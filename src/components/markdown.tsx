@@ -1,5 +1,5 @@
-import { createEffect, createSignal, onMount, Show } from "solid-js"
-import { initMarkdown, renderMarkdown } from "../lib/markdown"
+import { createEffect, createSignal, Show } from "solid-js"
+import { renderMarkdown } from "../lib/markdown"
 
 interface MarkdownProps {
   content: string
@@ -8,29 +8,11 @@ interface MarkdownProps {
 
 export function Markdown(props: MarkdownProps) {
   const [html, setHtml] = createSignal("")
-  const [ready, setReady] = createSignal(false)
   let containerRef: HTMLDivElement | undefined
 
-  onMount(async () => {
-    await initMarkdown(props.isDark ?? false)
-    setReady(true)
-  })
-
   createEffect(async () => {
-    if (ready()) {
-      const rendered = await renderMarkdown(props.content)
-      setHtml(rendered)
-    }
-  })
-
-  createEffect(async () => {
-    if (props.isDark !== undefined) {
-      await initMarkdown(props.isDark)
-      if (ready()) {
-        const rendered = await renderMarkdown(props.content)
-        setHtml(rendered)
-      }
-    }
+    const rendered = await renderMarkdown(props.content)
+    setHtml(rendered)
   })
 
   createEffect(() => {
@@ -87,9 +69,5 @@ export function Markdown(props: MarkdownProps) {
     }
   })
 
-  return (
-    <Show when={ready()} fallback={<div class="text-gray-500">Loading...</div>}>
-      <div ref={containerRef} class="prose prose-sm dark:prose-invert max-w-none" innerHTML={html()} />
-    </Show>
-  )
+  return <div ref={containerRef} class="prose prose-sm dark:prose-invert max-w-none" innerHTML={html()} />
 }

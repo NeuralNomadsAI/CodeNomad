@@ -18,9 +18,9 @@ function generateId(): string {
 }
 
 export function setupInstanceIPC(mainWindow: BrowserWindow) {
-  ipcMain.handle("instance:create", async (event, folder: string) => {
-    const id = generateId()
+  processManager.setMainWindow(mainWindow)
 
+  ipcMain.handle("instance:create", async (event, id: string, folder: string) => {
     const instance: Instance = {
       id,
       folder,
@@ -32,7 +32,7 @@ export function setupInstanceIPC(mainWindow: BrowserWindow) {
     instances.set(id, instance)
 
     try {
-      const { pid, port } = await processManager.spawn(folder)
+      const { pid, port } = await processManager.spawn(folder, id)
 
       instance.port = port
       instance.pid = pid
@@ -48,7 +48,7 @@ export function setupInstanceIPC(mainWindow: BrowserWindow) {
         })
       }
 
-      return { port, pid }
+      return { id, port, pid }
     } catch (error) {
       instance.status = "error"
       instance.error = error instanceof Error ? error.message : String(error)

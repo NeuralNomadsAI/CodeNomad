@@ -6,6 +6,8 @@ import InstanceTabs from "./components/instance-tabs"
 import SessionTabs from "./components/session-tabs"
 import MessageStream from "./components/message-stream"
 import PromptInput from "./components/prompt-input"
+import LogsView from "./components/logs-view"
+import { initMarkdown } from "./lib/markdown"
 import {
   hasInstances,
   isSelectingFolder,
@@ -23,6 +25,7 @@ import {
   setActiveInstanceId,
   stopInstance,
   getActiveInstance,
+  addLog,
 } from "./stores/instances"
 import {
   getSessions,
@@ -173,6 +176,8 @@ const App: Component = () => {
   }
 
   onMount(() => {
+    initMarkdown(false).catch(console.error)
+
     setupTabKeyboardShortcuts(handleSelectFolder, handleNewSession, handleCloseSession)
 
     window.electronAPI.onNewInstance(() => {
@@ -192,6 +197,10 @@ const App: Component = () => {
     window.electronAPI.onInstanceStopped(({ id }) => {
       console.log("Instance stopped:", id)
       updateInstance(id, { status: "stopped" })
+    })
+
+    window.electronAPI.onInstanceLog(({ id, entry }) => {
+      addLog(id, entry)
     })
   })
 
@@ -255,10 +264,7 @@ const App: Component = () => {
                           </Show>
                         }
                       >
-                        <div class="p-4 text-gray-600">
-                          <p class="font-semibold mb-2">Server Logs</p>
-                          <p class="text-sm">Log viewer will be implemented in Task 013</p>
-                        </div>
+                        <LogsView instanceId={instance().id} />
                       </Show>
                     </div>
                   </Show>

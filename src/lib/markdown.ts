@@ -2,43 +2,32 @@ import { marked } from "marked"
 import { getHighlighter, type Highlighter } from "shiki"
 
 let highlighter: Highlighter | null = null
+let highlighterPromise: Promise<Highlighter> | null = null
 let currentTheme: "light" | "dark" = "light"
+let isInitialized = false
 
 async function getOrCreateHighlighter() {
-  if (!highlighter) {
-    highlighter = await getHighlighter({
-      themes: ["github-light", "github-dark"],
-      langs: [
-        "typescript",
-        "javascript",
-        "python",
-        "bash",
-        "json",
-        "html",
-        "css",
-        "markdown",
-        "yaml",
-        "sql",
-        "rust",
-        "go",
-        "cpp",
-        "c",
-        "java",
-        "csharp",
-        "php",
-        "ruby",
-        "swift",
-        "kotlin",
-        "diff",
-        "shell",
-      ],
-    })
+  if (highlighter) {
+    return highlighter
   }
+
+  if (highlighterPromise) {
+    return highlighterPromise
+  }
+
+  highlighterPromise = getHighlighter({
+    themes: ["github-light", "github-dark"],
+    langs: [],
+  })
+
+  highlighter = await highlighterPromise
+  highlighterPromise = null
   return highlighter
 }
 
-export async function initMarkdown(isDark: boolean) {
-  const hl = await getOrCreateHighlighter()
+function setupRenderer(isDark: boolean) {
+  if (!highlighter) return
+
   currentTheme = isDark ? "dark" : "light"
 
   marked.setOptions({
@@ -52,12 +41,12 @@ export async function initMarkdown(isDark: boolean) {
     const encodedCode = encodeURIComponent(code)
     const escapedLang = lang ? escapeHtml(lang) : ""
 
-    if (!lang) {
+    if (!lang || !highlighter) {
       return `<div class="markdown-code-block" data-language="" data-code="${encodedCode}"><pre><code>${escapeHtml(code)}</code></pre></div>`
     }
 
     try {
-      const html = hl.codeToHtml(code, {
+      const html = highlighter.codeToHtml(code, {
         lang,
         theme: isDark ? "github-dark" : "github-light",
       })
@@ -79,14 +68,28 @@ export async function initMarkdown(isDark: boolean) {
   marked.use({ renderer })
 }
 
+export async function initMarkdown(isDark: boolean) {
+  await getOrCreateHighlighter()
+  setupRenderer(isDark)
+  isInitialized = true
+}
+
+export function isMarkdownReady(): boolean {
+  return isInitialized && highlighter !== null
+}
+
 export async function renderMarkdown(content: string): Promise<string> {
-  if (!highlighter) {
+  if (!isInitialized) {
     await initMarkdown(currentTheme === "dark")
   }
   return marked.parse(content) as Promise<string>
 }
 
-function escapeHtml(text: string): string {
+export async function getSharedHighlighter(): Promise<Highlighter> {
+  return getOrCreateHighlighter()
+}
+
+export function escapeHtml(text: string): string {
   const map: Record<string, string> = {
     "&": "&amp;",
     "<": "&lt;",

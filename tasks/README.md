@@ -67,17 +67,17 @@ Each task file contains:
 
 ### Phase 2: Core Chat (Tasks 006-010)
 
-- [ ] 006 - Instance & Session Tabs
-- [ ] 007 - Message Display
-- [ ] 008 - SSE Integration
-- [ ] 009 - Prompt Input (Basic)
-- [ ] 010 - Tool Call Rendering
+- [x] 006 - Instance & Session Tabs
+- [x] 007 - Message Display
+- [x] 008 - SSE Integration
+- [x] 009 - Prompt Input (Basic)
+- [x] 010 - Tool Call Rendering
 
 ### Phase 3: Essential Features (Tasks 011-015)
 
-- [ ] 011 - Agent/Model Selectors
-- [ ] 012 - Markdown Rendering
-- [ ] 013 - Logs Tab
+- [x] 011 - Agent/Model Selectors
+- [x] 012 - Markdown Rendering
+- [x] 013 - Logs Tab
 - [ ] 014 - Error Handling
 - [ ] 015 - Keyboard Shortcuts
 

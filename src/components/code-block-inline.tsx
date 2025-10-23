@@ -1,45 +1,11 @@
-import { createSignal, onMount, Show } from "solid-js"
-import { getHighlighter, type Highlighter } from "shiki"
+import { createSignal, onMount, Show, createEffect } from "solid-js"
+import type { Highlighter } from "shiki"
 import { useTheme } from "../lib/theme"
+import { getSharedHighlighter, escapeHtml } from "../lib/markdown"
 
 interface CodeBlockInlineProps {
   code: string
   language?: string
-}
-
-let highlighter: Highlighter | null = null
-
-async function getOrCreateHighlighter() {
-  if (!highlighter) {
-    highlighter = await getHighlighter({
-      themes: ["github-light", "github-dark"],
-      langs: [
-        "typescript",
-        "javascript",
-        "python",
-        "bash",
-        "json",
-        "html",
-        "css",
-        "markdown",
-        "yaml",
-        "sql",
-        "rust",
-        "go",
-        "cpp",
-        "c",
-        "java",
-        "csharp",
-        "php",
-        "ruby",
-        "swift",
-        "kotlin",
-        "diff",
-        "shell",
-      ],
-    })
-  }
-  return highlighter
 }
 
 export function CodeBlockInline(props: CodeBlockInlineProps) {
@@ -47,21 +13,30 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
   const [html, setHtml] = createSignal("")
   const [copied, setCopied] = createSignal(false)
   const [ready, setReady] = createSignal(false)
+  let highlighter: Highlighter | null = null
 
   onMount(async () => {
-    const hl = await getOrCreateHighlighter()
+    highlighter = await getSharedHighlighter()
     setReady(true)
-    updateHighlight(hl)
+    updateHighlight()
   })
 
-  const updateHighlight = async (hl: Highlighter) => {
+  createEffect(() => {
+    if (ready()) {
+      updateHighlight()
+    }
+  })
+
+  const updateHighlight = () => {
+    if (!highlighter) return
+
     if (!props.language) {
       setHtml(`<pre><code>${escapeHtml(props.code)}</code></pre>`)
       return
     }
 
     try {
-      const highlighted = hl.codeToHtml(props.code, {
+      const highlighted = highlighter.codeToHtml(props.code, {
         lang: props.language,
         theme: isDark() ? "github-dark" : "github-light",
       })
@@ -115,15 +90,4 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
       </div>
     </Show>
   )
-}
-
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  }
-  return text.replace(/[&<>"']/g, (m) => map[m])
 }

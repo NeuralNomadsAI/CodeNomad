@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process"
-import { app } from "electron"
+import { app, BrowserWindow } from "electron"
 import { existsSync, statSync } from "fs"
 import { execSync } from "child_process"
 
@@ -15,17 +15,48 @@ interface ProcessMeta {
   startTime: number
   childProcess: ChildProcess
   logs: string[]
+  instanceId: string
 }
 
 class ProcessManager {
   private processes = new Map<number, ProcessMeta>()
+  private mainWindow: BrowserWindow | null = null
 
-  async spawn(folder: string): Promise<ProcessInfo> {
+  setMainWindow(window: BrowserWindow) {
+    this.mainWindow = window
+  }
+
+  private parseLogLevel(message: string): "info" | "error" | "warn" | "debug" {
+    const upperMessage = message.toUpperCase()
+    if (upperMessage.includes("[ERROR]") || upperMessage.includes("ERROR:")) return "error"
+    if (upperMessage.includes("[WARN]") || upperMessage.includes("WARN:")) return "warn"
+    if (upperMessage.includes("[DEBUG]") || upperMessage.includes("DEBUG:")) return "debug"
+    if (upperMessage.includes("[INFO]") || upperMessage.includes("INFO:")) return "info"
+    return "info"
+  }
+
+  private sendLog(instanceId: string, level: "info" | "error" | "warn" | "debug", message: string) {
+    if (this.mainWindow && message.trim()) {
+      const parsedLevel = this.parseLogLevel(message)
+      this.mainWindow.webContents.send("instance:log", {
+        id: instanceId,
+        entry: {
+          timestamp: Date.now(),
+          level: parsedLevel,
+          message: message.trim(),
+        },
+      })
+    }
+  }
+
+  async spawn(folder: string, instanceId: string): Promise<ProcessInfo> {
     this.validateFolder(folder)
     this.validateOpenCodeBinary()
 
+    this.sendLog(instanceId, "info", `Starting OpenCode server for ${folder}...`)
+
     return new Promise((resolve, reject) => {
-      const child = spawn("opencode", ["serve", "--port", "0"], {
+      const child = spawn("opencode", ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"], {
         cwd: folder,
         stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
@@ -34,6 +65,7 @@ class ProcessManager {
 
       const timeout = setTimeout(() => {
         child.kill("SIGKILL")
+        this.sendLog(instanceId, "error", "Server startup timeout (10s exceeded)")
         reject(new Error("Server startup timeout (10s exceeded)"))
       }, 10000)
 
@@ -49,6 +81,10 @@ class ProcessManager {
         stdoutBuffer = lines.pop() || ""
 
         for (const line of lines) {
+          if (!line.trim()) continue
+
+          this.sendLog(instanceId, "info", line)
+
           const portMatch = line.match(/opencode server listening on http:\/\/[^:]+:(\d+)/)
           if (portMatch && !portFound) {
             portFound = true
@@ -62,13 +98,13 @@ class ProcessManager {
               startTime: Date.now(),
               childProcess: child,
               logs: [line],
+              instanceId,
             }
 
             this.processes.set(child.pid!, meta)
             resolve({ pid: child.pid!, port })
           }
 
-          const logEntry = { timestamp: Date.now(), level: "info", message: line }
           const meta = this.processes.get(child.pid!)
           if (meta) {
             meta.logs.push(line)
@@ -84,7 +120,10 @@ class ProcessManager {
         stderrBuffer = lines.pop() || ""
 
         for (const line of lines) {
-          const logEntry = { timestamp: Date.now(), level: "error", message: line }
+          if (!line.trim()) continue
+
+          this.sendLog(instanceId, "error", line)
+
           const meta = this.processes.get(child.pid!)
           if (meta) {
             meta.logs.push(line)

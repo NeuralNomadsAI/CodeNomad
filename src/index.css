@@ -948,6 +948,7 @@ body {
   cursor: pointer;
   color: #666;
   transition: all 150ms ease;
+  margin-left: auto;
 }
 
 [data-theme="dark"] .code-block-copy {

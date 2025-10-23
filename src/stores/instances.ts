@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { Instance } from "../types/instance"
+import type { Instance, LogEntry } from "../types/instance"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { fetchSessions, fetchAgents, fetchProviders } from "./sessions"
@@ -7,6 +7,8 @@ import { showSessionPicker } from "./ui"
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
+
+const MAX_LOG_ENTRIES = 1000
 
 function addInstance(instance: Instance) {
   setInstances((prev) => {
@@ -40,48 +42,48 @@ function removeInstance(id: string) {
 }
 
 async function createInstance(folder: string): Promise<string> {
-  const tempId = `temp-${Date.now()}`
+  const id = `instance-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
   const instance: Instance = {
-    id: tempId,
+    id,
     folder,
     port: 0,
     pid: 0,
     status: "starting",
     client: null,
+    logs: [],
   }
 
   addInstance(instance)
 
   try {
-    const { port, pid } = await window.electronAPI.createInstance(folder)
+    const { id: returnedId, port, pid } = await window.electronAPI.createInstance(id, folder)
 
     const client = sdkManager.createClient(port)
 
-    updateInstance(tempId, {
+    updateInstance(id, {
       port,
       pid,
       client,
       status: "ready",
     })
 
-    setActiveInstanceId(tempId)
-
-    sseManager.connect(tempId, port)
+    setActiveInstanceId(id)
+    sseManager.connect(id, port)
 
     try {
-      await fetchSessions(tempId)
-      await fetchAgents(tempId)
-      await fetchProviders(tempId)
+      await fetchSessions(id)
+      await fetchAgents(id)
+      await fetchProviders(id)
     } catch (error) {
       console.error("Failed to fetch initial data:", error)
     }
 
-    showSessionPicker(tempId)
+    showSessionPicker(id)
 
-    return tempId
+    return id
   } catch (error) {
-    updateInstance(tempId, {
+    updateInstance(id, {
       status: "error",
       error: error instanceof Error ? error.message : String(error),
     })
@@ -111,6 +113,32 @@ function getActiveInstance(): Instance | null {
   return id ? instances().get(id) || null : null
 }
 
+function addLog(id: string, entry: LogEntry) {
+  setInstances((prev) => {
+    const next = new Map(prev)
+    const instance = next.get(id)
+    if (instance) {
+      const logs = [...instance.logs, entry]
+      if (logs.length > MAX_LOG_ENTRIES) {
+        logs.shift()
+      }
+      next.set(id, { ...instance, logs })
+    }
+    return next
+  })
+}
+
+function clearLogs(id: string) {
+  setInstances((prev) => {
+    const next = new Map(prev)
+    const instance = next.get(id)
+    if (instance) {
+      next.set(id, { ...instance, logs: [] })
+    }
+    return next
+  })
+}
+
 export {
   instances,
   activeInstanceId,
@@ -121,4 +149,6 @@ export {
   createInstance,
   stopInstance,
   getActiveInstance,
+  addLog,
+  clearLogs,
 }
