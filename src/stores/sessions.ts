@@ -74,11 +74,60 @@ async function fetchSessions(instanceId: string): Promise<void> {
   }
 }
 
+async function getDefaultModel(
+  instanceId: string,
+  agentName?: string,
+): Promise<{ providerId: string; modelId: string }> {
+  const instanceProviders = providers().get(instanceId) || []
+  const instanceAgents = agents().get(instanceId) || []
+
+  if (agentName) {
+    const agent = instanceAgents.find((a) => a.name === agentName)
+    if (agent?.model?.providerId && agent.model.modelId) {
+      return {
+        providerId: agent.model.providerId,
+        modelId: agent.model.modelId,
+      }
+    }
+  }
+
+  const anthropicProvider = instanceProviders.find((p) => p.id === "anthropic")
+  if (anthropicProvider) {
+    const defaultModelId = anthropicProvider.defaultModelId || anthropicProvider.models[0]?.id
+    if (defaultModelId) {
+      return {
+        providerId: "anthropic",
+        modelId: defaultModelId,
+      }
+    }
+  }
+
+  if (instanceProviders.length > 0) {
+    const firstProvider = instanceProviders[0]
+    const defaultModelId = firstProvider.defaultModelId || firstProvider.models[0]?.id
+
+    if (defaultModelId) {
+      return {
+        providerId: firstProvider.id,
+        modelId: defaultModelId,
+      }
+    }
+  }
+
+  return { providerId: "", modelId: "" }
+}
+
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
+
+  const instanceAgents = agents().get(instanceId) || []
+  const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
+  const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
+
+  const defaultModel = await getDefaultModel(instanceId, selectedAgent)
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -98,8 +147,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       instanceId,
       title: response.data.title || "New Session",
       parentId: null,
-      agent: agent || "",
-      model: { providerId: "", modelId: "" },
+      agent: selectedAgent,
+      model: defaultModel,
       time: {
         created: response.data.time.created,
         updated: response.data.time.updated,
@@ -185,13 +234,17 @@ async function fetchAgents(instanceId: string): Promise<void> {
 
   try {
     const response = await instance.client.app.agents()
-    const agentList = (response.data ?? [])
-      .filter((agent) => agent.mode !== "subagent")
-      .map((agent) => ({
-        name: agent.name,
-        description: agent.description || "",
-        mode: agent.mode,
-      }))
+    const agentList = (response.data ?? []).map((agent) => ({
+      name: agent.name,
+      description: agent.description || "",
+      mode: agent.mode,
+      model: agent.model?.modelID
+        ? {
+            providerId: agent.model.providerID || "",
+            modelId: agent.model.modelID,
+          }
+        : undefined,
+    }))
 
     setAgents((prev) => {
       const next = new Map(prev)
@@ -216,6 +269,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
     const providerList = response.data.providers.map((provider) => ({
       id: provider.id,
       name: provider.name,
+      defaultModelId: response.data?.default?.[provider.id],
       models: Object.entries(provider.models).map(([id, model]) => ({
         id,
         name: model.name,
@@ -359,14 +413,44 @@ async function loadMessages(instanceId: string, sessionId: string): Promise<void
       }
     })
 
+    let agentName = ""
+    let providerID = ""
+    let modelID = ""
+
+    for (let i = response.data.length - 1; i >= 0; i--) {
+      const apiMessage = response.data[i]
+      const info = apiMessage.info || apiMessage
+
+      if (info.role === "assistant") {
+        agentName = (info as any).mode || (info as any).agent || ""
+        providerID = (info as any).providerID || ""
+        modelID = (info as any).modelID || ""
+        if (agentName && providerID && modelID) break
+      }
+    }
+
+    if (!agentName && !providerID && !modelID) {
+      const defaultModel = await getDefaultModel(instanceId, session.agent)
+      agentName = session.agent
+      providerID = defaultModel.providerId
+      modelID = defaultModel.modelId
+    }
+
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = next.get(instanceId)
       if (instanceSessions) {
         const session = instanceSessions.get(sessionId)
         if (session) {
+          const updatedSession = {
+            ...session,
+            messages,
+            messagesInfo,
+            agent: agentName || session.agent,
+            model: providerID && modelID ? { providerId: providerID, modelId: modelID } : session.model,
+          }
           const updatedInstanceSessions = new Map(instanceSessions)
-          updatedInstanceSessions.set(sessionId, { ...session, messages, messagesInfo })
+          updatedInstanceSessions.set(sessionId, updatedSession)
           next.set(instanceId, updatedInstanceSessions)
         }
       }
@@ -595,6 +679,48 @@ async function sendMessage(
   }
 }
 
+async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = new Map(prev.get(instanceId))
+    const session = instanceSessions.get(sessionId)
+    if (session) {
+      instanceSessions.set(sessionId, { ...session, agent })
+      next.set(instanceId, instanceSessions)
+    }
+    return next
+  })
+}
+
+async function updateSessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = new Map(prev.get(instanceId))
+    const session = instanceSessions.get(sessionId)
+    if (session) {
+      instanceSessions.set(sessionId, { ...session, model })
+      next.set(instanceId, instanceSessions)
+    }
+    return next
+  })
+}
+
 sseManager.onMessageUpdate = handleMessageUpdate
 sseManager.onSessionUpdate = handleSessionUpdate
 
@@ -621,4 +747,7 @@ export {
   getParentSessions,
   getChildSessions,
   getSessionFamily,
+  updateSessionAgent,
+  updateSessionModel,
+  getDefaultModel,
 }

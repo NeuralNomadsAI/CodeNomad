@@ -1,10 +1,16 @@
 import { createSignal, Show } from "solid-js"
+import AgentSelector from "./agent-selector"
+import ModelSelector from "./model-selector"
 
 interface PromptInputProps {
   instanceId: string
   sessionId: string
   onSend: (prompt: string) => Promise<void>
   disabled?: boolean
+  agent: string
+  model: { providerId: string; modelId: string }
+  onAgentChange: (agent: string) => Promise<void>
+  onModelChange: (model: { providerId: string; modelId: string }) => Promise<void>
 }
 
 export default function PromptInput(props: PromptInputProps) {
@@ -73,6 +79,20 @@ export default function PromptInput(props: PromptInputProps) {
         <span class="hint">
           <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for new line
         </span>
+        <div class="flex items-center gap-2">
+          <AgentSelector
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            currentAgent={props.agent}
+            onAgentChange={props.onAgentChange}
+          />
+          <ModelSelector
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            currentModel={props.model}
+            onModelChange={props.onModelChange}
+          />
+        </div>
       </div>
     </div>
   )

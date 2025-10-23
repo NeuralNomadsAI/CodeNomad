@@ -22,12 +22,17 @@ export interface Agent {
   name: string
   description: string
   mode: string
+  model?: {
+    providerId: string
+    modelId: string
+  }
 }
 
 export interface Provider {
   id: string
   name: string
   models: Model[]
+  defaultModelId?: string
 }
 
 export interface Model {

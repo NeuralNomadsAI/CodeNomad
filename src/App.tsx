@@ -37,6 +37,8 @@ import {
   getParentSessions,
   loadMessages,
   sendMessage,
+  updateSessionAgent,
+  updateSessionModel,
 } from "./stores/sessions"
 import { setupTabKeyboardShortcuts } from "./lib/keyboard"
 
@@ -58,6 +60,14 @@ const SessionView: Component<{
     await sendMessage(props.instanceId, props.sessionId, prompt)
   }
 
+  async function handleAgentChange(agent: string) {
+    await updateSessionAgent(props.instanceId, props.sessionId, agent)
+  }
+
+  async function handleModelChange(model: { providerId: string; modelId: string }) {
+    await updateSessionModel(props.instanceId, props.sessionId, model)
+  }
+
   return (
     <Show
       when={session()}
@@ -75,7 +85,15 @@ const SessionView: Component<{
             messages={s().messages || []}
             messagesInfo={s().messagesInfo}
           />
-          <PromptInput instanceId={props.instanceId} sessionId={s().id} onSend={handleSendMessage} />
+          <PromptInput
+            instanceId={props.instanceId}
+            sessionId={s().id}
+            onSend={handleSendMessage}
+            agent={s().agent}
+            model={s().model}
+            onAgentChange={handleAgentChange}
+            onModelChange={handleModelChange}
+          />
         </div>
       )}
     </Show>

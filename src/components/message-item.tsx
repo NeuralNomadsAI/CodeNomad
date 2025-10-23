@@ -59,9 +59,7 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </Show>
 
-        <For each={props.message.parts}>
-          {(part) => <MessagePart part={part} key={part.id || `${part.type}-${Math.random()}`} />}
-        </For>
+        <For each={props.message.parts}>{(part) => <MessagePart part={part} />}</For>
       </div>
 
       <Show when={props.message.status === "sending"}>
