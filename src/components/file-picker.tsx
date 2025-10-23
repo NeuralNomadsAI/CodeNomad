@@ -26,10 +26,24 @@ const FilePicker: Component<FilePickerProps> = (props) => {
   let containerRef: HTMLDivElement | undefined
 
   async function fetchGitFiles() {
-    if (!props.instanceClient || cachedGitFiles().length > 0) return
+    if (!props.instanceClient) {
+      console.log("[FilePicker] No instance client available")
+      return
+    }
+
+    if (cachedGitFiles().length > 0) {
+      console.log("[FilePicker] Git files already cached:", cachedGitFiles().length)
+      return
+    }
+
+    console.log("[FilePicker] Fetching git files...")
+    const startTime = Date.now()
 
     try {
       const gitResponse = await props.instanceClient.file.status()
+      const elapsed = Date.now() - startTime
+      console.log(`[FilePicker] Git files response received in ${elapsed}ms:`, gitResponse)
+
       if (gitResponse?.data) {
         const gitFiles: FileItem[] = gitResponse.data.map((file: any) => ({
           path: file.path,
@@ -37,29 +51,46 @@ const FilePicker: Component<FilePickerProps> = (props) => {
           removed: file.removed,
           isGitFile: true,
         }))
+        console.log(`[FilePicker] Cached ${gitFiles.length} git files`)
         setCachedGitFiles(gitFiles)
+      } else {
+        console.log("[FilePicker] Git response has no data:", gitResponse)
+        setCachedGitFiles([])
       }
     } catch (error) {
-      console.warn("Git files not available:", error)
+      const elapsed = Date.now() - startTime
+      console.warn(`[FilePicker] Git files not available after ${elapsed}ms:`, error)
       setCachedGitFiles([])
     }
   }
 
   async function fetchFiles(searchQuery: string) {
-    if (!props.instanceClient) return
+    if (!props.instanceClient) {
+      console.log("[FilePicker] No instance client for file search")
+      return
+    }
 
+    console.log(`[FilePicker] Fetching files for query: "${searchQuery}"`)
     setLoading(true)
+    const startTime = Date.now()
+
     try {
       const gitFiles = cachedGitFiles()
+      console.log(`[FilePicker] Using ${gitFiles.length} cached git files`)
 
       if (!searchQuery) {
+        console.log(`[FilePicker] No search query, showing ${gitFiles.length} git files`)
         setFiles(gitFiles)
         setSelectedIndex(0)
         setLoading(false)
         return
       }
 
+      console.log(`[FilePicker] Searching files with query: "${searchQuery}"`)
       const searchResponse = await props.instanceClient.find.files({ query: { query: searchQuery } })
+      const elapsed = Date.now() - startTime
+
+      console.log(`[FilePicker] Search response received in ${elapsed}ms:`, searchResponse)
 
       const searchFiles: FileItem[] = (searchResponse?.data || [])
         .filter((path: string) => !gitFiles.some((gf) => gf.path === path))
@@ -71,10 +102,14 @@ const FilePicker: Component<FilePickerProps> = (props) => {
       const filteredGitFiles = gitFiles.filter((f) => f.path.toLowerCase().includes(searchQuery.toLowerCase()))
       const allFiles = [...filteredGitFiles, ...searchFiles]
 
+      console.log(
+        `[FilePicker] Showing ${allFiles.length} files (${filteredGitFiles.length} git + ${searchFiles.length} search)`,
+      )
       setFiles(allFiles)
       setSelectedIndex(0)
     } catch (error) {
-      console.error("Failed to search files:", error)
+      const elapsed = Date.now() - startTime
+      console.error(`[FilePicker] Failed to search files after ${elapsed}ms:`, error)
       setFiles([])
     } finally {
       setLoading(false)
@@ -84,13 +119,19 @@ const FilePicker: Component<FilePickerProps> = (props) => {
   let lastQuery = ""
 
   createEffect(() => {
+    console.log(`[FilePicker] Effect triggered - open: ${props.open}, query: "${props.searchQuery}"`)
+
     if (props.open) {
       if (cachedGitFiles().length === 0) {
+        console.log("[FilePicker] Triggering git files fetch")
         fetchGitFiles()
       }
       if (props.searchQuery !== lastQuery) {
+        console.log(`[FilePicker] Query changed from "${lastQuery}" to "${props.searchQuery}"`)
         lastQuery = props.searchQuery
         fetchFiles(props.searchQuery)
+      } else {
+        console.log(`[FilePicker] Query unchanged: "${props.searchQuery}"`)
       }
     }
   })
