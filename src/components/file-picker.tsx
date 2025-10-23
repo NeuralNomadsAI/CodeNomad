@@ -30,15 +30,18 @@ const FilePicker: Component<FilePickerProps> = (props) => {
 
     try {
       const gitResponse = await props.instanceClient.file.status()
-      const gitFiles: FileItem[] = (gitResponse.data || []).map((file: any) => ({
-        path: file.path,
-        added: file.added,
-        removed: file.removed,
-        isGitFile: true,
-      }))
-      setCachedGitFiles(gitFiles)
+      if (gitResponse?.data) {
+        const gitFiles: FileItem[] = gitResponse.data.map((file: any) => ({
+          path: file.path,
+          added: file.added,
+          removed: file.removed,
+          isGitFile: true,
+        }))
+        setCachedGitFiles(gitFiles)
+      }
     } catch (error) {
-      console.error("Failed to fetch git files:", error)
+      console.warn("Git files not available:", error)
+      setCachedGitFiles([])
     }
   }
 
@@ -47,49 +50,49 @@ const FilePicker: Component<FilePickerProps> = (props) => {
 
     setLoading(true)
     try {
-      const searchFilesPromise = searchQuery
-        ? props.instanceClient.find.files({ query: { query: searchQuery } })
-        : Promise.resolve({ data: [] })
-
-      const searchResponse = await searchFilesPromise
       const gitFiles = cachedGitFiles()
 
-      const searchFiles: FileItem[] = (searchResponse.data || [])
+      if (!searchQuery) {
+        setFiles(gitFiles)
+        setSelectedIndex(0)
+        setLoading(false)
+        return
+      }
+
+      const searchResponse = await props.instanceClient.find.files({ query: { query: searchQuery } })
+
+      const searchFiles: FileItem[] = (searchResponse?.data || [])
         .filter((path: string) => !gitFiles.some((gf) => gf.path === path))
         .map((path: string) => ({
           path,
           isGitFile: false,
         }))
 
-      const allFiles = searchQuery
-        ? [...gitFiles.filter((f) => f.path.toLowerCase().includes(searchQuery.toLowerCase())), ...searchFiles]
-        : gitFiles
+      const filteredGitFiles = gitFiles.filter((f) => f.path.toLowerCase().includes(searchQuery.toLowerCase()))
+      const allFiles = [...filteredGitFiles, ...searchFiles]
 
       setFiles(allFiles)
       setSelectedIndex(0)
     } catch (error) {
-      console.error("Failed to fetch files:", error)
+      console.error("Failed to search files:", error)
       setFiles([])
     } finally {
       setLoading(false)
     }
   }
 
-  createEffect(() => {
-    if (props.open) {
-      fetchGitFiles()
-      fetchFiles(props.searchQuery)
-    }
-  })
+  let lastQuery = ""
 
   createEffect(() => {
     if (props.open) {
-      fetchFiles(props.searchQuery)
+      if (cachedGitFiles().length === 0) {
+        fetchGitFiles()
+      }
+      if (props.searchQuery !== lastQuery) {
+        lastQuery = props.searchQuery
+        fetchFiles(props.searchQuery)
+      }
     }
-  })
-
-  createEffect(() => {
-    setSelectedIndex(0)
   })
 
   function scrollToSelected() {
