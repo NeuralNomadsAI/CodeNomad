@@ -1,5 +1,5 @@
 import { marked } from "marked"
-import { getHighlighter, type Highlighter } from "shiki"
+import { createHighlighter, type Highlighter, bundledLanguages } from "shiki/bundle/full"
 
 let highlighter: Highlighter | null = null
 let highlighterPromise: Promise<Highlighter> | null = null
@@ -15,9 +15,9 @@ async function getOrCreateHighlighter() {
     return highlighterPromise
   }
 
-  highlighterPromise = getHighlighter({
+  highlighterPromise = createHighlighter({
     themes: ["github-light", "github-dark"],
-    langs: [],
+    langs: Object.keys(bundledLanguages),
   })
 
   highlighter = await highlighterPromise

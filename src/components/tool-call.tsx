@@ -1,6 +1,8 @@
 import { createSignal, Show, For, createEffect } from "solid-js"
 import { isToolCallExpanded, toggleToolCallExpanded } from "../stores/tool-call-state"
 import { CodeBlockInline } from "./code-block-inline"
+import { Markdown } from "./markdown"
+import { useTheme } from "../lib/theme"
 
 interface ToolCallProps {
   toolCall: any
@@ -96,7 +98,12 @@ function getLanguageFromPath(path: string): string | undefined {
   return ext ? langMap[ext] : undefined
 }
 
+function hasMarkdownCodeBlocks(text: string): boolean {
+  return /```[\s\S]*?```/.test(text)
+}
+
 export default function ToolCall(props: ToolCallProps) {
+  const { isDark } = useTheme()
   const toolCallId = () => props.toolCallId || props.toolCall?.id || ""
   const expanded = () => isToolCallExpanded(toolCallId())
 
@@ -345,6 +352,17 @@ export default function ToolCall(props: ToolCallProps) {
 
     if (input.command) {
       const fullOutput = `$ ${input.command}${output ? "\n" + output : ""}`
+
+      if (output && hasMarkdownCodeBlocks(output)) {
+        return (
+          <div class="tool-call-bash">
+            <div class="message-text">
+              <Markdown content={fullOutput} isDark={isDark()} />
+            </div>
+          </div>
+        )
+      }
+
       return (
         <div class="tool-call-bash">
           <CodeBlockInline code={fullOutput} language="bash" />
@@ -362,6 +380,15 @@ export default function ToolCall(props: ToolCallProps) {
     if (output) {
       const lines = output.split("\n")
       const truncated = lines.slice(0, 10).join("\n")
+
+      if (hasMarkdownCodeBlocks(truncated)) {
+        return (
+          <div class="message-text">
+            <Markdown content={truncated} isDark={isDark()} />
+          </div>
+        )
+      }
+
       return <CodeBlockInline code={truncated} language="markdown" />
     }
 
@@ -448,6 +475,15 @@ export default function ToolCall(props: ToolCallProps) {
     if (output) {
       const lines = output.split("\n")
       const truncated = lines.slice(0, 10).join("\n")
+
+      if (hasMarkdownCodeBlocks(truncated)) {
+        return (
+          <div class="message-text">
+            <Markdown content={truncated} isDark={isDark()} />
+          </div>
+        )
+      }
+
       return <CodeBlockInline code={truncated} />
     }
 

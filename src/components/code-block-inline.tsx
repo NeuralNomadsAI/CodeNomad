@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show, createEffect } from "solid-js"
-import type { Highlighter } from "shiki"
+import type { Highlighter } from "shiki/bundle/full"
 import { useTheme } from "../lib/theme"
 import { getSharedHighlighter, escapeHtml } from "../lib/markdown"
 
@@ -23,6 +23,9 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
 
   createEffect(() => {
     if (ready()) {
+      isDark()
+      props.code
+      props.language
       updateHighlight()
     }
   })
