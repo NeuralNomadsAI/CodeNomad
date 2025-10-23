@@ -34,6 +34,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [fileSearchQuery, setFileSearchQuery] = createSignal("")
   const [atPosition, setAtPosition] = createSignal<number | null>(null)
   const [isDragging, setIsDragging] = createSignal(false)
+  const [ignoredAtPositions, setIgnoredAtPositions] = createSignal<Set<number>>(new Set())
   let textareaRef: HTMLTextAreaElement | undefined
   let containerRef: HTMLDivElement | undefined
 
@@ -103,6 +104,7 @@ export default function PromptInput(props: PromptInputProps) {
       await props.onSend(text, currentAttachments)
       setPrompt("")
       clearAttachments(props.instanceId, props.sessionId)
+      setIgnoredAtPositions(new Set<number>())
 
       if (textareaRef) {
         textareaRef.style.height = "auto"
@@ -129,7 +131,7 @@ export default function PromptInput(props: PromptInputProps) {
     const textBeforeCursor = value.substring(0, cursorPos)
     const lastAtIndex = textBeforeCursor.lastIndexOf("@")
 
-    if (lastAtIndex !== -1) {
+    if (lastAtIndex !== -1 && !ignoredAtPositions().has(lastAtIndex)) {
       const textAfterAt = value.substring(lastAtIndex + 1, cursorPos)
       const hasSpace = textAfterAt.includes(" ") || textAfterAt.includes("\n")
 
@@ -176,10 +178,14 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleFilePickerClose() {
+    const pos = atPosition()
+    if (pos !== null) {
+      setIgnoredAtPositions((prev) => new Set(prev).add(pos))
+    }
     setShowFilePicker(false)
     setAtPosition(null)
     setFileSearchQuery("")
-    textareaRef?.focus()
+    setTimeout(() => textareaRef?.focus(), 0)
   }
 
   function handleFilePickerNavigate(_direction: "up" | "down") {}
@@ -227,13 +233,6 @@ export default function PromptInput(props: PromptInputProps) {
 
   return (
     <div class="prompt-input-container">
-      <Show when={attachments().length > 0}>
-        <div class="flex flex-wrap gap-2 border-b border-gray-200 p-2 dark:border-gray-700">
-          <For each={attachments()}>
-            {(att) => <AttachmentChip attachment={att} onRemove={() => handleRemoveAttachment(att.id)} />}
-          </For>
-        </div>
-      </Show>
       <div
         ref={containerRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/10" : ""}`}
@@ -251,6 +250,14 @@ export default function PromptInput(props: PromptInputProps) {
             searchQuery={fileSearchQuery()}
             textareaRef={textareaRef}
           />
+        </Show>
+
+        <Show when={attachments().length > 0}>
+          <div class="flex flex-wrap gap-1 px-3 pt-2 pb-1">
+            <For each={attachments()}>
+              {(att) => <AttachmentChip attachment={att} onRemove={() => handleRemoveAttachment(att.id)} />}
+            </For>
+          </div>
         </Show>
 
         <textarea

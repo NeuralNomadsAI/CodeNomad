@@ -174,6 +174,14 @@ const FilePicker: Component<FilePickerProps> = (props) => {
     const listener = (e: KeyboardEvent) => {
       if (!props.open) return
       const fileList = files()
+
+      if (e.key === "Escape") {
+        e.preventDefault()
+        e.stopPropagation()
+        props.onClose()
+        return
+      }
+
       if (fileList.length === 0) return
 
       if (e.key === "ArrowDown") {
@@ -189,14 +197,11 @@ const FilePicker: Component<FilePickerProps> = (props) => {
         if (fileList[selectedIndex()]) {
           handleSelect(fileList[selectedIndex()].path)
         }
-      } else if (e.key === "Escape") {
-        e.preventDefault()
-        props.onClose()
       }
     }
 
-    document.addEventListener("keydown", listener)
-    onCleanup(() => document.removeEventListener("keydown", listener))
+    document.addEventListener("keydown", listener, true)
+    onCleanup(() => document.removeEventListener("keydown", listener, true))
   })
 
   return (
