@@ -1,7 +1,7 @@
 import { Component, onMount, onCleanup, Show, createMemo, createEffect, createSignal } from "solid-js"
 import type { Session } from "./types/session"
 import type { Attachment } from "./types/attachment"
-import EmptyState from "./components/empty-state"
+import FolderSelectionView from "./components/folder-selection-view"
 import InstanceWelcomeView from "./components/instance-welcome-view"
 import CommandPalette from "./components/command-palette"
 import InstanceTabs from "./components/instance-tabs"
@@ -12,8 +12,15 @@ import LogsView from "./components/logs-view"
 import { initMarkdown } from "./lib/markdown"
 import { createCommandRegistry } from "./lib/commands"
 import type { Command } from "./lib/commands"
-import { hasInstances, isSelectingFolder, setIsSelectingFolder, setHasInstances } from "./stores/ui"
-import { toggleShowThinkingBlocks, preferences } from "./stores/preferences"
+import {
+  hasInstances,
+  isSelectingFolder,
+  setIsSelectingFolder,
+  setHasInstances,
+  showFolderSelection,
+  setShowFolderSelection,
+} from "./stores/ui"
+import { toggleShowThinkingBlocks, preferences, addRecentFolder } from "./stores/preferences"
 import {
   createInstance,
   instances,
@@ -176,22 +183,36 @@ const App: Component = () => {
     return activeSessionId().get(instance.id) || null
   })
 
-  async function handleSelectFolder() {
+  async function handleSelectFolder(folderPath?: string) {
     setIsSelectingFolder(true)
     try {
-      const folder = await window.electronAPI.selectFolder()
+      let folder: string | null | undefined = folderPath
+
       if (!folder) {
-        return
+        folder = await window.electronAPI.selectFolder()
+        if (!folder) {
+          return
+        }
       }
 
+      addRecentFolder(folder)
       const instanceId = await createInstance(folder)
       setHasInstances(true)
+      setShowFolderSelection(false)
 
       console.log("Created instance:", instanceId, "Port:", instances().get(instanceId)?.port)
     } catch (error) {
       console.error("Failed to create instance:", error)
     } finally {
       setIsSelectingFolder(false)
+    }
+  }
+
+  function handleNewInstanceRequest() {
+    if (hasInstances()) {
+      setShowFolderSelection(true)
+    } else {
+      handleSelectFolder()
     }
   }
 
@@ -234,7 +255,7 @@ const App: Component = () => {
       category: "Instance",
       keywords: ["folder", "project", "workspace"],
       shortcut: { key: "N", meta: true },
-      action: handleSelectFolder,
+      action: handleNewInstanceRequest,
     })
 
     commandRegistry.register({
@@ -620,7 +641,7 @@ const App: Component = () => {
     setupCommands()
 
     setupTabKeyboardShortcuts(
-      handleSelectFolder,
+      handleNewInstanceRequest,
       handleCloseInstance,
       handleNewSession,
       handleCloseSession,
@@ -676,6 +697,8 @@ const App: Component = () => {
     )
     registerEscapeShortcut(
       () => {
+        if (showFolderSelection()) return true
+
         const instance = activeInstance()
         if (!instance) return false
 
@@ -697,6 +720,11 @@ const App: Component = () => {
         )
       },
       async () => {
+        if (showFolderSelection()) {
+          setShowFolderSelection(false)
+          return
+        }
+
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "logs") return
@@ -740,7 +768,7 @@ const App: Component = () => {
     })
 
     window.electronAPI.onNewInstance(() => {
-      handleSelectFolder()
+      handleNewInstanceRequest()
     })
 
     window.electronAPI.onInstanceStarted(({ id, port, pid, binaryPath }) => {
@@ -774,7 +802,7 @@ const App: Component = () => {
               activeInstanceId={activeInstanceId()}
               onSelect={setActiveInstanceId}
               onClose={handleCloseInstance}
-              onNew={handleSelectFolder}
+              onNew={handleNewInstanceRequest}
             />
 
             <Show when={activeInstance()}>
@@ -825,7 +853,7 @@ const App: Component = () => {
           </>
         }
       >
-        <EmptyState onSelectFolder={handleSelectFolder} isLoading={isSelectingFolder()} />
+        <FolderSelectionView onSelectFolder={handleSelectFolder} isLoading={isSelectingFolder()} />
       </Show>
 
       <CommandPalette
@@ -834,6 +862,28 @@ const App: Component = () => {
         commands={commandRegistry.getAll()}
         onExecute={handleExecuteCommand}
       />
+
+      <Show when={showFolderSelection()}>
+        <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div class="w-full h-full relative">
+            <button
+              onClick={() => setShowFolderSelection(false)}
+              class="absolute top-4 right-4 z-10 p-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              title="Close (Esc)"
+            >
+              <svg
+                class="w-5 h-5 text-gray-600 dark:text-gray-300"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <FolderSelectionView onSelectFolder={handleSelectFolder} isLoading={isSelectingFolder()} />
+          </div>
+        </div>
+      </Show>
     </div>
   )
 }

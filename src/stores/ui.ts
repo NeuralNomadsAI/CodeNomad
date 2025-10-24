@@ -3,6 +3,7 @@ import { createSignal } from "solid-js"
 const [hasInstances, setHasInstances] = createSignal(false)
 const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null)
 const [isSelectingFolder, setIsSelectingFolder] = createSignal(false)
+const [showFolderSelection, setShowFolderSelection] = createSignal(false)
 
 const [instanceTabOrder, setInstanceTabOrder] = createSignal<string[]>([])
 const [sessionTabOrder, setSessionTabOrder] = createSignal<Map<string, string[]>>(new Map())
@@ -26,6 +27,8 @@ export {
   setSelectedFolder,
   isSelectingFolder,
   setIsSelectingFolder,
+  showFolderSelection,
+  setShowFolderSelection,
   instanceTabOrder,
   setInstanceTabOrder,
   sessionTabOrder,
