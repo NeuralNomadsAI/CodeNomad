@@ -1,9 +1,9 @@
-import { createSignal, Show, onMount } from "solid-js"
+import { createSignal, Show, onMount, For } from "solid-js"
 import AgentSelector from "./agent-selector"
 import ModelSelector from "./model-selector"
 import FilePicker from "./file-picker"
 import { addToHistory, getHistory } from "../stores/message-history"
-import { getAttachments, addAttachment, clearAttachments } from "../stores/attachments"
+import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createFileAttachment } from "../types/attachment"
 import type { Attachment } from "../types/attachment"
 import Kbd from "./kbd"
@@ -37,6 +37,24 @@ export default function PromptInput(props: PromptInputProps) {
   let containerRef: HTMLDivElement | undefined
 
   const attachments = () => getAttachments(props.instanceId, props.sessionId)
+
+  function handleRemoveAttachment(attachmentId: string) {
+    removeAttachment(props.instanceId, props.sessionId, attachmentId)
+
+    const currentAttachments = attachments()
+    const attachment = currentAttachments.find((a) => a.id === attachmentId)
+    if (attachment && attachment.source.type === "file") {
+      const filename = attachment.filename
+      const currentPrompt = prompt()
+      const newPrompt = currentPrompt.replace(`@${filename}`, "").replace(/\s+/g, " ").trim()
+      setPrompt(newPrompt)
+
+      if (textareaRef) {
+        textareaRef.style.height = "auto"
+        textareaRef.style.height = Math.min(textareaRef.scrollHeight, 200) + "px"
+      }
+    }
+  }
 
   onMount(async () => {
     const loaded = await getHistory(props.instanceFolder)
@@ -269,18 +287,39 @@ export default function PromptInput(props: PromptInputProps) {
           />
         </Show>
 
-        <textarea
-          ref={textareaRef}
-          class="prompt-input"
-          placeholder="Type your message, @file, or /command..."
-          value={prompt()}
-          onInput={handleInput}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          disabled={sending() || props.disabled}
-          rows={1}
-        />
+        <div class="flex flex-1 flex-col gap-2">
+          <Show when={attachments().length > 0}>
+            <div class="flex flex-wrap gap-1">
+              <For each={attachments()}>
+                {(attachment) => (
+                  <div class="inline-flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-xs text-white">
+                    <span class="font-mono">@{attachment.filename}</span>
+                    <button
+                      onClick={() => handleRemoveAttachment(attachment.id)}
+                      class="flex h-3.5 w-3.5 items-center justify-center rounded text-sm hover:bg-blue-600"
+                      aria-label="Remove attachment"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+          <textarea
+            ref={textareaRef}
+            class="prompt-input"
+            placeholder="Type your message, @file, or /command..."
+            value={prompt()}
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            disabled={sending() || props.disabled}
+            rows={1}
+          />
+        </div>
+
         <button class="send-button" onClick={handleSend} disabled={!canSend()} aria-label="Send message">
           <Show when={sending()} fallback={<span class="send-icon">▶</span>}>
             <span class="spinner-small" />

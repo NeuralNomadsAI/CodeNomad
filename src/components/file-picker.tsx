@@ -94,7 +94,7 @@ const FilePicker: Component<FilePickerProps> = (props) => {
           isGitFile: false,
         }))
 
-      const filteredGitFiles = searchQuery
+      const filteredGitFiles = searchQuery.trim()
         ? gitFiles.filter((f) => f.path.toLowerCase().includes(searchQuery.toLowerCase()))
         : gitFiles
       const allFiles = [...filteredGitFiles, ...searchFiles]
