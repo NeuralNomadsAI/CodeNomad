@@ -14,6 +14,7 @@ export interface ElectronAPI {
     }) => void,
   ) => void
   onNewInstance: (callback: () => void) => void
+  scanDirectory: (workspaceFolder: string) => Promise<string[]>
 }
 
 const electronAPI: ElectronAPI = {
@@ -35,6 +36,7 @@ const electronAPI: ElectronAPI = {
   onNewInstance: (callback) => {
     ipcRenderer.on("menu:newInstance", () => callback())
   },
+  scanDirectory: (workspaceFolder: string) => ipcRenderer.invoke("fs:scanDirectory", workspaceFolder),
 }
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI)

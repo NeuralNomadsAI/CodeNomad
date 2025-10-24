@@ -1,6 +1,4 @@
 import { Component, createSignal, createEffect, For, Show, onCleanup } from "solid-js"
-import * as fs from "fs"
-import * as path from "path"
 
 interface FileItem {
   path: string
@@ -26,86 +24,9 @@ const FilePicker: Component<FilePickerProps> = (props) => {
   const [loading, setLoading] = createSignal(false)
   const [allFiles, setAllFiles] = createSignal<FileItem[]>([])
   const [isInitialized, setIsInitialized] = createSignal(false)
-  const [gitignorePatterns, setGitignorePatterns] = createSignal<Set<string>>(new Set())
 
   let containerRef: HTMLDivElement | undefined
-
-  async function loadGitignore() {
-    try {
-      const gitignorePath = path.join(props.workspaceFolder, ".gitignore")
-      if (fs.existsSync(gitignorePath)) {
-        const content = fs.readFileSync(gitignorePath, "utf-8")
-        const patterns = new Set(
-          content
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line && !line.startsWith("#")),
-        )
-        setGitignorePatterns(patterns)
-        console.log(`[FilePicker] Loaded ${patterns.size} gitignore patterns`)
-      }
-    } catch (error) {
-      console.warn("[FilePicker] Could not load .gitignore:", error)
-    }
-  }
-
-  function isIgnored(relativePath: string): boolean {
-    const patterns = gitignorePatterns()
-    for (const pattern of patterns) {
-      if (pattern.endsWith("/") && relativePath.startsWith(pattern)) {
-        return true
-      }
-      if (relativePath === pattern || relativePath.startsWith(pattern + "/")) {
-        return true
-      }
-      if (pattern.includes("*")) {
-        const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$")
-        if (regex.test(relativePath)) {
-          return true
-        }
-      }
-    }
-    return false
-  }
-
-  async function scanDirectory(dirPath: string, baseDir: string): Promise<FileItem[]> {
-    const results: FileItem[] = []
-
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name)
-        const relativePath = path.relative(baseDir, fullPath)
-
-        if (entry.name === ".git" || entry.name === "node_modules") {
-          continue
-        }
-
-        if (isIgnored(relativePath)) {
-          continue
-        }
-
-        if (entry.isDirectory()) {
-          results.push({
-            path: relativePath + "/",
-            isGitFile: false,
-          })
-          const subFiles = await scanDirectory(fullPath, baseDir)
-          results.push(...subFiles)
-        } else {
-          results.push({
-            path: relativePath,
-            isGitFile: false,
-          })
-        }
-      }
-    } catch (error) {
-      console.warn(`[FilePicker] Error scanning ${dirPath}:`, error)
-    }
-
-    return results
-  }
+  let scrollContainerRef: HTMLDivElement | undefined
 
   async function fetchFiles(searchQuery: string) {
     console.log(`[FilePicker] Fetching files for query: "${searchQuery}"`)
@@ -113,9 +34,12 @@ const FilePicker: Component<FilePickerProps> = (props) => {
 
     try {
       if (allFiles().length === 0) {
-        await loadGitignore()
         console.log(`[FilePicker] Scanning workspace: ${props.workspaceFolder}`)
-        const scannedFiles = await scanDirectory(props.workspaceFolder, props.workspaceFolder)
+        const scannedPaths = await window.electronAPI.scanDirectory(props.workspaceFolder)
+        const scannedFiles: FileItem[] = scannedPaths.map((path) => ({
+          path,
+          isGitFile: false,
+        }))
         setAllFiles(scannedFiles)
         console.log(`[FilePicker] Found ${scannedFiles.length} files`)
       }
@@ -127,6 +51,12 @@ const FilePicker: Component<FilePickerProps> = (props) => {
       console.log(`[FilePicker] Showing ${filteredFiles.length} files`)
       setFiles(filteredFiles)
       setSelectedIndex(0)
+
+      setTimeout(() => {
+        if (scrollContainerRef) {
+          scrollContainerRef.scrollTop = 0
+        }
+      }, 0)
     } catch (error) {
       console.error(`[FilePicker] Failed to fetch files:`, error)
       setFiles([])
@@ -231,7 +161,7 @@ const FilePicker: Component<FilePickerProps> = (props) => {
         class="absolute bottom-full left-0 mb-2 w-full max-w-2xl rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900"
         style={{ "z-index": 100 }}
       >
-        <div class="max-h-96 overflow-y-auto">
+        <div ref={scrollContainerRef} class="max-h-96 overflow-y-auto">
           <Show
             when={!loading() && isInitialized()}
             fallback={

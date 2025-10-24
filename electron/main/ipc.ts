@@ -1,6 +1,9 @@
 import { ipcMain, BrowserWindow } from "electron"
 import { processManager } from "./process-manager"
 import { randomBytes } from "crypto"
+import * as fs from "fs"
+import * as path from "path"
+import ignore from "ignore"
 
 interface Instance {
   id: string
@@ -79,5 +82,50 @@ export function setupInstanceIPC(mainWindow: BrowserWindow) {
 
   ipcMain.handle("instance:list", async () => {
     return Array.from(instances.values())
+  })
+
+  ipcMain.handle("fs:scanDirectory", async (event, workspaceFolder: string) => {
+    const ig = ignore()
+    ig.add([".git", "node_modules"])
+
+    const gitignorePath = path.join(workspaceFolder, ".gitignore")
+    if (fs.existsSync(gitignorePath)) {
+      const content = fs.readFileSync(gitignorePath, "utf-8")
+      ig.add(content)
+    }
+
+    function scanDir(dirPath: string, baseDir: string): string[] {
+      const results: string[] = []
+
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+
+        for (const entry of entries) {
+          const fullPath = path.join(dirPath, entry.name)
+          const relativePath = path.relative(baseDir, fullPath)
+
+          if (ig.ignores(relativePath)) {
+            continue
+          }
+
+          if (entry.isDirectory()) {
+            const dirWithSlash = relativePath + "/"
+            if (!ig.ignores(dirWithSlash)) {
+              results.push(dirWithSlash)
+              const subFiles = scanDir(fullPath, baseDir)
+              results.push(...subFiles)
+            }
+          } else {
+            results.push(relativePath)
+          }
+        }
+      } catch (error) {
+        console.warn(`Error scanning ${dirPath}:`, error)
+      }
+
+      return results
+    }
+
+    return scanDir(workspaceFolder, workspaceFolder)
   })
 }
