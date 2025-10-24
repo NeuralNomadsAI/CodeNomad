@@ -317,7 +317,35 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleFileSelect(path: string) {
+    const isFolder = path.endsWith("/")
     const filename = path.split("/").pop() || path
+
+    if (isFolder) {
+      const currentPrompt = prompt()
+      const pos = atPosition()
+      const cursorPos = textareaRef?.selectionStart || 0
+
+      if (pos !== null) {
+        const before = currentPrompt.substring(0, pos + 1)
+        const after = currentPrompt.substring(cursorPos)
+        const folderPath = path.slice(0, -1)
+        const newPrompt = before + folderPath + after
+        setPrompt(newPrompt)
+        setFileSearchQuery(folderPath)
+
+        setTimeout(() => {
+          if (textareaRef) {
+            const newCursorPos = pos + 1 + folderPath.length
+            textareaRef.setSelectionRange(newCursorPos, newCursorPos)
+            textareaRef.style.height = "auto"
+            textareaRef.style.height = Math.min(textareaRef.scrollHeight, 200) + "px"
+            textareaRef.focus()
+          }
+        }, 0)
+      }
+
+      return
+    }
 
     const existingAttachments = attachments()
     const alreadyAttached = existingAttachments.some((att) => att.source.type === "file" && att.source.path === path)
