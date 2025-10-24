@@ -1,4 +1,4 @@
-import { Component, onMount, onCleanup, Show, createMemo, createEffect } from "solid-js"
+import { Component, onMount, onCleanup, Show, createMemo, createEffect, createSignal } from "solid-js"
 import type { Session } from "./types/session"
 import type { Attachment } from "./types/attachment"
 import EmptyState from "./components/empty-state"
@@ -36,6 +36,7 @@ import {
   getParentSessions,
   loadMessages,
   sendMessage,
+  abortSession,
   updateSessionAgent,
   updateSessionModel,
   agents,
@@ -45,7 +46,7 @@ import { isOpen as isCommandPaletteOpen, showCommandPalette, hideCommandPalette 
 import { registerNavigationShortcuts } from "./lib/shortcuts/navigation"
 import { registerInputShortcuts } from "./lib/shortcuts/input"
 import { registerAgentShortcuts } from "./lib/shortcuts/agent"
-import { registerEscapeShortcut } from "./lib/shortcuts/escape"
+import { registerEscapeShortcut, setEscapeStateChangeHandler } from "./lib/shortcuts/escape"
 import { keyboardRegistry } from "./lib/keyboard-registry"
 
 const SessionView: Component<{
@@ -53,6 +54,7 @@ const SessionView: Component<{
   activeSessions: Map<string, Session>
   instanceId: string
   instanceFolder: string
+  escapeInDebounce: boolean
 }> = (props) => {
   const session = () => props.activeSessions.get(props.sessionId)
 
@@ -101,6 +103,7 @@ const SessionView: Component<{
             model={s().model}
             onAgentChange={handleAgentChange}
             onModelChange={handleModelChange}
+            escapeInDebounce={props.escapeInDebounce}
           />
         </div>
       )}
@@ -110,6 +113,7 @@ const SessionView: Component<{
 
 const App: Component = () => {
   const commandRegistry = createCommandRegistry()
+  const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
 
   const activeInstance = createMemo(() => getActiveInstance())
 
@@ -477,6 +481,8 @@ const App: Component = () => {
   onMount(() => {
     initMarkdown(false).catch(console.error)
 
+    setEscapeStateChangeHandler(setEscapeInDebounce)
+
     setupCommands()
 
     setupTabKeyboardShortcuts(
@@ -538,15 +544,35 @@ const App: Component = () => {
       () => {
         const instance = activeInstance()
         if (!instance) return false
-        const sessions = getSessions(instance.id)
+
         const sessionId = activeSessionIdForInstance()
+        if (!sessionId || sessionId === "logs") return false
+
+        const sessions = getSessions(instance.id)
         const session = sessions.find((s) => s.id === sessionId)
-        if (!session) return false
+        if (!session || session.messages.length === 0) return false
+
         const lastMessage = session.messages[session.messages.length - 1]
-        return lastMessage?.status === "streaming"
+        const messageInfo = session.messagesInfo.get(lastMessage.id)
+
+        const timeCompleted = messageInfo?.time?.completed
+        return (
+          lastMessage.type === "assistant" &&
+          messageInfo !== undefined &&
+          (timeCompleted === undefined || timeCompleted === 0)
+        )
       },
-      () => {
-        console.log("Interrupt session (not implemented)")
+      async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "logs") return
+
+        try {
+          await abortSession(instance.id, sessionId)
+          console.log("Session aborted successfully")
+        } catch (error) {
+          console.error("Failed to abort session:", error)
+        }
       },
       () => {
         const active = document.activeElement as HTMLElement
@@ -650,6 +676,7 @@ const App: Component = () => {
                               activeSessions={activeSessions()}
                               instanceId={activeInstance()!.id}
                               instanceFolder={activeInstance()!.folder}
+                              escapeInDebounce={escapeInDebounce()}
                             />
                           </Show>
                         }

@@ -700,6 +700,25 @@ async function sendMessage(
   }
 }
 
+async function abortSession(instanceId: string, sessionId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  console.log("[abortSession] Aborting session:", { instanceId, sessionId })
+
+  try {
+    await instance.client.session.abort({
+      path: { id: sessionId },
+    })
+    console.log("[abortSession] Session aborted successfully")
+  } catch (error) {
+    console.error("[abortSession] Failed to abort session:", error)
+    throw error
+  }
+}
+
 async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -759,6 +778,7 @@ export {
   fetchProviders,
   loadMessages,
   sendMessage,
+  abortSession,
   setActiveSession,
   setActiveParentSession,
   clearActiveParentSession,

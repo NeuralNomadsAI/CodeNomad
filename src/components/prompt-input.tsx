@@ -21,6 +21,7 @@ interface PromptInputProps {
   model: { providerId: string; modelId: string }
   onAgentChange: (agent: string) => Promise<void>
   onModelChange: (model: { providerId: string; modelId: string }) => Promise<void>
+  escapeInDebounce?: boolean
 }
 
 export default function PromptInput(props: PromptInputProps) {
@@ -200,12 +201,7 @@ export default function PromptInput(props: PromptInputProps) {
       if (isModifierKey) return
 
       const isSpecialKey =
-        e.key === "Escape" ||
-        e.key === "Tab" ||
-        e.key === "Enter" ||
-        e.key.startsWith("Arrow") ||
-        e.key === "Backspace" ||
-        e.key === "Delete"
+        e.key === "Tab" || e.key === "Enter" || e.key.startsWith("Arrow") || e.key === "Backspace" || e.key === "Delete"
       if (isSpecialKey) return
 
       if (e.key.length === 1 && textareaRef && !props.disabled) {
@@ -738,10 +734,21 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
       <div class="prompt-input-hints">
         <HintRow>
-          <Kbd>Enter</Kbd> to send • <Kbd>Shift+Enter</Kbd> for new line • <Kbd>@</Kbd> for files/agents • <Kbd>↑↓</Kbd>{" "}
-          for history
-          <Show when={attachments().length > 0}>
-            <span class="ml-2 text-xs text-gray-500">• {attachments().length} file(s) attached</span>
+          <Show
+            when={props.escapeInDebounce}
+            fallback={
+              <>
+                <Kbd>Enter</Kbd> to send • <Kbd>Shift+Enter</Kbd> for new line • <Kbd>@</Kbd> for files/agents •{" "}
+                <Kbd>↑↓</Kbd> for history
+                <Show when={attachments().length > 0}>
+                  <span class="ml-2 text-xs text-gray-500">• {attachments().length} file(s) attached</span>
+                </Show>
+              </>
+            }
+          >
+            <span class="text-orange-600 dark:text-orange-400 font-medium">
+              Press <Kbd>Esc</Kbd> again to abort session
+            </span>
           </Show>
         </HintRow>
         <div class="flex items-center gap-2">
