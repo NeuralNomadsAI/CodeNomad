@@ -123,13 +123,14 @@ export default function PromptInput(props: PromptInputProps) {
     if (e.key === "Backspace" || e.key === "Delete") {
       const cursorPos = textarea.selectionStart
       const text = prompt()
-      const placeholderRegex = /\[pasted #(\d+)\]/g
-      let match
 
-      while ((match = placeholderRegex.exec(text)) !== null) {
-        const placeholderStart = match.index
-        const placeholderEnd = match.index + match[0].length
-        const pasteNumber = match[1]
+      const pastePlaceholderRegex = /\[pasted #(\d+)\]/g
+      let pasteMatch
+
+      while ((pasteMatch = pastePlaceholderRegex.exec(text)) !== null) {
+        const placeholderStart = pasteMatch.index
+        const placeholderEnd = pasteMatch.index + pasteMatch[0].length
+        const pasteNumber = pasteMatch[1]
 
         const isDeletingFromEnd = e.key === "Backspace" && cursorPos === placeholderEnd
         const isDeletingFromStart = e.key === "Delete" && cursorPos === placeholderStart
@@ -160,6 +161,44 @@ export default function PromptInput(props: PromptInputProps) {
           }, 0)
 
           return
+        }
+      }
+
+      const fileMentionRegex = /@(\S+)/g
+      let fileMatch
+
+      while ((fileMatch = fileMentionRegex.exec(text)) !== null) {
+        const mentionStart = fileMatch.index
+        const mentionEnd = fileMatch.index + fileMatch[0].length
+        const filename = fileMatch[1]
+
+        const isDeletingFromEnd = e.key === "Backspace" && cursorPos === mentionEnd
+        const isDeletingFromStart = e.key === "Delete" && cursorPos === mentionStart
+        const isSelected =
+          textarea.selectionStart <= mentionStart &&
+          textarea.selectionEnd >= mentionEnd &&
+          textarea.selectionStart !== textarea.selectionEnd
+
+        if (isDeletingFromEnd || isDeletingFromStart || isSelected) {
+          const currentAttachments = attachments()
+          const attachment = currentAttachments.find((a) => a.source.type === "file" && a.filename === filename)
+
+          if (attachment) {
+            e.preventDefault()
+
+            removeAttachment(props.instanceId, props.sessionId, attachment.id)
+
+            const newText = text.substring(0, mentionStart) + text.substring(mentionEnd)
+            setPrompt(newText)
+
+            setTimeout(() => {
+              textarea.setSelectionRange(mentionStart, mentionStart)
+              textarea.style.height = "auto"
+              textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px"
+            }, 0)
+
+            return
+          }
         }
       }
     }
