@@ -372,26 +372,6 @@ const App: Component = () => {
     })
 
     commandRegistry.register({
-      id: "next-agent",
-      label: "Next Agent",
-      description: "Cycle to next agent",
-      category: "Agent & Model",
-      keywords: ["agent", "switch", "cycle"],
-      shortcut: { key: "Tab" },
-      action: handleCycleAgent,
-    })
-
-    commandRegistry.register({
-      id: "prev-agent",
-      label: "Previous Agent",
-      description: "Cycle to previous agent",
-      category: "Agent & Model",
-      keywords: ["agent", "switch", "cycle"],
-      shortcut: { key: "Tab", shift: true },
-      action: handleCycleAgentReverse,
-    })
-
-    commandRegistry.register({
       id: "open-model-selector",
       label: "Open Model Selector",
       description: "Choose a different model",
@@ -503,54 +483,6 @@ const App: Component = () => {
     commandRegistry.execute(commandId)
   }
 
-  function handleCycleAgent() {
-    const instance = activeInstance()
-    const sessionId = activeSessionIdForInstance()
-    if (!instance || !sessionId || sessionId === "logs") return
-
-    const sessions = getSessions(instance.id)
-    const session = sessions.find((s) => s.id === sessionId)
-    if (!session) return
-
-    const instanceAgents = agents().get(instance.id) || []
-    const availableAgents =
-      session.parentId === null ? instanceAgents.filter((a) => a.mode !== "subagent") : instanceAgents
-
-    if (availableAgents.length === 0) return
-
-    const currentIndex = availableAgents.findIndex((a) => a.name === session.agent)
-    const nextIndex = (currentIndex + 1) % availableAgents.length
-    const nextAgent = availableAgents[nextIndex]
-
-    if (nextAgent) {
-      updateSessionAgent(instance.id, sessionId, nextAgent.name).catch(console.error)
-    }
-  }
-
-  function handleCycleAgentReverse() {
-    const instance = activeInstance()
-    const sessionId = activeSessionIdForInstance()
-    if (!instance || !sessionId || sessionId === "logs") return
-
-    const sessions = getSessions(instance.id)
-    const session = sessions.find((s) => s.id === sessionId)
-    if (!session) return
-
-    const instanceAgents = agents().get(instance.id) || []
-    const availableAgents =
-      session.parentId === null ? instanceAgents.filter((a) => a.mode !== "subagent") : instanceAgents
-
-    if (availableAgents.length === 0) return
-
-    const currentIndex = availableAgents.findIndex((a) => a.name === session.agent)
-    const prevIndex = currentIndex <= 0 ? availableAgents.length - 1 : currentIndex - 1
-    const prevAgent = availableAgents[prevIndex]
-
-    if (prevAgent) {
-      updateSessionAgent(instance.id, sessionId, prevAgent.name).catch(console.error)
-    }
-  }
-
   onMount(() => {
     initMarkdown(false).catch(console.error)
 
@@ -576,8 +508,6 @@ const App: Component = () => {
       },
     )
     registerAgentShortcuts(
-      handleCycleAgent,
-      handleCycleAgentReverse,
       () => {
         const modelInput = document.querySelector("[data-model-selector]") as HTMLInputElement
         if (modelInput) {

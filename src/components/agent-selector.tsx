@@ -102,16 +102,9 @@ export default function AgentSelector(props: AgentSelectorProps) {
           </Select.Content>
         </Select.Portal>
       </Select>
-      <div class="flex items-center gap-1">
-        <Show when={availableAgents().length > 1}>
-          <span class="text-xs text-gray-400">
-            <Kbd>Tab</Kbd>
-          </span>
-        </Show>
-        <span class="text-xs text-gray-400">
-          <Kbd shortcut="cmd+shift+a" />
-        </span>
-      </div>
+      <span class="text-xs text-gray-400">
+        <Kbd shortcut="cmd+shift+a" />
+      </span>
     </div>
   )
 }

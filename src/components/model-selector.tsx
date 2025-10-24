@@ -101,10 +101,17 @@ export default function ModelSelector(props: ModelSelectorProps) {
           <Combobox.Input class="sr-only" data-model-selector />
           <Combobox.Trigger
             ref={triggerRef}
-            class="inline-flex items-center justify-between gap-2 px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 text-xs min-w-[140px]"
+            class="inline-flex items-center justify-between gap-2 px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 text-xs min-w-[180px]"
           >
-            <span class="text-gray-700">Model: {currentModelValue()?.name ?? "None"}</span>
-            <Combobox.Icon>
+            <div class="flex flex-col items-start min-w-0">
+              <span class="text-gray-700 font-medium">Model: {currentModelValue()?.name ?? "None"}</span>
+              {currentModelValue() && (
+                <span class="text-gray-500 text-[10px]">
+                  {currentModelValue()!.providerId}/{currentModelValue()!.id}
+                </span>
+              )}
+            </div>
+            <Combobox.Icon class="flex-shrink-0">
               <ChevronDown class="w-3 h-3 text-gray-500" />
             </Combobox.Icon>
           </Combobox.Trigger>
