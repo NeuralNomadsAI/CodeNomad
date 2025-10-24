@@ -47,7 +47,7 @@ export function registerNavigationShortcuts() {
       if (!parentId) return
 
       const familySessions = getSessionFamily(instanceId, parentId)
-      const ids = familySessions.map((s) => s.id).concat(["logs"])
+      const ids = familySessions.map((s) => s.id).concat(["info"])
       if (ids.length <= 1) return
 
       const current = ids.indexOf(activeSessionId().get(instanceId) || "")
@@ -70,7 +70,7 @@ export function registerNavigationShortcuts() {
       if (!parentId) return
 
       const familySessions = getSessionFamily(instanceId, parentId)
-      const ids = familySessions.map((s) => s.id).concat(["logs"])
+      const ids = familySessions.map((s) => s.id).concat(["info"])
       if (ids.length <= 1) return
 
       const current = ids.indexOf(activeSessionId().get(instanceId) || "")
@@ -82,14 +82,14 @@ export function registerNavigationShortcuts() {
   })
 
   keyboardRegistry.register({
-    id: "switch-to-logs",
+    id: "switch-to-info",
     key: "l",
     modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
     handler: () => {
       const instanceId = activeInstanceId()
-      if (instanceId) setActiveSession(instanceId, "logs")
+      if (instanceId) setActiveSession(instanceId, "info")
     },
-    description: "logs tab",
+    description: "info tab",
     context: "global",
   })
 }
