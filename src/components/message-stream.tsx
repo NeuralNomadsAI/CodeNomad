@@ -6,6 +6,46 @@ import { sseManager } from "../lib/sse-manager"
 import Kbd from "./kbd"
 import { preferences } from "../stores/preferences"
 
+// Calculate session tokens and cost from messagesInfo
+function calculateSessionInfo(messagesInfo?: Map<string, any>) {
+  if (!messagesInfo) return { tokens: 0, cost: 0 }
+
+  let totalTokens = 0
+  let totalCost = 0
+
+  for (const [, info] of messagesInfo) {
+    if (info.role === "assistant" && info.tokens) {
+      const tokens = info.tokens
+      totalTokens +=
+        (tokens.input || 0) +
+        (tokens.cache?.read || 0) +
+        (tokens.cache?.write || 0) +
+        (tokens.output || 0) +
+        (tokens.reasoning || 0)
+      totalCost += info.cost || 0
+    }
+  }
+
+  return { tokens: totalTokens, cost: totalCost }
+}
+
+// Format tokens like TUI (e.g., "110K", "1.2M")
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) {
+    return `${(tokens / 1000000).toFixed(1)}M`
+  } else if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(0)}K`
+  }
+  return tokens.toString()
+}
+
+// Format session info like TUI (e.g., "110K • $0.42")
+function formatSessionInfo(tokens: number, cost: number): string {
+  const tokensStr = formatTokens(tokens)
+  const costStr = cost > 0 ? ` • $${cost.toFixed(2)}` : ""
+  return `${tokensStr}${costStr}`
+}
+
 interface MessageStreamProps {
   instanceId: string
   sessionId: string
@@ -112,6 +152,14 @@ export default function MessageStream(props: MessageStreamProps) {
   return (
     <div class="message-stream-container">
       <div class="connection-status">
+        <div class="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <span>
+            {(() => {
+              const sessionInfo = calculateSessionInfo(props.messagesInfo)
+              return formatSessionInfo(sessionInfo.tokens, sessionInfo.cost)
+            })()}
+          </span>
+        </div>
         <div class="flex-1" />
         <div class="flex items-center gap-2 text-sm font-medium text-gray-700">
           <span>Command Palette</span>
