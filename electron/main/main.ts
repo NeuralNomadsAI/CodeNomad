@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron"
 import { join } from "path"
 import { createApplicationMenu } from "./menu"
 import { setupInstanceIPC } from "./ipc"
+import { setupStorageIPC } from "./storage"
 
 let mainWindow: BrowserWindow | null = null
 
@@ -27,6 +28,7 @@ function createWindow() {
 
   createApplicationMenu(mainWindow)
   setupInstanceIPC(mainWindow)
+  setupStorageIPC()
 
   mainWindow.on("closed", () => {
     mainWindow = null

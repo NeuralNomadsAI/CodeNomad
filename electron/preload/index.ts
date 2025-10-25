@@ -15,6 +15,14 @@ export interface ElectronAPI {
   ) => void
   onNewInstance: (callback: () => void) => void
   scanDirectory: (workspaceFolder: string) => Promise<string[]>
+  // Storage operations
+  getConfigPath: () => string
+  getInstancesDir: () => string
+  readConfigFile: () => Promise<string>
+  writeConfigFile: (content: string) => Promise<void>
+  readInstanceFile: (instanceId: string) => Promise<string>
+  writeInstanceFile: (instanceId: string, content: string) => Promise<void>
+  deleteInstanceFile: (instanceId: string) => Promise<void>
 }
 
 const electronAPI: ElectronAPI = {
@@ -37,6 +45,18 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on("menu:newInstance", () => callback())
   },
   scanDirectory: (workspaceFolder: string) => ipcRenderer.invoke("fs:scanDirectory", workspaceFolder),
+  // Storage operations
+  getConfigPath: () => ipcRenderer.invoke("storage:getConfigPath"),
+  getInstancesDir: () => ipcRenderer.invoke("storage:getInstancesDir"),
+  readConfigFile: () => ipcRenderer.invoke("storage:readConfigFile"),
+  writeConfigFile: (content: string) => ipcRenderer.invoke("storage:writeConfigFile", content),
+  readInstanceFile: (filename: string) => ipcRenderer.invoke("storage:readInstanceFile", filename),
+  writeInstanceFile: (filename: string, content: string) =>
+    ipcRenderer.invoke("storage:writeInstanceFile", filename, content),
+  deleteInstanceFile: (filename: string) => ipcRenderer.invoke("storage:deleteInstanceFile", filename),
+  onConfigChanged: (callback: () => void) => {
+    ipcRenderer.on("storage:configChanged", () => callback())
+  },
 }
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI)

@@ -1,69 +1,50 @@
-import { createSignal } from "solid-js"
+import { createSignal, onMount } from "solid-js"
+import { storage, type ConfigData } from "../lib/storage"
 
-const STORAGE_KEY = "opencode-preferences"
-const RECENT_FOLDERS_KEY = "opencode-recent-folders"
-const MAX_RECENT_FOLDERS = 10
-
-interface Preferences {
+export interface Preferences {
   showThinkingBlocks: boolean
 }
 
-interface RecentFolder {
+export interface RecentFolder {
   path: string
   lastAccessed: number
 }
+
+const MAX_RECENT_FOLDERS = 10
 
 const defaultPreferences: Preferences = {
   showThinkingBlocks: false,
 }
 
-function loadPreferences(): Preferences {
+const [preferences, setPreferences] = createSignal<Preferences>(defaultPreferences)
+const [recentFolders, setRecentFolders] = createSignal<RecentFolder[]>([])
+
+async function loadConfig(): Promise<void> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      return { ...defaultPreferences, ...JSON.parse(stored) }
+    const config = await storage.loadConfig()
+    setPreferences({ ...defaultPreferences, ...config.preferences })
+    setRecentFolders(config.recentFolders)
+  } catch (error) {
+    console.error("Failed to load config:", error)
+  }
+}
+
+async function saveConfig(): Promise<void> {
+  try {
+    const config: ConfigData = {
+      preferences: preferences(),
+      recentFolders: recentFolders(),
     }
+    await storage.saveConfig(config)
   } catch (error) {
-    console.error("Failed to load preferences:", error)
-  }
-  return defaultPreferences
-}
-
-function savePreferences(prefs: Preferences): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs))
-  } catch (error) {
-    console.error("Failed to save preferences:", error)
+    console.error("Failed to save config:", error)
   }
 }
-
-function loadRecentFolders(): RecentFolder[] {
-  try {
-    const stored = localStorage.getItem(RECENT_FOLDERS_KEY)
-    if (stored) {
-      return JSON.parse(stored)
-    }
-  } catch (error) {
-    console.error("Failed to load recent folders:", error)
-  }
-  return []
-}
-
-function saveRecentFolders(folders: RecentFolder[]): void {
-  try {
-    localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(folders))
-  } catch (error) {
-    console.error("Failed to save recent folders:", error)
-  }
-}
-
-const [preferences, setPreferences] = createSignal<Preferences>(loadPreferences())
-const [recentFolders, setRecentFolders] = createSignal<RecentFolder[]>(loadRecentFolders())
 
 function updatePreferences(updates: Partial<Preferences>): void {
   const updated = { ...preferences(), ...updates }
   setPreferences(updated)
-  savePreferences(updated)
+  saveConfig().catch(console.error)
 }
 
 function toggleShowThinkingBlocks(): void {
@@ -76,13 +57,26 @@ function addRecentFolder(path: string): void {
 
   const trimmed = folders.slice(0, MAX_RECENT_FOLDERS)
   setRecentFolders(trimmed)
-  saveRecentFolders(trimmed)
+  saveConfig().catch(console.error)
 }
 
 function removeRecentFolder(path: string): void {
   const folders = recentFolders().filter((f) => f.path !== path)
   setRecentFolders(folders)
-  saveRecentFolders(folders)
+  saveConfig().catch(console.error)
 }
+
+// Load config on mount and listen for changes from other instances
+onMount(() => {
+  loadConfig()
+
+  // Reload config when changed by another instance
+  const unsubscribe = storage.onConfigChanged(() => {
+    loadConfig()
+  })
+
+  // Cleanup on unmount
+  return unsubscribe
+})
 
 export { preferences, updatePreferences, toggleShowThinkingBlocks, recentFolders, addRecentFolder, removeRecentFolder }

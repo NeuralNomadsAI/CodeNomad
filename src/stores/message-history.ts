@@ -1,4 +1,4 @@
-import { saveHistory, loadHistory, deleteHistory } from "../lib/db"
+import { storage, type InstanceData } from "../lib/storage"
 
 const MAX_HISTORY = 100
 
@@ -18,9 +18,11 @@ export async function addToHistory(instanceId: string, text: string): Promise<vo
 
   instanceHistories.set(instanceId, history)
 
-  saveHistory(instanceId, history).catch((err) => {
+  try {
+    await storage.saveInstanceData(instanceId, { messageHistory: history })
+  } catch (err) {
     console.warn("Failed to persist message history:", err)
-  })
+  }
 }
 
 export async function getHistory(instanceId: string): Promise<string[]> {
@@ -31,7 +33,12 @@ export async function getHistory(instanceId: string): Promise<string[]> {
 export async function clearHistory(instanceId: string): Promise<void> {
   instanceHistories.delete(instanceId)
   historyLoaded.delete(instanceId)
-  await deleteHistory(instanceId)
+
+  try {
+    await storage.saveInstanceData(instanceId, { messageHistory: [] })
+  } catch (error) {
+    console.warn("Failed to clear history:", error)
+  }
 }
 
 async function ensureHistoryLoaded(instanceId: string): Promise<void> {
@@ -40,8 +47,8 @@ async function ensureHistoryLoaded(instanceId: string): Promise<void> {
   }
 
   try {
-    const history = await loadHistory(instanceId)
-    instanceHistories.set(instanceId, history)
+    const data = await storage.loadInstanceData(instanceId)
+    instanceHistories.set(instanceId, data.messageHistory)
     historyLoaded.add(instanceId)
   } catch (error) {
     console.warn("Failed to load history:", error)

@@ -1,4 +1,5 @@
 import { createContext, createSignal, useContext, onMount, type JSX } from "solid-js"
+import { storage } from "./storage"
 
 interface ThemeContextValue {
   isDark: () => boolean
@@ -10,22 +11,43 @@ const ThemeContext = createContext<ThemeContextValue>()
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches
-  const savedTheme = localStorage.getItem("theme")
-  const initialDark = savedTheme ? savedTheme === "dark" : prefersDark
+  const [isDark, setIsDarkSignal] = createSignal(prefersDark)
 
-  const [isDark, setIsDarkSignal] = createSignal(initialDark)
+  async function loadTheme() {
+    try {
+      const config = await storage.loadConfig()
+      const savedTheme = (config as any).theme
+      const initialDark = savedTheme ? savedTheme === "dark" : prefersDark
+      setIsDarkSignal(initialDark)
+    } catch (error) {
+      console.warn("Failed to load theme from config:", error)
+    }
+  }
+
+  async function saveTheme(dark: boolean) {
+    try {
+      const config = await storage.loadConfig()
+      ;(config as any).theme = dark ? "dark" : "light"
+      await storage.saveConfig(config)
+    } catch (error) {
+      console.warn("Failed to save theme to config:", error)
+    }
+  }
 
   onMount(() => {
-    if (isDark()) {
-      document.documentElement.setAttribute("data-theme", "dark")
-    } else {
-      document.documentElement.removeAttribute("data-theme")
-    }
+    loadTheme()
+
+    // Listen for config changes from other instances
+    const unsubscribe = storage.onConfigChanged(() => {
+      loadTheme()
+    })
+
+    return unsubscribe
   })
 
   const setTheme = (dark: boolean) => {
     setIsDarkSignal(dark)
-    localStorage.setItem("theme", dark ? "dark" : "light")
+    saveTheme(dark)
     if (dark) {
       document.documentElement.setAttribute("data-theme", "dark")
     } else {
