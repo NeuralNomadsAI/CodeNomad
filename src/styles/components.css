@@ -1,0 +1,54 @@
+/* Reusable component utilities using tokens */
+
+/* Message item base styles */
+.message-item-base {
+  @apply flex flex-col gap-2 p-3 rounded-lg w-full;
+}
+
+/* Message state badges */
+.message-queued-badge {
+  @apply inline-block font-bold px-3 py-1 rounded mb-3 text-xs tracking-wide;
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+}
+
+/* Message error block */
+.message-error-block {
+  @apply text-sm p-3 rounded border-l-[3px] my-2;
+  color: var(--status-error);
+  background-color: rgba(244, 67, 54, 0.1);
+  border-color: var(--status-error);
+}
+
+[data-theme="dark"] .message-error-block {
+  background-color: rgba(244, 67, 54, 0.15);
+}
+
+/* Message generating indicator */
+.message-generating {
+  @apply text-sm italic py-2;
+  color: var(--text-muted);
+}
+
+/* Message sending indicator */
+.message-sending {
+  @apply text-xs italic mt-1;
+  color: var(--text-muted);
+}
+
+/* Message error indicator */
+.message-error {
+  @apply text-xs mt-1;
+  color: var(--status-error);
+}
+
+/* Generating spinner animation */
+.generating-spinner {
+  @apply inline-block;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
