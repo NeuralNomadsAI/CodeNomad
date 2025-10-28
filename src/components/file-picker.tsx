@@ -158,42 +158,43 @@ const FilePicker: Component<FilePickerProps> = (props) => {
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="absolute bottom-full left-0 mb-2 w-full max-w-2xl rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900"
+        class="dropdown-surface bottom-full left-0 mb-2 max-w-2xl rounded-lg"
         style={{ "z-index": 100 }}
       >
-        <div ref={scrollContainerRef} class="max-h-96 overflow-y-auto">
+        <div ref={scrollContainerRef} class="dropdown-content max-h-96">
           <Show
             when={!loading() && isInitialized()}
             fallback={
-              <div class="p-4 text-center text-sm text-gray-500">
-                <div class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600"></div>
-                <span class="ml-2">Loading files...</span>
+              <div class="dropdown-loading">
+                <div class="spinner inline-block h-4 w-4 mr-2"></div>
+                <span>Loading files...</span>
               </div>
             }
           >
             <Show
               when={files().length > 0}
-              fallback={<div class="p-4 text-center text-sm text-gray-500">No matching files</div>}
+              fallback={<div class="dropdown-empty">No matching files</div>}
             >
               <For each={files()}>
                 {(file, index) => (
                   <div
                     data-file-selected={index() === selectedIndex()}
-                    class={`cursor-pointer border-b border-gray-100 px-4 py-2 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800 ${
-                      index() === selectedIndex() ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                    class={`dropdown-item border-b px-4 py-2 font-mono text-sm ${
+                      index() === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
+                    style="border-color: var(--border-muted)"
                     onClick={() => handleSelect(file.path)}
                     onMouseEnter={() => setSelectedIndex(index())}
                   >
                     <div class="flex items-center justify-between">
-                      <span class="font-mono text-sm text-gray-900 dark:text-gray-100">{file.path}</span>
+                      <span>{file.path}</span>
                       <Show when={file.isGitFile && (file.added || file.removed)}>
-                        <div class="flex gap-2 text-xs">
+                        <div class="flex gap-2">
                           <Show when={file.added}>
-                            <span class="text-green-600 dark:text-green-400">+{file.added}</span>
+                            <span class="dropdown-diff-added">+{file.added}</span>
                           </Show>
                           <Show when={file.removed}>
-                            <span class="text-red-600 dark:text-red-400">-{file.removed}</span>
+                            <span class="dropdown-diff-removed">-{file.removed}</span>
                           </Show>
                         </div>
                       </Show>
@@ -205,7 +206,7 @@ const FilePicker: Component<FilePickerProps> = (props) => {
           </Show>
         </div>
 
-        <div class="border-t border-gray-200 p-2 text-xs text-gray-500 dark:border-gray-700">
+        <div class="dropdown-footer p-2">
           <div class="flex items-center justify-between px-2">
             <span>↑↓ Navigate • Enter Select • Esc Close</span>
           </div>

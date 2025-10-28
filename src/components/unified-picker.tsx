@@ -157,10 +157,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="absolute bottom-full left-0 mb-1 w-full max-w-md rounded-md border border-gray-300 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-800 z-50"
+        class="dropdown-surface bottom-full left-0 mb-1 max-w-md"
       >
-        <div class="border-b border-gray-200 px-3 py-2 dark:border-gray-700">
-          <div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+        <div class="dropdown-header">
+          <div class="dropdown-header-title">
             Select Agent or File
             <Show when={loading()}>
               <span class="ml-2">Loading...</span>
@@ -168,13 +168,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </div>
         </div>
 
-        <div ref={scrollContainerRef} class="max-h-60 overflow-y-auto">
+        <div ref={scrollContainerRef} class="dropdown-content max-h-60">
           <Show when={agentCount() === 0 && fileCount() === 0}>
-            <div class="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">No results found</div>
+            <div class="dropdown-empty">No results found</div>
           </Show>
 
           <Show when={agentCount() > 0}>
-            <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+            <div class="dropdown-section-header">
               AGENTS
             </div>
             <For each={filteredAgents()}>
@@ -184,15 +184,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                 )
                 return (
                   <div
-                    class={`cursor-pointer px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                      itemIndex === selectedIndex() ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                    class={`dropdown-item ${
+                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => handleSelect({ type: "agent", agent })}
                   >
                     <div class="flex items-start gap-2">
                       <svg
-                        class="h-4 w-4 mt-0.5 text-blue-600 dark:text-blue-400"
+                        class="dropdown-icon-accent h-4 w-4 mt-0.5"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -206,15 +206,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       </svg>
                       <div class="flex-1">
                         <div class="flex items-center gap-2">
-                          <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{agent.name}</span>
+                          <span class="text-sm font-medium">{agent.name}</span>
                           <Show when={agent.mode === "subagent"}>
-                            <span class="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-normal text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
+                            <span class="dropdown-badge">
                               subagent
                             </span>
                           </Show>
                         </div>
                         <Show when={agent.description}>
-                          <div class="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
                             {agent.description && agent.description.length > 80
                               ? agent.description.slice(0, 80) + "..."
                               : agent.description}
@@ -229,7 +229,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </Show>
 
           <Show when={fileCount() > 0}>
-            <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
+            <div class="dropdown-section-header">
               FILES
             </div>
             <For each={files()}>
@@ -238,8 +238,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                 const isFolder = file.path.endsWith("/")
                 return (
                   <div
-                    class={`cursor-pointer px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                      itemIndex === selectedIndex() ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                    class={`dropdown-item py-1.5 ${
+                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => handleSelect({ type: "file", file })}
@@ -248,7 +248,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       <Show
                         when={isFolder}
                         fallback={
-                          <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg class="dropdown-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path
                               stroke-linecap="round"
                               stroke-linejoin="round"
@@ -258,7 +258,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           </svg>
                         }
                       >
-                        <svg class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg class="dropdown-icon-accent h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path
                             stroke-linecap="round"
                             stroke-linejoin="round"
@@ -267,7 +267,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           />
                         </svg>
                       </Show>
-                      <span class="text-gray-900 dark:text-gray-100 truncate">{file.path}</span>
+                      <span class="truncate">{file.path}</span>
                     </div>
                   </div>
                 )
@@ -276,8 +276,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </Show>
         </div>
 
-        <div class="border-t border-gray-200 px-3 py-2 dark:border-gray-700">
-          <div class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="dropdown-footer">
+          <div>
             <span class="font-medium">↑↓</span> navigate • <span class="font-medium">Enter</span> select •{" "}
             <span class="font-medium">Esc</span> close
           </div>
