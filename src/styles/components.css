@@ -76,6 +76,26 @@
   @apply cursor-not-allowed opacity-50;
 }
 
+.button-secondary {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3 text-base font-medium transition-colors;
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.button-secondary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+}
+
+.button-secondary:disabled {
+  @apply cursor-not-allowed opacity-50;
+}
+
 /* Message item base styles */
 
 .message-item-base {
