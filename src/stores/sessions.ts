@@ -82,7 +82,7 @@ function removeSessionIndexes(instanceId: string) {
   sessionIndexes.delete(instanceId)
 }
 
-function computeDisplayParts(message: Message, showThinking: boolean): MessageDisplayParts {
+export function computeDisplayParts(message: Message, showThinking: boolean): MessageDisplayParts {
   const text: any[] = []
   const tool: any[] = []
   const reasoning: any[] = []
@@ -97,7 +97,10 @@ function computeDisplayParts(message: Message, showThinking: boolean): MessageDi
     }
   }
 
-  return { text, tool, reasoning }
+  const combined = reasoning.length > 0 ? [...text, ...reasoning] : [...text]
+  const version = typeof message.version === "number" ? message.version : 0
+
+  return { text, tool, reasoning, combined, showThinking, version }
 }
 
 function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void) {
@@ -710,6 +713,7 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
         parts: apiMessage.parts || [],
         timestamp: info.time?.created || Date.now(),
         status: "complete" as const,
+        version: 0,
       }
 
       message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
@@ -824,6 +828,7 @@ function handleMessageUpdate(instanceId: string, event: any): void {
         parts: [part],
         timestamp: Date.now(),
         status: "streaming" as const,
+        version: 0,
       }
 
       newMessage.displayParts = computeDisplayParts(newMessage, preferences().showThinkingBlocks)
@@ -841,6 +846,9 @@ function handleMessageUpdate(instanceId: string, event: any): void {
     } else {
       // Update existing message
       const message = session.messages[messageIndex]
+      if (typeof message.version !== "number") {
+        message.version = 0
+      }
 
       // Strip synthetic parts when real data arrives
       let filteredSynthetics = false
@@ -864,14 +872,32 @@ function handleMessageUpdate(instanceId: string, event: any): void {
         index.partIndex.set(message.id, partMap)
       }
 
+      let shouldIncrementVersion = filteredSynthetics || replacedTemp
       const partIndex = partMap.get(part.id)
+
       if (partIndex === undefined) {
         baseParts.push(part)
         if (part.id && typeof part.id === "string") {
           partMap.set(part.id, baseParts.length - 1)
         }
+        shouldIncrementVersion = true
       } else {
+        const previousPart = baseParts[partIndex]
+        const textUnchanged =
+          !filteredSynthetics &&
+          !replacedTemp &&
+          part.type === "text" &&
+          previousPart?.type === "text" &&
+          previousPart.text === part.text
+
+        if (textUnchanged) {
+          return
+        }
+
         baseParts[partIndex] = part
+        if (part.type !== "text" || !previousPart || previousPart.text !== part.text) {
+          shouldIncrementVersion = true
+        }
       }
 
       const oldId = message.id
@@ -879,7 +905,16 @@ function handleMessageUpdate(instanceId: string, event: any): void {
       message.status = message.status === "sending" ? "streaming" : message.status
       message.parts = baseParts
 
-      message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+      if (shouldIncrementVersion) {
+        message.version += 1
+        message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+      } else if (
+        !message.displayParts ||
+        message.displayParts.showThinking !== preferences().showThinkingBlocks ||
+        message.displayParts.version !== message.version
+      ) {
+        message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+      }
 
       // Update message index if ID changed
       if (oldId !== message.id) {
@@ -947,11 +982,17 @@ function handleMessageUpdate(instanceId: string, event: any): void {
       if (tempMessageIndex > -1) {
         // Replace queued message
         const message = session.messages[tempMessageIndex]
+        if (typeof message.version !== "number") {
+          message.version = 0
+        }
+
         const oldId = message.id
         message.id = info.id
         message.type = (info.role === "user" ? "user" : "assistant") as "user" | "assistant"
         message.timestamp = info.time?.created || Date.now()
         message.status = "complete" as const
+        message.version += 1
+        message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
 
         if (oldId !== message.id) {
           index.messageIndex.delete(oldId)
@@ -971,6 +1012,7 @@ function handleMessageUpdate(instanceId: string, event: any): void {
           parts: [],
           timestamp: info.time?.created || Date.now(),
           status: "complete" as const,
+          version: 0,
         }
 
         newMessage.displayParts = computeDisplayParts(newMessage, preferences().showThinkingBlocks)
@@ -989,16 +1031,21 @@ function handleMessageUpdate(instanceId: string, event: any): void {
     } else {
       // Update existing message status
       const message = session.messages[messageIndex]
+      if (typeof message.version !== "number") {
+        message.version = 0
+      }
       message.status = "complete" as const
+      message.version += 1
+      message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+
+      session.messagesInfo.set(info.id, info)
+
+      withSession(instanceId, info.sessionID, (session) => {
+        // Session already mutated in place
+      })
+
+      updateSessionInfo(instanceId, info.sessionID)
     }
-
-    session.messagesInfo.set(info.id, info)
-
-    withSession(instanceId, info.sessionID, (session) => {
-      // Session already mutated in place
-    })
-
-    updateSessionInfo(instanceId, info.sessionID)
   }
 }
 
@@ -1110,6 +1157,7 @@ async function sendMessage(
     parts: optimisticParts,
     timestamp: Date.now(),
     status: "sending",
+    version: 0,
   }
 
   optimisticMessage.displayParts = computeDisplayParts(optimisticMessage, preferences().showThinkingBlocks)

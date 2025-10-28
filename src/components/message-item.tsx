@@ -6,6 +6,7 @@ interface MessageItemProps {
   message: Message
   messageInfo?: any
   isQueued?: boolean
+  parts?: any[]
   onRevert?: (messageId: string) => void
 }
 
@@ -15,6 +16,8 @@ export default function MessageItem(props: MessageItemProps) {
     const date = new Date(props.message.timestamp)
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   }
+
+  const messageParts = () => props.parts ?? props.message.parts
 
   const errorMessage = () => {
     if (!props.messageInfo?.error) return null
@@ -36,7 +39,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const hasContent = () => {
-    return props.message.parts.length > 0 || errorMessage() !== null
+    return messageParts().length > 0 || errorMessage() !== null
   }
 
   const isGenerating = () => {
@@ -81,7 +84,7 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </Show>
 
-        <For each={props.message.parts}>{(part) => <MessagePart part={part} />}</For>
+        <For each={messageParts()}>{(part) => <MessagePart part={part} />}</For>
       </div>
 
       <Show when={props.message.status === "sending"}>

@@ -1,11 +1,11 @@
 import { For, Show, createSignal, createEffect, createMemo } from "solid-js"
-import type { Message } from "../types/message"
+import type { Message, MessageDisplayParts } from "../types/message"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import { sseManager } from "../lib/sse-manager"
 import Kbd from "./kbd"
 import { preferences } from "../stores/preferences"
-import { providers, getSessionInfo } from "../stores/sessions"
+import { providers, getSessionInfo, computeDisplayParts } from "../stores/sessions"
 
 // Calculate session tokens and cost from messagesInfo (matches TUI logic)
 function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: string) {
@@ -120,16 +120,45 @@ interface MessageStreamProps {
   onRevert?: (messageId: string) => void
 }
 
-interface DisplayItem {
-  type: "message" | "tool"
-  data: any
+interface MessageDisplayItem {
+  type: "message"
+  message: Message
+  combinedParts: any[]
+  isQueued: boolean
   messageInfo?: any
+}
+
+interface ToolDisplayItem {
+  type: "tool"
+  key: string
+  toolPart: any
+  messageInfo?: any
+}
+
+type DisplayItem = MessageDisplayItem | ToolDisplayItem
+
+interface MessageCacheEntry {
+  version: number
+  showThinking: boolean
+  isQueued: boolean
+  messageInfo?: any
+  displayParts: MessageDisplayParts
+  item: MessageDisplayItem
+}
+
+interface ToolCacheEntry {
+  toolPart: any
+  messageInfo?: any
+  item: ToolDisplayItem
 }
 
 export default function MessageStream(props: MessageStreamProps) {
   let containerRef: HTMLDivElement | undefined
   const [autoScroll, setAutoScroll] = createSignal(true)
   const [showScrollButton, setShowScrollButton] = createSignal(false)
+
+  let messageItemCache = new Map<string, MessageCacheEntry>()
+  let toolItemCache = new Map<string, ToolCacheEntry>()
 
   const connectionStatus = () => sseManager.getStatus(props.instanceId)
 
@@ -180,9 +209,11 @@ export default function MessageStream(props: MessageStreamProps) {
 
   const displayItems = createMemo(() => {
     // Ensure memo reacts to preference changes
-    preferences().showThinkingBlocks
+    const showThinking = preferences().showThinkingBlocks
 
     const items: DisplayItem[] = []
+    const newMessageCache = new Map<string, MessageCacheEntry>()
+    const newToolCache = new Map<string, ToolCacheEntry>()
 
     let lastAssistantIndex = -1
     for (let i = props.messages.length - 1; i >= 0; i--) {
@@ -201,34 +232,81 @@ export default function MessageStream(props: MessageStreamProps) {
         break
       }
 
-      // Use precomputed displayParts, fallback to empty arrays if not available
-      const displayParts = message.displayParts || { text: [], tool: [], reasoning: [] }
-      const textParts = displayParts.text
-      const toolParts = displayParts.tool
-      const reasoningParts = displayParts.reasoning
+      const baseDisplayParts = message.displayParts
+      const displayParts: MessageDisplayParts =
+        baseDisplayParts && baseDisplayParts.showThinking === showThinking
+          ? baseDisplayParts
+          : computeDisplayParts(message, showThinking)
 
+      const combinedParts = displayParts.combined
+      const version = message.version ?? 0
       const isQueued = message.type === "user" && (lastAssistantIndex === -1 || index > lastAssistantIndex)
 
-      if (textParts.length > 0 || reasoningParts.length > 0 || messageInfo?.error) {
-        items.push({
+      const cacheEntry = messageItemCache.get(message.id)
+      if (
+        cacheEntry &&
+        cacheEntry.version === version &&
+        cacheEntry.showThinking === showThinking &&
+        cacheEntry.isQueued === isQueued &&
+        cacheEntry.messageInfo === messageInfo
+      ) {
+        cacheEntry.displayParts = displayParts
+        cacheEntry.version = version
+        cacheEntry.showThinking = showThinking
+        cacheEntry.isQueued = isQueued
+        cacheEntry.messageInfo = messageInfo
+        cacheEntry.item.message = message
+        cacheEntry.item.combinedParts = combinedParts
+        cacheEntry.item.isQueued = isQueued
+        cacheEntry.item.messageInfo = messageInfo
+        newMessageCache.set(message.id, cacheEntry)
+        items.push(cacheEntry.item)
+      } else {
+        const messageItem: MessageDisplayItem = {
           type: "message",
-          data: {
-            ...message,
-            parts: [...textParts, ...reasoningParts],
-            isQueued,
-          },
+          message,
+          combinedParts,
+          isQueued,
           messageInfo,
+        }
+        newMessageCache.set(message.id, {
+          version,
+          showThinking,
+          isQueued,
+          messageInfo,
+          displayParts,
+          item: messageItem,
         })
+        items.push(messageItem)
       }
 
-      for (const toolPart of toolParts) {
-        items.push({
-          type: "tool",
-          data: toolPart,
-          messageInfo,
-        })
+      for (let toolIndex = 0; toolIndex < displayParts.tool.length; toolIndex++) {
+        const toolPart = displayParts.tool[toolIndex]
+        const toolKey = typeof toolPart?.id === "string" ? toolPart.id : `${message.id}-tool-${toolIndex}`
+
+        const toolEntry = toolItemCache.get(toolKey)
+        if (toolEntry && toolEntry.toolPart === toolPart && toolEntry.messageInfo === messageInfo) {
+          toolEntry.item.toolPart = toolPart
+          toolEntry.item.messageInfo = messageInfo
+          toolEntry.toolPart = toolPart
+          toolEntry.messageInfo = messageInfo
+          newToolCache.set(toolKey, toolEntry)
+          items.push(toolEntry.item)
+        } else {
+          const toolItem: ToolDisplayItem = {
+            type: "tool",
+            key: toolKey,
+            toolPart,
+            messageInfo,
+          }
+          newToolCache.set(toolKey, { toolPart, messageInfo, item: toolItem })
+          items.push(toolItem)
+        }
       }
     }
+
+    messageItemCache = newMessageCache
+    toolItemCache = newToolCache
 
     return items
   })
@@ -301,29 +379,30 @@ export default function MessageStream(props: MessageStreamProps) {
         </Show>
 
         <For each={displayItems()} fallback={null}>
-          {(item, index) => {
-            const key = item.type === "message" ? `msg-${item.data.id}` : `tool-${item.data.id}`
-            return (
-              <Show
-                when={item.type === "message"}
-                fallback={
-                  <div class="tool-call-message" data-key={key}>
-                    <div class="tool-call-header-label">
-                      <span class="tool-call-icon">🔧</span>
-                      <span>Tool Call</span>
-                      <span class="tool-name">{item.data?.tool || "unknown"}</span>
-                    </div>
-                    <ToolCall toolCall={item.data} toolCallId={item.data.id} />
-                  </div>
-                }
-              >
+          {(item) => {
+            if (item.type === "message") {
+              return (
                 <MessageItem
-                  message={item.data}
+                  message={item.message}
                   messageInfo={item.messageInfo}
-                  isQueued={item.data.isQueued}
+                  isQueued={item.isQueued}
+                  parts={item.combinedParts}
                   onRevert={props.onRevert}
                 />
-              </Show>
+              )
+            }
+
+            const toolPart = item.toolPart
+
+            return (
+              <div class="tool-call-message" data-key={item.key}>
+                <div class="tool-call-header-label">
+                  <span class="tool-call-icon">🔧</span>
+                  <span>Tool Call</span>
+                  <span class="tool-name">{toolPart?.tool || "unknown"}</span>
+                </div>
+                <ToolCall toolCall={toolPart} toolCallId={toolPart?.id} />
+              </div>
             )
           }}
         </For>
