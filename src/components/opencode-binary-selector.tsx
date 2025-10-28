@@ -214,22 +214,30 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
         type="button"
         onClick={handleButtonClick}
         disabled={props.disabled}
-        class="w-full px-3 py-2 text-left bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+        classList={{
+          "selector-trigger": true,
+          "w-full": true,
+          "px-3": true,
+          "py-2": true,
+          "text-sm": true,
+          "shadow-sm": true,
+          "selector-trigger-disabled": props.disabled
+        }}
         ref={buttonRef}
       >
         <div class="flex items-center gap-2 flex-1 min-w-0">
-          <Show when={validating()} fallback={<FolderOpen class="w-4 h-4 text-gray-400 dark:text-gray-500" />}>
-            <Loader2 class="w-4 h-4 text-blue-500 animate-spin" />
+          <Show when={validating()} fallback={<FolderOpen class="w-4 h-4 selector-trigger-icon" />}>
+            <Loader2 class="w-4 h-4 selector-loading-spinner" />
           </Show>
-          <span class="text-sm text-gray-900 dark:text-gray-100 truncate">
+          <span class="truncate">
             {getDisplayName(props.selectedBinary || "opencode")}
           </span>
           <Show when={versionInfo().get(props.selectedBinary)}>
-            <span class="text-xs text-gray-500 dark:text-gray-400">v{versionInfo().get(props.selectedBinary)}</span>
+            <span class="selector-badge-version">v{versionInfo().get(props.selectedBinary)}</span>
           </Show>
         </div>
         <ChevronDown
-          class={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform ${isOpen() ? "rotate-180" : ""}`}
+          class={`w-4 h-4 selector-trigger-icon transition-transform ${isOpen() ? "rotate-180" : ""}`}
         />
       </button>
 
@@ -237,19 +245,19 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       <Show when={isOpen()}>
         <div
           data-binary-dropdown
-          class="absolute top-full left-0 right-0 z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-96 overflow-y-auto"
+          class="selector-popover absolute top-full left-0 right-0 mt-1 max-h-96 overflow-y-auto"
           style={{
             position: "absolute",
             "z-index": 500,
             "max-height": "24rem",
           }}
         >
-          <div class="p-3 border-b border-gray-200 dark:border-gray-700">
-            <div class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">OpenCode Binary Selection</div>
+          <div class="selector-section">
+            <div class="selector-section-title mb-2">OpenCode Binary Selection</div>
 
             {/* Custom path input */}
             <div class="space-y-2">
-              <div class="flex gap-2">
+              <div class="selector-input-group">
                 <input
                   type="text"
                   value={customPath()}
@@ -263,12 +271,12 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                     }
                   }}
                   placeholder="Enter path to opencode binary..."
-                  class="flex-1 px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  class="selector-input"
                 />
                 <button
                   onClick={handleCustomPathSubmit}
                   disabled={!customPath().trim() || validating()}
-                  class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
+                  class="selector-button selector-button-primary"
                 >
                   Add
                 </button>
@@ -278,7 +286,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
               <button
                 onClick={handleBrowseBinary}
                 disabled={validating()}
-                class="w-full px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2"
               >
                 <FolderOpen class="w-4 h-4" />
                 Browse for Binary...
@@ -287,10 +295,10 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
             {/* Validation error */}
             <Show when={validationError()}>
-              <div class="mt-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded">
-                <div class="flex items-start gap-2">
-                  <AlertCircle class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-                  <span class="text-xs text-red-700 dark:text-red-400">{validationError()}</span>
+              <div class="selector-validation-error mt-2">
+                <div class="selector-validation-error-content">
+                  <AlertCircle class="selector-validation-error-icon" />
+                  <span class="selector-validation-error-text">{validationError()}</span>
                 </div>
               </div>
             </Show>
@@ -301,7 +309,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
             <Show
               when={binaries().length > 0}
               fallback={
-                <div class="p-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                <div class="selector-empty-state">
                   No recent binaries. Add one above or use system PATH.
                 </div>
               }
@@ -317,8 +325,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
                   return (
                     <div
-                      class={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
-                        isSelected() ? "bg-blue-50 dark:bg-blue-900/20" : ""
+                      class={`selector-option border-b last:border-b-0 ${
+                        isSelected() ? "selector-option-selected" : ""
                       }`}
                       onClick={() => handleSelectBinary(binary.path)}
                     >
@@ -326,19 +334,19 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                         <div class="flex items-center gap-2 flex-1 min-w-0">
                           <Show
                             when={isSelected()}
-                            fallback={<FolderOpen class="w-4 h-4 text-gray-400 dark:text-gray-500" />}
+                            fallback={<FolderOpen class="w-4 h-4 selector-trigger-icon" />}
                           >
-                            <Check class="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                            <Check class="w-4 h-4 selector-option-indicator" />
                           </Show>
                           <div class="flex-1 min-w-0">
-                            <div class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                            <div class="selector-option-label truncate">
                               {getDisplayName(binary.path)}
                             </div>
                             <div class="flex items-center gap-2 mt-0.5">
                               <Show when={version()}>
-                                <span class="text-xs text-gray-500 dark:text-gray-400">v{version()}</span>
+                                <span class="selector-badge-version">v{version()}</span>
                               </Show>
-                              <span class="text-xs text-gray-400 dark:text-gray-500">
+                              <span class="selector-badge-time">
                                 {formatRelativeTime(binary.lastUsed)}
                               </span>
                             </div>
@@ -360,30 +368,30 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
           </div>
 
           {/* Default option */}
-          <div class="p-2 border-t border-gray-200 dark:border-gray-700">
+          <div class="selector-section">
             <div
-              class={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer rounded ${
-                props.selectedBinary === "opencode" ? "bg-blue-50 dark:bg-blue-900/20" : ""
+              class={`selector-option ${
+                props.selectedBinary === "opencode" ? "selector-option-selected" : ""
               }`}
               onClick={() => handleSelectBinary("opencode")}
             >
               <div class="flex items-center gap-2">
                 <Show
                   when={props.selectedBinary === "opencode"}
-                  fallback={<FolderOpen class="w-4 h-4 text-gray-400 dark:text-gray-500" />}
+                  fallback={<FolderOpen class="w-4 h-4 selector-trigger-icon" />}
                 >
-                  <Check class="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <Check class="w-4 h-4 selector-option-indicator" />
                 </Show>
                 <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium text-gray-900 dark:text-gray-100">opencode (system PATH)</div>
+                  <div class="selector-option-label">opencode (system PATH)</div>
                   <div class="flex items-center gap-2 mt-0.5">
                     <Show when={versionInfo().get("opencode")}>
-                      <span class="text-xs text-gray-500 dark:text-gray-400">v{versionInfo().get("opencode")}</span>
+                      <span class="selector-badge-version">v{versionInfo().get("opencode")}</span>
                     </Show>
                     <Show when={!versionInfo().get("opencode") && validating()}>
-                      <span class="text-xs text-gray-400 dark:text-gray-500">Checking...</span>
+                      <span class="selector-badge-time">Checking...</span>
                     </Show>
-                    <span class="text-xs text-gray-400 dark:text-gray-500">Use binary from system PATH</span>
+                    <span class="selector-badge-time">Use binary from system PATH</span>
                   </div>
                 </div>
               </div>

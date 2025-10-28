@@ -78,18 +78,18 @@ export default function ModelSelector(props: ModelSelectorProps) {
         itemComponent={(itemProps) => (
           <Combobox.Item
             item={itemProps.item}
-            class="px-3 py-2 cursor-pointer rounded outline-none transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/40 data-[highlighted]:bg-blue-100 dark:data-[highlighted]:bg-blue-900/60 flex items-start gap-2"
+            class="selector-option"
           >
-            <div class="flex flex-col flex-1 min-w-0">
-              <Combobox.ItemLabel class="font-medium text-sm text-gray-900 dark:text-gray-100">
+            <div class="selector-option-content">
+              <Combobox.ItemLabel class="selector-option-label">
                 {itemProps.item.rawValue.name}
               </Combobox.ItemLabel>
-              <Combobox.ItemDescription class="text-xs text-gray-600 dark:text-gray-300">
+              <Combobox.ItemDescription class="selector-option-description">
                 {itemProps.item.rawValue.providerName} • {itemProps.item.rawValue.providerId}/
                 {itemProps.item.rawValue.id}
               </Combobox.ItemDescription>
             </div>
-            <Combobox.ItemIndicator class="flex-shrink-0 mt-0.5 text-blue-600 dark:text-blue-400">
+            <Combobox.ItemIndicator class="selector-option-indicator">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
@@ -101,38 +101,38 @@ export default function ModelSelector(props: ModelSelectorProps) {
           <Combobox.Input class="sr-only" data-model-selector />
           <Combobox.Trigger
             ref={triggerRef}
-            class="inline-flex items-center justify-between gap-2 px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 outline-none focus:ring-2 focus:ring-blue-500 text-xs min-w-[180px] transition-colors"
+            class="selector-trigger"
           >
-            <div class="flex flex-col items-start min-w-0">
-              <span class="text-gray-700 dark:text-gray-200 font-medium">
+            <div class="selector-trigger-label">
+              <span class="selector-trigger-primary">
                 Model: {currentModelValue()?.name ?? "None"}
               </span>
               {currentModelValue() && (
-                <span class="text-gray-500 dark:text-gray-400 text-[10px]">
+                <span class="selector-trigger-secondary">
                   {currentModelValue()!.providerId}/{currentModelValue()!.id}
                 </span>
               )}
             </div>
-            <Combobox.Icon class="flex-shrink-0">
-              <ChevronDown class="w-3 h-3 text-gray-500 dark:text-gray-300" />
+            <Combobox.Icon class="selector-trigger-icon">
+              <ChevronDown class="w-3 h-3" />
             </Combobox.Icon>
           </Combobox.Trigger>
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg overflow-hidden z-50 min-w-[300px]">
-            <div class="p-2 border-b border-gray-200 dark:border-gray-700">
+          <Combobox.Content class="selector-popover">
+            <div class="selector-search-container">
               <Combobox.Input
                 ref={searchInputRef}
-                class="w-full px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                class="selector-search-input"
                 placeholder="Search models..."
               />
             </div>
-            <Combobox.Listbox class="max-h-64 overflow-auto p-1 bg-white dark:bg-gray-800" />
+            <Combobox.Listbox class="selector-listbox" />
           </Combobox.Content>
         </Combobox.Portal>
       </Combobox>
-      <span class="text-xs text-gray-400 dark:text-gray-500">
+      <span class="hint">
         <Kbd shortcut="cmd+shift+m" />
       </span>
     </div>

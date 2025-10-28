@@ -799,3 +799,245 @@
 [data-theme="dark"] .dropdown-icon-accent {
   color: var(--accent-primary);
 }
+
+/* Selector component utilities */
+.selector-trigger {
+  @apply inline-flex items-center justify-between gap-2 px-2 py-1 border rounded outline-none transition-colors text-xs min-w-[180px];
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-trigger:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-trigger:focus {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+.selector-trigger-disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-trigger-label {
+  @apply flex flex-col items-start min-w-0;
+}
+
+.selector-trigger-primary {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.selector-trigger-secondary {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.selector-trigger-icon {
+  @apply flex-shrink-0;
+  color: var(--text-muted);
+}
+
+.selector-popover {
+  @apply rounded-md shadow-lg overflow-hidden z-50 min-w-[300px];
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+}
+
+.selector-search-container {
+  @apply p-2 border-b;
+  border-color: var(--border-base);
+}
+
+.selector-search-input {
+  @apply w-full px-3 py-1.5 text-xs border rounded outline-none transition-colors;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-search-input:focus {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+.selector-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.selector-listbox {
+  @apply max-h-64 overflow-auto p-1;
+  background-color: var(--surface-base);
+}
+
+.selector-option {
+  @apply px-3 py-2 cursor-pointer rounded outline-none transition-colors flex items-start gap-2;
+  color: var(--text-primary);
+}
+
+.selector-option:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-option-highlighted {
+  background-color: rgba(0, 102, 255, 0.1);
+}
+
+[data-theme="dark"] .selector-option-highlighted {
+  background-color: rgba(0, 128, 255, 0.2);
+}
+
+.selector-option-selected {
+  background-color: rgba(0, 102, 255, 0.15);
+}
+
+[data-theme="dark"] .selector-option-selected {
+  background-color: rgba(0, 128, 255, 0.25);
+}
+
+.selector-option-content {
+  @apply flex flex-col flex-1 min-w-0;
+}
+
+.selector-option-label {
+  @apply font-medium text-sm;
+  color: var(--text-primary);
+}
+
+.selector-option-description {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-option-indicator {
+  @apply flex-shrink-0 mt-0.5;
+  color: var(--accent-primary);
+}
+
+.selector-section {
+  @apply px-3 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.selector-section-title {
+  @apply text-xs font-medium;
+  color: var(--text-muted);
+}
+
+.selector-badge {
+  @apply rounded px-1.5 py-0.5 text-xs font-normal;
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+}
+
+[data-theme="dark"] .selector-badge {
+  background-color: rgba(0, 128, 255, 0.2);
+  color: var(--text-primary);
+}
+
+.selector-badge-version {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-badge-time {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-validation-error {
+  @apply p-2 rounded border;
+  background-color: rgba(244, 67, 54, 0.1);
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+[data-theme="dark"] .selector-validation-error {
+  background-color: rgba(244, 67, 54, 0.2);
+}
+
+.selector-validation-error-content {
+  @apply flex items-start gap-2;
+}
+
+.selector-validation-error-icon {
+  @apply w-4 h-4 mt-0.5 flex-shrink-0;
+  color: var(--status-error);
+}
+
+.selector-validation-error-text {
+  @apply text-xs;
+}
+
+.selector-input-group {
+  @apply flex gap-2;
+}
+
+.selector-input {
+  @apply flex-1 px-2 py-1.5 text-sm border rounded outline-none transition-colors;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-input:focus {
+  @apply ring-1;
+  ring-color: var(--accent-primary);
+}
+
+.selector-input::placeholder {
+  color: var(--text-muted);
+}
+
+.selector-button {
+  @apply px-3 py-1.5 text-sm rounded transition-colors cursor-pointer;
+}
+
+.selector-button-primary {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+}
+
+.selector-button-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.selector-button-primary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+  background-color: var(--surface-muted);
+}
+
+[data-theme="dark"] .selector-button-primary:disabled {
+  background-color: var(--surface-secondary);
+}
+
+.selector-button-secondary {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.selector-button-secondary:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.selector-button-secondary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-empty-state {
+  @apply p-4 text-center text-sm;
+  color: var(--text-muted);
+}
+
+.selector-loading {
+  @apply flex items-center gap-2;
+  color: var(--text-muted);
+}
+
+.selector-loading-spinner {
+  @apply w-4 h-4 animate-spin;
+  color: var(--accent-primary);
+}
