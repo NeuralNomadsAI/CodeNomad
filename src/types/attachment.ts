@@ -79,7 +79,7 @@ export function createFileAttachment(
 }
 
 export function createTextAttachment(value: string, display: string, filename: string): Attachment {
-  const base64 = btoa(value)
+  const base64 = encodeTextAsBase64(value)
   return {
     id: crypto.randomUUID(),
     type: "text",
@@ -92,6 +92,24 @@ export function createTextAttachment(value: string, display: string, filename: s
       value,
     },
   }
+}
+
+function encodeTextAsBase64(value: string): string {
+  if (typeof TextEncoder !== "undefined") {
+    const encoder = new TextEncoder()
+    const bytes = encoder.encode(value)
+    let binary = ""
+    const chunkSize = 0x8000
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length))
+      binary += String.fromCharCode(...chunk)
+    }
+    return btoa(binary)
+  }
+
+  return btoa(
+    encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16))),
+  )
 }
 
 export function createAgentAttachment(agentName: string): Attachment {
