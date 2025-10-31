@@ -84,7 +84,8 @@ export function Markdown(props: MarkdownProps) {
         const rendered = await renderMarkdown(text)
         if (latestRequestedText === text) {
           setHtml(rendered)
-          part.renderCache = { text, html: rendered }
+          const themeKey = Boolean(props.isDark) ? "dark" : "light"
+          part.renderCache = { text, html: rendered, theme: themeKey }
         }
       } catch (error) {
         console.error("Failed to re-render markdown after language load:", error)

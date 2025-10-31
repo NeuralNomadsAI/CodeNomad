@@ -216,16 +216,6 @@
   line-height: var(--line-height-normal);
 }
 
-/* Assistant message compact overrides */
-.message-text-assistant {
-  font-size: 13.5px;
-  line-height: 1.1;
-}
-
-.message-text-assistant .prose {
-  font-size: 0.94rem;
-}
-
 .message-text-assistant .prose p {
   margin: 0;
 }

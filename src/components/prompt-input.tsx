@@ -1,7 +1,8 @@
-import { createSignal, Show, onMount, For, onCleanup } from "solid-js"
+import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack } from "solid-js"
 import UnifiedPicker from "./unified-picker"
 import { addToHistory, getHistory } from "../stores/message-history"
 import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
+import { getPromptValue, setPromptValue, clearPromptValue } from "../stores/prompt-state"
 import { createFileAttachment, createTextAttachment, createAgentAttachment } from "../types/attachment"
 import type { Attachment } from "../types/attachment"
 import Kbd from "./kbd"
@@ -19,7 +20,7 @@ interface PromptInputProps {
 }
 
 export default function PromptInput(props: PromptInputProps) {
-  const [prompt, setPrompt] = createSignal("")
+  const [prompt, setPromptInternal] = createSignal("")
   const [history, setHistory] = createSignal<string[]>([])
   const [historyIndex, setHistoryIndex] = createSignal(-1)
   const [isFocused, setIsFocused] = createSignal(false)
@@ -27,7 +28,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [searchQuery, setSearchQuery] = createSignal("")
   const [atPosition, setAtPosition] = createSignal<number | null>(null)
   const [isDragging, setIsDragging] = createSignal(false)
-  const [ignoredAtPositions, setIgnoredAtPositions] = createSignal<Set<number>>(new Set())
+  const [ignoredAtPositions, setIgnoredAtPositions] = createSignal<Set<number>>(new Set<number>())
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
   let textareaRef: HTMLTextAreaElement | undefined
@@ -35,6 +36,85 @@ export default function PromptInput(props: PromptInputProps) {
 
   const attachments = () => getAttachments(props.instanceId, props.sessionId)
   const instanceAgents = () => agents().get(props.instanceId) || []
+
+  const setPrompt = (value: string) => {
+    setPromptInternal(value)
+    setPromptValue(props.instanceId, props.sessionId, value)
+  }
+
+  const clearPrompt = () => {
+    clearPromptValue(props.instanceId, props.sessionId)
+    setPromptInternal("")
+  }
+
+  function syncAttachmentCounters(currentPrompt: string, sessionAttachments: Attachment[]) {
+    let highestPaste = 0
+    let highestImage = 0
+
+    for (const match of currentPrompt.matchAll(/\[pasted #(\d+)\]/g)) {
+      const value = Number.parseInt(match[1], 10)
+      if (!Number.isNaN(value)) {
+        highestPaste = Math.max(highestPaste, value)
+      }
+    }
+
+    for (const attachment of sessionAttachments) {
+      if (attachment.source.type === "text") {
+        const placeholderMatch = attachment.display.match(/pasted #(\d+)/)
+        if (placeholderMatch) {
+          const value = Number.parseInt(placeholderMatch[1], 10)
+          if (!Number.isNaN(value)) {
+            highestPaste = Math.max(highestPaste, value)
+          }
+        }
+      }
+      if (attachment.source.type === "file" && attachment.mediaType.startsWith("image/")) {
+        const imageMatch = attachment.display.match(/Image #(\d+)/)
+        if (imageMatch) {
+          const value = Number.parseInt(imageMatch[1], 10)
+          if (!Number.isNaN(value)) {
+            highestImage = Math.max(highestImage, value)
+          }
+        }
+      }
+    }
+
+    for (const match of currentPrompt.matchAll(/\[Image #(\d+)\]/g)) {
+      const value = Number.parseInt(match[1], 10)
+      if (!Number.isNaN(value)) {
+        highestImage = Math.max(highestImage, value)
+      }
+    }
+
+    setPasteCount(highestPaste)
+    setImageCount(highestImage)
+  }
+
+  createEffect(
+    on(
+      () => `${props.instanceId}:${props.sessionId}`,
+      () => {
+        const storedPrompt = getPromptValue(props.instanceId, props.sessionId)
+        const currentAttachments = untrack(() => getAttachments(props.instanceId, props.sessionId))
+
+        setPrompt(storedPrompt)
+        setHistoryIndex(-1)
+        setIgnoredAtPositions(new Set<number>())
+        setShowPicker(false)
+        setAtPosition(null)
+        setSearchQuery("")
+        syncAttachmentCounters(storedPrompt, currentAttachments)
+
+        queueMicrotask(() => {
+          if (textareaRef) {
+            textareaRef.style.height = "auto"
+            textareaRef.style.height = Math.min(textareaRef.scrollHeight, 200) + "px"
+          }
+        })
+      },
+      { defer: true },
+    ),
+  )
 
   function handleRemoveAttachment(attachmentId: string) {
     const currentAttachments = attachments()
@@ -391,7 +471,7 @@ export default function PromptInput(props: PromptInputProps) {
     const currentAttachments = attachments()
     if (!text || props.disabled) return
 
-    setPrompt("")
+    clearPrompt()
     clearAttachments(props.instanceId, props.sessionId)
     setIgnoredAtPositions(new Set<number>())
     setPasteCount(0)

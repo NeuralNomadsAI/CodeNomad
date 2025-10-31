@@ -1,11 +1,16 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
-import { $ } from "bun"
+import { spawn } from "child_process"
 import { existsSync } from "fs"
 import { join } from "path"
+import { fileURLToPath } from "url"
 
-const appDir = join(import.meta.dir, "..")
-$.cwd(appDir)
+const __dirname = fileURLToPath(new URL(".", import.meta.url))
+const appDir = join(__dirname, "..")
+
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
+const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
+const nodeModulesPath = join(appDir, "node_modules")
 
 const platforms = {
   mac: {
@@ -42,15 +47,41 @@ const platforms = {
   },
 }
 
-async function build(platform: string) {
-  const config = platforms[platform as keyof typeof platforms]
+function run(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const spawnOptions = {
+      cwd: appDir,
+      stdio: "inherit",
+      ...options,
+      env: { ...process.env, NODE_PATH: nodeModulesPath, ...(options.env || {}) },
+    }
+
+    const child = spawn(command, args, spawnOptions)
+
+    child.on("error", reject)
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(undefined)
+      } else {
+        reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`))
+      }
+    })
+  })
+}
+
+function printAvailablePlatforms() {
+  console.error(`\nAvailable platforms:`)
+  for (const [name, cfg] of Object.entries(platforms)) {
+    console.error(`  - ${name.padEnd(12)} : ${cfg.description}`)
+  }
+}
+
+async function build(platform) {
+  const config = platforms[platform]
 
   if (!config) {
     console.error(`❌ Unknown platform: ${platform}`)
-    console.error(`\nAvailable platforms:`)
-    for (const [name, cfg] of Object.entries(platforms)) {
-      console.error(`  - ${name.padEnd(12)} : ${cfg.description}`)
-    }
+    printAvailablePlatforms()
     process.exit(1)
   }
 
@@ -58,18 +89,18 @@ async function build(platform: string) {
 
   try {
     console.log("📦 Step 1/2: Building Electron app...\n")
-    await $`bun run build`
+    await run(npmCmd, ["run", "build"])
 
     console.log("\n📦 Step 2/2: Packaging binaries...\n")
-    const distExists = existsSync(join(appDir, "dist"))
-    if (!distExists) {
+    const distPath = join(appDir, "dist")
+    if (!existsSync(distPath)) {
       throw new Error("dist/ directory not found. Build failed.")
     }
 
-    await $`bunx electron-builder ${config.args}`
+    await run(npxCmd, ["electron-builder", ...config.args])
 
     console.log("\n✅ Build complete!")
-    console.log(`📁 Binaries available in: release/\n`)
+    console.log(`📁 Binaries available in: ${join(appDir, "release")}\n`)
   } catch (error) {
     console.error("\n❌ Build failed:", error)
     process.exit(1)

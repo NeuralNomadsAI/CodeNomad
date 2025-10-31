@@ -5,6 +5,7 @@ import { partHasRenderableText } from "../types/message"
 import { instances } from "./instances"
 
 import { sseManager } from "../lib/sse-manager"
+import { decodeHtmlEntities } from "../lib/markdown"
 import { preferences } from "./preferences"
 
 interface SessionInfo {
@@ -29,12 +30,91 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
+if (typeof globalThis !== "undefined") {
+  const debugGlobal = globalThis as any
+  debugGlobal.__OPENCODE_DEBUG__ = {
+    ...(debugGlobal.__OPENCODE_DEBUG__ ?? {}),
+    getSessions: () => sessions(),
+  }
+}
 
 // Message index cache structure: instanceId -> sessionId -> { messageIndex, partIndex }
 const sessionIndexes = new Map<
   string,
   Map<string, { messageIndex: Map<string, number>; partIndex: Map<string, Map<string, number>> }>
 >()
+
+function decodeTextSegment(segment: any): any {
+  if (typeof segment === "string") {
+    return decodeHtmlEntities(segment)
+  }
+
+  if (segment && typeof segment === "object") {
+    const updated: Record<string, any> = { ...segment }
+
+    if (typeof updated.text === "string") {
+      updated.text = decodeHtmlEntities(updated.text)
+    }
+
+    if (typeof updated.value === "string") {
+      updated.value = decodeHtmlEntities(updated.value)
+    }
+
+    if (Array.isArray(updated.content)) {
+      updated.content = updated.content.map((item: any) => decodeTextSegment(item))
+    }
+
+    return updated
+  }
+
+  return segment
+}
+
+function normalizeMessagePart(part: any): any {
+  if (!part || typeof part !== "object") {
+    return part
+  }
+
+  if (part.type !== "text") {
+    return part
+  }
+
+  const normalized: Record<string, any> = { ...part, renderCache: undefined }
+
+  if (typeof normalized.text === "string") {
+    normalized.text = decodeHtmlEntities(normalized.text)
+  } else if (normalized.text && typeof normalized.text === "object") {
+    const textObject: Record<string, any> = { ...normalized.text }
+
+    if (typeof textObject.value === "string") {
+      textObject.value = decodeHtmlEntities(textObject.value)
+    }
+
+    if (Array.isArray(textObject.content)) {
+      textObject.content = textObject.content.map((item: any) => decodeTextSegment(item))
+    }
+
+    if (typeof textObject.text === "string") {
+      textObject.text = decodeHtmlEntities(textObject.text)
+    }
+
+    normalized.text = textObject
+  }
+
+  if (Array.isArray(normalized.content)) {
+    normalized.content = normalized.content.map((item: any) => decodeTextSegment(item))
+  }
+
+  if (normalized.thinking && typeof normalized.thinking === "object") {
+    const thinking: Record<string, any> = { ...normalized.thinking }
+    if (Array.isArray(thinking.content)) {
+      thinking.content = thinking.content.map((item: any) => decodeTextSegment(item))
+    }
+    normalized.thinking = thinking
+  }
+
+  return normalized
+}
 
 function getSessionIndex(instanceId: string, sessionId: string) {
   let instanceMap = sessionIndexes.get(instanceId)
@@ -716,13 +796,8 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
 
       messagesInfo.set(messageId, info)
 
-      // Clear render cache for all parts when loading messages
-      const parts = (apiMessage.parts || []).map((part: any) => {
-        if (part.type === "text") {
-          return { ...part, renderCache: undefined }
-        }
-        return part
-      })
+      // Normalize parts to decode entities and clear caches for text segments
+      const parts = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
 
       const message: Message = {
         id: messageId,
@@ -815,8 +890,10 @@ function handleMessageUpdate(instanceId: string, event: any): void {
   if (!instanceSessions) return
 
   if (event.type === "message.part.updated") {
-    const part = event.properties?.part
-    if (!part) return
+    const rawPart = event.properties?.part
+    if (!rawPart) return
+
+    const part = normalizeMessagePart(rawPart)
 
     const session = instanceSessions.get(part.sessionID)
     if (!session) return
