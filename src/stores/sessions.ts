@@ -25,6 +25,74 @@ const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 const [providers, setProviders] = createSignal<Map<string, Provider[]>>(new Map())
+const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, string>>(new Map())
+
+function getDraftKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}:${sessionId}`
+}
+
+function getSessionDraftPrompt(instanceId: string, sessionId: string): string {
+  if (!instanceId || !sessionId) return ""
+  const key = getDraftKey(instanceId, sessionId)
+  return sessionDraftPrompts().get(key) ?? ""
+}
+
+function setSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
+  const key = getDraftKey(instanceId, sessionId)
+  setSessionDraftPrompts((prev) => {
+    const next = new Map(prev)
+    if (!value) {
+      next.delete(key)
+    } else {
+      next.set(key, value)
+    }
+    return next
+  })
+}
+
+function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
+  const key = getDraftKey(instanceId, sessionId)
+  setSessionDraftPrompts((prev) => {
+    if (!prev.has(key)) return prev
+    const next = new Map(prev)
+    next.delete(key)
+    return next
+  })
+}
+
+function clearInstanceDraftPrompts(instanceId: string) {
+  if (!instanceId) return
+  setSessionDraftPrompts((prev) => {
+    let changed = false
+    const next = new Map(prev)
+    const prefix = `${instanceId}:`
+    for (const key of Array.from(next.keys())) {
+      if (key.startsWith(prefix)) {
+        next.delete(key)
+        changed = true
+      }
+    }
+    return changed ? next : prev
+  })
+}
+
+function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
+  setSessionDraftPrompts((prev) => {
+    let changed = false
+    const next = new Map(prev)
+    const prefix = `${instanceId}:`
+    for (const key of Array.from(next.keys())) {
+      if (key.startsWith(prefix)) {
+        const sessionId = key.slice(prefix.length)
+        if (!validSessionIds.has(sessionId)) {
+          next.delete(key)
+          changed = true
+        }
+      }
+    }
+    return changed ? next : prev
+  })
+}
 
 const [loading, setLoading] = createSignal({
   fetchingSessions: new Map<string, boolean>(),
@@ -323,6 +391,8 @@ async function fetchSessions(instanceId: string): Promise<void> {
       next.set(instanceId, sessionMap)
       return next
     })
+
+    pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
   } catch (error) {
     console.error("Failed to fetch sessions:", error)
     throw error
@@ -735,6 +805,8 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
       }
       return next
     })
+
+    clearSessionDraftPrompt(instanceId, sessionId)
 
     // Remove session info entry
     setSessionInfoByInstance((prev) => {
@@ -1788,4 +1860,8 @@ export {
   updateSessionModel,
   getDefaultModel,
   removeSessionIndexes,
+  getSessionDraftPrompt,
+  setSessionDraftPrompt,
+  clearSessionDraftPrompt,
+  clearInstanceDraftPrompts,
 }

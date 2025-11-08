@@ -2,13 +2,12 @@ import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack 
 import UnifiedPicker from "./unified-picker"
 import { addToHistory, getHistory } from "../stores/message-history"
 import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
-import { getPromptValue, setPromptValue, clearPromptValue } from "../stores/prompt-state"
 import { createFileAttachment, createTextAttachment, createAgentAttachment } from "../types/attachment"
 import type { Attachment } from "../types/attachment"
 import Kbd from "./kbd"
 import HintRow from "./hint-row"
 import { getActiveInstance } from "../stores/instances"
-import { agents } from "../stores/sessions"
+import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraftPrompt } from "../stores/sessions"
 
 interface PromptInputProps {
   instanceId: string
@@ -57,11 +56,11 @@ export default function PromptInput(props: PromptInputProps) {
 
   const setPrompt = (value: string) => {
     setPromptInternal(value)
-    setPromptValue(props.instanceId, props.sessionId, value)
+    setSessionDraftPrompt(props.instanceId, props.sessionId, value)
   }
 
   const clearPrompt = () => {
-    clearPromptValue(props.instanceId, props.sessionId)
+    clearSessionDraftPrompt(props.instanceId, props.sessionId)
     setPromptInternal("")
   }
 
@@ -116,14 +115,14 @@ export default function PromptInput(props: PromptInputProps) {
         const sessionId = props.sessionId
 
         onCleanup(() => {
-          setPromptValue(instanceId, sessionId, prompt())
+          setSessionDraftPrompt(instanceId, sessionId, prompt())
         })
 
-        const storedPrompt = getPromptValue(instanceId, sessionId)
+        const storedPrompt = getSessionDraftPrompt(instanceId, sessionId)
         const currentAttachments = untrack(() => getAttachments(instanceId, sessionId))
 
         setPromptInternal(storedPrompt)
-        setPromptValue(instanceId, sessionId, storedPrompt)
+        setSessionDraftPrompt(instanceId, sessionId, storedPrompt)
         setHistoryIndex(-1)
         setIgnoredAtPositions(new Set<number>())
         setShowPicker(false)
@@ -134,9 +133,8 @@ export default function PromptInput(props: PromptInputProps) {
         queueMicrotask(() => {
           adjustTextareaHeight(textareaRef)
         })
-      },
-      { defer: true },
-    ),
+      }
+    )
   )
 
   function handleRemoveAttachment(attachmentId: string) {

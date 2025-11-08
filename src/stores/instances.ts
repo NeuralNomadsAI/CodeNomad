@@ -2,7 +2,13 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
-import { fetchSessions, fetchAgents, fetchProviders, removeSessionIndexes } from "./sessions"
+import {
+  fetchSessions,
+  fetchAgents,
+  fetchProviders,
+  removeSessionIndexes,
+  clearInstanceDraftPrompts,
+} from "./sessions"
 import { preferences, updateLastUsedBinary } from "./preferences"
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
@@ -69,8 +75,9 @@ function removeInstance(id: string) {
     setActiveInstanceId(null)
   }
 
-  // Clean up session indexes for removed instance
+  // Clean up session indexes and drafts for removed instance
   removeSessionIndexes(id)
+  clearInstanceDraftPrompts(id)
 }
 
 async function createInstance(folder: string, binaryPath?: string): Promise<string> {
