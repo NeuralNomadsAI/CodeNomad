@@ -1,5 +1,5 @@
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
-import { instances, getInstanceLogs } from "../stores/instances"
+import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 
 interface LogsViewProps {
@@ -15,8 +15,13 @@ const LogsView: Component<LogsViewProps> = (props) => {
 
   const instance = () => instances().get(props.instanceId)
   const logs = createMemo(() => getInstanceLogs(props.instanceId))
+  const streamingEnabled = createMemo(() => isInstanceLogStreaming(props.instanceId))
 
+  const handleEnableLogs = () => setInstanceLogStreaming(props.instanceId, true)
+  const handleDisableLogs = () => setInstanceLogStreaming(props.instanceId, false)
+ 
   onMount(() => {
+
     if (scrollRef && savedState) {
       scrollRef.scrollTop = savedState.scrollTop
     }
@@ -79,6 +84,20 @@ const LogsView: Component<LogsViewProps> = (props) => {
     <div class="log-container">
       <div class="log-header">
         <h3 class="text-sm font-medium" style="color: var(--text-secondary)">Server Logs</h3>
+        <div class="flex items-center gap-2">
+          <Show
+            when={streamingEnabled()}
+            fallback={
+              <button type="button" class="button-tertiary" onClick={handleEnableLogs}>
+                Show server logs
+              </button>
+            }
+          >
+            <button type="button" class="button-tertiary" onClick={handleDisableLogs}>
+              Hide server logs
+            </button>
+          </Show>
+        </div>
       </div>
 
       <Show when={instance()?.environmentVariables && Object.keys(instance()?.environmentVariables!).length > 0}>
@@ -108,21 +127,34 @@ const LogsView: Component<LogsViewProps> = (props) => {
         class="log-content"
       >
         <Show
-          when={logs().length > 0}
-          fallback={<div class="log-empty-state">Waiting for server output...</div>}
+          when={streamingEnabled()}
+          fallback={
+            <div class="log-paused-state">
+              <p class="log-paused-title">Server logs are paused</p>
+              <p class="log-paused-description">Enable streaming to watch your OpenCode server activity.</p>
+              <button type="button" class="button-primary" onClick={handleEnableLogs}>
+                Show server logs
+              </button>
+            </div>
+          }
         >
-          <For each={logs()}>
-            {(entry) => (
-              <div class="log-entry">
-                <span class="log-timestamp">{formatTime(entry.timestamp)}</span>
-                <span class={`log-message ${getLevelColor(entry.level)}`}>{entry.message}</span>
-              </div>
-            )}
-          </For>
+          <Show
+            when={logs().length > 0}
+            fallback={<div class="log-empty-state">Waiting for server output...</div>}
+          >
+            <For each={logs()}>
+              {(entry) => (
+                <div class="log-entry">
+                  <span class="log-timestamp">{formatTime(entry.timestamp)}</span>
+                  <span class={`log-message ${getLevelColor(entry.level)}`}>{entry.message}</span>
+                </div>
+              )}
+            </For>
+          </Show>
         </Show>
       </div>
-
-      <Show when={!autoScroll()}>
+ 
+      <Show when={!autoScroll() && streamingEnabled()}>
         <button
           onClick={scrollToBottom}
           class="scroll-to-bottom"
@@ -132,6 +164,7 @@ const LogsView: Component<LogsViewProps> = (props) => {
         </button>
       </Show>
     </div>
+
   )
 }
 

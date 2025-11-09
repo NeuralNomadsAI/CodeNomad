@@ -14,6 +14,7 @@ import { preferences, updateLastUsedBinary } from "./preferences"
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
+const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
 const MAX_LOG_ENTRIES = 1000
 
@@ -28,8 +29,27 @@ function ensureLogContainer(id: string) {
   })
 }
 
+function ensureLogStreamingState(id: string) {
+  setLogStreamingState((prev) => {
+    if (prev.has(id)) {
+      return prev
+    }
+    const next = new Map(prev)
+    next.set(id, false)
+    return next
+  })
+}
+
 function removeLogContainer(id: string) {
   setInstanceLogs((prev) => {
+    if (!prev.has(id)) {
+      return prev
+    }
+    const next = new Map(prev)
+    next.delete(id)
+    return next
+  })
+  setLogStreamingState((prev) => {
     if (!prev.has(id)) {
       return prev
     }
@@ -43,6 +63,22 @@ function getInstanceLogs(instanceId: string): LogEntry[] {
   return instanceLogs().get(instanceId) ?? []
 }
 
+function isInstanceLogStreaming(instanceId: string): boolean {
+  return logStreamingState().get(instanceId) ?? false
+}
+
+function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
+  ensureLogStreamingState(instanceId)
+  setLogStreamingState((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, enabled)
+    return next
+  })
+  if (!enabled) {
+    clearLogs(instanceId)
+  }
+}
+
 function addInstance(instance: Instance) {
   setInstances((prev) => {
     const next = new Map(prev)
@@ -50,6 +86,7 @@ function addInstance(instance: Instance) {
     return next
   })
   ensureLogContainer(instance.id)
+  ensureLogStreamingState(instance.id)
 }
 
 function updateInstance(id: string, updates: Partial<Instance>) {
@@ -181,6 +218,10 @@ function getActiveInstance(): Instance | null {
 }
 
 function addLog(id: string, entry: LogEntry) {
+  if (!isInstanceLogStreaming(id)) {
+    return
+  }
+
   setInstanceLogs((prev) => {
     const next = new Map(prev)
     const existing = next.get(id) ?? []
@@ -215,4 +256,6 @@ export {
   clearLogs,
   instanceLogs,
   getInstanceLogs,
+  isInstanceLogStreaming,
+  setInstanceLogStreaming,
 }

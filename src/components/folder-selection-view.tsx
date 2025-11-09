@@ -18,15 +18,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   let recentListRef: HTMLDivElement | undefined
  
   const folders = () => recentFolders()
- 
+  const isLoading = () => Boolean(props.isLoading)
+
   // Update selected binary when preferences change
   createEffect(() => {
-     const lastUsed = preferences().lastUsedBinary
-     if (lastUsed && lastUsed !== selectedBinary()) {
-       setSelectedBinary(lastUsed)
-     }
-   })
- 
+    const lastUsed = preferences().lastUsedBinary
+    if (lastUsed && lastUsed !== selectedBinary()) {
+      setSelectedBinary(lastUsed)
+    }
+  })
+
+
   function scrollToIndex(index: number) {
     const container = recentListRef
     if (!container) return
@@ -45,16 +47,36 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
 
   function handleKeyDown(e: KeyboardEvent) {
+    const normalizedKey = e.key.toLowerCase()
+    const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
+    const blockedKeys = [
+      "ArrowDown",
+      "ArrowUp",
+      "PageDown",
+      "PageUp",
+      "Home",
+      "End",
+      "Enter",
+      "Backspace",
+      "Delete",
+    ]
+
+    if (isLoading()) {
+      if (isBrowseShortcut || blockedKeys.includes(e.key)) {
+        e.preventDefault()
+      }
+      return
+    }
+
     const folderList = folders()
- 
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
+
+    if (isBrowseShortcut) {
       e.preventDefault()
       handleBrowse()
       return
     }
- 
-    if (folderList.length === 0) return
 
+    if (folderList.length === 0) return
 
     if (e.key === "ArrowDown") {
       e.preventDefault()
@@ -107,14 +129,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
+
   function handleEnterKey() {
+    if (isLoading()) return
     const folderList = folders()
     const index = selectedIndex()
 
-    if (index < folderList.length) {
-      props.onSelectFolder(folderList[index].path)
+    const folder = folderList[index]
+    if (folder) {
+      handleFolderSelect(folder.path)
     }
   }
+
 
   onMount(() => {
     window.addEventListener("keydown", handleKeyDown)
@@ -136,20 +162,24 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   function handleFolderSelect(path: string) {
+    if (isLoading()) return
     updateLastUsedBinary(selectedBinary())
     props.onSelectFolder(path, selectedBinary())
   }
-
+ 
   function handleBrowse() {
+    if (isLoading()) return
     updateLastUsedBinary(selectedBinary())
     props.onSelectFolder(undefined, selectedBinary())
   }
+
 
   function handleBinaryChange(binary: string) {
     setSelectedBinary(binary)
   }
 
   function handleRemove(path: string, e?: Event) {
+    if (isLoading()) return
     e?.stopPropagation()
     removeRecentFolder(path)
 
@@ -159,6 +189,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
+
   function getDisplayPath(path: string): string {
     if (path.startsWith("/Users/")) {
       return path.replace(/^\/Users\/[^/]+/, "~")
@@ -167,8 +198,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   return (
-    <div class="flex h-screen w-full items-start justify-center overflow-hidden py-6" style="background-color: var(--surface-secondary)">
-      <div class="w-full max-w-3xl h-full max-h-[90vh] px-8 flex flex-col overflow-hidden">
+    <div
+      class="flex h-screen w-full items-start justify-center overflow-hidden py-6 relative"
+      style="background-color: var(--surface-secondary)"
+    >
+      <div
+        class="w-full max-w-3xl h-full max-h-[90vh] px-8 flex flex-col overflow-hidden"
+        aria-busy={isLoading() ? "true" : "false"}
+      >
         <div class="mb-6 text-center shrink-0">
           <div class="mb-3 flex justify-center">
             <Folder class="h-16 w-16 icon-muted" />
@@ -205,14 +242,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       class="panel-list-item"
                       classList={{
                         "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
+                        "panel-list-item-disabled": isLoading(),
                       }}
                     >
                       <div class="flex items-center gap-2 w-full px-1">
                         <button
                           data-folder-index={index()}
                           class="panel-list-item-content flex-1"
+                          disabled={isLoading()}
                           onClick={() => handleFolderSelect(folder.path)}
                           onMouseEnter={() => {
+                            if (isLoading()) return
                             setFocusMode("recent")
                             setSelectedIndex(index())
                           }}
@@ -239,6 +279,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         </button>
                         <button
                           onClick={(e) => handleRemove(folder.path, e)}
+                          disabled={isLoading()}
                           class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
                           title="Remove from recent"
                         >
@@ -334,6 +375,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
         </div>
       </div>
+      <Show when={isLoading()}>
+        <div class="folder-loading-overlay">
+          <div class="folder-loading-indicator">
+            <div class="spinner" />
+            <p class="folder-loading-text">Starting instance…</p>
+            <p class="folder-loading-subtext">Hang tight while we prepare your workspace.</p>
+          </div>
+        </div>
+      </Show>
     </div>
   )
 }

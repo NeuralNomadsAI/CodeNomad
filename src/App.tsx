@@ -56,6 +56,7 @@ import {
   agents,
   isSessionBusy,
   getSessionInfo,
+  isSessionMessagesLoading,
 } from "./stores/sessions"
 import { setupTabKeyboardShortcuts } from "./lib/keyboard"
 import { isOpen as isCommandPaletteOpen, showCommandPalette, hideCommandPalette } from "./stores/command-palette"
@@ -74,8 +75,10 @@ const SessionView: Component<{
   escapeInDebounce: boolean
 }> = (props) => {
   const session = () => props.activeSessions.get(props.sessionId)
-
+  const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
+ 
   createEffect(() => {
+
     const currentSession = session()
     if (currentSession) {
       loadMessages(props.instanceId, currentSession.id).catch(console.error)
@@ -186,6 +189,7 @@ const SessionView: Component<{
             messages={s().messages || []}
             messagesInfo={s().messagesInfo}
             revert={s().revert}
+            loading={messagesLoading()}
             onRevert={handleRevert}
             onFork={handleFork}
           />

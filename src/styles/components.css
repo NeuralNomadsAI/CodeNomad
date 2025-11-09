@@ -112,6 +112,27 @@ button.button-primary {
   @apply cursor-not-allowed opacity-50;
 }
 
+.button-tertiary {
+  @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors;
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.button-tertiary:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.button-tertiary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+}
+
+.button-tertiary:disabled {
+  @apply cursor-not-allowed opacity-50;
+}
+
 /* Message item base styles */
 
 .message-item-base {
@@ -1131,6 +1152,38 @@ button.button-primary {
   animation: spin 1s linear infinite;
 }
 
+.folder-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(2px);
+}
+
+.folder-loading-indicator {
+  @apply flex flex-col items-center gap-3 text-center;
+  padding: 24px 32px;
+  border-radius: 16px;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  min-width: 260px;
+}
+
+.folder-loading-text {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.folder-loading-subtext {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -1695,6 +1748,18 @@ button.button-primary {
   background-color: transparent;
 }
 
+.panel-list-item-content:disabled {
+  opacity: 0.6;
+}
+
+.panel-list-item button:disabled {
+  cursor: not-allowed;
+}
+
+.panel-list-item-disabled {
+  opacity: 0.6;
+}
+
 .panel-empty-state {
   @apply p-6 text-center;
 }
@@ -1779,6 +1844,25 @@ button.button-primary {
 .log-empty-state {
   @apply text-center py-8;
   color: var(--text-muted);
+}
+
+.log-paused-state {
+  @apply flex flex-col items-center justify-center gap-3 text-center py-10 px-6;
+  border: 1px dashed var(--border-base);
+  border-radius: 12px;
+  background-color: var(--surface-base);
+}
+
+.log-paused-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.log-paused-description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  max-width: 320px;
 }
 
 /* Environment variables display */
