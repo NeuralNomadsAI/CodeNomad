@@ -15,7 +15,6 @@ import {
 } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
 
-const FALLBACK_MODEL_OUTPUT_LIMIT = 32_000
 const SCROLL_OFFSET = 64
 
 interface TaskSessionLocation {
@@ -54,7 +53,7 @@ function navigateToTaskSession(location: TaskSessionLocation) {
 // Calculate session tokens and cost from messagesInfo (matches TUI logic)
 function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: string) {
   if (!messagesInfo || messagesInfo.size === 0)
-    return { tokens: 0, cost: 0, contextWindow: 0, isSubscriptionModel: false, contextUsageTokens: 0 }
+    return { tokens: 0, cost: 0, contextWindow: 0, isSubscriptionModel: false }
 
   let tokens = 0
   let cost = 0
@@ -62,9 +61,6 @@ function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: stri
   let isSubscriptionModel = false
   let modelID = ""
   let providerID = ""
-  let inputTokensForUsage = 0
-  let cacheReadTokensForUsage = 0
-  let modelOutputLimit = FALLBACK_MODEL_OUTPUT_LIMIT
 
   // Go backwards through messages to find the last relevant assistant message (like TUI)
   const messageArray = Array.from(messagesInfo.values()).reverse()
@@ -89,9 +85,6 @@ function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: stri
           cost = info.cost || 0
         }
 
-        inputTokensForUsage = usage.input || 0
-        cacheReadTokensForUsage = usage.cache?.read || 0
-
         // Get model info for context window and subscription check
         modelID = info.modelID || ""
         providerID = info.providerID || ""
@@ -115,9 +108,6 @@ function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: stri
       if (model?.limit?.context) {
         contextWindow = model.limit.context
       }
-      if (model?.limit?.output && model.limit.output > 0) {
-        modelOutputLimit = model.limit.output
-      }
       // Check if it's a subscription model (cost is 0 for both input and output)
       if (model?.cost?.input === 0 && model?.cost?.output === 0) {
         isSubscriptionModel = true
@@ -125,11 +115,8 @@ function calculateSessionInfo(messagesInfo?: Map<string, any>, instanceId?: stri
     }
   }
 
-  const contextUsageTokens = inputTokensForUsage + cacheReadTokensForUsage + modelOutputLimit
-
-  return { tokens, cost, contextWindow, isSubscriptionModel, contextUsageTokens }
+  return { tokens, cost, contextWindow, isSubscriptionModel }
 }
-
 
 // Format tokens like TUI (e.g., "110K", "1.2M")
 function formatTokens(tokens: number): string {
@@ -142,23 +129,16 @@ function formatTokens(tokens: number): string {
 }
 
 // Format session info for the session view header
-function formatSessionInfo(
-  tokens: number,
-  _cost: number,
-  contextWindow: number,
-  _isSubscriptionModel: boolean,
-  contextUsageTokens?: number,
-): string {
-  const usageTokens = typeof contextUsageTokens === "number" && contextUsageTokens > 0 ? contextUsageTokens : tokens
-  const usageLabel = formatTokens(usageTokens)
+function formatSessionInfo(tokens: number, _cost: number, contextWindow: number, _isSubscriptionModel: boolean): string {
+  const tokensStr = formatTokens(tokens)
 
   if (contextWindow > 0) {
     const windowStr = formatTokens(contextWindow)
-    const percentage = Math.min(100, Math.max(0, Math.round((usageTokens / contextWindow) * 100)))
-    return `${usageLabel} of ${windowStr} (${percentage}%)`
+    const percentage = Math.min(100, Math.max(0, Math.round((tokens / contextWindow) * 100)))
+    return `${tokensStr} of ${windowStr} (${percentage}%)`
   }
 
-  return usageLabel
+  return tokensStr
 }
 
 interface MessageStreamProps {
@@ -265,12 +245,9 @@ export default function MessageStream(props: MessageStreamProps) {
         cost: 0,
         contextWindow: 0,
         isSubscriptionModel: false,
-        contextUsageTokens: 0,
       }
     )
   })
-
-  const currentSession = createMemo(() => sessions().get(props.instanceId)?.get(props.sessionId))
 
   const formattedSessionInfo = createMemo(() => {
     const sessionInfo = getSessionInfo(props.instanceId, props.sessionId) || {
@@ -278,17 +255,14 @@ export default function MessageStream(props: MessageStreamProps) {
       cost: 0,
       contextWindow: 0,
       isSubscriptionModel: false,
-      contextUsageTokens: 0,
     }
     return formatSessionInfo(
       sessionInfo.tokens,
       sessionInfo.cost,
       sessionInfo.contextWindow,
       sessionInfo.isSubscriptionModel,
-      sessionInfo.contextUsageTokens,
     )
   })
-
 
   function isNearBottom(element: HTMLDivElement, offset = SCROLL_OFFSET) {
     const { scrollTop, scrollHeight, clientHeight } = element
@@ -391,14 +365,7 @@ export default function MessageStream(props: MessageStreamProps) {
 
       tokenSegments.push(`${message.id}:${message.version ?? 0}:${message.status}:${message.parts.length}`)
 
-      for (const part of message.parts) {
-        const partId = typeof part.id === "string" ? part.id : part.type ?? "part"
-        const partVersion = typeof (part as any).version === "number" ? (part as any).version : 0
-        tokenSegments.push(`${message.id}:${partId}:${partVersion}`)
-      }
-
       const baseDisplayParts = message.displayParts
-
       const displayParts: MessageDisplayParts =
         baseDisplayParts && baseDisplayParts.showThinking === showThinking
           ? baseDisplayParts

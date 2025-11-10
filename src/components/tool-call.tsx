@@ -568,20 +568,48 @@ export default function ToolCall(props: ToolCallProps) {
       return null
     }
 
+    const getStatusLabel = (status: string): string => {
+      switch (status) {
+        case "completed":
+          return "Completed"
+        case "in_progress":
+          return "In progress"
+        case "cancelled":
+          return "Cancelled"
+        default:
+          return "Pending"
+      }
+    }
+
+    const shouldShowTag = (status: string) => status === "in_progress" || status === "cancelled"
+
     return (
-      <div class="tool-call-todos">
+      <div class="tool-call-todos" role="list">
         <For each={todos}>
           {(todo) => {
-            const content = todo.content
+            const content = typeof todo.content === "string" ? todo.content.trim() : ""
             if (!content) return null
 
+            const status = typeof todo.status === "string" ? todo.status : "pending"
+            const label = getStatusLabel(status)
+
             return (
-              <div class="tool-call-todo-item">
-                {todo.status === "completed" && "- [x] "}
-                {todo.status !== "completed" && "- [ ] "}
-                {todo.status === "cancelled" && <s>{content}</s>}
-                {todo.status === "in_progress" && <code>{content}</code>}
-                {todo.status !== "cancelled" && todo.status !== "in_progress" && content}
+              <div
+                class="tool-call-todo-item"
+                classList={{
+                  "tool-call-todo-item-completed": status === "completed",
+                  "tool-call-todo-item-cancelled": status === "cancelled",
+                  "tool-call-todo-item-active": status === "in_progress",
+                }}
+                role="listitem"
+              >
+                <span class="tool-call-todo-checkbox" data-status={status} aria-label={label}></span>
+                <div class="tool-call-todo-body">
+                  <span class="tool-call-todo-text">{content}</span>
+                  <Show when={shouldShowTag(status)}>
+                    <span class="tool-call-todo-tag">{label}</span>
+                  </Show>
+                </div>
               </div>
             )
           }}
@@ -601,7 +629,7 @@ export default function ToolCall(props: ToolCallProps) {
 
     return (
       <div
-        class="message-text tool-call-markdown tool-call-markdown-large tool-call-task-container"
+        class="message-text tool-call-markdown tool-call-task-container"
         ref={(element) => initializeScrollContainer(element)}
         onScroll={(event) => updateScrollState(toolCallId(), event.currentTarget)}
       >
