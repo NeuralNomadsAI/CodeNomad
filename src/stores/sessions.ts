@@ -389,6 +389,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
   })
 
   try {
+    console.log(`[HTTP] GET /session.list for instance ${instanceId}`)
     const response = await instance.client.session.list()
 
     const sessionMap = new Map<string, Session>()
@@ -649,6 +650,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   })
 
   try {
+    console.log(`[HTTP] POST /session.create for instance ${instanceId}`)
     const response = await instance.client.session.create()
 
     if (!response.data) {
@@ -750,6 +752,7 @@ async function forkSession(
     request.body = { messageID: options.messageId }
   }
 
+  console.log(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
   const response = await instance.client.session.fork(request)
 
   if (!response.data) {
@@ -834,6 +837,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   })
 
   try {
+    console.log(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
     await instance.client.session.delete({ path: { id: sessionId } })
 
     setSessions((prev) => {
@@ -895,6 +899,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
   }
 
   try {
+    console.log(`[HTTP] GET /app.agents for instance ${instanceId}`)
     const response = await instance.client.app.agents()
     const agentList = (response.data ?? []).map((agent) => ({
       name: agent.name,
@@ -925,6 +930,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 
   try {
+    console.log(`[HTTP] GET /config.providers for instance ${instanceId}`)
     const response = await instance.client.config.providers()
     if (!response.data) return
 
@@ -1077,6 +1083,7 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   })
 
   try {
+    console.log(`[HTTP] GET /session.messages for instance ${instanceId}`, { sessionId })
     const response = await instance.client.session.messages({ path: { id: sessionId } })
 
     if (!response.data || !Array.isArray(response.data)) {
@@ -1946,6 +1953,7 @@ async function sendMessage(
   })
 
   try {
+    console.log(`[HTTP] POST /session.prompt for instance ${instanceId}`, { sessionId, requestBody })
     const response = await instance.client.session.prompt({
       path: { id: sessionId },
       body: requestBody,
@@ -1972,6 +1980,7 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   console.log("[abortSession] Aborting session:", { instanceId, sessionId })
 
   try {
+    console.log(`[HTTP] POST /session.abort for instance ${instanceId}`, { sessionId })
     await instance.client.session.abort({
       path: { id: sessionId },
     })
