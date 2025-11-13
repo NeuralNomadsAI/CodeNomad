@@ -579,8 +579,8 @@ export default function MessageStream(props: MessageStreamProps) {
           <div class="empty-state">
             <div class="empty-state-content">
               <div class="flex flex-col items-center gap-3 mb-6">
-                <img src={codeNomadLogo} alt="CodeNomad logo" class="h-16 w-auto" loading="lazy" />
-                <h1 class="text-2xl font-semibold text-primary">CodeNomad</h1>
+                <img src={codeNomadLogo} alt="CodeNomad logo" class="h-48 w-auto" loading="lazy" />
+                <h1 class="text-3xl font-semibold text-primary">CodeNomad</h1>
               </div>
               <h3>Start a conversation</h3>
               <p>Type a message below or open the Command Palette:</p>
