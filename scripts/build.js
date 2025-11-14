@@ -52,6 +52,7 @@ function run(command, args, options = {}) {
     const spawnOptions = {
       cwd: appDir,
       stdio: "inherit",
+      shell: process.platform === "win32",
       ...options,
       env: { ...process.env, NODE_PATH: nodeModulesPath, ...(options.env || {}) },
     }
