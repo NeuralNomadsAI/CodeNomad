@@ -6,7 +6,8 @@ import { useTheme } from "../lib/theme"
 import { getLanguageFromPath } from "../lib/markdown"
 import { isRenderableDiffText } from "../lib/diff-utils"
 import { getToolRenderCache, setToolRenderCache } from "../lib/tool-render-cache"
-import { preferences, setDiffViewMode, type DiffViewMode } from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
+import type { DiffViewMode } from "../stores/preferences"
 import type { TextPart, SDKPart, ClientPart } from "../types/message"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
@@ -177,6 +178,7 @@ function extractDiffPayload(toolName: string, state: ToolState): DiffPayload | n
 }
 
 export default function ToolCall(props: ToolCallProps) {
+  const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
   const toolCallId = () => props.toolCallId || props.toolCall?.id || ""
   const expanded = () => isToolCallExpanded(toolCallId())

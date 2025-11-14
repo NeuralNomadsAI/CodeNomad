@@ -1,17 +1,18 @@
 import { Component, createSignal, For, Show } from "solid-js"
 import { Plus, Trash2, Key, Globe } from "lucide-solid"
-import {
-  preferences,
-  addEnvironmentVariable,
-  removeEnvironmentVariable,
-  updateEnvironmentVariables,
-} from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 
 interface EnvironmentVariablesEditorProps {
   disabled?: boolean
 }
 
 const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (props) => {
+  const {
+    preferences,
+    addEnvironmentVariable,
+    removeEnvironmentVariable,
+    updateEnvironmentVariables,
+  } = useConfig()
   const [envVars, setEnvVars] = createSignal<Record<string, string>>(preferences().environmentVariables || {})
   const [newKey, setNewKey] = createSignal("")
   const [newValue, setNewValue] = createSignal("")

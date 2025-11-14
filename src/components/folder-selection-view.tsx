@@ -1,6 +1,6 @@
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight } from "lucide-solid"
-import { recentFolders, removeRecentFolder, preferences, updateLastUsedBinary } from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import Kbd from "./kbd"
 
@@ -15,6 +15,7 @@ interface FolderSelectionViewProps {
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
+  const { recentFolders, removeRecentFolder, preferences, updateLastUsedBinary } = useConfig()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")

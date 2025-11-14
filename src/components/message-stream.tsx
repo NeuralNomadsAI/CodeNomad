@@ -30,7 +30,7 @@ import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import { sseManager } from "../lib/sse-manager"
 import Kbd from "./kbd"
-import { preferences } from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 import { getSessionInfo, computeDisplayParts, sessions, setActiveSession, setActiveParentSession } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
 
@@ -170,6 +170,7 @@ function getSessionCache(instanceId: string, sessionId: string): SessionCache {
 }
 
 export default function MessageStream(props: MessageStreamProps) {
+  const { preferences } = useConfig()
   let containerRef: HTMLDivElement | undefined
   const [autoScroll, setAutoScroll] = createSignal(true)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)

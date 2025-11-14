@@ -1,6 +1,7 @@
 import { render } from "solid-js/web"
 import App from "./App"
 import { ThemeProvider } from "./lib/theme"
+import { ConfigProvider } from "./stores/preferences"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -12,9 +13,11 @@ if (!root) {
 
 render(
   () => (
-    <ThemeProvider>
-      <App />
-    </ThemeProvider>
+    <ConfigProvider>
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
+    </ConfigProvider>
   ),
   root,
 )

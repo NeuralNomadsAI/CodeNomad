@@ -1,4 +1,5 @@
-import { createSignal, onMount } from "solid-js"
+import { createContext, createSignal, onMount, useContext } from "solid-js"
+import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type ConfigData } from "../lib/storage"
 
 export interface ModelPreference {
@@ -32,7 +33,7 @@ export interface RecentFolder {
   lastAccessed: number
 }
 
-const MAX_RECENT_FOLDERS = 10
+const MAX_RECENT_FOLDERS = 20
 const MAX_RECENT_MODELS = 5
 
 const defaultPreferences: Preferences = {
@@ -45,11 +46,13 @@ const defaultPreferences: Preferences = {
 const [preferences, setPreferences] = createSignal<Preferences>(defaultPreferences)
 const [recentFolders, setRecentFolders] = createSignal<RecentFolder[]>([])
 const [opencodeBinaries, setOpenCodeBinaries] = createSignal<OpenCodeBinary[]>([])
+const [isConfigLoaded, setIsConfigLoaded] = createSignal(false)
 let cachedConfig: ConfigData = {
   preferences: defaultPreferences,
   recentFolders: [],
   opencodeBinaries: [],
 }
+let loadPromise: Promise<void> | null = null
 
 async function loadConfig(): Promise<void> {
   try {
@@ -60,16 +63,25 @@ async function loadConfig(): Promise<void> {
       recentFolders: config.recentFolders || [],
       opencodeBinaries: config.opencodeBinaries || [],
     }
-    setPreferences(cachedConfig.preferences)
-    setRecentFolders(cachedConfig.recentFolders)
-    setOpenCodeBinaries(cachedConfig.opencodeBinaries)
   } catch (error) {
     console.error("Failed to load config:", error)
+    cachedConfig = {
+      ...cachedConfig,
+      preferences: { ...defaultPreferences },
+      recentFolders: [],
+      opencodeBinaries: [],
+    }
   }
+
+  setPreferences(cachedConfig.preferences)
+  setRecentFolders(cachedConfig.recentFolders)
+  setOpenCodeBinaries(cachedConfig.opencodeBinaries)
+  setIsConfigLoaded(true)
 }
 
 async function saveConfig(): Promise<void> {
   try {
+    await ensureConfigLoaded()
     const config: ConfigData = {
       ...cachedConfig,
       preferences: preferences(),
@@ -82,6 +94,17 @@ async function saveConfig(): Promise<void> {
     console.error("Failed to save config:", error)
   }
 }
+
+async function ensureConfigLoaded(): Promise<void> {
+  if (isConfigLoaded()) return
+  if (!loadPromise) {
+    loadPromise = loadConfig().finally(() => {
+      loadPromise = null
+    })
+  }
+  await loadPromise
+}
+
 
 function updatePreferences(updates: Partial<Preferences>): void {
   const updated = { ...preferences(), ...updates }
@@ -196,20 +219,85 @@ function getAgentModelPreference(instanceId: string, agent: string): ModelPrefer
   return preferences().agentModelSelections?.[instanceId]?.[agent]
 }
 
-// Load config on mount and listen for changes from other instances
-onMount(() => {
-  loadConfig()
-
-  // Reload config when changed by another instance
-  const unsubscribe = storage.onConfigChanged(() => {
-    loadConfig()
-  })
-
-  // Cleanup on unmount
-  return unsubscribe
+void ensureConfigLoaded().catch((error) => {
+  console.error("Failed to initialize config:", error)
 })
 
+interface ConfigContextValue {
+  isLoaded: Accessor<boolean>
+  preferences: typeof preferences
+  recentFolders: typeof recentFolders
+  opencodeBinaries: typeof opencodeBinaries
+  toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
+  setDiffViewMode: typeof setDiffViewMode
+  addRecentFolder: typeof addRecentFolder
+  removeRecentFolder: typeof removeRecentFolder
+  addOpenCodeBinary: typeof addOpenCodeBinary
+  removeOpenCodeBinary: typeof removeOpenCodeBinary
+  updateLastUsedBinary: typeof updateLastUsedBinary
+  updatePreferences: typeof updatePreferences
+  updateEnvironmentVariables: typeof updateEnvironmentVariables
+  addEnvironmentVariable: typeof addEnvironmentVariable
+  removeEnvironmentVariable: typeof removeEnvironmentVariable
+  addRecentModelPreference: typeof addRecentModelPreference
+  setAgentModelPreference: typeof setAgentModelPreference
+  getAgentModelPreference: typeof getAgentModelPreference
+}
+
+const ConfigContext = createContext<ConfigContextValue>()
+
+const configContextValue: ConfigContextValue = {
+  isLoaded: isConfigLoaded,
+  preferences,
+  recentFolders,
+  opencodeBinaries,
+  toggleShowThinkingBlocks,
+  setDiffViewMode,
+  addRecentFolder,
+  removeRecentFolder,
+  addOpenCodeBinary,
+  removeOpenCodeBinary,
+  updateLastUsedBinary,
+  updatePreferences,
+  updateEnvironmentVariables,
+  addEnvironmentVariable,
+  removeEnvironmentVariable,
+  addRecentModelPreference,
+  setAgentModelPreference,
+  getAgentModelPreference,
+}
+
+const ConfigProvider: ParentComponent = (props) => {
+  onMount(() => {
+    ensureConfigLoaded().catch((error) => {
+      console.error("Failed to initialize config:", error)
+    })
+
+    const unsubscribe = storage.onConfigChanged(() => {
+      loadConfig().catch((error) => {
+        console.error("Failed to refresh config:", error)
+      })
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  })
+
+  return <ConfigContext.Provider value={configContextValue}>{props.children}</ConfigContext.Provider>
+}
+
+function useConfig(): ConfigContextValue {
+  const context = useContext(ConfigContext)
+  if (!context) {
+    throw new Error("useConfig must be used within ConfigProvider")
+  }
+  return context
+}
+
 export {
+  ConfigProvider,
+  useConfig,
   preferences,
   updatePreferences,
   toggleShowThinkingBlocks,

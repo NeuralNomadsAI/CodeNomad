@@ -3,7 +3,7 @@ import ToolCall from "./tool-call"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { preferences } from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
@@ -14,6 +14,7 @@ interface MessagePartProps {
 }
 export default function MessagePart(props: MessagePartProps) {
   const { isDark } = useTheme()
+  const { preferences } = useConfig()
   const partType = () => props.part?.type || ""
   const reasoningId = () => `reasoning-${props.part?.id || ""}`
   const isReasoningExpanded = () => isItemExpanded(reasoningId())

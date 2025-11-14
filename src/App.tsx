@@ -29,7 +29,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { toggleShowThinkingBlocks, preferences, addRecentFolder, setDiffViewMode } from "./stores/preferences"
+import { useConfig } from "./stores/preferences"
 import {
   createInstance,
   instances,
@@ -350,6 +350,7 @@ const ContextUsagePanel: Component<{ instanceId: string; sessionId: string }> = 
 
 const App: Component = () => {
   const { isDark } = useTheme()
+  const { preferences, addRecentFolder, toggleShowThinkingBlocks, setDiffViewMode } = useConfig()
   const commandRegistry = createCommandRegistry()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [paletteCommands, setPaletteCommands] = createSignal<Command[]>([])

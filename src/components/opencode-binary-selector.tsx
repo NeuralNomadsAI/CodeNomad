@@ -1,12 +1,6 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { FolderOpen, Trash2, Check, AlertCircle, Loader2, Plus } from "lucide-solid"
-import {
-  opencodeBinaries,
-  addOpenCodeBinary,
-  removeOpenCodeBinary,
-  preferences,
-  updatePreferences,
-} from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 
 interface BinaryOption {
   path: string
@@ -23,6 +17,13 @@ interface OpenCodeBinarySelectorProps {
 }
 
 const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) => {
+  const {
+    opencodeBinaries,
+    addOpenCodeBinary,
+    removeOpenCodeBinary,
+    preferences,
+    updatePreferences,
+  } = useConfig()
   const [customPath, setCustomPath] = createSignal("")
   const [validating, setValidating] = createSignal(false)
   const [validationError, setValidationError] = createSignal<string | null>(null)
