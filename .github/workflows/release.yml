@@ -89,7 +89,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
-          gh release upload "$TAG" release/* --clobber
+          set -euo pipefail
+          shopt -s nullglob
+          for file in release/*.dmg release/*.zip; do
+            [ -e "$file" ] || continue
+            gh release upload "$TAG" "$file" --clobber
+          done
 
   build-windows:
     needs: prepare-release
@@ -118,8 +123,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
-          Get-ChildItem -Path "release" -File -Recurse | ForEach-Object {
-            gh release upload $env:TAG $_.FullName --clobber
+          $patterns = @("*.exe", "*.zip")
+          foreach ($pattern in $patterns) {
+            Get-ChildItem -Path "release" -Filter $pattern -File | ForEach-Object {
+              gh release upload $env:TAG $_.FullName --clobber
+            }
           }
 
   build-linux:
@@ -148,4 +156,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
-          gh release upload "$TAG" release/* --clobber
+          set -euo pipefail
+          shopt -s nullglob
+          for file in release/*.AppImage release/*.deb release/*.tar.gz; do
+            [ -e "$file" ] || continue
+            gh release upload "$TAG" "$file" --clobber
+          done
