@@ -1,0 +1,623 @@
+import type { Session } from "../types/session"
+import type { Message } from "../types/message"
+
+import { instances } from "./instances"
+import { preferences, setAgentModelPreference } from "./preferences"
+import { setSessionCompactionState } from "./session-compaction"
+import {
+  activeSessionId,
+  agents,
+  clearSessionDraftPrompt,
+  messagesLoaded,
+  providers,
+  pruneDraftPrompts,
+  setActiveSessionId,
+  setAgents,
+  setMessagesLoaded,
+  setProviders,
+  setSessionInfoByInstance,
+  setSessions,
+  sessions,
+  loading,
+  setLoading,
+} from "./session-state"
+import { getDefaultModel, isModelValid } from "./session-models"
+import {
+  computeDisplayParts,
+  clearSessionIndex,
+  getSessionIndex,
+  initializePartVersion,
+  normalizeMessagePart,
+  rebuildSessionIndex,
+  updateSessionInfo,
+} from "./session-messages"
+
+interface SessionForkResponse {
+  id: string
+  title?: string
+  parentID?: string | null
+  agent?: string
+  model?: {
+    providerID?: string
+    modelID?: string
+  }
+  time?: {
+    created?: number
+    updated?: number
+  }
+  revert?: {
+    messageID?: string
+    partID?: string
+    snapshot?: string
+    diff?: string
+  }
+}
+
+async function fetchSessions(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.fetchingSessions.set(instanceId, true)
+    return next
+  })
+
+  try {
+    console.log(`[HTTP] GET /session.list for instance ${instanceId}`)
+    const response = await instance.client.session.list()
+
+    const sessionMap = new Map<string, Session>()
+
+    if (!response.data || !Array.isArray(response.data)) {
+      return
+    }
+
+    const existingSessions = sessions().get(instanceId)
+
+    for (const apiSession of response.data) {
+      const existingSession = existingSessions?.get(apiSession.id)
+
+      sessionMap.set(apiSession.id, {
+        id: apiSession.id,
+        instanceId,
+        title: apiSession.title || "Untitled",
+        parentId: apiSession.parentID || null,
+        agent: existingSession?.agent ?? "",
+        model: existingSession?.model ?? { providerId: "", modelId: "" },
+        version: apiSession.version,
+        time: {
+          ...apiSession.time,
+        },
+        revert: apiSession.revert
+          ? {
+              messageID: apiSession.revert.messageID,
+              partID: apiSession.revert.partID,
+              snapshot: apiSession.revert.snapshot,
+              diff: apiSession.revert.diff,
+            }
+          : undefined,
+        messages: existingSession?.messages ?? [],
+        messagesInfo: existingSession?.messagesInfo ?? new Map(),
+      })
+    }
+
+    const validSessionIds = new Set(sessionMap.keys())
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, sessionMap)
+      return next
+    })
+
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId)
+      if (loadedSet) {
+        const filtered = new Set<string>()
+        for (const id of loadedSet) {
+          if (validSessionIds.has(id)) {
+            filtered.add(id)
+          }
+        }
+        next.set(instanceId, filtered)
+      }
+      return next
+    })
+
+    for (const session of sessionMap.values()) {
+      const flag = (session.time as (Session["time"] & { compacting?: number | boolean }) | undefined)?.compacting
+      const active = typeof flag === "number" ? flag > 0 : Boolean(flag)
+      setSessionCompactionState(instanceId, session.id, active)
+    }
+
+    pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
+  } catch (error) {
+    console.error("Failed to fetch sessions:", error)
+    throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      next.fetchingSessions.set(instanceId, false)
+      return next
+    })
+  }
+}
+
+async function createSession(instanceId: string, agent?: string): Promise<Session> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const instanceAgents = agents().get(instanceId) || []
+  const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
+  const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
+
+  const defaultModel = await getDefaultModel(instanceId, selectedAgent)
+
+  if (selectedAgent && isModelValid(instanceId, defaultModel)) {
+    setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+  }
+
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.creatingSession.set(instanceId, true)
+    return next
+  })
+
+  try {
+    console.log(`[HTTP] POST /session.create for instance ${instanceId}`)
+    const response = await instance.client.session.create()
+
+    if (!response.data) {
+      throw new Error("Failed to create session: No data returned")
+    }
+
+    const session: Session = {
+      id: response.data.id,
+      instanceId,
+      title: response.data.title || "New Session",
+      parentId: null,
+      agent: selectedAgent,
+      model: defaultModel,
+      version: response.data.version,
+      time: {
+        ...response.data.time,
+      },
+      revert: response.data.revert
+        ? {
+            messageID: response.data.revert.messageID,
+            partID: response.data.revert.partID,
+            snapshot: response.data.revert.snapshot,
+            diff: response.data.revert.diff,
+          }
+        : undefined,
+      messages: [],
+      messagesInfo: new Map(),
+    }
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = next.get(instanceId) || new Map()
+      instanceSessions.set(session.id, session)
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    const instanceProviders = providers().get(instanceId) || []
+    const initialProvider = instanceProviders.find((p) => p.id === session.model.providerId)
+    const initialModel = initialProvider?.models.find((m) => m.id === session.model.modelId)
+    const initialContextWindow = initialModel?.limit?.context ?? 0
+    const initialSubscriptionModel = initialModel?.cost?.input === 0 && initialModel?.cost?.output === 0
+    const initialContextPercent = initialContextWindow > 0 ? 0 : null
+
+    setSessionInfoByInstance((prev) => {
+      const next = new Map(prev)
+      const instanceInfo = new Map(prev.get(instanceId))
+      instanceInfo.set(session.id, {
+        tokens: 0,
+        cost: 0,
+        contextWindow: initialContextWindow,
+        isSubscriptionModel: Boolean(initialSubscriptionModel),
+        contextUsageTokens: 0,
+        contextUsagePercent: initialContextPercent,
+      })
+      next.set(instanceId, instanceInfo)
+      return next
+    })
+
+    getSessionIndex(instanceId, session.id)
+
+    return session
+  } catch (error) {
+    console.error("Failed to create session:", error)
+    throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      next.creatingSession.set(instanceId, false)
+      return next
+    })
+  }
+}
+
+async function forkSession(
+  instanceId: string,
+  sourceSessionId: string,
+  options?: { messageId?: string },
+): Promise<Session> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const request: {
+    path: { id: string }
+    body?: { messageID: string }
+  } = {
+    path: { id: sourceSessionId },
+  }
+
+  if (options?.messageId) {
+    request.body = { messageID: options.messageId }
+  }
+
+  console.log(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
+  const response = await instance.client.session.fork(request)
+
+  if (!response.data) {
+    throw new Error("Failed to fork session: No data returned")
+  }
+
+  const info = response.data as SessionForkResponse
+  const forkedSession = {
+    id: info.id,
+    instanceId,
+    title: info.title || "Forked Session",
+    parentId: info.parentID || null,
+    agent: info.agent || "",
+    model: {
+      providerId: info.model?.providerID || "",
+      modelId: info.model?.modelID || "",
+    },
+    version: "0",
+    time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
+    revert: info.revert
+      ? {
+          messageID: info.revert.messageID,
+          partID: info.revert.partID,
+          snapshot: info.revert.snapshot,
+          diff: info.revert.diff,
+        }
+      : undefined,
+    messages: [],
+    messagesInfo: new Map(),
+  } as unknown as Session
+
+  setSessions((prev) => {
+    const next = new Map(prev)
+    const instanceSessions = next.get(instanceId) || new Map()
+    instanceSessions.set(forkedSession.id, forkedSession)
+    next.set(instanceId, instanceSessions)
+    return next
+  })
+
+  const instanceProviders = providers().get(instanceId) || []
+  const forkProvider = instanceProviders.find((p) => p.id === forkedSession.model.providerId)
+  const forkModel = forkProvider?.models.find((m) => m.id === forkedSession.model.modelId)
+  const forkContextWindow = forkModel?.limit?.context ?? 0
+  const forkSubscriptionModel = forkModel?.cost?.input === 0 && forkModel?.cost?.output === 0
+  const forkContextPercent = forkContextWindow > 0 ? 0 : null
+
+  setSessionInfoByInstance((prev) => {
+    const next = new Map(prev)
+    const instanceInfo = new Map(prev.get(instanceId))
+    instanceInfo.set(forkedSession.id, {
+      tokens: 0,
+      cost: 0,
+      contextWindow: forkContextWindow,
+      isSubscriptionModel: Boolean(forkSubscriptionModel),
+      contextUsageTokens: 0,
+      contextUsagePercent: forkContextPercent,
+    })
+    next.set(instanceId, instanceInfo)
+    return next
+  })
+
+  getSessionIndex(instanceId, forkedSession.id)
+
+  return forkedSession
+}
+
+async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  setLoading((prev) => {
+    const next = { ...prev }
+    const deleting = next.deletingSession.get(instanceId) || new Set()
+    deleting.add(sessionId)
+    next.deletingSession.set(instanceId, deleting)
+    return next
+  })
+
+  try {
+    console.log(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
+    await instance.client.session.delete({ path: { id: sessionId } })
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = next.get(instanceId)
+      if (instanceSessions) {
+        instanceSessions.delete(sessionId)
+      }
+      return next
+    })
+
+    setSessionCompactionState(instanceId, sessionId, false)
+    clearSessionDraftPrompt(instanceId, sessionId)
+
+    setSessionInfoByInstance((prev) => {
+      const next = new Map(prev)
+      const instanceInfo = next.get(instanceId)
+      if (instanceInfo) {
+        const updatedInstanceInfo = new Map(instanceInfo)
+        updatedInstanceInfo.delete(sessionId)
+        if (updatedInstanceInfo.size === 0) {
+          next.delete(instanceId)
+        } else {
+          next.set(instanceId, updatedInstanceInfo)
+        }
+      }
+      return next
+    })
+
+    clearSessionIndex(instanceId, sessionId)
+
+    if (activeSessionId().get(instanceId) === sessionId) {
+      setActiveSessionId((prev) => {
+        const next = new Map(prev)
+        next.delete(instanceId)
+        return next
+      })
+    }
+  } catch (error) {
+    console.error("Failed to delete session:", error)
+    throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      const deleting = next.deletingSession.get(instanceId)
+      if (deleting) {
+        deleting.delete(sessionId)
+      }
+      return next
+    })
+  }
+}
+
+async function fetchAgents(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  try {
+    console.log(`[HTTP] GET /app.agents for instance ${instanceId}`)
+    const response = await instance.client.app.agents()
+    const agentList = (response.data ?? []).map((agent) => ({
+      name: agent.name,
+      description: agent.description || "",
+      mode: agent.mode,
+      model: agent.model?.modelID
+        ? {
+            providerId: agent.model.providerID || "",
+            modelId: agent.model.modelID,
+          }
+        : undefined,
+    }))
+
+    setAgents((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, agentList)
+      return next
+    })
+  } catch (error) {
+    console.error("Failed to fetch agents:", error)
+  }
+}
+
+async function fetchProviders(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  try {
+    console.log(`[HTTP] GET /config.providers for instance ${instanceId}`)
+    const response = await instance.client.config.providers()
+    if (!response.data) return
+
+    const providerList = response.data.providers.map((provider) => ({
+      id: provider.id,
+      name: provider.name,
+      defaultModelId: response.data?.default?.[provider.id],
+      models: Object.entries(provider.models).map(([id, model]) => ({
+        id,
+        name: model.name,
+        providerId: provider.id,
+        limit: model.limit,
+        cost: model.cost,
+      })),
+    }))
+
+    setProviders((prev) => {
+      const next = new Map(prev)
+      next.set(instanceId, providerList)
+      return next
+    })
+  } catch (error) {
+    console.error("Failed to fetch providers:", error)
+  }
+}
+
+async function loadMessages(instanceId: string, sessionId: string, force = false): Promise<void> {
+  if (force) {
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId)
+      if (loadedSet) {
+        loadedSet.delete(sessionId)
+      }
+      return next
+    })
+  }
+
+  const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
+  if (alreadyLoaded && !force) {
+    return
+  }
+
+  const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
+  if (isLoading) {
+    return
+  }
+
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  setLoading((prev) => {
+    const next = { ...prev }
+    const loadingSet = next.loadingMessages.get(instanceId) || new Set()
+    loadingSet.add(sessionId)
+    next.loadingMessages.set(instanceId, loadingSet)
+    return next
+  })
+
+  try {
+    console.log(`[HTTP] GET /session.messages for instance ${instanceId}`, { sessionId })
+    const response = await instance.client.session.messages({ path: { id: sessionId } })
+
+    if (!response.data || !Array.isArray(response.data)) {
+      return
+    }
+
+    const messagesInfo = new Map<string, any>()
+    const messages: Message[] = response.data.map((apiMessage: any) => {
+      const info = apiMessage.info || apiMessage
+      const role = info.role || "assistant"
+      const messageId = info.id || String(Date.now())
+
+      messagesInfo.set(messageId, info)
+
+      const parts: any[] = (apiMessage.parts || []).map((part: any) => normalizeMessagePart(part))
+
+      const message: Message = {
+        id: messageId,
+        sessionId,
+        type: role === "user" ? "user" : "assistant",
+        parts,
+        timestamp: info.time?.created || Date.now(),
+        status: "complete" as const,
+        version: 0,
+      }
+
+      parts.forEach((part: any) => initializePartVersion(part))
+
+      message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+
+      return message
+    })
+
+    let agentName = ""
+    let providerID = ""
+    let modelID = ""
+
+    for (let i = response.data.length - 1; i >= 0; i--) {
+      const apiMessage = response.data[i]
+      const info = apiMessage.info || apiMessage
+
+      if (info.role === "assistant") {
+        agentName = (info as any).mode || (info as any).agent || ""
+        providerID = (info as any).providerID || ""
+        modelID = (info as any).modelID || ""
+        if (agentName && providerID && modelID) break
+      }
+    }
+
+    if (!agentName && !providerID && !modelID) {
+      const defaultModel = await getDefaultModel(instanceId, session.agent)
+      agentName = session.agent
+      providerID = defaultModel.providerId
+      modelID = defaultModel.modelId
+    }
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const nextInstanceSessions = next.get(instanceId)
+      if (nextInstanceSessions) {
+        const existingSession = nextInstanceSessions.get(sessionId)
+        if (existingSession) {
+          const updatedSession = {
+            ...existingSession,
+            messages,
+            messagesInfo,
+            agent: agentName || existingSession.agent,
+            model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+          }
+          const updatedInstanceSessions = new Map(nextInstanceSessions)
+          updatedInstanceSessions.set(sessionId, updatedSession)
+          next.set(instanceId, updatedInstanceSessions)
+        }
+      }
+      return next
+    })
+
+    rebuildSessionIndex(instanceId, sessionId, messages)
+
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId) || new Set()
+      loadedSet.add(sessionId)
+      next.set(instanceId, loadedSet)
+      return next
+    })
+  } catch (error) {
+    console.error("Failed to load messages:", error)
+    throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      const loadingSet = next.loadingMessages.get(instanceId)
+      if (loadingSet) {
+        loadingSet.delete(sessionId)
+      }
+      return next
+    })
+  }
+
+  updateSessionInfo(instanceId, sessionId)
+}
+
+export {
+  createSession,
+  deleteSession,
+  fetchAgents,
+  fetchProviders,
+  fetchSessions,
+  forkSession,
+  loadMessages,
+}
