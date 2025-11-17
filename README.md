@@ -42,3 +42,12 @@ Grab the latest build for macOS, Windows, and Linux from the [GitHub Releases pa
 3. Connect to one or more OpenCode instances, set keyboard shortcuts in preferences, and start a session.
 4. Use tabs to swap between instances, the task sidebar to dive into child sessions, and the prompt input to keep shipping.
 
+## CLI Server Flags
+
+The bundled CLI server (`@codenomad/cli`) controls which folders the UI can browse when you pick a workspace:
+
+- `--workspace-root <path>` (default: current working directory) scopes browsing to a safe subtree. The UI can only see folders beneath this root.
+- `--unrestricted-root` explicitly allows full-machine browsing for the current process. In this mode the UI starts from the host home directory, adds a "parent" option so you can reach `/` on macOS/Linux, and lists drives/UNC paths on Windows. The flag is runtime-only—restart the CLI without it to go back to restricted mode.
+
+Use unrestricted mode only when you trust the host; the CLI will skip directories it cannot read and never persists the opt-in.
+

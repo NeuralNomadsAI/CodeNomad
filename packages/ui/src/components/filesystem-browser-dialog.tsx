@@ -5,7 +5,6 @@ import { cliApi } from "../lib/api-client"
 import { getServerMeta } from "../lib/server-meta"
 
 const MAX_RESULTS = 200
-const DEFAULT_DEPTH = 2
 
 type CacheListener = (entries: FileSystemEntry[]) => void
 
@@ -124,8 +123,8 @@ async function loadDirectory(path: string): Promise<void> {
   }
 
   const promise = cliApi
-    .listFileSystem(normalized === "." ? "." : normalized, { depth: DEFAULT_DEPTH })
-    .then((entries) => {
+    .listFileSystem(normalized === "." ? "." : normalized)
+    .then(({ entries }) => {
       const changed = updateCache(entries)
       fileSystemCache.loadedDirectories.add(normalized)
       for (const entry of entries) {

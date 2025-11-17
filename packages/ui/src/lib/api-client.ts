@@ -6,6 +6,7 @@ import type {
   BinaryUpdateRequest,
   BinaryValidationResult,
   FileSystemEntry,
+  FileSystemListResponse,
   InstanceData,
   ServerMeta,
  
@@ -130,15 +131,16 @@ export const cliApi = {
       body: JSON.stringify({ path }),
     })
   },
-  listFileSystem(relativePath = ".", options?: { depth?: number; includeFiles?: boolean }): Promise<FileSystemEntry[]> {
-    const params = new URLSearchParams({ path: relativePath })
-    if (options?.depth) {
-      params.set("depth", String(options.depth))
+  listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {
+    const params = new URLSearchParams()
+    if (path && path !== ".") {
+      params.set("path", path)
     }
     if (options?.includeFiles !== undefined) {
       params.set("includeFiles", String(options.includeFiles))
     }
-    return request<FileSystemEntry[]>(`/api/filesystem?${params.toString()}`)
+    const query = params.toString()
+    return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
   },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)

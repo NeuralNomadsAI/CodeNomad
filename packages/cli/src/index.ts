@@ -19,6 +19,7 @@ interface CliOptions {
   host: string
   rootDir: string
   configPath: string
+  unrestrictedRoot: boolean
   logLevel?: string
   logDestination?: string
 }
@@ -34,7 +35,11 @@ function parseCliOptions(argv: string[]): CliOptions {
     .version(packageJson.version, "-v, --version", "Show the CLI version")
     .addOption(new Option("--host <host>", "Host interface to bind").env("CLI_HOST").default(DEFAULT_HOST))
     .addOption(new Option("--port <number>", "Port for the HTTP server").env("CLI_PORT").default(DEFAULT_PORT).argParser(parsePort))
-    .addOption(new Option("--root <path>", "Workspace root directory").default(process.cwd()))
+    .addOption(
+      new Option("--workspace-root <path>", "Workspace root directory").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
+    )
+    .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))
+    .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem").env("CLI_UNRESTRICTED_ROOT").default(false))
     .addOption(new Option("--config <path>", "Path to the config file").env("CLI_CONFIG").default(DEFAULT_CONFIG_PATH))
     .addOption(new Option("--log-level <level>", "Log level (trace|debug|info|warn|error)").env("CLI_LOG_LEVEL"))
     .addOption(new Option("--log-destination <path>", "Log destination file (defaults to stdout)").env("CLI_LOG_DESTINATION"))
@@ -43,17 +48,22 @@ function parseCliOptions(argv: string[]): CliOptions {
   const parsed = program.opts<{
     host: string
     port: number
-    root: string
+    workspaceRoot?: string
+    root?: string
+    unrestrictedRoot?: boolean
     config: string
     logLevel?: string
     logDestination?: string
   }>()
 
+  const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
+
   return {
     port: parsed.port,
     host: parsed.host,
-    rootDir: parsed.root,
+    rootDir: resolvedRoot,
     configPath: parsed.config,
+    unrestrictedRoot: Boolean(parsed.unrestrictedRoot),
     logLevel: parsed.logLevel,
     logDestination: parsed.logDestination,
   }
@@ -86,7 +96,7 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
   })
-  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir })
+  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
   const instanceStore = new InstanceStore()
 
   const serverMeta: ServerMeta = {

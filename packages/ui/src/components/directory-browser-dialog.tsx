@@ -1,12 +1,36 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
 import { ArrowUpLeft, Folder as FolderIcon, Loader2, X } from "lucide-solid"
-import type { FileSystemEntry } from "../../../cli/src/api-types"
+import type { FileSystemEntry, FileSystemListingMetadata } from "../../../cli/src/api-types"
+import { WINDOWS_DRIVES_ROOT } from "../../../cli/src/api-types"
 import { cliApi } from "../lib/api-client"
-import { getServerMeta } from "../lib/server-meta"
 
-const ROOT_KEY = "."
-const ROOT_REQUEST_PATH = "/"
-const DEFAULT_DEPTH = 2
+function normalizePathKey(input?: string | null) {
+  if (!input || input === "." || input === "./") {
+    return "."
+  }
+  if (input === WINDOWS_DRIVES_ROOT) {
+    return WINDOWS_DRIVES_ROOT
+  }
+  let normalized = input.replace(/\\/g, "/")
+  if (/^[a-zA-Z]:/.test(normalized)) {
+    const [drive, rest = ""] = normalized.split(":")
+    const suffix = rest.startsWith("/") ? rest : rest ? `/${rest}` : "/"
+    return `${drive.toUpperCase()}:${suffix.replace(/\/+/g, "/")}`
+  }
+  if (normalized.startsWith("//")) {
+    return `//${normalized.slice(2).replace(/\/+/g, "/")}`
+  }
+  if (normalized.startsWith("/")) {
+    return `/${normalized.slice(1).replace(/\/+/g, "/")}`
+  }
+  normalized = normalized.replace(/^\.\/+/, "").replace(/\/+/g, "/")
+  return normalized === "" ? "." : normalized
+}
+
+
+function isAbsolutePathLike(input: string) {
+  return input.startsWith("/") || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")
+}
 
 interface DirectoryBrowserDialogProps {
   open: boolean
@@ -16,36 +40,15 @@ interface DirectoryBrowserDialogProps {
   onClose: () => void
 }
 
-function normalizeRelativePath(input?: string) {
-  if (!input || input === "." || input === "./" || input === "/") {
-    return "."
-  }
-  let normalized = input.replace(/\\+/g, "/")
-  if (normalized.startsWith("./")) {
-    normalized = normalized.replace(/^\.\/+/, "")
-  }
-  if (normalized.startsWith("/")) {
-    normalized = normalized.replace(/^\/+/g, "")
-  }
-  return normalized === "" ? "." : normalized
-}
-
-function getParentPath(relativePath: string) {
-  const normalized = normalizeRelativePath(relativePath)
-  if (normalized === ".") {
-    return "."
-  }
-  const segments = normalized.split("/")
-  segments.pop()
-  return segments.length === 0 ? "." : segments.join("/")
-}
-
 function resolveAbsolutePath(root: string, relativePath: string) {
   if (!root) {
     return relativePath
   }
-  if (!relativePath || relativePath === "." || relativePath === "./" || relativePath === "/") {
+  if (!relativePath || relativePath === "." || relativePath === "./") {
     return root
+  }
+  if (isAbsolutePathLike(relativePath)) {
+    return relativePath
   }
   const separator = root.includes("\\") ? "\\" : "/"
   const trimmedRoot = root.endsWith(separator) ? root : `${root}${separator}`
@@ -63,14 +66,19 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [error, setError] = createSignal<string | null>(null)
   const [directoryChildren, setDirectoryChildren] = createSignal<Map<string, FileSystemEntry[]>>(new Map())
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
-  const [loadedPaths, setLoadedPaths] = createSignal<Set<string>>(new Set())
-  const [currentPath, setCurrentPath] = createSignal(ROOT_KEY)
+  const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
+  const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
+
+  const metadataCache = new Map<string, FileSystemListingMetadata>()
+  const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
 
   function resetState() {
     setDirectoryChildren(new Map<string, FileSystemEntry[]>())
     setLoadingPaths(new Set<string>())
-    setLoadedPaths(new Set<string>())
-    setCurrentPath(ROOT_KEY)
+    setCurrentPathKey(null)
+    setCurrentMetadata(null)
+    metadataCache.clear()
+    inFlightRequests.clear()
     setError(null)
   }
 
@@ -97,9 +105,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   async function initialize() {
     setLoading(true)
     try {
-      const meta = await getServerMeta()
-      setRootPath(meta.workspaceRoot)
-      await ensureDirectoryLoaded(ROOT_KEY)
+      const metadata = await loadDirectory()
+      applyMetadata(metadata)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to load filesystem"
       setError(message)
@@ -108,86 +115,105 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     }
   }
 
-  async function ensureDirectoryLoaded(path: string) {
-    const normalized = normalizeRelativePath(path)
-    if (loadedPaths().has(normalized)) {
-      return
-    }
-    await loadDirectory(normalized)
+  function applyMetadata(metadata: FileSystemListingMetadata) {
+    const key = normalizePathKey(metadata.currentPath)
+    setCurrentPathKey(key)
+    setCurrentMetadata(metadata)
+    setRootPath(metadata.rootPath)
   }
 
-  async function loadDirectory(path: string) {
-    const normalized = normalizeRelativePath(path)
-    if (loadingPaths().has(normalized)) {
-      return
+  async function loadDirectory(targetPath?: string): Promise<FileSystemListingMetadata> {
+    const key = targetPath ? normalizePathKey(targetPath) : undefined
+    if (key) {
+      const cached = metadataCache.get(key)
+      if (cached) {
+        return cached
+      }
+      const pending = inFlightRequests.get(key)
+      if (pending) {
+        return pending
+      }
     }
 
-    setLoadingPaths((prev) => {
-      const next = new Set(prev)
-      next.add(normalized)
-      return next
-    })
+    const request = (async () => {
+      if (key) {
+        setLoadingPaths((prev) => {
+          const next = new Set(prev)
+          next.add(key)
+          return next
+        })
+      }
 
-    try {
-      const requestPath = normalized === ROOT_KEY ? ROOT_REQUEST_PATH : normalized
-      const entries = await cliApi.listFileSystem(requestPath, { depth: DEFAULT_DEPTH, includeFiles: false })
-      mergeDirectoryEntries(normalized, entries)
-      setLoadedPaths((prev) => {
-        const next = new Set(prev)
-        next.add(normalized)
+      const response = await cliApi.listFileSystem(targetPath, { includeFiles: false })
+      const canonicalKey = normalizePathKey(response.metadata.currentPath)
+      const directories = response.entries
+        .filter((entry) => entry.type === "directory")
+        .sort((a, b) => a.name.localeCompare(b.name))
+
+      setDirectoryChildren((prev) => {
+        const next = new Map(prev)
+        next.set(canonicalKey, directories)
         return next
       })
+
+      metadataCache.set(canonicalKey, response.metadata)
+
+      setLoadingPaths((prev) => {
+        const next = new Set(prev)
+        if (key) {
+          next.delete(key)
+        }
+        next.delete(canonicalKey)
+        return next
+      })
+
+      return response.metadata
+    })()
+      .catch((err) => {
+        if (key) {
+          setLoadingPaths((prev) => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+        }
+        throw err
+      })
+      .finally(() => {
+        if (key) {
+          inFlightRequests.delete(key)
+        }
+      })
+
+    if (key) {
+      inFlightRequests.set(key, request)
+    }
+
+    return request
+  }
+
+  async function navigateTo(path?: string) {
+    setError(null)
+    try {
+      const metadata = await loadDirectory(path)
+      applyMetadata(metadata)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to load filesystem"
       setError(message)
-      throw err
-    } finally {
-      setLoadingPaths((prev) => {
-        const next = new Set(prev)
-        next.delete(normalized)
-        return next
-      })
     }
-  }
-
-  function mergeDirectoryEntries(basePath: string, entries: FileSystemEntry[]) {
-    const grouped = new Map<string, FileSystemEntry[]>([[basePath, []]])
-    for (const entry of entries) {
-      if (entry.type !== "directory") {
-        continue
-      }
-      const normalizedEntryPath = normalizeRelativePath(entry.path)
-      const parentPath = getParentPath(normalizedEntryPath)
-      const siblings = grouped.get(parentPath) ?? []
-      siblings.push({ ...entry, path: normalizedEntryPath })
-      grouped.set(parentPath, siblings)
-    }
-
-    setDirectoryChildren((prev) => {
-      const next = new Map(prev)
-      for (const [parent, children] of grouped.entries()) {
-        const sorted = children.slice().sort((a, b) => a.name.localeCompare(b.name))
-        next.set(parent, sorted)
-      }
-      return next
-    })
-  }
-
-  function handleEntrySelect(relativePath: string) {
-    const absolute = resolveAbsolutePath(rootPath(), relativePath)
-    props.onSelect(absolute)
-  }
-
-  function isPathLoading(path: string) {
-    return loadingPaths().has(normalizeRelativePath(path))
   }
 
   const folderRows = createMemo<FolderRow[]>(() => {
     const rows: FolderRow[] = []
-    if (currentPath() !== ROOT_KEY) {
-      rows.push({ type: "up", path: getParentPath(currentPath()) })
+    const metadata = currentMetadata()
+    if (metadata?.parentPath) {
+      rows.push({ type: "up", path: metadata.parentPath })
     }
-    const children = directoryChildren().get(currentPath()) ?? []
+    const key = currentPathKey()
+    if (!key) {
+      return rows
+    }
+    const children = directoryChildren().get(key) ?? []
     for (const entry of children) {
       rows.push({ type: "folder", entry })
     }
@@ -195,16 +221,44 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   })
 
   function handleNavigateTo(path: string) {
-    const normalized = normalizeRelativePath(path)
-    setCurrentPath(normalized)
-    void ensureDirectoryLoaded(normalized)
+    void navigateTo(path)
   }
 
   function handleNavigateUp() {
-    handleNavigateTo(getParentPath(currentPath()))
+    const parent = currentMetadata()?.parentPath
+    if (parent) {
+      void navigateTo(parent)
+    }
   }
 
-  const currentAbsolutePath = createMemo(() => resolveAbsolutePath(rootPath(), currentPath()))
+  const currentAbsolutePath = createMemo(() => {
+    const metadata = currentMetadata()
+    if (!metadata) {
+      return ""
+    }
+    if (metadata.pathKind === "drives") {
+      return ""
+    }
+    if (metadata.pathKind === "relative") {
+      return resolveAbsolutePath(metadata.rootPath, metadata.currentPath)
+    }
+    return metadata.displayPath
+  })
+
+  const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
+
+  function handleEntrySelect(entry: FileSystemEntry) {
+    const absolutePath = entry.absolutePath
+      ? entry.absolutePath
+      : isAbsolutePathLike(entry.path)
+        ? entry.path
+        : resolveAbsolutePath(rootPath(), entry.path)
+    props.onSelect(absolutePath)
+  }
+
+  function isPathLoading(path: string) {
+    return loadingPaths().has(normalizePathKey(path))
+  }
 
   function handleOverlayClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
@@ -239,7 +293,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                   <button
                     type="button"
                     class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                    onClick={() => handleEntrySelect(currentPath())}
+                    disabled={!canSelectCurrent()}
+                    onClick={() => {
+                      const absolute = currentAbsolutePath()
+                      if (absolute) {
+                        props.onSelect(absolute)
+                      }
+                    }}
                   >
                     Select Current
                   </button>
@@ -290,7 +350,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                   class="selector-button selector-button-secondary directory-browser-select"
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    handleEntrySelect(item.entry.path)
+                                    handleEntrySelect(item.entry)
                                   }}
                                 >
                                   Select

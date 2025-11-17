@@ -60,13 +60,39 @@ export interface FileSystemEntry {
   name: string
   /** Path relative to the CLI server root ("." represents the root itself). */
   path: string
+  /** Absolute path when available (unrestricted listings). */
+  absolutePath?: string
   type: "file" | "directory"
   size?: number
   /** ISO timestamp of last modification when available. */
   modifiedAt?: string
 }
 
-export type FileSystemListResponse = FileSystemEntry[]
+export type FileSystemScope = "restricted" | "unrestricted"
+export type FileSystemPathKind = "relative" | "absolute" | "drives"
+
+export interface FileSystemListingMetadata {
+  scope: FileSystemScope
+  /** Canonical identifier of the current view ("." for restricted roots, absolute paths otherwise). */
+  currentPath: string
+  /** Optional parent path if navigation upward is allowed. */
+  parentPath?: string
+  /** Absolute path representing the root or origin point for this listing. */
+  rootPath: string
+  /** Absolute home directory of the CLI host (useful defaults for unrestricted mode). */
+  homePath: string
+  /** Human-friendly label for the current path. */
+  displayPath: string
+  /** Indicates whether entry paths are relative, absolute, or represent drive roots. */
+  pathKind: FileSystemPathKind
+}
+
+export interface FileSystemListResponse {
+  entries: FileSystemEntry[]
+  metadata: FileSystemListingMetadata
+}
+
+export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
   workspaceId: string
