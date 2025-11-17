@@ -5,12 +5,14 @@ import { BinaryRegistry } from "../config/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { WorkspaceRuntime } from "./runtime"
+import { Logger } from "../logger"
 
 interface WorkspaceManagerOptions {
   rootDir: string
   configStore: ConfigStore
   binaryRegistry: BinaryRegistry
   eventBus: EventBus
+  logger: Logger
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
@@ -20,7 +22,7 @@ export class WorkspaceManager {
   private readonly runtime: WorkspaceRuntime
 
   constructor(private readonly options: WorkspaceManagerOptions) {
-    this.runtime = new WorkspaceRuntime(this.options.eventBus)
+    this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
   }
 
   list(): WorkspaceDescriptor[] {
@@ -53,6 +55,8 @@ export class WorkspaceManager {
     const binary = this.options.binaryRegistry.resolveDefault()
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
 
+    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: binary.path }, "Creating workspace")
+
     const descriptor: WorkspaceRecord = {
       id,
       path: workspacePath,
@@ -84,12 +88,14 @@ export class WorkspaceManager {
       descriptor.status = "ready"
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.started", workspace: descriptor })
+      this.options.logger.info({ workspaceId: id, port }, "Workspace ready")
       return descriptor
     } catch (error) {
       descriptor.status = "error"
       descriptor.error = error instanceof Error ? error.message : String(error)
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
+      this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed to start")
       throw error
     }
   }
@@ -98,9 +104,12 @@ export class WorkspaceManager {
     const workspace = this.workspaces.get(id)
     if (!workspace) return undefined
 
+    this.options.logger.info({ workspaceId: id }, "Stopping workspace")
     const wasRunning = Boolean(workspace.pid)
     if (wasRunning) {
-      await this.runtime.stop(id).catch(() => {})
+      await this.runtime.stop(id).catch((error) => {
+        this.options.logger.warn({ workspaceId: id, err: error }, "Failed to stop workspace process cleanly")
+      })
     }
 
     this.workspaces.delete(id)
@@ -111,12 +120,19 @@ export class WorkspaceManager {
   }
 
   async shutdown() {
-    for (const [id] of this.workspaces) {
-      if (this.workspaces.get(id)?.pid) {
-        await this.runtime.stop(id).catch(() => {})
+    this.options.logger.info("Shutting down all workspaces")
+    for (const [id, workspace] of this.workspaces) {
+      if (workspace.pid) {
+        this.options.logger.info({ workspaceId: id }, "Stopping workspace during shutdown")
+        await this.runtime.stop(id).catch((error) => {
+          this.options.logger.error({ workspaceId: id, err: error }, "Failed to stop workspace during shutdown")
+        })
+      } else {
+        this.options.logger.debug({ workspaceId: id }, "Workspace already stopped")
       }
     }
     this.workspaces.clear()
+    this.options.logger.info("All workspaces cleared")
   }
 
   private requireWorkspace(id: string): WorkspaceRecord {
@@ -130,6 +146,8 @@ export class WorkspaceManager {
   private handleProcessExit(workspaceId: string, info: { code: number | null; requested: boolean }) {
     const workspace = this.workspaces.get(workspaceId)
     if (!workspace) return
+
+    this.options.logger.info({ workspaceId, ...info }, "Workspace process exited")
 
     workspace.pid = undefined
     workspace.port = undefined

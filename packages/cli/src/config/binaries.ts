@@ -7,9 +7,14 @@ import {
 import { ConfigStore } from "./store"
 import { EventBus } from "../events/bus"
 import type { ConfigFileUpdate } from "./schema"
+import { Logger } from "../logger"
 
 export class BinaryRegistry {
-  constructor(private readonly configStore: ConfigStore, private readonly eventBus?: EventBus) {}
+  constructor(
+    private readonly configStore: ConfigStore,
+    private readonly eventBus: EventBus | undefined,
+    private readonly logger: Logger,
+  ) {}
 
   list(): BinaryRecord[] {
     return this.mapRecords()
@@ -18,12 +23,14 @@ export class BinaryRegistry {
   resolveDefault(): BinaryRecord {
     const binaries = this.mapRecords()
     if (binaries.length === 0) {
+      this.logger.warn("No configured binaries found, falling back to opencode")
       return this.buildFallbackRecord("opencode")
     }
     return binaries.find((binary) => binary.isDefault) ?? binaries[0]
   }
 
   create(request: BinaryCreateRequest): BinaryRecord {
+    this.logger.info({ path: request.path }, "Registering OpenCode binary")
     const entry = {
       path: request.path,
       version: undefined,
@@ -49,6 +56,7 @@ export class BinaryRegistry {
   }
 
   update(id: string, updates: BinaryUpdateRequest): BinaryRecord {
+    this.logger.info({ id }, "Updating OpenCode binary")
     const config = this.configStore.get()
     const updatedEntries = config.opencodeBinaries.map((binary) =>
       binary.path === id ? { ...binary, label: updates.label ?? binary.label } : binary,
@@ -69,6 +77,7 @@ export class BinaryRegistry {
   }
 
   remove(id: string) {
+    this.logger.info({ id }, "Removing OpenCode binary")
     const config = this.configStore.get()
     const remaining = config.opencodeBinaries.filter((binary) => binary.path !== id)
     const update: ConfigFileUpdate = { opencodeBinaries: remaining }
@@ -82,6 +91,7 @@ export class BinaryRegistry {
   }
 
   validatePath(path: string): BinaryValidationResult {
+    this.logger.debug({ path }, "Validating OpenCode binary path")
     return this.validateRecord({
       id: path,
       path,
@@ -119,6 +129,7 @@ export class BinaryRegistry {
   }
 
   private emitChange() {
+    this.logger.debug("Emitting binaries changed event")
     this.eventBus?.publish({ type: "config.binariesChanged", binaries: this.mapRecords() })
   }
 

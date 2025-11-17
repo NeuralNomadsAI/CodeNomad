@@ -8,7 +8,7 @@ import type {
   FileSystemEntry,
   InstanceData,
   ServerMeta,
-
+ 
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -21,6 +21,15 @@ const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE
 const DEFAULT_EVENTS_URL = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = API_BASE ? `${API_BASE}${DEFAULT_EVENTS_URL}` : DEFAULT_EVENTS_URL
+const HTTP_PREFIX = "[HTTP]"
+
+function logHttp(message: string, context?: Record<string, unknown>) {
+  if (context) {
+    console.log(`${HTTP_PREFIX} ${message}`, context)
+    return
+  }
+  console.log(`${HTTP_PREFIX} ${message}`)
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
@@ -29,16 +38,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...(init?.headers ?? {}),
   }
 
-  const response = await fetch(url, { ...init, headers })
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `Request failed with ${response.status}`)
+  const method = (init?.method ?? "GET").toUpperCase()
+  const startedAt = Date.now()
+  logHttp(`${method} ${path}`)
+
+  try {
+    const response = await fetch(url, { ...init, headers })
+    if (!response.ok) {
+      const message = await response.text()
+      logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
+      throw new Error(message || `Request failed with ${response.status}`)
+    }
+    const duration = Date.now() - startedAt
+    logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
+    if (response.status === 204) {
+      return undefined as T
+    }
+    return (await response.json()) as T
+  } catch (error) {
+    logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
+    throw error
   }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
 }
+
 
 export const cliApi = {
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
@@ -124,16 +146,18 @@ export const cliApi = {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
+    console.log(`[SSE] Connecting to ${EVENTS_URL}`)
     const source = new EventSource(EVENTS_URL)
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEventPayload
         onEvent(payload)
       } catch (error) {
-        console.error("Failed to parse SSE event", error)
+        console.error("[SSE] Failed to parse event", error)
       }
     }
     source.onerror = () => {
+      console.warn("[SSE] EventSource error, closing stream")
       onError?.()
     }
     return source

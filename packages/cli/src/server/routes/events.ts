@@ -4,6 +4,7 @@ import { WorkspaceEventPayload } from "../../api-types"
 
 interface RouteDeps {
   eventBus: EventBus
+  registerClient: (cleanup: () => void) => () => void
 }
 
 export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -26,12 +27,23 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.raw.write(`:hb ${Date.now()}\n\n`)
     }, 15000)
 
+    let closed = false
     const close = () => {
+      if (closed) return
+      closed = true
       clearInterval(heartbeat)
       unsubscribe()
+      reply.raw.end?.()
     }
 
-    request.raw.on("close", close)
-    request.raw.on("error", close)
+    const unregister = deps.registerClient(close)
+
+    const handleClose = () => {
+      close()
+      unregister()
+    }
+
+    request.raw.on("close", handleClose)
+    request.raw.on("error", handleClose)
   })
 }

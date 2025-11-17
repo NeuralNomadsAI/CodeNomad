@@ -1,6 +1,7 @@
 import fs from "fs"
 import path from "path"
 import { EventBus } from "../events/bus"
+import { Logger } from "../logger"
 import {
   AgentModelSelections,
   ConfigFile,
@@ -14,7 +15,11 @@ export class ConfigStore {
   private cache: ConfigFile = DEFAULT_CONFIG
   private loaded = false
 
-  constructor(private readonly configPath: string, private readonly eventBus?: EventBus) {}
+  constructor(
+    private readonly configPath: string,
+    private readonly eventBus: EventBus | undefined,
+    private readonly logger: Logger,
+  ) {}
 
   load(): ConfigFile {
     if (this.loaded) {
@@ -27,11 +32,13 @@ export class ConfigStore {
         const content = fs.readFileSync(resolved, "utf-8")
         const parsed = JSON.parse(content)
         this.cache = ConfigFileSchema.parse(parsed)
+        this.logger.debug({ resolved }, "Loaded existing config file")
       } else {
         this.cache = DEFAULT_CONFIG
+        this.logger.info({ resolved }, "No config file found, using defaults")
       }
     } catch (error) {
-      console.warn("Failed to load config", error)
+      this.logger.warn({ err: error }, "Failed to load config, using defaults")
       this.cache = DEFAULT_CONFIG
     }
 
@@ -52,6 +59,7 @@ export class ConfigStore {
     this.cache = ConfigFileSchema.parse(merged)
     this.persist()
     this.eventBus?.publish({ type: "config.appChanged", config: this.cache })
+    this.logger.info("Config updated")
   }
 
   private mergeConfig(current: ConfigFile, partial: ConfigFile | ConfigFileUpdate): ConfigFile {
@@ -97,8 +105,9 @@ export class ConfigStore {
       const resolved = this.resolvePath(this.configPath)
       fs.mkdirSync(path.dirname(resolved), { recursive: true })
       fs.writeFileSync(resolved, JSON.stringify(this.cache, null, 2), "utf-8")
+      this.logger.debug({ resolved }, "Persisted config file")
     } catch (error) {
-      console.warn("Failed to persist config", error)
+      this.logger.warn({ err: error }, "Failed to persist config")
     }
   }
 

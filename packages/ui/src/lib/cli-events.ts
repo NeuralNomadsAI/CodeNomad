@@ -3,6 +3,15 @@ import { cliApi } from "./api-client"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
+const SSE_PREFIX = "[SSE]"
+
+function logSse(message: string, context?: Record<string, unknown>) {
+  if (context) {
+    console.log(`${SSE_PREFIX} ${message}`, context)
+    return
+  }
+  console.log(`${SSE_PREFIX} ${message}`)
+}
 
 class CliEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
@@ -17,8 +26,10 @@ class CliEvents {
     if (this.source) {
       this.source.close()
     }
+    logSse("Connecting to backend events stream")
     this.source = cliApi.connectEvents((event) => this.dispatch(event), () => this.scheduleReconnect())
     this.source.onopen = () => {
+      logSse("Events stream connected")
       this.retryDelay = RETRY_BASE_DELAY
     }
   }
@@ -28,6 +39,7 @@ class CliEvents {
       this.source.close()
       this.source = null
     }
+    logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     setTimeout(() => {
       this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_DELAY)
       this.connect()
@@ -35,6 +47,7 @@ class CliEvents {
   }
 
   private dispatch(event: WorkspaceEventPayload) {
+    logSse(`event ${event.type}`)
     this.handlers.get("*")?.forEach((handler) => handler(event))
     this.handlers.get(event.type)?.forEach((handler) => handler(event))
   }

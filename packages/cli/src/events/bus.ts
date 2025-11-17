@@ -1,8 +1,14 @@
 import { EventEmitter } from "events"
 import { WorkspaceEventPayload } from "../api-types"
+import { Logger } from "../logger"
 
 export class EventBus extends EventEmitter {
+  constructor(private readonly logger?: Logger) {
+    super()
+  }
+
   publish(event: WorkspaceEventPayload): boolean {
+    this.logger?.debug({ event }, "Publishing workspace event")
     return super.emit(event.type, event)
   }
 

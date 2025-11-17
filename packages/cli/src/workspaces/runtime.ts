@@ -3,6 +3,7 @@ import { existsSync, statSync } from "fs"
 import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
+import { Logger } from "../logger"
 
 interface LaunchOptions {
   workspaceId: string
@@ -27,7 +28,7 @@ interface ManagedProcess {
 export class WorkspaceRuntime {
   private processes = new Map<string, ManagedProcess>()
 
-  constructor(private readonly eventBus: EventBus) {}
+  constructor(private readonly eventBus: EventBus, private readonly logger: Logger) {}
 
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number }> {
     this.validateFolder(options.folder)
@@ -36,6 +37,7 @@ export class WorkspaceRuntime {
     const env = { ...process.env, ...(options.environment ?? {}) }
 
     return new Promise((resolve, reject) => {
+      this.logger.info({ workspaceId: options.workspaceId, folder: options.folder }, "Launching OpenCode process")
       const child = spawn(options.binaryPath, args, {
         cwd: options.folder,
         env,
@@ -49,22 +51,36 @@ export class WorkspaceRuntime {
       let stderrBuffer = ""
       let portFound = false
 
-      const timeout = setTimeout(() => {
-        child.kill("SIGKILL")
-        reject(new Error("Server startup timeout (10s exceeded)"))
-      }, 10000)
+      let warningTimer: NodeJS.Timeout | null = null
 
-      const cleanup = () => {
-        clearTimeout(timeout)
+      const startWarningTimer = () => {
+        warningTimer = setInterval(() => {
+          this.logger.warn({ workspaceId: options.workspaceId }, "Workspace runtime has not reported a port yet")
+        }, 10000)
+      }
+
+      const stopWarningTimer = () => {
+        if (warningTimer) {
+          clearInterval(warningTimer)
+          warningTimer = null
+        }
+      }
+
+      startWarningTimer()
+
+      const cleanupStreams = () => {
+        stopWarningTimer()
         child.stdout?.removeAllListeners()
         child.stderr?.removeAllListeners()
-        child.removeListener("error", handleError)
       }
 
       const handleExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        this.logger.info({ workspaceId: options.workspaceId, code, signal }, "OpenCode process exited")
         this.processes.delete(options.workspaceId)
+        cleanupStreams()
+        child.removeListener("error", handleError)
+        child.removeListener("exit", handleExit)
         if (!portFound) {
-          cleanup()
           const reason = stderrBuffer || `Process exited with code ${code}`
           reject(new Error(reason))
         } else {
@@ -73,9 +89,10 @@ export class WorkspaceRuntime {
       }
 
       const handleError = (error: Error) => {
-        cleanup()
-        this.processes.delete(options.workspaceId)
+        cleanupStreams()
         child.removeListener("exit", handleExit)
+        this.processes.delete(options.workspaceId)
+        this.logger.error({ workspaceId: options.workspaceId, err: error }, "Workspace runtime error")
         reject(error)
       }
 
@@ -96,8 +113,11 @@ export class WorkspaceRuntime {
             const portMatch = line.match(/opencode server listening on http:\/\/.+:(\d+)/i)
             if (portMatch) {
               portFound = true
-              cleanup()
-              resolve({ pid: child.pid!, port: parseInt(portMatch[1], 10) })
+              cleanupStreams()
+              child.removeListener("error", handleError)
+              const port = parseInt(portMatch[1], 10)
+              this.logger.info({ workspaceId: options.workspaceId, port }, "Workspace runtime allocated port")
+              resolve({ pid: child.pid!, port })
             }
           }
         }
@@ -114,16 +134,6 @@ export class WorkspaceRuntime {
           this.emitLog(options.workspaceId, "error", line)
         }
       })
-
-      child.on("exit", (code, signal) => {
-        this.processes.delete(options.workspaceId)
-        if (!portFound) {
-          cleanup()
-          const reason = stderrBuffer || `Process exited with code ${code}`
-          reject(new Error(reason))
-        }
-        options.onExit?.({ workspaceId: options.workspaceId, code, signal, requested: managed.requestedStop })
-      })
     })
   }
 
@@ -133,24 +143,48 @@ export class WorkspaceRuntime {
 
     managed.requestedStop = true
     const child = managed.child
+    this.logger.info({ workspaceId }, "Stopping OpenCode process")
 
     await new Promise<void>((resolve, reject) => {
-      const onExit = () => {
+      const cleanup = () => {
+        child.removeListener("exit", onExit)
         child.removeListener("error", onError)
+      }
+
+      const onExit = () => {
+        cleanup()
         resolve()
       }
       const onError = (error: Error) => {
-        child.removeListener("exit", onExit)
+        cleanup()
         reject(error)
+      }
+
+      const resolveIfAlreadyExited = () => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          this.logger.debug({ workspaceId, exitCode: child.exitCode, signal: child.signalCode }, "Process already exited")
+          cleanup()
+          resolve()
+          return true
+        }
+        return false
       }
 
       child.once("exit", onExit)
       child.once("error", onError)
 
+      if (resolveIfAlreadyExited()) {
+        return
+      }
+
+      this.logger.debug({ workspaceId }, "Sending SIGTERM to workspace process")
       child.kill("SIGTERM")
       setTimeout(() => {
         if (!child.killed) {
+          this.logger.warn({ workspaceId }, "Process did not stop after SIGTERM, force killing")
           child.kill("SIGKILL")
+        } else {
+          this.logger.debug({ workspaceId }, "Workspace process stopped gracefully before SIGKILL timeout")
         }
       }, 2000)
     })

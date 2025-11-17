@@ -12,6 +12,7 @@
   "dependencies": {
     "@fastify/cors": "^8.5.0",
     "fastify": "^4.28.1",
+    "pino": "^9.4.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
