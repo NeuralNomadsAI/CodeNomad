@@ -11,11 +11,12 @@ import type {
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
+  Permission,
 } from "@opencode-ai/sdk"
 
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { preferences } from "./preferences"
-import { instances, addPermissionToQueue, removePermissionFromQueue, refreshPermissionsForSession } from "./instances"
+import { instances, addPermissionToQueue, removePermissionFromQueue, refreshPermissionsForSession, getPermissionQueue } from "./instances"
 import {
   sessions,
   setSessions,
@@ -485,11 +486,119 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionUpdat
   addPermissionToQueue(instanceId, permission)
 }
 
+/**
+ * Updates a tool call to error state when a permission is rejected.
+ * 
+ * NOTE: We need to manually update the tool call state for "reject" responses because:
+ * - For "once"/"always" (approved) permissions, the server executes the tool and sends
+ *   message.part.updated events as the tool transitions through states (pending → running → completed/error)
+ * - For "reject", the server doesn't execute the tool at all, so there's no execution to report
+ * - The server only sends permission.replied event, which doesn't include updated tool state
+ * - Therefore, the client must not only update the UI to reflect the rejected state, but update the
+     tool call in the message history so the agent doesn't get confused.
+ */
+function updateToolCallToErrorState(
+  instanceId: string,
+  sessionID: string,
+  messageID: string,
+  callID: string
+): void {
+  
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) {
+    return
+  }
+
+  const session = instanceSessions.get(sessionID)
+  if (!session) {
+    return
+  }
+
+  const index = getSessionIndex(instanceId, sessionID)
+  const messageIndex = index.messageIndex.get(messageID)
+  if (messageIndex === undefined) {
+    return
+  }
+
+  const message = session.messages[messageIndex]
+  const partMap = index.partIndex.get(message.id)
+  if (!partMap) {
+    return
+  }
+
+  const partIndex = partMap.get(callID)
+  if (partIndex === undefined) {
+    return
+  }
+
+  const part = message.parts[partIndex]
+  if (!part || part.type !== "tool") {
+    return
+  }
+
+  // Check if the part has a state that can be updated
+  const currentState = part.state
+  if (!currentState || currentState.status === "pending") {
+    return
+  }
+
+
+  // Update tool call state to error - preserve existing input and metadata
+  part.state = {
+    status: "error",
+    error: "The user rejected permission to use this specific tool call. You may try again with different parameters.",
+    input: (currentState as any).input || {},
+    metadata: (currentState as any).metadata || {},
+    time: {
+      start: Date.now(),
+      end: Date.now()
+    }
+  }
+
+
+  // Increment version to trigger re-render
+  if (typeof part.version !== "number") {
+    part.version = 0
+  }
+  part.version += 1
+
+  // Increment message version to trigger re-render
+  if (typeof message.version !== "number") {
+    message.version = 0
+  }
+  message.version += 1
+
+  // Update display parts
+  message.displayParts = computeDisplayParts(message, preferences().showThinkingBlocks)
+
+}
+
 function handlePermissionReplied(instanceId: string, event: EventPermissionReplied): void {
-  const { permissionID } = event.properties
+  const { permissionID, response } = event.properties
+  
   if (!permissionID) return
 
   console.log(`[SSE] Permission replied: ${permissionID}`)
+
+  // Find the permission to get sessionID, messageID, and callID
+  const permissionQueue = getPermissionQueue(instanceId)
+  
+  const permission = permissionQueue.find((p: Permission) => p.id === permissionID)
+  
+  if (!permission) {
+    removePermissionFromQueue(instanceId, permissionID)
+    return
+  }
+
+  // Only handle reject responses for now
+  if (response === "reject") {
+    const { sessionID, messageID, callID } = permission
+    
+    if (sessionID && messageID && callID) {
+      updateToolCallToErrorState(instanceId, sessionID, messageID, callID)
+    }
+  }
+  
   removePermissionFromQueue(instanceId, permissionID)
 }
 

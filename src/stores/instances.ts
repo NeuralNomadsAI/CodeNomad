@@ -544,9 +544,6 @@ async function sendPermissionResponse(
       path: { id: sessionId, permissionID: permissionId },
       body: { response }
     })
-
-    // Remove from queue after successful response
-    removePermissionFromQueue(instanceId, permissionId)
   } catch (error) {
     console.error("Failed to send permission response:", error)
     throw error
