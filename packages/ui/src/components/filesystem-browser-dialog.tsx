@@ -1,197 +1,23 @@
-import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup, onMount } from "solid-js"
-import { Folder as FolderIcon, File as FileIcon, Loader2, Search, X } from "lucide-solid"
-import type { FileSystemEntry } from "../../../cli/src/api-types"
+import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
+import { Folder as FolderIcon, File as FileIcon, Loader2, Search, X, ArrowUpLeft } from "lucide-solid"
+import type { FileSystemEntry, FileSystemListingMetadata } from "../../../cli/src/api-types"
 import { cliApi } from "../lib/api-client"
-import { getServerMeta } from "../lib/server-meta"
 
 const MAX_RESULTS = 200
 
-type CacheListener = (entries: FileSystemEntry[]) => void
-
-interface FileSystemCacheState {
-  entriesMap: Map<string, FileSystemEntry>
-  entriesList: FileSystemEntry[]
-  loadedDirectories: Set<string>
-  loadingPromises: Map<string, Promise<void>>
-  pendingDirectories: string[]
-  listeners: Set<CacheListener>
-  queueActive: boolean
-}
-
-const fileSystemCache: FileSystemCacheState = {
-  entriesMap: new Map(),
-  entriesList: [],
-  loadedDirectories: new Set(),
-  loadingPromises: new Map(),
-  pendingDirectories: [],
-  listeners: new Set(),
-  queueActive: false,
-}
-
-let cacheWorkspaceRoot: string | null = null
-
-function normalizeEntryPath(path: string): string {
-  if (!path || path === ".") {
+function normalizeEntryPath(path: string | undefined): string {
+  if (!path || path === "." || path === "./") {
     return "."
   }
-  const cleaned = path.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+/g, "/")
-  return cleaned || "."
-}
-
-function updateCache(entries: FileSystemEntry[]): boolean {
-  let changed = false
-  for (const entry of entries) {
-    const normalizedPath = normalizeEntryPath(entry.path)
-    const normalizedEntry = normalizedPath === entry.path ? entry : { ...entry, path: normalizedPath }
-    const existing = fileSystemCache.entriesMap.get(normalizedPath)
-
-    if (
-      !existing ||
-      existing.name !== normalizedEntry.name ||
-      existing.type !== normalizedEntry.type ||
-      existing.size !== normalizedEntry.size ||
-      existing.modifiedAt !== normalizedEntry.modifiedAt
-    ) {
-      fileSystemCache.entriesMap.set(normalizedPath, normalizedEntry)
-      changed = true
-    }
+  let cleaned = path.replace(/\\/g, "/")
+  if (cleaned.startsWith("./")) {
+    cleaned = cleaned.replace(/^\.\/+/, "")
   }
-
-  if (changed) {
-    fileSystemCache.entriesList = Array.from(fileSystemCache.entriesMap.values()).sort((a, b) =>
-      a.path.localeCompare(b.path),
-    )
+  if (cleaned.startsWith("/")) {
+    cleaned = cleaned.replace(/^\/+/, "")
   }
-
-  return changed
-}
-
-function notifyCacheListeners() {
-  for (const listener of fileSystemCache.listeners) {
-    listener(fileSystemCache.entriesList)
-  }
-}
-
-function subscribeToCache(listener: CacheListener) {
-  fileSystemCache.listeners.add(listener)
-  listener(fileSystemCache.entriesList)
-  return () => fileSystemCache.listeners.delete(listener)
-}
-
-function resetFileSystemCache() {
-  fileSystemCache.entriesMap.clear()
-  fileSystemCache.entriesList = []
-  fileSystemCache.loadedDirectories.clear()
-  fileSystemCache.loadingPromises.clear()
-  fileSystemCache.pendingDirectories = []
-  fileSystemCache.queueActive = false
-  notifyCacheListeners()
-}
-
-function enqueueDirectory(path: string, priority = false) {
-  const normalized = normalizeEntryPath(path)
-  if (normalized === "." || fileSystemCache.loadedDirectories.has(normalized) || fileSystemCache.loadingPromises.has(normalized)) {
-    return
-  }
-
-  const existingIndex = fileSystemCache.pendingDirectories.indexOf(normalized)
-  if (existingIndex !== -1) {
-    if (priority) {
-      fileSystemCache.pendingDirectories.splice(existingIndex, 1)
-      fileSystemCache.pendingDirectories.unshift(normalized)
-    }
-    return
-  }
-
-  if (priority) {
-    fileSystemCache.pendingDirectories.unshift(normalized)
-  } else {
-    fileSystemCache.pendingDirectories.push(normalized)
-  }
-}
-
-async function loadDirectory(path: string): Promise<void> {
-  const normalized = normalizeEntryPath(path)
-  if (fileSystemCache.loadedDirectories.has(normalized)) {
-    return
-  }
-
-  const existing = fileSystemCache.loadingPromises.get(normalized)
-  if (existing) {
-    await existing
-    return
-  }
-
-  const promise = cliApi
-    .listFileSystem(normalized === "." ? "." : normalized)
-    .then(({ entries }) => {
-      const changed = updateCache(entries)
-      fileSystemCache.loadedDirectories.add(normalized)
-      for (const entry of entries) {
-        if (entry.type === "directory") {
-          enqueueDirectory(entry.path)
-        }
-      }
-      if (changed) {
-        notifyCacheListeners()
-      }
-    })
-    .finally(() => {
-      fileSystemCache.loadingPromises.delete(normalized)
-    })
-
-  fileSystemCache.loadingPromises.set(normalized, promise)
-  await promise
-}
-
-async function processDirectoryQueue() {
-  if (fileSystemCache.queueActive) {
-    return
-  }
-  fileSystemCache.queueActive = true
-  try {
-    while (fileSystemCache.pendingDirectories.length > 0) {
-      const next = fileSystemCache.pendingDirectories.shift()
-      if (!next) continue
-      try {
-        await loadDirectory(next)
-      } catch (error) {
-        console.warn("Failed to load directory", next, error)
-      }
-    }
-  } finally {
-    fileSystemCache.queueActive = false
-  }
-}
-
-function startBackgroundLoading() {
-  void processDirectoryQueue()
-}
-
-function prioritizeDirectoriesForQuery(query: string) {
-  const normalized = query.replace(/\\/g, "/").trim()
-  if (!normalized) {
-    return
-  }
-  const segments = normalized.split("/").filter(Boolean)
-  let prefix = ""
-  for (const segment of segments) {
-    prefix = prefix ? `${prefix}/${segment}` : segment
-    enqueueDirectory(prefix, true)
-  }
-  startBackgroundLoading()
-}
-
-async function ensureWorkspaceFilesystemLoaded(workspaceRoot: string) {
-  if (cacheWorkspaceRoot && cacheWorkspaceRoot !== workspaceRoot) {
-    cacheWorkspaceRoot = workspaceRoot
-    resetFileSystemCache()
-  } else if (!cacheWorkspaceRoot) {
-    cacheWorkspaceRoot = workspaceRoot
-  }
-
-  await loadDirectory(".")
-  startBackgroundLoading()
+  cleaned = cleaned.replace(/\/+/g, "/")
+  return cleaned === "" ? "." : cleaned
 }
 
 function resolveAbsolutePath(root: string, relativePath: string): string {
@@ -207,11 +33,6 @@ function resolveAbsolutePath(root: string, relativePath: string): string {
   return `${trimmedRoot}${normalized}`
 }
 
-function formatRootLabel(root: string): string {
-  if (!root) return "Workspace Root"
-  const parts = root.split(/[/\\]/).filter(Boolean)
-  return parts[parts.length - 1] || root || "Workspace Root"
-}
 
 interface FileSystemBrowserDialogProps {
   open: boolean
@@ -222,72 +43,173 @@ interface FileSystemBrowserDialogProps {
   onClose: () => void
 }
 
+type FolderRow = { type: "up"; path: string } | { type: "entry"; entry: FileSystemEntry }
+
 const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props) => {
-  const [entries, setEntries] = createSignal<FileSystemEntry[]>([])
   const [rootPath, setRootPath] = createSignal("")
-  const [loading, setLoading] = createSignal(false)
+  const [entries, setEntries] = createSignal<FileSystemEntry[]>([])
+  const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
+  const [loadingPath, setLoadingPath] = createSignal<string | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [selectedIndex, setSelectedIndex] = createSignal(0)
 
   let searchInputRef: HTMLInputElement | undefined
 
-  onMount(() => {
-    const unsubscribe = subscribeToCache((items) => setEntries(items))
-    onCleanup(unsubscribe)
-  })
+  const directoryCache = new Map<string, FileSystemEntry[]>()
+  const metadataCache = new Map<string, FileSystemListingMetadata>()
+  const inFlightLoads = new Map<string, Promise<FileSystemListingMetadata>>()
 
-  createEffect(() => {
-    const query = searchQuery().trim()
-    if (!query) {
-      return
+  function resetDialogState() {
+    directoryCache.clear()
+    metadataCache.clear()
+    inFlightLoads.clear()
+    setEntries([])
+    setCurrentMetadata(null)
+    setLoadingPath(null)
+  }
+
+  async function fetchDirectory(path: string, makeCurrent = false): Promise<FileSystemListingMetadata> {
+    const normalized = normalizeEntryPath(path)
+
+    if (directoryCache.has(normalized) && metadataCache.has(normalized)) {
+      if (makeCurrent) {
+        setCurrentMetadata(metadataCache.get(normalized) ?? null)
+        setEntries(directoryCache.get(normalized) ?? [])
+      }
+      return metadataCache.get(normalized) as FileSystemListingMetadata
     }
-    prioritizeDirectoriesForQuery(query)
-  })
+
+    if (inFlightLoads.has(normalized)) {
+      const metadata = await inFlightLoads.get(normalized)!
+      if (makeCurrent) {
+        setCurrentMetadata(metadata)
+        setEntries(directoryCache.get(normalized) ?? [])
+      }
+      return metadata
+    }
+
+    const loadPromise = (async () => {
+      setLoadingPath(normalized)
+      const response = await cliApi.listFileSystem(normalized === "." ? "." : normalized, {
+        includeFiles: props.mode === "files",
+      })
+      directoryCache.set(normalized, response.entries)
+      metadataCache.set(normalized, response.metadata)
+      if (!rootPath()) {
+        setRootPath(response.metadata.rootPath)
+      }
+      if (loadingPath() === normalized) {
+        setLoadingPath(null)
+      }
+      return response.metadata
+    })().catch((err) => {
+      if (loadingPath() === normalized) {
+        setLoadingPath(null)
+      }
+      throw err
+    })
+
+    inFlightLoads.set(normalized, loadPromise)
+    try {
+      const metadata = await loadPromise
+      if (makeCurrent) {
+        const key = normalizeEntryPath(metadata.currentPath)
+        setCurrentMetadata(metadata)
+        setEntries(directoryCache.get(key) ?? directoryCache.get(normalized) ?? [])
+      }
+      return metadata
+    } finally {
+      inFlightLoads.delete(normalized)
+    }
+  }
 
   async function refreshEntries() {
-    setLoading(true)
     setError(null)
+    resetDialogState()
     try {
-      const meta = await getServerMeta()
-      setRootPath(meta.workspaceRoot)
-      await ensureWorkspaceFilesystemLoaded(meta.workspaceRoot)
+      const metadata = await fetchDirectory(".", true)
+      setRootPath(metadata.rootPath)
+      setEntries(directoryCache.get(normalizeEntryPath(metadata.currentPath)) ?? [])
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to load filesystem"
       setError(message)
-    } finally {
-      setLoading(false)
     }
+  }
+
+  function describeLoadingPath() {
+    const path = loadingPath()
+    if (!path) {
+      return "filesystem"
+    }
+    if (path === ".") {
+      return rootPath() || "workspace root"
+    }
+    return resolveAbsolutePath(rootPath(), path)
+  }
+
+  function currentAbsolutePath(): string {
+    const metadata = currentMetadata()
+    if (!metadata) {
+      return rootPath()
+    }
+    if (metadata.pathKind === "relative") {
+      return resolveAbsolutePath(rootPath(), metadata.currentPath)
+    }
+    return metadata.displayPath
+  }
+
+  function handleOverlayClick(event: MouseEvent) {
+    if (event.target === event.currentTarget) {
+      props.onClose()
+    }
+  }
+
+  function handleEntrySelect(entry: FileSystemEntry) {
+    const absolute = resolveAbsolutePath(rootPath(), entry.path)
+    props.onSelect(absolute)
+  }
+
+  function handleNavigateTo(path: string) {
+    void fetchDirectory(path, true).catch((err) => {
+      console.error("Failed to open directory", err)
+      setError(err instanceof Error ? err.message : "Unable to open directory")
+    })
+  }
+
+  function handleNavigateUp() {
+    const parent = currentMetadata()?.parentPath
+    if (!parent) {
+      return
+    }
+    handleNavigateTo(parent)
   }
 
   const filteredEntries = createMemo(() => {
     const query = searchQuery().trim().toLowerCase()
-    const mode = props.mode
-    const root = rootPath()
-    const matchesType = entries().filter((entry) => (mode === "directories" ? entry.type === "directory" : entry.type === "file"))
-
-    const baseEntries = mode === "directories" && root
-      ? [
-          {
-            name: formatRootLabel(root),
-            path: ".",
-            type: "directory" as const,
-          },
-          ...matchesType,
-        ]
-      : matchesType
-
+    const subset = entries().filter((entry) => (props.mode === "directories" ? entry.type === "directory" : true))
     if (!query) {
-      return baseEntries
+      return subset
     }
-
-    return baseEntries.filter((entry) => {
-      const absolute = resolveAbsolutePath(root, entry.path)
+    return subset.filter((entry) => {
+      const absolute = resolveAbsolutePath(rootPath(), entry.path)
       return absolute.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query)
     })
   })
 
   const visibleEntries = createMemo(() => filteredEntries().slice(0, MAX_RESULTS))
+
+  const folderRows = createMemo<FolderRow[]>(() => {
+    const rows: FolderRow[] = []
+    const metadata = currentMetadata()
+    if (metadata?.parentPath) {
+      rows.push({ type: "up", path: metadata.parentPath })
+    }
+    for (const entry of visibleEntries()) {
+      rows.push({ type: "entry", entry })
+    }
+    return rows
+  })
 
   createEffect(() => {
     const list = visibleEntries()
@@ -338,19 +260,11 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
     window.addEventListener("keydown", handleKeyDown)
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
+      resetDialogState()
+      setRootPath("")
+      setError(null)
     })
   })
-
-  function handleEntrySelect(entry: FileSystemEntry) {
-    const absolute = resolveAbsolutePath(rootPath(), entry.path)
-    props.onSelect(absolute)
-  }
-
-  function handleOverlayClick(event: MouseEvent) {
-    if (event.target === event.currentTarget) {
-      props.onClose()
-    }
-  }
 
   return (
     <Show when={props.open}>
@@ -360,9 +274,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
             <div class="panel-header flex items-start justify-between gap-4">
               <div>
                 <h3 class="panel-title">{props.title}</h3>
-                <p class="panel-subtitle">
-                  {props.description || "Search for a path under the configured workspace root."}
-                </p>
+                <p class="panel-subtitle">{props.description || "Search for a path under the configured workspace root."}</p>
                 <Show when={rootPath()}>
                   <p class="text-xs text-muted mt-1 font-mono break-all">Root: {rootPath()}</p>
                 </Show>
@@ -392,56 +304,117 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
               </div>
             </div>
 
+            <Show when={props.mode === "directories"}>
+              <div class="px-4 pb-2">
+                <div class="flex items-center justify-between gap-3 rounded-md border border-border-subtle px-4 py-3">
+                  <div>
+                    <p class="text-xs text-secondary uppercase tracking-wide">Current folder</p>
+                    <p class="text-sm font-mono text-primary break-all">{currentAbsolutePath()}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary whitespace-nowrap"
+                    onClick={() => props.onSelect(currentAbsolutePath())}
+                  >
+                    Select Current
+                  </button>
+                </div>
+              </div>
+            </Show>
+
             <div class="panel-list panel-list--fill max-h-96 overflow-auto">
               <Show
-                when={!loading() && !error()}
+                when={entries().length > 0}
                 fallback={
                   <div class="flex items-center justify-center py-6 text-sm text-secondary">
                     <Show
-                      when={loading()}
+                      when={loadingPath() !== null}
                       fallback={<span class="text-red-500">{error()}</span>}
                     >
                       <div class="flex items-center gap-2">
                         <Loader2 class="w-4 h-4 animate-spin" />
-                        <span>Loading filesystem…</span>
+                        <span>Loading {describeLoadingPath()}…</span>
                       </div>
                     </Show>
                   </div>
                 }
               >
+                <Show when={loadingPath()}>
+                  <div class="flex items-center gap-2 px-4 py-2 text-xs text-secondary">
+                    <Loader2 class="w-3.5 h-3.5 animate-spin" />
+                    <span>Loading {describeLoadingPath()}…</span>
+                  </div>
+                </Show>
                 <Show
-                  when={visibleEntries().length > 0}
+                  when={folderRows().length > 0}
                   fallback={
                     <div class="flex flex-col items-center justify-center gap-2 py-10 text-sm text-secondary">
-                      <p>No matches.</p>
-                      <Show when={searchQuery().trim().length === 0}>
-                        <button type="button" class="selector-button selector-button-secondary" onClick={refreshEntries}>
-                          Retry
-                        </button>
-                      </Show>
+                      <p>No entries found.</p>
+                      <button type="button" class="selector-button selector-button-secondary" onClick={refreshEntries}>
+                        Retry
+                      </button>
                     </div>
                   }
                 >
-                  <For each={visibleEntries()}>
-                    {(entry, index) => (
-                      <button
-                        type="button"
-                        class="panel-list-item flex items-center gap-3 text-left"
-                        classList={{ "panel-list-item-highlight": selectedIndex() === index() }}
-                        onMouseEnter={() => setSelectedIndex(index())}
-                        onClick={() => handleEntrySelect(entry)}
-                      >
-                        <div class="flex h-8 w-8 items-center justify-center rounded-md bg-surface-secondary text-muted">
-                          <Show when={entry.type === "directory"} fallback={<FileIcon class="w-4 h-4" />}>
-                            <FolderIcon class="w-4 h-4" />
-                          </Show>
+                  <For each={folderRows()}>
+                    {(row) => {
+                      if (row.type === "up") {
+                        return (
+                          <div class="panel-list-item" role="button">
+                            <div class="panel-list-item-content directory-browser-row">
+                              <button type="button" class="directory-browser-row-main" onClick={handleNavigateUp}>
+                                <div class="directory-browser-row-icon">
+                                  <ArrowUpLeft class="w-4 h-4" />
+                                </div>
+                                <div class="directory-browser-row-text">
+                                  <span class="directory-browser-row-name">Up one level</span>
+                                </div>
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      const entry = row.entry
+                      const selectEntry = () => handleEntrySelect(entry)
+                      const activateEntry = () => {
+                        if (entry.type === "directory") {
+                          handleNavigateTo(entry.path)
+                        } else {
+                          selectEntry()
+                        }
+                      }
+
+                      return (
+                        <div class="panel-list-item" role="listitem">
+                          <div class="panel-list-item-content directory-browser-row">
+                            <button type="button" class="directory-browser-row-main" onClick={activateEntry}>
+                              <div class="directory-browser-row-icon">
+                                <Show when={entry.type === "directory"} fallback={<FileIcon class="w-4 h-4" />}>
+                                  <FolderIcon class="w-4 h-4" />
+                                </Show>
+                              </div>
+                              <div class="directory-browser-row-text">
+                                <span class="directory-browser-row-name">{entry.name || entry.path}</span>
+                                <span class="directory-browser-row-sub">
+                                  {resolveAbsolutePath(rootPath(), entry.path)}
+                                </span>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              class="selector-button selector-button-secondary directory-browser-select"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                selectEntry()
+                              }}
+                            >
+                              Select
+                            </button>
+                          </div>
                         </div>
-                        <div class="flex flex-col">
-                          <span class="text-sm font-medium text-primary">{entry.name || entry.path}</span>
-                          <span class="text-xs font-mono text-muted">{resolveAbsolutePath(rootPath(), entry.path)}</span>
-                        </div>
-                      </button>
-                    )}
+                      )
+                    }}
                   </For>
                 </Show>
               </Show>
@@ -472,3 +445,4 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
 }
 
 export default FileSystemBrowserDialog
+
