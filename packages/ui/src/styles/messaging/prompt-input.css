@@ -103,6 +103,35 @@
   ring-color: var(--attachment-chip-ring);
 }
 
+.attachment-chip-image {
+  position: relative;
+}
+
+.attachment-chip-preview {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  padding: 8px;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25);
+  z-index: 20;
+}
+
+.attachment-chip-preview img {
+  display: block;
+  max-width: 320px;
+  max-height: 320px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.attachment-chip-image:hover .attachment-chip-preview {
+  display: block;
+}
+
 .attachment-remove {
   @apply ml-0.5 flex h-4 w-4 items-center justify-center rounded transition-colors;
 }

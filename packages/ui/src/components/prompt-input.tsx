@@ -720,8 +720,24 @@ export default function PromptInput(props: PromptInputProps) {
       const filename = file.name
       const mime = file.type || "text/plain"
 
-      const attachment = createFileAttachment(path, filename, mime, undefined, props.instanceFolder)
-      addAttachment(props.instanceId, props.sessionId, attachment)
+      const createAndStoreAttachment = (previewUrl?: string) => {
+        const attachment = createFileAttachment(path, filename, mime, undefined, props.instanceFolder)
+        if (previewUrl && mime.startsWith("image/")) {
+          attachment.url = previewUrl
+        }
+        addAttachment(props.instanceId, props.sessionId, attachment)
+      }
+
+      if (mime.startsWith("image/") && typeof FileReader !== "undefined") {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = typeof reader.result === "string" ? reader.result : undefined
+          createAndStoreAttachment(result)
+        }
+        reader.readAsDataURL(file)
+      } else {
+        createAndStoreAttachment()
+      }
     }
 
     textareaRef?.focus()
@@ -772,7 +788,7 @@ export default function PromptInput(props: PromptInputProps) {
                 {(attachment) => {
                   const isImage = attachment.mediaType.startsWith("image/")
                   return (
-                    <div class="attachment-chip">
+                    <div class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}>
                       <Show
                         when={isImage}
                         fallback={
@@ -831,6 +847,11 @@ export default function PromptInput(props: PromptInputProps) {
                           />
                         </svg>
                       </button>
+                      <Show when={isImage}>
+                        <div class="attachment-chip-preview">
+                          <img src={attachment.url} alt={attachment.filename} />
+                        </div>
+                      </Show>
                     </div>
                   )
                 }}
