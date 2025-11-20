@@ -7,10 +7,12 @@ import { fileURLToPath } from "url"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
 const appDir = join(__dirname, "..")
+const workspaceRoot = join(appDir, "..", "..")
 
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
 const nodeModulesPath = join(appDir, "node_modules")
+const workspaceNodeModulesPath = join(workspaceRoot, "node_modules")
 
 const platforms = {
   mac: {
@@ -93,10 +95,16 @@ async function build(platform) {
   console.log(`\n🔨 Building for: ${config.description}\n`)
 
   try {
-    console.log("📦 Step 1/2: Building Electron app...\n")
+    console.log("📦 Step 1/3: Building CLI dependency...\n")
+    await run(npmCmd, ["run", "build", "--workspace", "@codenomad/cli"], {
+      cwd: workspaceRoot,
+      env: { NODE_PATH: workspaceNodeModulesPath },
+    })
+
+    console.log("\n📦 Step 2/3: Building Electron app...\n")
     await run(npmCmd, ["run", "build"])
 
-    console.log("\n📦 Step 2/2: Packaging binaries...\n")
+    console.log("\n📦 Step 3/3: Packaging binaries...\n")
     const distPath = join(appDir, "dist")
     if (!existsSync(distPath)) {
       throw new Error("dist/ directory not found. Build failed.")

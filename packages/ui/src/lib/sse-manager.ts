@@ -56,7 +56,7 @@ const [connectionStatus, setConnectionStatus] = createSignal<
 
 class SSEManager {
   private connections = new Map<string, SSEConnection>()
-  private static readonly MAX_RECONNECT_ATTEMPTS = 3
+  private static readonly MAX_RECONNECT_DELAY_MS = 5000
 
   connect(instanceId: string, proxyPath: string, reconnectAttempts = 0): void {
     const existing = this.connections.get(instanceId)
@@ -165,13 +165,8 @@ class SSEManager {
 
     connection.eventSource.close()
 
-    if (connection.reconnectAttempts >= SSEManager.MAX_RECONNECT_ATTEMPTS) {
-      this.handleConnectionLost(instanceId, reason)
-      return
-    }
-
     const nextAttempt = connection.reconnectAttempts + 1
-    const delay = Math.min(nextAttempt * 1000, 5000)
+    const delay = Math.min(nextAttempt * 1000, SSEManager.MAX_RECONNECT_DELAY_MS)
 
     connection.reconnectAttempts = nextAttempt
     connection.status = "connecting"
@@ -183,18 +178,6 @@ class SSEManager {
       connection.reconnectTimer = undefined
       this.connect(instanceId, connection.proxyPath, nextAttempt)
     }, delay)
-  }
-
-  private handleConnectionLost(instanceId: string, reason: string): void {
-    const connection = this.connections.get(instanceId)
-    if (!connection) return
-
-    this.clearReconnectTimer(connection)
-    connection.eventSource.close()
-    this.connections.delete(instanceId)
-    connection.status = "disconnected"
-    this.updateConnectionStatus(instanceId, "disconnected")
-    this.onConnectionLost?.(instanceId, reason)
   }
 
   private clearReconnectTimer(connection: SSEConnection): void {

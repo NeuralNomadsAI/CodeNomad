@@ -56,6 +56,12 @@
       "dist/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "electron/resources",
+        "to": ""
+      }
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [

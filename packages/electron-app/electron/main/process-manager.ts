@@ -6,7 +6,8 @@ import { existsSync } from "fs"
 import path from "path"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
-const require = createRequire(import.meta.url)
+const nodeRequire = createRequire(import.meta.url)
+
 
 type CliState = "starting" | "ready" | "error" | "stopped"
 
@@ -283,7 +284,7 @@ export class CliProcessManager extends EventEmitter {
 
   private resolveTsx(): string | null {
     try {
-      const resolved = require.resolve("tsx/dist/cli.js")
+      const resolved = nodeRequire.resolve("tsx/dist/cli.js")
       if (resolved && existsSync(resolved)) {
         return resolved
       }
@@ -295,8 +296,8 @@ export class CliProcessManager extends EventEmitter {
 
   private tryResolveDist(): string | null {
     const candidates: Array<string | (() => string)> = [
-      () => require.resolve("@codenomad/cli/dist/bin.js"),
-      () => require.resolve("@codenomad/cli/dist/bin.js", { paths: [app.getAppPath()] }),
+      () => nodeRequire.resolve("@codenomad/cli/dist/bin.js"),
+      () => nodeRequire.resolve("@codenomad/cli/dist/bin.js", { paths: [app.getAppPath()] }),
       path.join(app.getAppPath(), "node_modules", "@codenomad", "cli", "dist", "bin.js"),
       path.resolve(app.getAppPath(), "..", "cli", "dist", "bin.js"),
       path.resolve(app.getAppPath(), "..", "packages", "cli", "dist", "bin.js"),

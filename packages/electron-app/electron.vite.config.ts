@@ -25,7 +25,7 @@ export default defineConfig({
     build: {
       outDir: "dist/preload",
       lib: {
-        entry: resolve(__dirname, "electron/preload/index.ts"),
+        entry: resolve(__dirname, "electron/preload/index.cjs"),
         formats: ["cjs"],
         fileName: () => "index.js",
       },
