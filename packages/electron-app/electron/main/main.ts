@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, session } from "electron"
+import { app, BrowserView, BrowserWindow, nativeImage, session } from "electron"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
@@ -11,6 +11,10 @@ const __dirname = dirname(__filename)
 const isMac = process.platform === "darwin"
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
+let cliView: BrowserView | null = null
+let cliViewReady = false
+let pendingCliUrl: string | null = null
+let loadingScreenVisible = true
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
@@ -58,6 +62,7 @@ function createWindow() {
 
   const loadingHtml = getLoadingHtmlPath()
   mainWindow.loadFile(loadingHtml)
+  loadingScreenVisible = true
 
   if (process.env.NODE_ENV === "development") {
     mainWindow.webContents.openDevTools({ mode: "detach" })
@@ -66,9 +71,108 @@ function createWindow() {
   createApplicationMenu(mainWindow)
   setupCliIPC(mainWindow, cliManager)
 
+  mainWindow.on("resize", resizeCliView)
+  mainWindow.on("enter-full-screen", resizeCliView)
+  mainWindow.on("leave-full-screen", resizeCliView)
+
   mainWindow.on("closed", () => {
+    destroyCliBrowserView()
     mainWindow = null
   })
+
+  attachCliBrowserView()
+}
+
+function destroyCliBrowserView() {
+  if (!cliView) {
+    cliViewReady = false
+    return
+  }
+
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.removeBrowserView(cliView)
+      } catch (error) {
+        console.warn("[cli] failed to remove BrowserView", error)
+      }
+    }
+    const contents = cliView.webContents as any
+    contents?.destroy?.()
+  } catch (error) {
+    console.warn("[cli] failed to destroy BrowserView", error)
+  }
+
+  cliView = null
+  cliViewReady = false
+}
+
+function createCliBrowserView(url: string) {
+  pendingCliUrl = url
+  cliViewReady = false
+  destroyCliBrowserView()
+
+  const view = new BrowserView({
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: !isMac,
+    },
+  })
+
+  cliView = view
+
+  view.webContents
+    .loadURL(url)
+    .catch((error) => console.error("[cli] failed to load BrowserView:", error))
+
+  view.webContents.once("did-finish-load", () => {
+    if (cliView !== view) {
+      const contents = view.webContents as any
+      contents?.destroy?.()
+      return
+    }
+    cliViewReady = true
+    attachCliBrowserView()
+  })
+}
+
+function attachCliBrowserView() {
+  if (!mainWindow || mainWindow.isDestroyed() || !cliView || !cliViewReady) {
+    return
+  }
+
+  try {
+    mainWindow.setBrowserView(cliView)
+    resizeCliView()
+    loadingScreenVisible = false
+  } catch (error) {
+    console.error("[cli] failed to attach BrowserView:", error)
+  }
+}
+
+function resizeCliView() {
+  if (!mainWindow || !cliView) {
+    return
+  }
+
+  const [width, height] = mainWindow.getContentSize()
+  cliView.setBounds({ x: 0, y: 0, width, height })
+  cliView.setAutoResize({ width: true, height: true })
+}
+
+function showLoadingScreen() {
+  destroyCliBrowserView()
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  if (!loadingScreenVisible) {
+    const loadingHtml = getLoadingHtmlPath()
+    loadingScreenVisible = true
+    mainWindow.loadFile(loadingHtml).catch((error) => console.error("[cli] failed to load loading screen:", error))
+  }
 }
 
 async function startCli() {
@@ -86,9 +190,16 @@ async function startCli() {
 }
 
 cliManager.on("ready", (status) => {
-  if (status.url && mainWindow && !mainWindow.isDestroyed()) {
-    console.info(`[cli] navigating main window to ${status.url}`)
-    mainWindow.loadURL(status.url)
+  if (!status.url) {
+    return
+  }
+  createCliBrowserView(status.url)
+})
+
+cliManager.on("status", (status) => {
+  if (status.state !== "ready") {
+    pendingCliUrl = null
+    showLoadingScreen()
   }
 })
 
