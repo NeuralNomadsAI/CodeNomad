@@ -89,8 +89,8 @@ function parseCliOptions(argv: string[]): CliOptions {
 
 function parsePort(input: string): number {
   const value = Number(input)
-  if (!Number.isInteger(value) || value < 1 || value > 65535) {
-    throw new InvalidArgumentError("Port must be an integer between 1 and 65535")
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new InvalidArgumentError("Port must be an integer between 0 and 65535")
   }
   return value
 }

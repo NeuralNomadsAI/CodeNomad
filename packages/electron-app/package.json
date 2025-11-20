@@ -10,7 +10,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "dev:electron": "NODE_ENV=development electron .",
+    "dev:electron": "NODE_ENV=development ELECTRON_ENABLE_LOGGING=1 NODE_OPTIONS=\"--import tsx\" electron electron/main/main.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "electron-vite preview",
@@ -29,8 +29,8 @@
     "package:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "@codenomad/ui": "file:../ui",
-    "ignore": "7.0.5"
+    "@codenomad/cli": "file:../cli",
+    "@codenomad/ui": "file:../ui"
   },
   "devDependencies": {
     "7zip-bin": "^5.2.0",
@@ -40,6 +40,7 @@
     "electron-vite": "4.0.1",
     "png2icons": "^2.0.1",
     "pngjs": "^7.0.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
     "vite-plugin-solid": "^2.10.0"

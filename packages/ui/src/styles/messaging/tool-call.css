@@ -645,6 +645,52 @@
   font-size: inherit;
 }
 
+.tool-call-todo-region {
+  @apply flex flex-col gap-3;
+}
+
+.tool-call-todo-summary {
+  @apply flex flex-col gap-2;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.tool-call-todo-metrics {
+  @apply flex flex-wrap items-center gap-3;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.tool-call-todo-metric-value {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  margin-right: 4px;
+}
+
+.tool-call-todo-progress {
+  position: relative;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: var(--surface-secondary);
+  overflow: hidden;
+  border: 1px solid var(--border-base);
+}
+
+.tool-call-todo-progress-bar {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  transition: width 0.2s ease;
+}
+
+.tool-call-todo-empty {
+  @apply text-sm text-muted;
+  padding: 0.75rem 0;
+}
+
 .tool-call-todos {
   @apply my-2 flex flex-col gap-2;
   list-style: none;
@@ -715,7 +761,37 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+}
+
+.tool-call-todo-heading {
+  @apply flex items-start justify-between gap-3;
+}
+
+.tool-call-todo-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  background-color: var(--surface-hover);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tool-call-todo-status-completed {
+  background-color: var(--badge-success-bg);
+  color: var(--status-success);
+}
+
+.tool-call-todo-status-in_progress {
+  background-color: var(--badge-neutral-bg);
+  color: var(--text-primary);
+}
+
+.tool-call-todo-status-cancelled {
+  background-color: var(--status-error-bg);
+  color: var(--status-error);
 }
 
 .tool-call-todo-text {

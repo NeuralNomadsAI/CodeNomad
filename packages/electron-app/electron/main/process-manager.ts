@@ -1,218 +1,151 @@
-import { spawn, execSync, ChildProcess } from "child_process"
-import { app, BrowserWindow } from "electron"
-import { existsSync, statSync } from "fs"
-import { buildUserShellCommand, getUserShellEnv, runUserShellCommandSync, supportsUserShell } from "./user-shell"
+import { spawn, type ChildProcess } from "child_process"
+import { app } from "electron"
+import { createRequire } from "module"
+import { EventEmitter } from "events"
+import { existsSync } from "fs"
+import path from "path"
+import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
-export interface ProcessInfo {
-  pid: number
-  port: number
-  binaryPath: string
+const require = createRequire(import.meta.url)
+
+type CliState = "starting" | "ready" | "error" | "stopped"
+
+export interface CliStatus {
+  state: CliState
+  pid?: number
+  port?: number
+  url?: string
+  error?: string
 }
 
-interface ProcessMeta {
-  pid: number
-  port: number
-  folder: string
-  startTime: number
-  childProcess: ChildProcess
-  logs: string[]
-  instanceId: string
+export interface CliLogEntry {
+  stream: "stdout" | "stderr"
+  message: string
 }
 
-class ProcessManager {
-  private processes = new Map<number, ProcessMeta>()
-  private mainWindow: BrowserWindow | null = null
+interface StartOptions {
+  dev: boolean
+}
 
-  setMainWindow(window: BrowserWindow) {
-    this.mainWindow = window
-  }
+interface CliEntryResolution {
+  entry: string
+  runner: "node" | "tsx"
+  runnerPath?: string
+}
 
-  private parseLogLevel(message: string): "info" | "error" | "warn" | "debug" {
-    const upperMessage = message.toUpperCase()
-    if (upperMessage.includes("[ERROR]") || upperMessage.includes("ERROR:")) return "error"
-    if (upperMessage.includes("[WARN]") || upperMessage.includes("WARN:")) return "warn"
-    if (upperMessage.includes("[DEBUG]") || upperMessage.includes("DEBUG:")) return "debug"
-    if (upperMessage.includes("[INFO]") || upperMessage.includes("INFO:")) return "info"
-    return "info"
-  }
+export declare interface CliProcessManager {
+  on(event: "status", listener: (status: CliStatus) => void): this
+  on(event: "ready", listener: (status: CliStatus) => void): this
+  on(event: "log", listener: (entry: CliLogEntry) => void): this
+  on(event: "exit", listener: (status: CliStatus) => void): this
+  on(event: "error", listener: (error: Error) => void): this
+}
 
-  private sendLog(instanceId: string, level: "info" | "error" | "warn" | "debug", message: string) {
-    if (this.mainWindow && message.trim()) {
-      const parsedLevel = this.parseLogLevel(message)
-      this.mainWindow.webContents.send("instance:log", {
-        id: instanceId,
-        entry: {
-          timestamp: Date.now(),
-          level: parsedLevel,
-          message: message.trim(),
-        },
-      })
-    }
-  }
+export class CliProcessManager extends EventEmitter {
+  private child?: ChildProcess
+  private status: CliStatus = { state: "stopped" }
+  private stdoutBuffer = ""
+  private stderrBuffer = ""
 
-  async spawn(
-    folder: string,
-    instanceId: string,
-    binaryPath?: string,
-    environmentVariables?: Record<string, string>,
-  ): Promise<ProcessInfo> {
-    this.validateFolder(folder)
-    const useUserShell = supportsUserShell()
-    const logAttempt = (message: string) => {
-      console.info(`[ProcessManager] ${message}`)
-      this.sendLog(instanceId, "debug", message)
+  async start(options: StartOptions): Promise<CliStatus> {
+    if (this.child) {
+      await this.stop()
     }
 
-    const env = useUserShell ? getUserShellEnv() : { ...process.env }
-    if (environmentVariables) {
-      Object.assign(env, environmentVariables)
-      this.sendLog(
-        instanceId,
-        "info",
-        `Using ${Object.keys(environmentVariables).length} custom environment variables:`,
-      )
+    this.stdoutBuffer = ""
+    this.stderrBuffer = ""
+    this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
-      // Log each environment variable
-      for (const [key, value] of Object.entries(environmentVariables)) {
-        this.sendLog(instanceId, "info", `  ${key}=${value}`)
-      }
-    }
+    const cliEntry = this.resolveCliEntry(options)
+    const args = this.buildCliArgs(options)
 
-    let targetBinary: string
-    if (!binaryPath || binaryPath === "opencode") {
-      targetBinary = useUserShell ? "opencode" : this.validateOpenCodeBinary(logAttempt)
-    } else {
-      targetBinary = this.validateCustomBinary(binaryPath, logAttempt)
-    }
-
-    const spawnCommand = useUserShell
-      ? this.buildShellServeCommand(targetBinary)
-      : { command: targetBinary, args: this.buildServeArgs() }
-
-    const launchDetail = `${spawnCommand.command} ${spawnCommand.args.join(" ")}`.trim()
-    this.sendLog(instanceId, "debug", `Launching process with: ${launchDetail}`)
-
-    this.sendLog(
-      instanceId,
-      "info",
-      `Starting OpenCode server for ${folder} using ${targetBinary}...`,
+    console.info(
+      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry}`,
     )
 
-    return new Promise((resolve, reject) => {
-      const child = spawn(spawnCommand.command, spawnCommand.args, {
-        cwd: folder,
-        stdio: ["ignore", "pipe", "pipe"],
-        env,
-        shell: false,
-      })
+    const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+    env.ELECTRON_RUN_AS_NODE = "1"
 
+    const spawnDetails = supportsUserShell()
+      ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
+      : this.buildDirectSpawn(cliEntry, args)
 
+    const child = spawn(spawnDetails.command, spawnDetails.args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+      shell: false,
+    })
+
+    console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
+    if (!child.pid) {
+      console.error("[cli] spawn failed: no pid")
+    }
+
+    this.child = child
+    this.updateStatus({ pid: child.pid ?? undefined })
+
+    child.stdout?.on("data", (data: Buffer) => {
+      this.handleStream(data.toString(), "stdout")
+    })
+
+    child.stderr?.on("data", (data: Buffer) => {
+      this.handleStream(data.toString(), "stderr")
+    })
+
+    child.on("error", (error) => {
+      console.error("[cli] failed to start CLI:", error)
+      this.updateStatus({ state: "error", error: error.message })
+      this.emit("error", error)
+    })
+
+    child.on("exit", (code, signal) => {
+      const failed = this.status.state !== "ready"
+      const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
+      console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
+      this.updateStatus({ state: failed ? "error" : "stopped", error })
+      if (failed && error) {
+        this.emit("error", new Error(error))
+      }
+      this.emit("exit", this.status)
+      this.child = undefined
+    })
+
+    return new Promise<CliStatus>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        child.kill("SIGKILL")
-        this.sendLog(instanceId, "error", "Server startup timeout (10s exceeded)")
-        reject(new Error("Server startup timeout (10s exceeded)"))
-      }, 10000)
+        this.handleTimeout()
+        reject(new Error("CLI startup timeout"))
+      }, 15000)
 
-      let stdoutBuffer = ""
-      let stderrBuffer = ""
-      let portFound = false
-
-      child.stdout?.on("data", (data: Buffer) => {
-        const text = data.toString()
-        stdoutBuffer += text
-
-        const lines = stdoutBuffer.split("\n")
-        stdoutBuffer = lines.pop() || ""
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-
-          this.sendLog(instanceId, "info", line)
-
-          const portMatch = line.match(/opencode server listening on http:\/\/[^:]+:(\d+)/)
-          if (portMatch && !portFound) {
-            portFound = true
-            const port = parseInt(portMatch[1], 10)
-            clearTimeout(timeout)
-
-            const meta: ProcessMeta = {
-              pid: child.pid!,
-              port,
-              folder,
-              startTime: Date.now(),
-              childProcess: child,
-              logs: [line],
-              instanceId,
-            }
-
-            this.processes.set(child.pid!, meta)
-            resolve({ pid: child.pid!, port, binaryPath: targetBinary })
-          }
-
-          const meta = this.processes.get(child.pid!)
-          if (meta) {
-            meta.logs.push(line)
-          }
-        }
-      })
-
-      child.stderr?.on("data", (data: Buffer) => {
-        const text = data.toString()
-        stderrBuffer += text
-
-        const lines = stderrBuffer.split("\n")
-        stderrBuffer = lines.pop() || ""
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-
-          this.sendLog(instanceId, "error", line)
-
-          const meta = this.processes.get(child.pid!)
-          if (meta) {
-            meta.logs.push(line)
-          }
-        }
-      })
-
-      child.on("error", (error) => {
+      this.once("ready", (status) => {
         clearTimeout(timeout)
-        if (error.message.includes("ENOENT")) {
-          reject(new Error("opencode binary not found in PATH"))
-        } else {
-          reject(error)
-        }
+        resolve(status)
       })
 
-      child.on("exit", (code, signal) => {
+      this.once("error", (error) => {
         clearTimeout(timeout)
-        this.processes.delete(child.pid!)
-
-        if (!portFound) {
-          const errorMsg = stderrBuffer || `Process exited with code ${code}`
-          reject(new Error(errorMsg))
-        }
+        reject(error)
       })
     })
   }
 
-  async kill(pid: number): Promise<void> {
-    const meta = this.processes.get(pid)
-    if (!meta) {
-      // Treat unknown processes as already stopped so tabs close cleanly
+  async stop(): Promise<void> {
+    const child = this.child
+    if (!child) {
+      this.updateStatus({ state: "stopped" })
       return
     }
 
-    return new Promise((resolve, reject) => {
-      const child = meta.childProcess
-
+    return new Promise((resolve) => {
       const killTimeout = setTimeout(() => {
         child.kill("SIGKILL")
-      }, 2000)
+      }, 4000)
 
       child.on("exit", () => {
         clearTimeout(killTimeout)
-        this.processes.delete(pid)
+        this.child = undefined
+        console.info("[cli] CLI process exited")
+        this.updateStatus({ state: "stopped" })
         resolve()
       })
 
@@ -220,134 +153,167 @@ class ProcessManager {
     })
   }
 
-  getStatus(pid: number): "running" | "stopped" | "unknown" {
-    if (!this.processes.has(pid)) {
-      return "unknown"
-    }
+  getStatus(): CliStatus {
+    return { ...this.status }
+  }
 
-    try {
-      process.kill(pid, 0)
-      return "running"
-    } catch {
-      return "stopped"
+  private handleTimeout() {
+    if (this.child) {
+      this.child.kill("SIGKILL")
+      this.child = undefined
+    }
+    this.updateStatus({ state: "error", error: "CLI did not start in time" })
+    this.emit("error", new Error("CLI did not start in time"))
+  }
+
+  private handleStream(chunk: string, stream: "stdout" | "stderr") {
+    if (stream === "stdout") {
+      this.stdoutBuffer += chunk
+      this.processBuffer("stdout")
+    } else {
+      this.stderrBuffer += chunk
+      this.processBuffer("stderr")
     }
   }
 
-  getAllProcesses(): Map<number, ProcessMeta> {
-    return new Map(this.processes)
-  }
+  private processBuffer(stream: "stdout" | "stderr") {
+    const buffer = stream === "stdout" ? this.stdoutBuffer : this.stderrBuffer
+    const lines = buffer.split("\n")
+    const trailing = lines.pop() ?? ""
 
-  async cleanup(): Promise<void> {
-    const killPromises = Array.from(this.processes.keys()).map((pid) => this.kill(pid).catch(() => {}))
-    await Promise.all(killPromises)
-  }
-
-  private validateFolder(folder: string): void {
-    if (!existsSync(folder)) {
-      throw new Error(`Folder does not exist: ${folder}`)
+    if (stream === "stdout") {
+      this.stdoutBuffer = trailing
+    } else {
+      this.stderrBuffer = trailing
     }
 
-    const stats = statSync(folder)
-    if (!stats.isDirectory()) {
-      throw new Error(`Path is not a directory: ${folder}`)
-    }
-  }
+    for (const line of lines) {
+      if (!line.trim()) continue
+      console.info(`[cli][${stream}] ${line}`)
+      this.emit("log", { stream, message: line })
 
-  private validateOpenCodeBinary(logAttempt?: (message: string) => void): string {
-    const log = logAttempt ?? ((message: string) => console.info(`[ProcessManager] ${message}`))
-
-    if (process.platform === "win32") {
-      log("Checking PATH via 'where opencode'")
-      return this.resolveBinaryViaLocator("where opencode", log)
-    }
-
-    const shellCheck = buildUserShellCommand("command -v opencode")
-    const shellPreview = [shellCheck.command, ...shellCheck.args].join(" ")
-    log(`Checking PATH via shell: ${shellPreview}`)
-
-    try {
-      const resolved = runUserShellCommandSync("command -v opencode")
-      const path = this.pickFirstPath(resolved)
-      if (path) {
-        log(`Shell located opencode at ${path}`)
-        return path
-      }
-      throw new Error("Empty result from shell lookup")
-    } catch (shellError) {
-      const message = shellError instanceof Error ? shellError.message : String(shellError)
-      log(`Shell lookup failed: ${message}`)
-      try {
-        log("Fallback to 'which opencode'")
-        return this.resolveBinaryViaLocator("which opencode", log)
-      } catch (locatorError) {
-        const locatorMessage = locatorError instanceof Error ? locatorError.message : String(locatorError)
-        log(`Locator fallback failed: ${locatorMessage}`)
-        throw new Error(
-          "opencode binary not found in PATH. Please install OpenCode CLI first: npm install -g @opencode/cli",
-        )
+      const port = this.extractPort(line)
+      if (port && this.status.state === "starting") {
+        const url = `http://127.0.0.1:${port}`
+        console.info(`[cli] ready on ${url}`)
+        this.updateStatus({ state: "ready", port, url })
+        this.emit("ready", this.status)
       }
     }
   }
 
-  private validateCustomBinary(binaryPath: string, log?: (message: string) => void): string {
-    log?.(`Validating custom binary at ${binaryPath}`)
-
-    if (!existsSync(binaryPath)) {
-      throw new Error(`OpenCode binary not found: ${binaryPath}`)
+  private extractPort(line: string): number | null {
+    const readyMatch = line.match(/CodeNomad Server is ready at http:\/\/[^:]+:(\d+)/i)
+    if (readyMatch) {
+      return parseInt(readyMatch[1], 10)
     }
 
-    const stats = statSync(binaryPath)
-    if (!stats.isFile()) {
-      throw new Error(`Path is not a file: ${binaryPath}`)
-    }
-
-    // Check if executable (on Unix systems)
-    if (process.platform !== "win32") {
+    if (line.toLowerCase().includes("http server listening")) {
+      const httpMatch = line.match(/:(\d{2,5})(?!.*:\d)/)
+      if (httpMatch) {
+        return parseInt(httpMatch[1], 10)
+      }
       try {
-        execSync(`test -x "${binaryPath}"`, { stdio: "pipe" })
+        const parsed = JSON.parse(line)
+        if (typeof parsed.port === "number") {
+          return parsed.port
+        }
       } catch {
-        throw new Error(`Binary is not executable: ${binaryPath}`)
+        // not JSON, ignore
       }
     }
 
-    return binaryPath
+    return null
   }
 
-  private resolveBinaryViaLocator(command: string, log?: (message: string) => void): string {
-    log?.(`Running locator command: ${command}`)
-    const output = execSync(command, { stdio: "pipe", encoding: "utf-8" })
-    log?.(`Locator output: ${output.trim() || "<empty>"}`)
-    const path = this.pickFirstPath(output)
-    if (!path) {
-      throw new Error("opencode binary not found in PATH")
+  private updateStatus(patch: Partial<CliStatus>) {
+    this.status = { ...this.status, ...patch }
+    this.emit("status", this.status)
+  }
+
+  private buildCliArgs(options: StartOptions): string[] {
+    const args = ["serve", "--host", "127.0.0.1", "--port", "0"]
+
+    if (options.dev) {
+      args.push("--ui-dev-server", "http://localhost:3000", "--log-level", "debug")
     }
-    return path
+
+    return args
   }
 
-  private pickFirstPath(output: string): string | null {
-    const line = output
-      .split("\n")
-      .map((entry) => entry.trim())
-      .find((entry) => entry.length > 0)
-    return line ?? null
+  private buildCommand(cliEntry: CliEntryResolution, args: string[]): string {
+    const parts = [JSON.stringify(process.execPath)]
+    if (cliEntry.runner === "tsx" && cliEntry.runnerPath) {
+      parts.push(JSON.stringify(cliEntry.runnerPath))
+    }
+    parts.push(JSON.stringify(cliEntry.entry))
+    args.forEach((arg) => parts.push(JSON.stringify(arg)))
+    return parts.join(" ")
   }
 
-  private buildServeArgs(): string[] {
-    return ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
+  private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
+    if (cliEntry.runner === "tsx") {
+      return { command: process.execPath, args: [cliEntry.runnerPath!, cliEntry.entry, ...args] }
+    }
+
+    return { command: process.execPath, args: [cliEntry.entry, ...args] }
   }
 
-  private buildShellServeCommand(binaryPath: string): { command: string; args: string[] } {
-    const args = this.buildServeArgs()
-      .map((arg) => JSON.stringify(arg))
-      .join(" ")
-    return buildUserShellCommand(`exec ${JSON.stringify(binaryPath)} ${args}`)
+  private resolveCliEntry(options: StartOptions): CliEntryResolution {
+    if (options.dev) {
+      const tsxPath = this.resolveTsx()
+      const sourceCandidates = [
+        path.resolve(app.getAppPath(), "..", "cli", "src", "index.ts"),
+        path.resolve(app.getAppPath(), "..", "packages", "cli", "src", "index.ts"),
+        path.resolve(process.cwd(), "packages", "cli", "src", "index.ts"),
+      ]
+      const sourceEntry = sourceCandidates.find((candidate) => existsSync(candidate))
+      if (tsxPath && sourceEntry) {
+        return { entry: sourceEntry, runner: "tsx", runnerPath: tsxPath }
+      }
+    }
+
+    const dist = this.tryResolveDist()
+    if (dist) {
+      return { entry: dist, runner: "node" }
+    }
+
+    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Please build @codenomad/cli.")
+  }
+
+  private resolveTsx(): string | null {
+    try {
+      const resolved = require.resolve("tsx/dist/cli.js")
+      if (resolved && existsSync(resolved)) {
+        return resolved
+      }
+    } catch {
+      return null
+    }
+    return null
+  }
+
+  private tryResolveDist(): string | null {
+    const candidates: Array<string | (() => string)> = [
+      () => require.resolve("@codenomad/cli/dist/bin.js"),
+      () => require.resolve("@codenomad/cli/dist/bin.js", { paths: [app.getAppPath()] }),
+      path.join(app.getAppPath(), "node_modules", "@codenomad", "cli", "dist", "bin.js"),
+      path.resolve(app.getAppPath(), "..", "cli", "dist", "bin.js"),
+      path.resolve(app.getAppPath(), "..", "packages", "cli", "dist", "bin.js"),
+      path.join(process.resourcesPath, "app.asar.unpacked", "node_modules", "@codenomad", "cli", "dist", "bin.js"),
+    ]
+
+    for (const candidate of candidates) {
+      try {
+        const resolved = typeof candidate === "function" ? candidate() : candidate
+        if (resolved && existsSync(resolved)) {
+          return resolved
+        }
+      } catch {
+        continue
+      }
+    }
+
+    return null
   }
 }
-
-export const processManager = new ProcessManager()
-
-app.on("before-quit", async (event) => {
-  event.preventDefault()
-  await processManager.cleanup()
-  app.exit(0)
-})

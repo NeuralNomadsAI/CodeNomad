@@ -1,243 +1,30 @@
-import { ipcMain, BrowserWindow, dialog } from "electron"
-import { processManager } from "./process-manager"
-import { randomBytes } from "crypto"
-import * as fs from "fs"
-import * as path from "path"
-import { spawn } from "child_process"
-import ignore from "ignore"
+import { BrowserWindow, ipcMain } from "electron"
+import type { CliLogEntry, CliProcessManager, CliStatus } from "./process-manager"
 
-interface Instance {
-  id: string
-  folder: string
-  port: number
-  pid: number
-  status: "starting" | "ready" | "error" | "stopped"
-  error?: string
-}
-
-const instances = new Map<string, Instance>()
-
-function generateId(): string {
-  return randomBytes(16).toString("hex")
-}
-
-function runBinaryVersion(binaryPath: string, timeoutMs = 5000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, ["-v"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-
-    let stdout = ""
-    let stderr = ""
-
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM")
-      reject(new Error("Version check timed out"))
-    }, timeoutMs)
-
-    child.stdout?.on("data", (data) => {
-      stdout += data.toString()
-    })
-
-    child.stderr?.on("data", (data) => {
-      stderr += data.toString()
-    })
-
-    child.on("error", (error) => {
-      clearTimeout(timeout)
-      reject(error)
-    })
-
-    child.on("close", (code) => {
-      clearTimeout(timeout)
-      if (code === 0) {
-        resolve(stdout.trim())
-      } else {
-        reject(new Error(stderr.trim() || `Binary exited with code ${code}`))
-      }
-    })
-  })
-}
-
-export function setupInstanceIPC(mainWindow: BrowserWindow) {
-  processManager.setMainWindow(mainWindow)
-
-  ipcMain.handle("dialog:selectFolder", async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: "Select Project Folder",
-      properties: ["openDirectory"],
-    })
-
-    if (result.canceled || !result.filePaths.length) {
-      return null
-    }
-
-    return result.filePaths[0]
-  })
-
-  ipcMain.handle(
-    "instance:create",
-    async (event, id: string, folder: string, binaryPath?: string, environmentVariables?: Record<string, string>) => {
-      const instance: Instance = {
-        id,
-        folder,
-        port: 0,
-        pid: 0,
-        status: "starting",
-      }
-
-      instances.set(id, instance)
-
-      try {
-        const {
-          pid,
-          port,
-          binaryPath: actualBinaryPath,
-        } = await processManager.spawn(folder, id, binaryPath, environmentVariables)
-
-        instance.port = port
-        instance.pid = pid
-        instance.status = "ready"
-
-        mainWindow.webContents.send("instance:started", { id, port, pid, binaryPath: actualBinaryPath })
-
-        const meta = processManager.getAllProcesses().get(pid)
-        if (meta) {
-          meta.childProcess.on("exit", (code, signal) => {
-            instance.status = "stopped"
-            mainWindow.webContents.send("instance:stopped", { id })
-          })
-        }
-
-        return { id, port, pid, binaryPath: actualBinaryPath }
-      } catch (error) {
-        instance.status = "error"
-        instance.error = error instanceof Error ? error.message : String(error)
-
-        mainWindow.webContents.send("instance:error", {
-          id,
-          error: instance.error,
-        })
-
-        throw error
-      }
-    },
-  )
-
-  ipcMain.handle("instance:stop", async (event, pid: number) => {
-    await processManager.kill(pid)
-
-    for (const [id, instance] of instances.entries()) {
-      if (instance.pid === pid) {
-        instance.status = "stopped"
-        break
-      }
+export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessManager) {
+  cliManager.on("status", (status: CliStatus) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli:status", status)
     }
   })
 
-  ipcMain.handle("instance:status", async (event, pid: number) => {
-    return processManager.getStatus(pid)
-  })
-
-  ipcMain.handle("instance:list", async () => {
-    return Array.from(instances.values())
-  })
-
-  ipcMain.handle("fs:scanDirectory", async (event, workspaceFolder: string) => {
-    const ig = ignore()
-    ig.add([".git", "node_modules"])
-
-    const gitignorePath = path.join(workspaceFolder, ".gitignore")
-    if (fs.existsSync(gitignorePath)) {
-      const content = fs.readFileSync(gitignorePath, "utf-8")
-      ig.add(content)
-    }
-
-    function scanDir(dirPath: string, baseDir: string): string[] {
-      const results: string[] = []
-
-      try {
-        const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-
-        for (const entry of entries) {
-          const fullPath = path.join(dirPath, entry.name)
-          const relativePath = path.relative(baseDir, fullPath)
-
-          if (ig.ignores(relativePath)) {
-            continue
-          }
-
-          if (entry.isDirectory()) {
-            const dirWithSlash = relativePath + "/"
-            if (!ig.ignores(dirWithSlash)) {
-              results.push(dirWithSlash)
-              const subFiles = scanDir(fullPath, baseDir)
-              results.push(...subFiles)
-            }
-          } else {
-            results.push(relativePath)
-          }
-        }
-      } catch (error) {
-        console.warn(`Error scanning ${dirPath}:`, error)
-      }
-
-      return results
-    }
-
-    return scanDir(workspaceFolder, workspaceFolder)
-  })
-
-  // OpenCode binary operations
-  ipcMain.handle("dialog:selectOpenCodeBinary", async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: "Select OpenCode Binary",
-      filters: [
-        { name: "Executable Files", extensions: ["exe", "cmd", "bat", "sh", "command", "app", ""] },
-        { name: "All Files", extensions: ["*"] },
-      ],
-      properties: ["openFile"],
-    })
-
-    if (result.canceled || !result.filePaths.length) {
-      return null
-    }
-
-    return result.filePaths[0]
-  })
-
-  ipcMain.handle("opencode:validateBinary", async (event, binaryPath: string) => {
-    try {
-      // Special handling for system PATH binary
-      const isSystemPath = binaryPath === "opencode"
-
-      if (!isSystemPath) {
-        // Check if file exists and is executable for custom paths
-        if (!fs.existsSync(binaryPath)) {
-          return { valid: false, error: "File does not exist" }
-        }
-
-        const stats = fs.statSync(binaryPath)
-        if (!stats.isFile()) {
-          return { valid: false, error: "Path is not a file" }
-        }
-      }
-
-      // Try to get version once via -v flag
-      try {
-        const version = await runBinaryVersion(binaryPath)
-        return { valid: true, version }
-      } catch (error) {
-        return {
-          valid: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
-      }
-    } catch (error) {
-      return {
-        valid: false,
-        error: error instanceof Error ? error.message : String(error),
-      }
+  cliManager.on("ready", (status: CliStatus) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli:ready", status)
     }
   })
+
+  cliManager.on("log", (entry: CliLogEntry) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli:log", entry)
+    }
+  })
+
+  cliManager.on("error", (error: Error) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli:error", { message: error.message })
+    }
+  })
+
+  ipcMain.handle("cli:getStatus", async () => cliManager.getStatus())
 }

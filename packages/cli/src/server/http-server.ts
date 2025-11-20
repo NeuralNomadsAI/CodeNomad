@@ -79,7 +79,32 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   return {
     instance: app,
-    start: () => app.listen({ port: deps.port, host: deps.host }),
+    start: async () => {
+      const addressInfo = await app.listen({ port: deps.port, host: deps.host })
+      let actualPort = deps.port
+
+      if (typeof addressInfo === "string") {
+        try {
+          const parsed = new URL(addressInfo)
+          actualPort = Number(parsed.port) || deps.port
+        } catch {
+          actualPort = deps.port
+        }
+      } else {
+        const address = app.server.address()
+        if (typeof address === "object" && address) {
+          actualPort = address.port
+        }
+      }
+
+      const displayHost = deps.host === "0.0.0.0" ? "127.0.0.1" : deps.host
+
+      deps.serverMeta.httpBaseUrl = `http://${displayHost}:${actualPort}`
+      deps.logger.info({ port: actualPort, host: deps.host }, "HTTP server listening")
+      console.log(`CodeNomad Server is ready at http://${displayHost}:${actualPort}`)
+
+      return actualPort
+    },
     stop: () => {
       closeSseClients()
       return app.close()

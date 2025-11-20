@@ -557,24 +557,73 @@ export default function ToolCall(props: ToolCallProps) {
     }
   }
 
-  const getTodoTitle = () => {
-    const state = props.toolCall?.state || {}
-    if (state.status !== "completed") return "Plan"
+  type TodoViewStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
-    const metadata = state.metadata || {}
-    const todos = metadata.todos || []
+  interface TodoViewItem {
+    id: string
+    content: string
+    status: TodoViewStatus
+  }
 
-    if (!Array.isArray(todos) || todos.length === 0) return "Plan"
+  function normalizeTodoStatus(rawStatus: unknown): TodoViewStatus {
+    if (rawStatus === "completed" || rawStatus === "in_progress" || rawStatus === "cancelled") return rawStatus
+    return "pending"
+  }
 
-    const counts = { pending: 0, completed: 0 }
-    for (const todo of todos) {
-      const status = todo.status || "pending"
-      if (status in counts) counts[status as keyof typeof counts]++
+  function extractTodosFromState(state: ToolState | undefined): TodoViewItem[] {
+    if (!state) return []
+    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
+      ? state.metadata || {}
+      : {}
+    const todos = Array.isArray((metadata as any).todos) ? (metadata as any).todos : []
+    const items: TodoViewItem[] = []
+
+    for (let index = 0; index < todos.length; index++) {
+      const todo = todos[index]
+      const content = typeof todo?.content === "string" ? todo.content.trim() : ""
+      if (!content) continue
+      const status = normalizeTodoStatus((todo as any).status)
+      const id = typeof todo?.id === "string" && todo.id.length > 0 ? todo.id : `${index}-${content}`
+      items.push({ id, content, status })
     }
 
-    const total = todos.length
-    if (counts.pending === total) return "Creating plan"
-    if (counts.completed === total) return "Completing plan"
+    return items
+  }
+
+  function summarizeTodos(todos: TodoViewItem[]) {
+    return todos.reduce(
+      (acc, todo) => {
+        acc.total += 1
+        acc[todo.status] = (acc[todo.status] || 0) + 1
+        return acc
+      },
+      { total: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 } as Record<TodoViewStatus | "total", number>,
+    )
+  }
+
+  function getTodoStatusLabel(status: TodoViewStatus): string {
+    switch (status) {
+      case "completed":
+        return "Completed"
+      case "in_progress":
+        return "In progress"
+      case "cancelled":
+        return "Cancelled"
+      default:
+        return "Pending"
+    }
+  }
+
+  const getTodoTitle = () => {
+    const state = props.toolCall?.state
+    if (!state) return "Plan"
+
+    const todos = extractTodosFromState(state)
+    if (state.status !== "completed" || todos.length === 0) return "Plan"
+
+    const counts = summarizeTodos(todos)
+    if (counts.pending === counts.total) return "Creating plan"
+    if (counts.completed === counts.total) return "Completing plan"
     return "Updating plan"
   }
 
@@ -639,7 +688,7 @@ export default function ToolCall(props: ToolCallProps) {
         return getTodoTitle()
 
       case "todoread":
-        return "Plan"
+        return getTodoTitle()
 
       case "invalid":
         if (typeof input.tool === "string") {
@@ -656,16 +705,12 @@ export default function ToolCall(props: ToolCallProps) {
     const toolName = props.toolCall?.tool || ""
     const state = props.toolCall?.state || {}
 
-    if (toolName === "todoread") {
-      return null
+    if (toolName === "todoread" || toolName === "todowrite") {
+      return renderTodoTool()
     }
 
     if (state.status === "pending") {
       return null
-    }
-
-    if (toolName === "todowrite") {
-      return renderTodowriteTool()
     }
 
     if (toolName === "task") {
@@ -938,65 +983,65 @@ export default function ToolCall(props: ToolCallProps) {
     return null
   }
 
-  const renderTodowriteTool = () => {
+  const renderTodoTool = () => {
     const state = props.toolCall?.state
     if (!state) return null
-    
-    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? state.metadata || {}
-      : {}
-    const todos = metadata.todos || []
 
-    if (!Array.isArray(todos) || todos.length === 0) {
-      return null
+    const todos = extractTodosFromState(state)
+    const counts = summarizeTodos(todos)
+
+    if (counts.total === 0) {
+      return <div class="tool-call-todo-empty">No plan items yet.</div>
     }
 
-    const getStatusLabel = (status: string): string => {
-      switch (status) {
-        case "completed":
-          return "Completed"
-        case "in_progress":
-          return "In progress"
-        case "cancelled":
-          return "Cancelled"
-        default:
-          return "Pending"
-      }
-    }
-
-    const shouldShowTag = (status: string) => status === "cancelled"
+    const completionPercent = Math.round((counts.completed / counts.total) * 100)
 
     return (
-      <div class="tool-call-todos" role="list">
-        <For each={todos}>
-          {(todo) => {
-            const content = typeof todo.content === "string" ? todo.content.trim() : ""
-            if (!content) return null
+      <div class="tool-call-todo-region">
+        <div class="tool-call-todo-summary">
+          <div class="tool-call-todo-metrics">
+            <span class="tool-call-todo-metric"><span class="tool-call-todo-metric-value">{counts.completed}</span> done</span>
+            <span class="tool-call-todo-metric"><span class="tool-call-todo-metric-value">{counts.in_progress}</span> in progress</span>
+            <span class="tool-call-todo-metric"><span class="tool-call-todo-metric-value">{counts.pending}</span> pending</span>
+          </div>
+          <div
+            class="tool-call-todo-progress"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax={counts.total}
+            aria-valuenow={counts.completed}
+            aria-label="Plan progress"
+          >
+            <div class="tool-call-todo-progress-bar" style={{ width: `${completionPercent}%` }} />
+          </div>
+        </div>
+        <div class="tool-call-todos" role="list">
+          <For each={todos}>
+            {(todo) => {
+              const label = getTodoStatusLabel(todo.status)
 
-            const status = typeof todo.status === "string" ? todo.status : "pending"
-            const label = getStatusLabel(status)
-
-            return (
-              <div
-                class="tool-call-todo-item"
-                classList={{
-                  "tool-call-todo-item-completed": status === "completed",
-                  "tool-call-todo-item-cancelled": status === "cancelled",
-                  "tool-call-todo-item-active": status === "in_progress",
-                }}
-                role="listitem"
-              >
-                <span class="tool-call-todo-checkbox" data-status={status} aria-label={label}></span>
-                <div class="tool-call-todo-body">
-                  <span class="tool-call-todo-text">{content}</span>
-                  <Show when={shouldShowTag(status)}>
-                    <span class="tool-call-todo-tag">{label}</span>
-                  </Show>
+              return (
+                <div
+                  class="tool-call-todo-item"
+                  classList={{
+                    "tool-call-todo-item-completed": todo.status === "completed",
+                    "tool-call-todo-item-cancelled": todo.status === "cancelled",
+                    "tool-call-todo-item-active": todo.status === "in_progress",
+                  }}
+                  role="listitem"
+                >
+                  <span class="tool-call-todo-checkbox" data-status={todo.status} aria-label={label}></span>
+                  <div class="tool-call-todo-body">
+                    <div class="tool-call-todo-heading">
+                      <span class="tool-call-todo-text">{todo.content}</span>
+                      <span class={`tool-call-todo-status tool-call-todo-status-${todo.status}`}>{label}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )
-          }}
-        </For>
+              )
+            }}
+          </For>
+        </div>
       </div>
     )
   }

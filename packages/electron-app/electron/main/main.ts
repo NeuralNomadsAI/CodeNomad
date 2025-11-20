@@ -1,30 +1,39 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, session } from "electron"
-import { join } from "path"
+import { app, BrowserWindow, nativeImage, session } from "electron"
+import { dirname, join } from "path"
+import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
-import { setupInstanceIPC } from "./ipc"
-import { setupStorageIPC } from "./storage"
+import { setupCliIPC } from "./ipc"
+import { CliProcessManager } from "./process-manager"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const isMac = process.platform === "darwin"
+const cliManager = new CliProcessManager()
+let mainWindow: BrowserWindow | null = null
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
 }
-
-// Setup IPC handlers before creating windows
-setupStorageIPC()
-
-let mainWindow: BrowserWindow | null = null
 
 function getIconPath() {
   if (app.isPackaged) {
     return join(process.resourcesPath, "icon.png")
   }
 
-  return join(app.getAppPath(), "electron/resources/icon.png")
+  return join(__dirname, "../resources/icon.png")
+}
+
+function getLoadingHtmlPath() {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, "loading.html")
+  }
+
+  return join(__dirname, "../resources/loading.html")
 }
 
 function createWindow() {
-  const prefersDark = true //nativeTheme.shouldUseDarkColors
+  const prefersDark = true
   const backgroundColor = prefersDark ? "#1a1a1a" : "#ffffff"
   const iconPath = getIconPath()
 
@@ -36,7 +45,7 @@ function createWindow() {
     backgroundColor,
     icon: iconPath,
     webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
+      preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
@@ -44,24 +53,44 @@ function createWindow() {
   })
 
   if (isMac) {
-    // Disable macOS spell server to avoid input lag
     mainWindow.webContents.session.setSpellCheckerEnabled(false)
   }
 
+  const loadingHtml = getLoadingHtmlPath()
+  mainWindow.loadFile(loadingHtml)
+
   if (process.env.NODE_ENV === "development") {
-    mainWindow.loadURL("http://localhost:3000")
-    mainWindow.webContents.openDevTools()
-  } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"))
+    mainWindow.webContents.openDevTools({ mode: "detach" })
   }
 
   createApplicationMenu(mainWindow)
-  setupInstanceIPC(mainWindow)
+  setupCliIPC(mainWindow, cliManager)
 
   mainWindow.on("closed", () => {
     mainWindow = null
   })
 }
+
+async function startCli() {
+  try {
+    const devMode = process.env.NODE_ENV === "development"
+    console.info("[cli] start requested (dev mode:", devMode, ")")
+    await cliManager.start({ dev: devMode })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("[cli] start failed:", message)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli:error", { message })
+    }
+  }
+}
+
+cliManager.on("ready", (status) => {
+  if (status.url && mainWindow && !mainWindow.isDestroyed()) {
+    console.info(`[cli] navigating main window to ${status.url}`)
+    mainWindow.loadURL(status.url)
+  }
+})
 
 if (isMac) {
   app.on("web-contents-created", (_, contents) => {
@@ -70,6 +99,8 @@ if (isMac) {
 }
 
 app.whenReady().then(() => {
+  startCli()
+
   if (isMac) {
     session.defaultSession.setSpellCheckerEnabled(false)
     app.on("browser-window-created", (_, window) => {
@@ -84,8 +115,6 @@ app.whenReady().then(() => {
     }
   }
 
-  console.log("[spellcheck] default session enabled:", session.defaultSession.isSpellCheckerEnabled())
-
   createWindow()
 
   app.on("activate", () => {
@@ -93,6 +122,12 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+})
+
+app.on("before-quit", async (event) => {
+  event.preventDefault()
+  await cliManager.stop().catch(() => {})
+  app.exit(0)
 })
 
 app.on("window-all-closed", () => {
