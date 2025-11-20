@@ -1,4 +1,4 @@
-import type { AppConfig, InstanceData } from "../../../cli/src/api-types"
+import type { AppConfig, InstanceData } from "../../../server/src/api-types"
 import { cliApi } from "./api-client"
 import { cliEvents } from "./cli-events"
 

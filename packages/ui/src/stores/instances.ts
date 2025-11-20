@@ -6,7 +6,7 @@ import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { cliApi } from "../lib/api-client"
 import { cliEvents } from "../lib/cli-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../cli/src/api-types"
+import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,

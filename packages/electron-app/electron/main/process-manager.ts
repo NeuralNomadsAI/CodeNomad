@@ -264,9 +264,9 @@ export class CliProcessManager extends EventEmitter {
     if (options.dev) {
       const tsxPath = this.resolveTsx()
       const sourceCandidates = [
-        path.resolve(app.getAppPath(), "..", "cli", "src", "index.ts"),
-        path.resolve(app.getAppPath(), "..", "packages", "cli", "src", "index.ts"),
-        path.resolve(process.cwd(), "packages", "cli", "src", "index.ts"),
+        path.resolve(app.getAppPath(), "..", "server", "src", "index.ts"),
+        path.resolve(app.getAppPath(), "..", "packages", "server", "src", "index.ts"),
+        path.resolve(process.cwd(), "packages", "server", "src", "index.ts"),
       ]
       const sourceEntry = sourceCandidates.find((candidate) => existsSync(candidate))
       if (tsxPath && sourceEntry) {
@@ -279,7 +279,7 @@ export class CliProcessManager extends EventEmitter {
       return { entry: dist, runner: "node" }
     }
 
-    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Please build @codenomad/cli.")
+    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Please build @neuralnomads/codenomad.")
   }
 
   private resolveTsx(): string | null {
@@ -296,12 +296,12 @@ export class CliProcessManager extends EventEmitter {
 
   private tryResolveDist(): string | null {
     const candidates: Array<string | (() => string)> = [
-      () => nodeRequire.resolve("@codenomad/cli/dist/bin.js"),
-      () => nodeRequire.resolve("@codenomad/cli/dist/bin.js", { paths: [app.getAppPath()] }),
-      path.join(app.getAppPath(), "node_modules", "@codenomad", "cli", "dist", "bin.js"),
-      path.resolve(app.getAppPath(), "..", "cli", "dist", "bin.js"),
-      path.resolve(app.getAppPath(), "..", "packages", "cli", "dist", "bin.js"),
-      path.join(process.resourcesPath, "app.asar.unpacked", "node_modules", "@codenomad", "cli", "dist", "bin.js"),
+      () => nodeRequire.resolve("@neuralnomads/codenomad/dist/bin.js"),
+      () => nodeRequire.resolve("@neuralnomads/codenomad/dist/bin.js", { paths: [app.getAppPath()] }),
+      path.join(app.getAppPath(), "node_modules", "@neuralnomads", "codenomad", "dist", "bin.js"),
+      path.resolve(app.getAppPath(), "..", "server", "dist", "bin.js"),
+      path.resolve(app.getAppPath(), "..", "packages", "server", "dist", "bin.js"),
+      path.join(process.resourcesPath, "app.asar.unpacked", "node_modules", "@neuralnomads", "codenomad", "dist", "bin.js"),
     ]
 
     for (const candidate of candidates) {

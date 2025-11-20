@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
-import replyFrom, { type FastifyReplyFromOptions } from "@fastify/reply-from"
+import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import path from "path"
 import { fetch } from "undici"
@@ -36,6 +36,11 @@ interface HttpServerDeps {
   logger: Logger
 }
 
+interface HttpServerStartResult {
+  port: number
+  url: string
+  displayHost: string
+}
 
 export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify({ logger: false })
@@ -83,8 +88,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   return {
     instance: app,
-    start: async () => {
+    start: async (): Promise<HttpServerStartResult> => {
       const addressInfo = await app.listen({ port: deps.port, host: deps.host })
+
       let actualPort = deps.port
 
       if (typeof addressInfo === "string") {
@@ -101,13 +107,14 @@ export function createHttpServer(deps: HttpServerDeps) {
         }
       }
 
-      const displayHost = deps.host === "0.0.0.0" ? "127.0.0.1" : deps.host
+      const displayHost = deps.host === "0.0.0.0" ? "127.0.0.1" : deps.host === "127.0.0.1" ? "localhost" : deps.host
+      const serverUrl = `http://${displayHost}:${actualPort}`
 
-      deps.serverMeta.httpBaseUrl = `http://${displayHost}:${actualPort}`
+      deps.serverMeta.httpBaseUrl = serverUrl
       deps.logger.info({ port: actualPort, host: deps.host }, "HTTP server listening")
-      console.log(`CodeNomad Server is ready at http://${displayHost}:${actualPort}`)
+      console.log(`CodeNomad Server is ready at ${serverUrl}`)
 
-      return actualPort
+      return { port: actualPort, url: serverUrl, displayHost }
     },
     stop: () => {
       closeSseClients()

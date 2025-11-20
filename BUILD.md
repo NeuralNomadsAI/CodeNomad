@@ -77,7 +77,7 @@ bun run build:all
 
 The build script performs these steps:
 
-1. **Build @codenomad/cli** → Produces the CLI `dist/` bundle (also rebuilds the UI assets it serves)
+1. **Build @neuralnomads/codenomad** → Produces the CLI `dist/` bundle (also rebuilds the UI assets it serves)
 2. **Compile TypeScript + bundle with Vite** → Electron main, preload, and renderer output in `dist/`
 3. **Package with electron-builder** → Platform-specific binaries
 

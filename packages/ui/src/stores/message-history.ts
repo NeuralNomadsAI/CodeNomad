@@ -1,4 +1,4 @@
-import type { InstanceData } from "../../../cli/src/api-types"
+import type { InstanceData } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,

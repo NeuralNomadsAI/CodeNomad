@@ -16,7 +16,7 @@ import type {
   WorkspaceLogEntry,
   WorkspaceEventPayload,
   WorkspaceEventType,
-} from "../../../cli/src/api-types"
+} from "../../../server/src/api-types"
 
 const FALLBACK_API_BASE = "http://127.0.0.1:9898"
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined

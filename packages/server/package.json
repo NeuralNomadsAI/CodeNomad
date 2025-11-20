@@ -1,11 +1,11 @@
 {
-  "name": "@codenomad/cli",
+  "name": "@neuralnomads/codenomad",
   "version": "0.1.0",
   "description": "CodeNomad CLI server for HTTP/SSE control plane",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "codenomad-cli": "dist/bin.js"
+    "codenomad": "dist/bin.js"
   },
   "scripts": {
     "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json",

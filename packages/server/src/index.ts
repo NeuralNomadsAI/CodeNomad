@@ -15,6 +15,7 @@ import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
 import { InstanceStore } from "./storage/instance-store"
 import { createLogger } from "./logger"
+import { launchInBrowser } from "./launcher"
 
 const require = createRequire(import.meta.url)
 const packageJson = require("../package.json") as { version: string }
@@ -32,6 +33,7 @@ interface CliOptions {
   logDestination?: string
   uiStaticDir: string
   uiDevServer?: string
+  launch: boolean
 }
 
 const DEFAULT_PORT = 9898
@@ -40,7 +42,7 @@ const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 
 function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
-    .name("codenomad-cli")
+    .name("codenomad")
     .description("CodeNomad CLI server")
     .version(packageJson.version, "-v, --version", "Show the CLI version")
     .addOption(new Option("--host <host>", "Host interface to bind").env("CLI_HOST").default(DEFAULT_HOST))
@@ -57,6 +59,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--ui-dir <path>", "Directory containing the built UI bundle").env("CLI_UI_DIR").default(DEFAULT_UI_STATIC_DIR),
     )
     .addOption(new Option("--ui-dev-server <url>", "Proxy UI requests to a running dev server").env("CLI_UI_DEV_SERVER"))
+    .addOption(new Option("--launch", "Launch the UI in a browser after start").env("CLI_LAUNCH").default(false))
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -70,6 +73,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     logDestination?: string
     uiDir: string
     uiDevServer?: string
+    launch?: boolean
   }>()
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
@@ -84,6 +88,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     logDestination: parsed.logDestination,
     uiStaticDir: parsed.uiDir,
     uiDevServer: parsed.uiDevServer,
+    launch: Boolean(parsed.launch),
   }
 }
 
@@ -139,11 +144,13 @@ async function main() {
     logger,
   })
 
+  const startInfo = await server.start()
+  logger.info({ port: startInfo.port, host: options.host }, "HTTP server listening")
+  console.log(`CodeNomad Server is ready at ${startInfo.url}`)
 
-  await server.start()
-  logger.info({ port: options.port, host: options.host }, "HTTP server listening")
-  const displayHost = options.host === "127.0.0.1" || options.host === "0.0.0.0" ? "localhost" : options.host
-  console.log(`CodeNomad Server is ready at http://${displayHost}:${options.port}`)
+  if (options.launch) {
+    await launchInBrowser(startInfo.url, logger.child({ component: "launcher" }))
+  }
 
   let shuttingDown = false
 

@@ -1,5 +1,5 @@
 import { createContext, createMemo, createSignal, onCleanup, type Accessor, type ParentComponent, useContext } from "solid-js"
-import type { InstanceData } from "../../../cli/src/api-types"
+import type { InstanceData } from "../../../server/src/api-types"
 import { storage } from "../lib/storage"
 
 const DEFAULT_INSTANCE_DATA: InstanceData = { messageHistory: [], agentModelSelections: {} }

@@ -29,7 +29,7 @@
     "package:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "@codenomad/cli": "file:../cli",
+    "@neuralnomads/codenomad": "file:../server",
     "@codenomad/ui": "file:../ui"
   },
   "devDependencies": {

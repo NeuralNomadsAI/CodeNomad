@@ -1,4 +1,4 @@
-import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../cli/src/api-types"
+import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { cliApi } from "./api-client"
 
 const RETRY_BASE_DELAY = 1000

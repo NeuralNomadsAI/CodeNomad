@@ -96,7 +96,7 @@ async function build(platform) {
 
   try {
     console.log("📦 Step 1/3: Building CLI dependency...\n")
-    await run(npmCmd, ["run", "build", "--workspace", "@codenomad/cli"], {
+    await run(npmCmd, ["run", "build", "--workspace", "@neuralnomads/codenomad"], {
       cwd: workspaceRoot,
       env: { NODE_PATH: workspaceNodeModulesPath },
     })

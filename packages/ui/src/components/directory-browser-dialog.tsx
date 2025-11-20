@@ -1,7 +1,7 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
 import { ArrowUpLeft, Folder as FolderIcon, Loader2, X } from "lucide-solid"
-import type { FileSystemEntry, FileSystemListingMetadata } from "../../../cli/src/api-types"
-import { WINDOWS_DRIVES_ROOT } from "../../../cli/src/api-types"
+import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
+import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { cliApi } from "../lib/api-client"
 
 function normalizePathKey(input?: string | null) {
