@@ -48,11 +48,12 @@ jobs:
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-darwin-x64 --no-save
 
-      - name: Build macOS binaries
+      - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
       - name: Upload release assets
         run: |
+          set -euo pipefail
           shopt -s nullglob
           for file in packages/electron-app/release/*; do
             [ -f "$file" ] || continue
@@ -92,7 +93,7 @@ jobs:
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-win32-x64-msvc --no-save
 
-      - name: Build Windows binaries
+      - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
       - name: Upload release assets
@@ -129,11 +130,12 @@ jobs:
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
-      - name: Build Linux binaries
+      - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
       - name: Upload release assets
         run: |
+          set -euo pipefail
           shopt -s nullglob
           for file in packages/electron-app/release/*; do
             [ -f "$file" ] || continue
@@ -145,6 +147,164 @@ jobs:
                 echo "Skipping non-installer asset: $file"
                 ;;
             esac
+          done
+
+  build-tauri-macos:
+    runs-on: macos-13
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ inputs.version }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust (Tauri)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set workspace versions
+        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm ci --workspaces
+
+      - name: Build macOS bundle (Tauri)
+        run: npm run build --workspace @codenomad/tauri-app
+
+      - name: Package Tauri artifacts (macOS)
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle"
+          ARTIFACT_DIR="packages/tauri-app/release-tauri"
+          rm -rf "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
+          if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
+            ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.zip"
+          fi
+          if [ -f "$BUNDLE_ROOT/dmg/CodeNomad.dmg" ]; then
+            cp "$BUNDLE_ROOT/dmg/CodeNomad.dmg" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.dmg"
+          fi
+
+      - name: Upload Tauri release assets (macOS)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for file in packages/tauri-app/release-tauri/*; do
+            [ -f "$file" ] || continue
+            gh release upload "$TAG" "$file" --clobber
+          done
+
+  build-tauri-windows:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ inputs.version }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust (Tauri)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set workspace versions
+        run: npm version ${{ env.VERSION }} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+        shell: bash
+
+      - name: Install dependencies
+        run: npm ci --workspaces
+
+      - name: Build Windows bundle (Tauri)
+        run: npm run build --workspace @codenomad/tauri-app
+
+      - name: Package Tauri artifacts (Windows)
+        shell: pwsh
+        run: |
+          $bundleRoot = "packages/tauri-app/target/release/bundle"
+          $artifactDir = "packages/tauri-app/release-tauri"
+          if (Test-Path $artifactDir) { Remove-Item $artifactDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $artifactDir | Out-Null
+          Get-ChildItem -Path $bundleRoot -Recurse -File | Where-Object { $_.Extension -in '.exe', '.msi' } | ForEach-Object {
+            $ext = $_.Extension.TrimStart('.')
+            $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.$ext")
+            Copy-Item $_.FullName $dest -Force
+          }
+
+      - name: Upload Tauri release assets (Windows)
+        shell: pwsh
+        run: |
+          if (Test-Path "packages/tauri-app/release-tauri") {
+            Get-ChildItem -Path "packages/tauri-app/release-tauri" -File | ForEach-Object {
+              gh release upload $env:TAG $_.FullName --clobber
+            }
+          }
+
+  build-tauri-linux:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ inputs.version }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust (Tauri)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Set workspace versions
+        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm ci --workspaces
+
+      - name: Build Linux bundle (Tauri)
+        run: npm run build --workspace @codenomad/tauri-app
+
+      - name: Package Tauri artifacts (Linux)
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle"
+          ARTIFACT_DIR="packages/tauri-app/release-tauri"
+          rm -rf "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
+          shopt -s nullglob globstar
+          for file in "$BUNDLE_ROOT"/**/*.{AppImage,deb,rpm,tar.gz}; do
+            [ -f "$file" ] || continue
+            ext="${file##*.}"
+            cp "$file" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.${ext}"
+          done
+
+      - name: Upload Tauri release assets (Linux)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for file in packages/tauri-app/release-tauri/*; do
+            [ -f "$file" ] || continue
+            gh release upload "$TAG" "$file" --clobber
           done
 
   build-linux-rpm:
