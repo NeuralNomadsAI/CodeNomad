@@ -75,9 +75,11 @@ jobs:
   publish-server:
     needs: build-and-upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       NODE_VERSION: 20
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,4 +100,4 @@ jobs:
         run: npm run build --workspace @neuralnomads/codenomad
 
       - name: Publish server package
-        run: npm publish --workspace @neuralnomads/codenomad --access public --tag latest
+        run: npm publish --workspace @neuralnomads/codenomad --access public --tag latest --provenance
