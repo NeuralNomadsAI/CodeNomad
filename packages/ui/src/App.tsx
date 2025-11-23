@@ -40,6 +40,7 @@ import {
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { deleteSession } from "./stores/session-api"
 
 const App: Component = () => {
   const { isDark } = useTheme()
@@ -174,19 +175,21 @@ const App: Component = () => {
       return
     }
 
-    const parentSessionId = session.parentId ?? session.id
-    const parentSession = sessions.find((s) => s.id === parentSessionId)
+    const confirmed = await showConfirmDialog("Delete this session? This action cannot be undone.", {
+      title: "Delete session",
+      variant: "warning",
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+    })
 
-    if (!parentSession || parentSession.parentId !== null) {
+    if (!confirmed) {
       return
     }
 
-    clearActiveParentSession(instanceId)
-
     try {
-      await fetchSessions(instanceId)
+      await deleteSession(instanceId, sessionId)
     } catch (error) {
-      console.error("Failed to refresh sessions after closing:", error)
+      console.error("Failed to delete session:", error)
     }
   }
 

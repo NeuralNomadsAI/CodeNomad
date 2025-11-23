@@ -105,11 +105,11 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
   const session = instanceSessions.get(sessionId)
   if (!session) return
 
-  updater(session)
-
   const updatedSession = {
     ...session,
   }
+
+  updater(updatedSession)
 
   setSessions((prev) => {
     const next = new Map(prev)

@@ -2,7 +2,7 @@ import { Show, createMemo, createSignal, type Component } from "solid-js"
 import type { Accessor } from "solid-js"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
-import { activeParentSessionId, activeSessionId as activeSessionMap, getSessionFamily, setActiveSession } from "../../stores/sessions"
+import { activeParentSessionId, activeSessionId as activeSessionMap, getSessions, setActiveSession } from "../../stores/sessions"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 import { buildCustomCommandEntries } from "../../lib/command-utils"
 import { getCommands as getInstanceCommands } from "../../stores/commands"
@@ -35,10 +35,8 @@ const InstanceShell: Component<InstanceShellProps> = (props) => {
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
 
   const activeSessions = createMemo(() => {
-    const parentId = activeParentSessionId().get(props.instance.id)
-    if (!parentId) return new Map<string, ReturnType<typeof getSessionFamily>[number]>()
-    const sessionFamily = getSessionFamily(props.instance.id, parentId)
-    return new Map(sessionFamily.map((s) => [s.id, s]))
+    const allSessions = getSessions(props.instance.id)
+    return new Map(allSessions.map((s) => [s.id, s]))
   })
 
   const activeSessionIdForInstance = createMemo(() => {

@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createEffect, onCleanup, onMount, createMemo, JSX } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { MessageSquare, Info, X, Copy } from "lucide-solid"
+import { MessageSquare, Info, Trash2, Copy } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import { keyboardRegistry } from "../lib/keyboard-registry"
@@ -62,7 +62,9 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [isResizing, setIsResizing] = createSignal(false)
   const [startX, setStartX] = createSignal(0)
   const [startWidth, setStartWidth] = createSignal(DEFAULT_WIDTH)
+  const [collapsedParents, setCollapsedParents] = createSignal<Set<string>>(new Set())
   const infoShortcut = keyboardRegistry.get("switch-to-info")
+  const COLLAPSE_STORAGE_KEY = `opencode-collapsed-sessions-${props.instanceId}`
 
   const selectSession = (sessionId: string) => {
     props.onSelect(sessionId)
@@ -229,16 +231,17 @@ const SessionList: Component<SessionListProps> = (props) => {
             </div>
             <Show when={rowProps.canClose}>
               <span
-                class="session-item-close opacity-80 hover:opacity-100 hover:bg-status-error hover:text-white rounded p-0.5 transition-all"
+                class="session-item-action opacity-80 hover:opacity-100 hover:bg-[var(--status-error)] hover:text-white rounded p-0.5 transition-all"
                 onClick={(event) => {
                   event.stopPropagation()
                   props.onClose(rowProps.sessionId)
                 }}
                 role="button"
                 tabIndex={0}
-                aria-label="Close session"
+                aria-label="Delete session"
+                title="Delete session"
               >
-                <X class="w-3 h-3" />
+                <Trash2 class="w-3 h-3" />
               </span>
             </Show>
           </div>
@@ -265,37 +268,32 @@ const SessionList: Component<SessionListProps> = (props) => {
     )
   }
  
-  const userSessionIds = createMemo(
-    () => {
-      const ids: string[] = []
-      for (const session of props.sessions.values()) {
-        if (session.parentId === null) {
-          ids.push(session.id)
+  const sessionsByParent = createMemo(() => {
+    const grouped = new Map<string, { parent: Session; children: Session[] }>()
+    
+    for (const session of props.sessions.values()) {
+      if (session.parentId === null) {
+        grouped.set(session.id, { parent: session, children: [] })
+      }
+    }
+    
+    for (const session of props.sessions.values()) {
+      if (session.parentId !== null) {
+        const group = grouped.get(session.parentId)
+        if (group) {
+          group.children.push(session)
         }
       }
-      return ids
-    },
-    undefined,
-    { equals: arraysEqual },
-  )
- 
-  const childSessionIds = createMemo(
-    () => {
-      const children: { id: string; updated: number }[] = []
-      for (const session of props.sessions.values()) {
-        if (session.parentId !== null) {
-          children.push({ id: session.id, updated: session.time.updated ?? 0 })
-        }
-      }
-      if (children.length <= 1) {
-        return children.map((entry) => entry.id)
-      }
-      children.sort((a, b) => b.updated - a.updated)
-      return children.map((entry) => entry.id)
-    },
-    undefined,
-    { equals: arraysEqual },
-  )
+    }
+    
+    for (const [_, group] of grouped) {
+      group.children.sort((a, b) => (b.time.updated || 0) - (a.time.updated || 0))
+    }
+    
+    return Array.from(grouped.values()).sort((a, b) => 
+      (b.parent.time.updated || 0) - (a.parent.time.updated || 0)
+    )
+  })
  
   return (
     <div
@@ -349,21 +347,25 @@ const SessionList: Component<SessionListProps> = (props) => {
           </div>
 
 
-        <Show when={userSessionIds().length > 0}>
+        <Show when={sessionsByParent().length > 0}>
           <div class="session-section">
             <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
-              User Session
+              Sessions ({props.sessions.size} total)
             </div>
-            <For each={userSessionIds()}>{(id) => <SessionRow sessionId={id} canClose />}</For>
-          </div>
-        </Show>
-
-        <Show when={childSessionIds().length > 0}>
-          <div class="session-section">
-            <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
-              Agent Sessions
-            </div>
-            <For each={childSessionIds()}>{(id) => <SessionRow sessionId={id} />}</For>
+            <For each={sessionsByParent()}>
+              {({ parent, children }) => (
+                <div class="session-group">
+                  <SessionRow sessionId={parent.id} canClose />
+                  <Show when={children.length > 0}>
+                    <div class="ml-4 border-l border-base pl-3">
+                      <For each={children}>
+                        {(child) => <SessionRow sessionId={child.id} />}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </For>
           </div>
         </Show>
       </div>
