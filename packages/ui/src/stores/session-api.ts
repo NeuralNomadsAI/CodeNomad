@@ -269,12 +269,15 @@ async function forkSession(
     throw new Error("Failed to fork session: No data returned")
   }
 
+  // DEBUG: Log the actual fork response to verify parentID
+  console.log(`[DEBUG] Fork response:`, JSON.stringify(response.data, null, 2))
+
   const info = response.data as SessionForkResponse
   const forkedSession = {
     id: info.id,
     instanceId,
     title: info.title || "Forked Session",
-    parentId: info.parentID || null,
+    parentId: info.parentID || sourceSessionId, // Fallback to source session ID if backend doesn't set parentID
     agent: info.agent || "",
     model: {
       providerId: info.model?.providerID || "",
