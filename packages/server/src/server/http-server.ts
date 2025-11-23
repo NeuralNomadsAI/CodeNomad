@@ -66,6 +66,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.register(replyFrom, {
     contentTypesToEncode: [],
     undici: {
+      connections: 16,
+      pipelining: 1,
       bodyTimeout: 0,
       headersTimeout: 0,
     },
