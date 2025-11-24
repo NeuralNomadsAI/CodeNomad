@@ -16,6 +16,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
+import { cleanupBlankSessions } from "../../stores/session-state"
 
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
@@ -139,6 +140,19 @@ export function useCommands(options: UseCommandsOptions) {
         const sessionId = activeSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "info") return
         await options.handleCloseSession(instance.id, sessionId)
+      },
+    })
+
+    commandRegistry.register({
+      id: "cleanup-blank-sessions",
+      label: "Cleanup Blank Sessions",
+      description: "Remove empty sessions from the current instance",
+      category: "Session",
+      keywords: ["cleanup", "blank", "empty", "sessions", "remove", "delete"],
+      action: async () => {
+        const instance = activeInstance()
+        if (!instance) return
+        await cleanupBlankSessions(instance.id, undefined, true)
       },
     })
 

@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js"
 
 import type { Session, Agent, Provider } from "../types/session"
+import { loadMessages, deleteSession } from "./session-api"
+import { showToastNotification } from "../lib/notifications"
 
 export interface SessionInfo {
   cost: number
@@ -221,7 +223,7 @@ function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | un
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
 
-function isBlankSession(session: Session, instanceId: string): boolean {
+async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
   if (session.parentId === null) {
     // Parent session is only blank if actually blank AND has no children
 
@@ -234,7 +236,10 @@ function isBlankSession(session: Session, instanceId: string): boolean {
     // Subagent
 
     const loadedSet = messagesLoaded().get(instanceId) || new Set()
-    if (!loadedSet.has(session.id)) return false
+    if (!loadedSet.has(session.id)) {
+      if (!fetchIfNeeded) return false
+      await loadMessages(instanceId, session.id)
+    }
 
     if (session.messages.length === 0) return true
 
@@ -250,10 +255,14 @@ function isBlankSession(session: Session, instanceId: string): boolean {
 
     // Subagent is blank if last message was NOT a tool call
     return !lastMessageWasToolCall
-  } else if (session.revert?.messageID) {
+  } else if (!session.title?.includes("subagent") && session.parentId !== null) {
     // Fork
+
     const loadedSet = messagesLoaded().get(instanceId) || new Set()
-    if (!loadedSet.has(session.id)) return false
+    if (!loadedSet.has(session.id)) {
+      if (!fetchIfNeeded) return false
+      await loadMessages(instanceId, session.id)
+    }
 
     if (session.messages.length === 0) return true
 
@@ -262,6 +271,36 @@ function isBlankSession(session: Session, instanceId: string): boolean {
   }
 
   return false // default to not saying it's blank, just to be safe
+}
+
+async function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return
+
+  const cleanupPromises = Array.from(instanceSessions)
+    .filter(([sessionId]) => sessionId !== excludeSessionId)
+    .map(async ([sessionId, session]) => {
+      const isBlank = await isBlankSession(session, instanceId, fetchIfNeeded)
+      if (!isBlank) return false
+
+      await deleteSession(instanceId, sessionId).catch((error: Error) => {
+        console.error(`Failed to delete blank session ${sessionId}:`, error)
+      })
+      return true
+    })
+
+  if (cleanupPromises.length > 0) {
+    console.log(`Cleaning up ${cleanupPromises.length} blank sessions`)
+    const deletionResults = await Promise.all(cleanupPromises)
+    const deletedCount = deletionResults.filter(Boolean).length
+
+    if (deletedCount > 0) {
+      showToastNotification({
+        message: `Cleaned up ${deletedCount} blank session${deletedCount === 1 ? '' : 's'}`,
+        variant: "info"
+      })
+    }
+  }
 }
 
 export {
@@ -303,4 +342,5 @@ export {
   isSessionMessagesLoading,
   getSessionInfo,
   isBlankSession,
+  cleanupBlankSessions,
 }
