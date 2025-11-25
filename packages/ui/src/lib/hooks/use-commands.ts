@@ -17,6 +17,7 @@ import type { Instance } from "../../types/instance"
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
+  toggleUsageMetrics: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: ExpansionPreference) => void
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
@@ -422,8 +423,21 @@ export function useCommands(options: UseCommandsOptions) {
     })
 
     commandRegistry.register({
+      id: "token-usage-visibility",
+      label: () => {
+        const visible = options.preferences().showUsageMetrics ?? true
+        return `Token Usage Display · ${visible ? "Visible" : "Hidden"}`
+      },
+      description: "Show or hide token and cost stats for assistant messages",
+      category: "System",
+      keywords: ["token", "usage", "cost", "stats"],
+      action: options.toggleUsageMetrics,
+    })
+ 
+    commandRegistry.register({
       id: "help",
       label: "Show Help",
+
       description: "Display keyboard shortcuts and help",
       category: "System",
       keywords: ["/help", "shortcuts", "help"],

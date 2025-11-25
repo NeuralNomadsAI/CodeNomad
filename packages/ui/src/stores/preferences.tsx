@@ -35,6 +35,7 @@ export interface Preferences {
   diffViewMode: DiffViewMode
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
+  showUsageMetrics: boolean
 }
 
 export interface OpenCodeBinary {
@@ -60,6 +61,7 @@ const defaultPreferences: Preferences = {
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
+  showUsageMetrics: true,
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -92,6 +94,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     diffViewMode: sanitized.diffViewMode ?? defaultPreferences.diffViewMode,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultPreferences.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultPreferences.diagnosticsExpansion,
+    showUsageMetrics: sanitized.showUsageMetrics ?? defaultPreferences.showUsageMetrics,
   }
 }
 
@@ -270,6 +273,10 @@ function toggleShowThinkingBlocks(): void {
   updatePreferences({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
+function toggleUsageMetrics(): void {
+  updatePreferences({ showUsageMetrics: !preferences().showUsageMetrics })
+}
+
 function addRecentFolder(path: string): void {
   updateConfig((draft) => {
     draft.recentFolders = buildRecentFolderList(path, draft.recentFolders)
@@ -370,6 +377,7 @@ interface ConfigContextValue {
   setThemePreference: typeof setThemePreference
   updateConfig: typeof updateConfig
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
+  toggleUsageMetrics: typeof toggleUsageMetrics
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
@@ -400,6 +408,7 @@ const configContextValue: ConfigContextValue = {
   setThemePreference,
   updateConfig,
   toggleShowThinkingBlocks,
+  toggleUsageMetrics,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
@@ -454,6 +463,7 @@ export {
   updateConfig,
   updatePreferences,
   toggleShowThinkingBlocks,
+  toggleUsageMetrics,
   recentFolders,
   addRecentFolder,
   removeRecentFolder,

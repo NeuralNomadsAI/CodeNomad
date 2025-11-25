@@ -47,6 +47,7 @@ const App: Component = () => {
     preferences,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
+    toggleUsageMetrics,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,
@@ -205,6 +206,7 @@ const App: Component = () => {
   const { commands: paletteCommands, executeCommand } = useCommands({
     preferences,
     toggleShowThinkingBlocks,
+    toggleUsageMetrics,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,

@@ -545,21 +545,22 @@ export default function MessageStream(props: MessageStreamProps) {
 
   return (
     <div class="message-stream-container">
-        <div class="connection-status">
-          <div class="connection-status-text connection-status-info flex flex-wrap items-center gap-2 text-sm font-medium">
-            <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-              <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
-              <span class="font-semibold text-primary">{formatTokens(sessionInfo().actualUsageTokens ?? 0)}</span>
-            </div>
-            <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-              <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
-              <span class="font-semibold text-primary">
-                {sessionInfo().contextAvailableTokens !== null ? formatTokens(sessionInfo().contextAvailableTokens ?? 0) : "--"}
-              </span>
-            </div>
+      <div class="connection-status">
+        <div class="connection-status-text connection-status-info flex flex-wrap items-center gap-2 text-sm font-medium">
+          <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+            <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
+            <span class="font-semibold text-primary">{formatTokens(sessionInfo().actualUsageTokens ?? 0)}</span>
           </div>
-
+          <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+            <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
+            <span class="font-semibold text-primary">
+              {sessionInfo().contextAvailableTokens !== null ? formatTokens(sessionInfo().contextAvailableTokens ?? 0) : "--"}
+            </span>
+          </div>
+        </div>
+ 
         <div class="connection-status-text connection-status-shortcut">
+
           <div class="connection-status-shortcut-action">
             <button
               type="button"

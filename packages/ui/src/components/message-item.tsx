@@ -2,6 +2,7 @@ import { For, Show, createMemo } from "solid-js"
 import type { Message, SDKPart, MessageInfo, ClientPart } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import { formatTokenTotal } from "../lib/formatters"
+import { preferences } from "../stores/preferences"
 import MessagePart from "./message-part"
 
 interface MessageItemProps {
@@ -17,6 +18,7 @@ interface MessageItemProps {
 
 export default function MessageItem(props: MessageItemProps) {
   const isUser = () => props.message.type === "user"
+  const showUsageMetrics = () => preferences().showUsageMetrics ?? true
   const timestamp = () => {
     const date = new Date(props.message.timestamp)
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -148,6 +150,9 @@ export default function MessageItem(props: MessageItemProps) {
   const usageStats = createMemo(() => {
     const info = props.messageInfo
     if (!info || info.role !== "assistant" || !info.tokens) {
+      return null
+    }
+    if (!showUsageMetrics()) {
       return null
     }
 

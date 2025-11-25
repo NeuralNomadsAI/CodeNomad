@@ -37,6 +37,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     return value > 0 ? value : 0
   })
 
+
   const formatTokenValue = (value: number | null | undefined) => {
     if (value === null || value === undefined) return "--"
     return formatTokenTotal(value)
