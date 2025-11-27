@@ -11,20 +11,20 @@
 }
 
 .message-item-base:not(.assistant-message) {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
 }
 
 .message-step-start {
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
-  margin-top: 0.5rem;
+  margin-top: 0.25rem;
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
 

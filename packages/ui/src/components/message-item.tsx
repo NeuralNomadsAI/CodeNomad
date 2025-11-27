@@ -229,7 +229,7 @@ export default function MessageItem(props: MessageItemProps) {
         </For>
 
         <Show when={fileAttachments().length > 0}>
-          <div class="message-attachments">
+          <div class="message-attachments mt-1">
             <For each={fileAttachments()}>
               {(attachment) => {
                 const name = getAttachmentName(attachment)
