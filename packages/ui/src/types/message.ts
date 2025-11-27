@@ -36,7 +36,6 @@ export type ClientPart = SDKPart & {
   sessionID?: string
   messageID?: string
   synthetic?: boolean
-  version?: number
   renderCache?: RenderCache
   pendingPermission?: PendingPermissionState
 }

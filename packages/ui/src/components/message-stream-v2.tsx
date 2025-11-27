@@ -221,8 +221,17 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       avail: info.contextAvailableTokens,
     }
   })
-
+ 
+  const preferenceSignature = createMemo(() => {
+    const pref = preferences()
+    const showThinking = pref.showThinkingBlocks ? 1 : 0
+    const thinkingExpansion = pref.thinkingBlocksExpansion ?? "expanded"
+    const showUsage = (pref.showUsageMetrics ?? true) ? 1 : 0
+    return `${showThinking}|${thinkingExpansion}|${showUsage}`
+  })
+ 
   const connectionStatus = () => sseManager.getStatus(props.instanceId)
+
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instanceId)
   }
@@ -391,7 +400,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       orderedParts.forEach((part, partIndex) => {
         if (part.type === "tool") {
           flushContent()
-          const partVersion = typeof part.version === "number" ? part.version : 0
+          const partRevision = typeof part.revision === "number" ? part.revision : 0
           const messageVersion = record.revision
           const key = `${record.id}:${part.id ?? partIndex}`
           let toolItem = sessionCache.toolItems.get(key)
@@ -403,7 +412,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
               messageInfo,
               messageId: record.id,
               messageVersion,
-              partVersion,
+              partRevision,
             }
             sessionCache.toolItems.set(key, toolItem)
           } else {
@@ -412,7 +421,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
             toolItem.messageInfo = messageInfo
             toolItem.messageId = record.id
             toolItem.messageVersion = messageVersion
-            toolItem.partVersion = partVersion
+            toolItem.partRevision = partRevision
           }
           items.push(toolItem)
           usedToolKeys.add(key)
@@ -510,12 +519,12 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
     if (!lastItem) {
       tailSignature = `msg:${lastBlock.record.id}:${lastBlock.record.revision}`
     } else if (lastItem.type === "tool") {
-      tailSignature = `tool:${lastItem.key}:${lastItem.partVersion}`
+      tailSignature = `tool:${lastItem.key}:${lastItem.partRevision}`
     } else if (lastItem.type === "content") {
       tailSignature = `content:${lastItem.key}:${lastBlock.record.revision}`
     } else {
-      const version = typeof lastItem.part.version === "number" ? lastItem.part.version : 0
-      tailSignature = `step:${lastItem.key}:${version}`
+      const revision = typeof lastItem.part.revision === "number" ? lastItem.part.revision : lastBlock.record.revision
+      tailSignature = `step:${lastItem.key}:${revision}`
     }
     return `${revisionValue}:${tailSignature}`
   })
@@ -531,6 +540,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   let containerRef: HTMLDivElement | undefined
   let lastKnownScrollTop = 0
+  let lastMeasuredScrollHeight = 0
   let pendingScrollFrame: number | null = null
   let userScrollIntentUntil = 0
   let detachScrollIntentListeners: (() => void) | undefined
@@ -572,6 +582,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
   function setContainerRef(element: HTMLDivElement | null) {
     containerRef = element || undefined
     lastKnownScrollTop = containerRef?.scrollTop ?? 0
+    lastMeasuredScrollHeight = containerRef?.scrollHeight ?? 0
     attachScrollIntentListeners(containerRef)
   }
 
@@ -597,10 +608,16 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       if (!containerRef) return
       containerRef.scrollTo({ top: containerRef.scrollHeight, behavior })
       setAutoScroll(true)
+      lastMeasuredScrollHeight = containerRef.scrollHeight
       lastKnownScrollTop = containerRef.scrollTop
       updateScrollIndicators(containerRef)
       scheduleScrollPersist()
     })
+  }
+ 
+  function scrollToBottomAndClamp(immediate = false) {
+    scrollToBottom(immediate)
+    requestAnimationFrame(() => clampScrollAfterShrink())
   }
  
   function scrollToTop(immediate = false) {
@@ -610,6 +627,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
     requestAnimationFrame(() => {
       if (!containerRef) return
       containerRef.scrollTo({ top: 0, behavior })
+      lastMeasuredScrollHeight = containerRef.scrollHeight
       lastKnownScrollTop = containerRef.scrollTop
       updateScrollIndicators(containerRef)
       scheduleScrollPersist()
@@ -624,6 +642,18 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       if (!containerRef) return
       scrollCache.persist(containerRef, { atBottomOffset: 48 })
     })
+  }
+
+  function clampScrollAfterShrink() {
+    if (!containerRef || !autoScroll()) return
+    const currentHeight = containerRef.scrollHeight
+    const clientHeight = containerRef.clientHeight
+    if (currentHeight < lastMeasuredScrollHeight) {
+      const maxScrollTop = Math.max(currentHeight - clientHeight, 0)
+      containerRef.scrollTo({ top: maxScrollTop, behavior: "auto" })
+      lastKnownScrollTop = containerRef.scrollTop
+    }
+    lastMeasuredScrollHeight = currentHeight
   }
 
 
@@ -642,6 +672,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       const movingUp = currentTop < previousTop - SCROLL_DIRECTION_THRESHOLD
       const movingDown = currentTop > previousTop + SCROLL_DIRECTION_THRESHOLD
       lastKnownScrollTop = currentTop
+      lastMeasuredScrollHeight = containerRef.scrollHeight
       const atBottom = isNearBottom(containerRef)
       if (isUserScroll) {
         if (movingUp && !atBottom && autoScroll()) {
@@ -667,6 +698,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
           const atBottom = isNearBottom(target)
           setAutoScroll(atBottom)
         }
+        lastMeasuredScrollHeight = target.scrollHeight
         updateScrollIndicators(target)
       },
     })
@@ -675,17 +707,24 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
   let previousToken: string | undefined
  
   createEffect(() => {
-
     const token = changeToken()
     if (!token || token === previousToken) {
       return
     }
     previousToken = token
     if (autoScroll()) {
-      scrollToBottom(true)
+      scrollToBottomAndClamp(true)
     }
   })
-
+ 
+  createEffect(() => {
+    preferenceSignature()
+    if (!autoScroll()) {
+      return
+    }
+    scrollToBottomAndClamp(true)
+  })
+ 
   createEffect(() => {
     if (messageRecords().length === 0) {
       setShowScrollTopButton(false)
@@ -693,6 +732,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
       setAutoScroll(true)
     }
   })
+
  
   onCleanup(() => {
     if (pendingScrollFrame !== null) {

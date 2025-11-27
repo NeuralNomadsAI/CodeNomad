@@ -404,13 +404,10 @@ export function createInstanceMessageStore(instanceId: string): InstanceMessageS
     parts.forEach((part, index) => {
       const id = ensurePartId(messageId, part, index)
       const cloned = clonePart(part)
-      if (typeof cloned.version !== "number") {
-        cloned.version = 0
-      }
       map[id] = {
         id,
         data: cloned,
-        revision: cloned.version,
+        revision: 0,
       }
       ids.push(id)
     })
