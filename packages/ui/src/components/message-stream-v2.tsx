@@ -192,8 +192,17 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+  const visibleMessageIds = createMemo(() => {
+    const ids = messageIds()
+    const revert = store().getSessionRevert(props.sessionId)
+    if (!revert?.messageID) {
+      return ids
+    }
+    const stopIndex = ids.indexOf(revert.messageID)
+    return stopIndex === -1 ? ids : ids.slice(0, stopIndex)
+  })
   const messageRecords = createMemo(() =>
-    messageIds()
+    visibleMessageIds()
       .map((id) => store().getMessage(id))
       .filter((record): record is MessageRecord => Boolean(record)),
   )
@@ -250,15 +259,17 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
 
   const messageIndexMap = createMemo(() => {
     const map = new Map<string, number>()
-    const records = messageRecords()
-    records.forEach((record, index) => map.set(record.id, index))
+    const ids = visibleMessageIds()
+    ids.forEach((id, index) => map.set(id, index))
     return map
   })
 
   const lastAssistantIndex = createMemo(() => {
-    const records = messageRecords()
-    for (let index = records.length - 1; index >= 0; index--) {
-      if (records[index].role === "assistant") {
+    const ids = visibleMessageIds()
+    const resolvedStore = store()
+    for (let index = ids.length - 1; index >= 0; index--) {
+      const record = resolvedStore.getMessage(ids[index])
+      if (record?.role === "assistant") {
         return index
       }
     }
