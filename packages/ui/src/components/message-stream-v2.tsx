@@ -332,6 +332,8 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
   let pendingScrollFrame: number | null = null
   let userScrollIntentUntil = 0
   let detachScrollIntentListeners: (() => void) | undefined
+  let hasRestoredScroll = false
+  let hasInitialScroll = false
 
   function markUserScrollIntent() {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
@@ -405,7 +407,11 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
  
   function scrollToBottomAndClamp(immediate = false) {
     scrollToBottom(immediate)
-    requestAnimationFrame(() => clampScrollAfterShrink())
+    if (hasInitialScroll) {
+      requestAnimationFrame(() => clampScrollAfterShrink())
+    } else {
+      hasInitialScroll = true
+    }
   }
  
   function scrollToTop(immediate = false) {
@@ -476,9 +482,13 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
  
   createEffect(() => {
     const target = containerRef
+    const loading = props.loading
+
     if (!target) return
+    if (loading) return
+    if (hasRestoredScroll) return
+
     scrollCache.restore(target, {
-      fallback: () => scrollToBottom(true),
       onApplied: (snapshot) => {
         if (snapshot) {
           setAutoScroll(snapshot.atBottom)
@@ -490,12 +500,17 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
         updateScrollIndicators(target)
       },
     })
+
+    hasRestoredScroll = true
   })
  
   let previousToken: string | undefined
  
   createEffect(() => {
     const token = changeToken()
+    const loading = props.loading
+
+    if (loading) return
     if (!token || token === previousToken) {
       return
     }
@@ -507,6 +522,7 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
  
   createEffect(() => {
     preferenceSignature()
+    if (props.loading) return
     if (!autoScroll()) {
       return
     }

@@ -46,36 +46,13 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
 const PENDING_PART_MAX_AGE_MS = 30_000
 
 function clonePart(part: ClientPart): ClientPart {
-  if (!part || typeof part !== "object") {
-    return part
-  }
-  const cloned: Record<string, any> = { ...part }
-  if ("renderCache" in cloned) {
-    cloned.renderCache = undefined
-  }
-  if ("text" in cloned) {
-    cloned.text = cloneStructuredValue(cloned.text)
-  }
-  if ("thinking" in cloned && typeof cloned.thinking === "object") {
-    cloned.thinking = cloneStructuredValue(cloned.thinking)
-  }
-  if ("content" in cloned && Array.isArray(cloned.content)) {
-    cloned.content = cloneStructuredValue(cloned.content)
-  }
-  return cloned as ClientPart
+  // Cloning is intentionally disabled; message parts
+  // are stored as received from the backend.
+  return part
 }
 
 function cloneStructuredValue<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((item) => cloneStructuredValue(item)) as T
-  }
-  if (value && typeof value === "object") {
-    const next: Record<string, any> = {}
-    Object.entries(value as Record<string, any>).forEach(([key, nested]) => {
-      next[key] = cloneStructuredValue(nested)
-    })
-    return next as T
-  }
+  // Legacy helper kept as a no-op to avoid deep copies.
   return value
 }
 
