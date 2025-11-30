@@ -636,9 +636,60 @@ export function createInstanceMessageStore(instanceId: string): InstanceMessageS
     return { entry, active }
   }
 
+  function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
+    const session = state.sessions[sessionId]
+    if (!session) return
+    const stopIndex = session.messageIds.indexOf(revertMessageId)
+    if (stopIndex === -1) return
+    const removedIds = session.messageIds.slice(stopIndex)
+    const keptIds = session.messageIds.slice(0, stopIndex)
+    if (removedIds.length === 0) return
+
+    setState("sessions", sessionId, "messageIds", keptIds)
+
+    setState("messages", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => delete next[id])
+      return next
+    })
+
+    setState("messageInfoVersion", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => delete next[id])
+      return next
+    })
+
+    removedIds.forEach((id) => messageInfoCache.delete(id))
+
+    setState("pendingParts", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => {
+        if (next[id]) delete next[id]
+      })
+      return next
+    })
+
+    setState("permissions", "byMessage", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => {
+        if (next[id]) delete next[id]
+      })
+      return next
+    })
+
+    withUsageState(sessionId, (draft) => {
+      removedIds.forEach((id) => removeUsageEntry(draft, id))
+    })
+
+    bumpSessionRevision(sessionId)
+  }
+
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
     if (!sessionId) return
     ensureSessionEntry(sessionId)
+    if (revert?.messageID) {
+      pruneMessagesAfterRevert(sessionId, revert.messageID)
+    }
     setState("sessions", sessionId, "revert", revert ?? null)
   }
 
