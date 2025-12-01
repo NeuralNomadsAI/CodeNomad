@@ -1192,11 +1192,15 @@ export default function ToolCall(props: ToolCallProps) {
       }}
       class={`tool-call ${combinedStatusClass()}`}
     >
-      <button class="tool-call-header" onClick={toggle} aria-expanded={expanded()}>
-        <span class="tool-call-icon">{expanded() ? "▼" : "▶"}</span>
-        <span class="tool-call-emoji">{getToolIcon(toolName())}</span>
-        <span class="tool-call-summary">{renderToolTitle()}</span>
-        <span class="tool-call-status">{statusIcon()}</span>
+      <button
+        class="tool-call-header"
+        onClick={toggle}
+        aria-expanded={expanded()}
+        data-status-icon={statusIcon()}
+      >
+        <span class="tool-call-summary" data-tool-icon={getToolIcon(toolName())}>
+          {renderToolTitle()}
+        </span>
       </button>
 
       <Show when={expanded()}>
