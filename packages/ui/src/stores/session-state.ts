@@ -294,7 +294,7 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
       "This cleanup may be slow, and may delete sessions you didn't intend to delete. Are you sure?",
       {
         title: "Deep Clean Sessions",
-        detail: "Deep cleaning sessions fetches the messages for each and every session in your history so it can remove not just all blank sessions, but all unused forks of sessions, and all subagents whose primary task has been completed.",
+        detail: "Deep Clean Sessions will delete all sessions that have no messages, remove any finished sub-agent sessions, and clear out any unused forks of a session.",
         confirmLabel: "Continue",
         cancelLabel: "Cancel"
       }
