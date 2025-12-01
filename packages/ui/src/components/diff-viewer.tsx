@@ -37,10 +37,10 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
     if (!normalized) {
       return null
     }
-
+ 
     const language = getLanguageFromPath(props.filePath) || "text"
     const fileName = props.filePath || "diff"
-
+ 
     return {
       oldFile: {
         fileName,
@@ -53,96 +53,47 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
       hunks: [normalized],
     }
   })
-
+ 
   let diffContainerRef: HTMLDivElement | undefined
-  let pendingCapture: number | undefined
-  let pendingContext: CaptureContext | undefined
-  let lastRenderedMarkup: string | undefined
-  let lastCachedHtml: string | undefined
-
-  const clearPendingCapture = () => {
-    if (pendingCapture !== undefined) {
-      cancelAnimationFrame(pendingCapture)
-      pendingCapture = undefined
-    }
-    pendingContext = undefined
-  }
-
-  const runCapture = (context: CaptureContext) => {
-    if (!diffContainerRef) {
-      props.onRendered?.()
-      return
-    }
-
-    const markup = diffContainerRef.innerHTML
-    if (!markup) {
-      props.onRendered?.()
-      return
-    }
-
-    const hasChanged = markup !== lastRenderedMarkup
-    if (hasChanged) {
-      lastRenderedMarkup = markup
-      if (context.cacheEntryParams) {
-        setCacheEntry(context.cacheEntryParams, {
-          text: context.diffText,
-          html: markup,
-          theme: context.theme,
-          mode: context.mode,
-        })
-      }
-    }
-
-    props.onRendered?.()
-  }
-
-  const scheduleCapture = (context: CaptureContext) => {
-    clearPendingCapture()
-    pendingContext = context
-    pendingCapture = requestAnimationFrame(() => {
-      const activeContext = pendingContext
-      pendingContext = undefined
-      pendingCapture = undefined
-      if (activeContext) {
-        runCapture(activeContext)
-      }
-    })
-  }
-
+  let lastCapturedKey: string | undefined
+ 
+  const contextKey = createMemo(() => {
+    const data = diffData()
+    if (!data) return ""
+    return `${props.theme}|${props.mode}|${props.diffText}`
+  })
+ 
   createEffect(() => {
     const cachedHtml = props.cachedHtml
     if (cachedHtml) {
-      clearPendingCapture()
-      if (cachedHtml !== lastCachedHtml) {
-        lastCachedHtml = cachedHtml
-        lastRenderedMarkup = cachedHtml
-        props.onRendered?.()
+      // When we are given cached HTML, we rely on the caller's cache
+      // and simply notify once rendered.
+      props.onRendered?.()
+      return
+    }
+ 
+    const key = contextKey()
+    if (!key) return
+    if (!diffContainerRef) return
+    if (lastCapturedKey === key) return
+ 
+    requestAnimationFrame(() => {
+      if (!diffContainerRef) return
+      const markup = diffContainerRef.innerHTML
+      if (!markup) return
+      lastCapturedKey = key
+      if (props.cacheEntryParams) {
+        setCacheEntry(props.cacheEntryParams, {
+          text: props.diffText,
+          html: markup,
+          theme: props.theme,
+          mode: props.mode,
+        })
       }
-      return
-    }
-
-    lastCachedHtml = undefined
-
-    const data = diffData()
-    const theme = props.theme
-    const mode = props.mode
-
-    if (!data) {
-      clearPendingCapture()
-      return
-    }
-
-    scheduleCapture({
-      theme,
-      mode,
-      diffText: props.diffText,
-      cacheEntryParams: props.cacheEntryParams,
+      props.onRendered?.()
     })
   })
 
-  onCleanup(() => {
-    clearPendingCapture()
-  })
 
   return (
     <div class="tool-call-diff-viewer">

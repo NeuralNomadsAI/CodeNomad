@@ -295,28 +295,6 @@ export default function MessageStreamV2(props: MessageStreamV2Props) {
     return `${revisionValue}:${tailSignature}`
   })
 
-  createEffect(() => {
-    const ids = new Set(messageIds())
-    const cache = getSessionRenderCache(props.instanceId, props.sessionId)
-    for (const [key] of cache.messageBlocks) {
-      if (!ids.has(key)) {
-        cache.messageBlocks.delete(key)
-      }
-    }
-    for (const [key] of cache.messageItems) {
-      const messageId = key.split(":", 1)[0]
-      if (!ids.has(messageId)) {
-        cache.messageItems.delete(key)
-      }
-    }
-    for (const [key] of cache.toolItems) {
-      const messageId = key.split(":", 1)[0]
-      if (!ids.has(messageId)) {
-        cache.toolItems.delete(key)
-      }
-    }
-  })
-
   const scrollCache = useScrollCache({
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,

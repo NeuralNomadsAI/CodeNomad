@@ -29,7 +29,8 @@ export function Markdown(props: MarkdownProps) {
 
     latestRequestedText = text
 
-    await initMarkdown(dark)
+    // Markdown initialization is now handled globally in App.
+    // initMarkdown is idempotent but we avoid per-part calls here.
 
     if (!highlightEnabled) {
       part.renderCache = undefined
