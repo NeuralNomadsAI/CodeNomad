@@ -34,6 +34,7 @@ function isToolStateError(state: ToolState): state is ToolStateError {
 
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
+const taskSummaryCache = new Map<string, { signature: string; items: TaskSummaryItem[] }>()
 
 function makeRenderCacheKey(
   toolCallId?: string | null,
@@ -318,13 +319,15 @@ function renderDiagnosticsSection(
 export default function ToolCall(props: ToolCallProps) {
   const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
-  const toolCallId = () => props.toolCallId || props.toolCall?.id || ""
+  const toolCallMemo = createMemo(() => props.toolCall)
+  const toolCallId = () => props.toolCallId || toolCallMemo()?.id || ""
+  const toolState = createMemo(() => toolCallMemo()?.state)
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
 
   const cacheContext = createMemo(() => ({
     toolCallId: toolCallId(),
     messageId: props.messageId,
-    partId: props.toolCall?.id ?? null,
+    partId: toolCallMemo()?.id ?? null,
   }))
 
   const createVariantCache = (variant: string) =>
@@ -341,20 +344,20 @@ export default function ToolCall(props: ToolCallProps) {
   const diffCache = createVariantCache("diff")
   const permissionDiffCache = createVariantCache("permission-diff")
   const markdownCache = createVariantCache("markdown")
-  const permissionState = createMemo(() => store().getPermissionState(props.messageId, props.toolCall?.id))
+  const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallMemo()?.id))
   const pendingPermission = createMemo(() => {
     const state = permissionState()
     if (state) {
       return { permission: state.entry.permission, active: state.active }
     }
-    return props.toolCall.pendingPermission
+    return toolCallMemo()?.pendingPermission
   })
   const toolOutputDefaultExpanded = createMemo(() => (preferences().toolOutputExpansion || "expanded") === "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
 
   const defaultExpandedForTool = createMemo(() => {
     const prefExpanded = toolOutputDefaultExpanded()
-    const toolName = props.toolCall?.tool || ""
+    const toolName = toolCallMemo()?.tool || ""
     if (toolName === "read") {
       return false
     }
@@ -390,8 +393,8 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const diagnosticsEntries = createMemo(() => {
-    const tool = props.toolCall?.tool || ""
-    const state = props.toolCall?.state
+    const tool = toolCallMemo()?.tool || ""
+    const state = toolState()
     if (!state) return []
     return extractDiagnostics(tool, state)
   })
@@ -455,7 +458,7 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const statusIcon = () => {
-    const status = props.toolCall?.state?.status || ""
+    const status = toolState()?.status || ""
     switch (status) {
       case "pending":
         return "⏸"
@@ -471,7 +474,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const statusClass = () => {
-    const status = props.toolCall?.state?.status || "pending"
+    const status = toolState()?.status || "pending"
     return `tool-call-status-${status}`
   }
 
@@ -492,7 +495,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const renderToolAction = () => {
-    const toolName = props.toolCall?.tool || ""
+    const toolName = toolCallMemo()?.tool || ""
     switch (toolName) {
       case "task":
         return "Delegating..."
@@ -598,7 +601,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const getTodoTitle = () => {
-    const state = props.toolCall?.state
+    const state = toolState()
     if (!state) return "Plan"
 
     const todos = extractTodosFromState(state)
@@ -611,8 +614,8 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const renderToolTitle = () => {
-    const toolName = props.toolCall?.tool || ""
-    const state = props.toolCall?.state
+    const toolName = toolCallMemo()?.tool || ""
+    const state = toolState()
 
     if (!state) return renderToolAction()
     if (state.status === "pending") return renderToolAction()
@@ -685,8 +688,8 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function renderToolBody() {
-    const toolName = props.toolCall?.tool || ""
-    const state = props.toolCall?.state || {}
+    const toolName = toolCallMemo()?.tool || ""
+    const state = toolState() || {}
 
     if (toolName === "todoread" || toolName === "todowrite") {
       return renderTodoTool()
@@ -957,7 +960,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const renderTodoTool = () => {
-    const state = props.toolCall?.state
+    const state = toolState()
     if (!state) return null
 
     const todos = extractTodosFromState(state)
@@ -1000,49 +1003,69 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  const renderTaskTool = () => {
-    const state = props.toolCall?.state
-    if (!state) return null
-    
-    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? state.metadata || {}
-      : {}
-    const summary = metadata.summary || []
+  type TaskSummaryItem = {
+    id: string
+    tool: string
+    input: Record<string, any>
+  }
 
-    if (!Array.isArray(summary) || summary.length === 0) {
-      return null
+  const taskSummary = createMemo(() => {
+    const state = toolState()
+    if (!state) return []
+    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
+      ? (state.metadata || {}) as Record<string, unknown>
+      : ({} as Record<string, unknown>)
+    const rawSummary = Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
+    if (rawSummary.length === 0) {
+      taskSummaryCache.delete(toolCallId())
+      return []
     }
+    const signature = JSON.stringify(rawSummary)
+    const cacheKey = toolCallId() || "__unknown__"
+    const cached = taskSummaryCache.get(cacheKey)
+    if (cached && cached.signature === signature) {
+      return cached.items
+    }
+    const normalized: TaskSummaryItem[] = rawSummary.map((entry, index) => {
+      const tool = typeof entry?.tool === "string" ? (entry.tool as string) : "unknown"
+      const input = typeof (entry as any)?.state?.input === "object" && entry.state?.input ? entry.state.input : {}
+      const id = typeof entry?.id === "string" && entry.id.length > 0 ? entry.id : `${tool}-${index}`
+      return { id, tool, input }
+    })
+    taskSummaryCache.set(cacheKey, { signature, items: normalized })
+    return normalized
+  })
+
+  const renderTaskTool = () => {
+    const items = taskSummary()
+    if (items.length === 0) return null
 
     return (
-      <div
-        class="message-text tool-call-markdown tool-call-task-container"
-        ref={(element) => initializeScrollContainer(element)}
-        onScroll={(event) => persistScrollSnapshot(event.currentTarget)}
-      >
+      <div class="message-text tool-call-markdown tool-call-task-container">
         <div class="tool-call-task-summary">
-          <For each={summary}>
+          <For each={items}>
             {(item) => {
-              const tool = item.tool || "unknown"
-              const itemInput = item.state?.input || {}
-              const icon = getToolIcon(tool)
+              const icon = getToolIcon(item.tool)
+              const input = item.input || {}
 
               let description = ""
-              switch (tool) {
+              switch (item.tool) {
                 case "bash":
-                  description = itemInput.description || itemInput.command || ""
+                  description = input.description || input.command || ""
                   break
                 case "edit":
                 case "read":
                 case "write":
-                  description = `${tool} ${getRelativePath(itemInput.filePath || "")}`
+                  description = `${item.tool} ${getRelativePath(input.filePath || "")}`
                   break
                 default:
-                  description = tool
+                  description = item.tool
               }
 
               return (
-                <div class="tool-call-task-item">
-                  {icon} {description}
+                <div class="tool-call-task-item" data-task-id={item.id}>
+                  <span class="tool-call-task-icon">{icon}</span>
+                  <span class="tool-call-task-text">{description}</span>
                 </div>
               )
             }}
@@ -1052,8 +1075,9 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
+
   const renderError = () => {
-    const state = props.toolCall?.state || {}
+    const state = toolState() || {}
     if (state.status === "error" && state.error) {
       return (
         <div class="tool-call-error-content">
@@ -1151,8 +1175,8 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  const toolName = () => props.toolCall?.tool || ""
-  const status = () => props.toolCall?.state?.status || ""
+  const toolName = () => toolCallMemo()?.tool || ""
+  const status = () => toolState()?.status || ""
 
   return (
     <div
