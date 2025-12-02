@@ -103,6 +103,29 @@ export default function VirtualItem(props: VirtualItemProps) {
   const resolved = resolveChildren(() => props.children)
   const [isIntersecting, setIsIntersecting] = createSignal(true)
   const [measuredHeight, setMeasuredHeight] = createSignal(sizeCache.get(props.cacheKey) ?? 0)
+  let pendingVisibility: boolean | null = null
+  let visibilityFrame: number | null = null
+  const flushVisibility = () => {
+    if (visibilityFrame !== null) {
+      cancelAnimationFrame(visibilityFrame)
+      visibilityFrame = null
+    }
+    if (pendingVisibility !== null) {
+      setIsIntersecting(pendingVisibility)
+      pendingVisibility = null
+    }
+  }
+  const queueVisibility = (nextValue: boolean) => {
+    pendingVisibility = nextValue
+    if (visibilityFrame !== null) return
+    visibilityFrame = requestAnimationFrame(() => {
+      visibilityFrame = null
+      if (pendingVisibility !== null) {
+        setIsIntersecting(pendingVisibility)
+        pendingVisibility = null
+      }
+    })
+  }
   const [hasMeasured, setHasMeasured] = createSignal(sizeCache.has(props.cacheKey))
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
 
@@ -167,7 +190,7 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
     const margin = props.threshold ?? DEFAULT_MARGIN_PX
     intersectionCleanup = subscribeToSharedObserver(wrapperRef, targetRoot, margin, (entry) => {
-      setIsIntersecting(entry.isIntersecting)
+      queueVisibility(entry.isIntersecting)
     })
   }
 
@@ -223,6 +246,7 @@ export default function VirtualItem(props: VirtualItemProps) {
   onCleanup(() => {
     cleanupResizeObserver()
     cleanupIntersectionObserver()
+    flushVisibility()
   })
  
   const wrapperClass = () => ["virtual-item-wrapper", props.class].filter(Boolean).join(" ")
