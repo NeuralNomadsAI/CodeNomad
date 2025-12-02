@@ -1,0 +1,19 @@
+.tool-call-task-container {
+  padding: 12px;
+}
+
+.tool-call-task-summary {
+  @apply my-2 flex flex-col gap-1.5;
+}
+
+.tool-call-task-item {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  padding-left: 8px;
+  border-left: 2px solid var(--border-base);
+}
+
+.tool-call-task-item::before {
+  content: "∟ ";
+  color: var(--text-muted);
+}

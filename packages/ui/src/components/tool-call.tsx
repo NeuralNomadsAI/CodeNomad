@@ -3,38 +3,18 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { Markdown } from "./markdown"
 import { ToolCallDiffViewer } from "./diff-viewer"
 import { useTheme } from "../lib/theme"
-import { getLanguageFromPath } from "../lib/markdown"
-import { isRenderableDiffText } from "../lib/diff-utils"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
 import { sendPermissionResponse } from "../stores/instances"
-import type { TextPart, SDKPart, ClientPart, RenderCache } from "../types/message"
+import type { TextPart, RenderCache } from "../types/message"
+import { resolveToolRenderer } from "./tool-call/renderers"
+import type { DiffPayload, DiffRenderOptions, MarkdownRenderOptions, ToolCallPart, ToolRendererContext } from "./tool-call/types"
+import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning } from "./tool-call/utils"
 
-type ToolCallPart = Extract<ClientPart, { type: "tool" }>
-
-// Import ToolState types from SDK
 type ToolState = import("@opencode-ai/sdk").ToolState
-type ToolStateRunning = import("@opencode-ai/sdk").ToolStateRunning  
-type ToolStateCompleted = import("@opencode-ai/sdk").ToolStateCompleted
-type ToolStateError = import("@opencode-ai/sdk").ToolStateError
-
-// Type guards
-function isToolStateRunning(state: ToolState): state is ToolStateRunning {
-  return state.status === "running"
-}
-
-function isToolStateCompleted(state: ToolState): state is ToolStateCompleted {
-  return state.status === "completed"
-}
-
-function isToolStateError(state: ToolState): state is ToolStateError {
-  return state.status === "error"
-}
-
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
-const taskSummaryCache = new Map<string, { signature: string; items: TaskSummaryItem[] }>()
 
 function makeRenderCacheKey(
   toolCallId?: string | null,
@@ -49,7 +29,7 @@ function makeRenderCacheKey(
 
 
 interface ToolCallProps {
-  toolCall: Extract<ClientPart, { type: "tool" }>
+  toolCall: ToolCallPart
   toolCallId?: string
   messageId?: string
   messageVersion?: number
@@ -60,60 +40,6 @@ interface ToolCallProps {
  }
 
 
-function getToolIcon(tool: string): string {
-  switch (tool) {
-    case "bash":
-      return "⚡"
-    case "edit":
-      return "✏️"
-    case "read":
-      return "📖"
-    case "write":
-      return "📝"
-    case "glob":
-      return "🔍"
-    case "grep":
-      return "🔎"
-    case "webfetch":
-      return "🌐"
-    case "task":
-      return "🎯"
-    case "todowrite":
-    case "todoread":
-      return "📋"
-    case "list":
-      return "📁"
-    case "patch":
-      return "🔧"
-    default:
-      return "🔧"
-  }
-}
-
-function getToolName(tool: string): string {
-  switch (tool) {
-    case "bash":
-      return "Shell"
-    case "webfetch":
-      return "Fetch"
-    case "invalid":
-      return "Invalid"
-    case "todowrite":
-    case "todoread":
-      return "Plan"
-    default:
-      const normalized = tool.replace(/^opencode_/, "")
-      return normalized.charAt(0).toUpperCase() + normalized.slice(1)
-  }
-}
-
-function getRelativePath(path: string): string {
-  if (!path) return ""
-  const parts = path.split("/")
-  return parts.slice(-1)[0] || path
-}
-
-const diffCapableTools = new Set(["edit", "patch"])
 
 interface LspRangePosition {
   line?: number
@@ -143,44 +69,6 @@ interface DiagnosticEntry {
   column: number
 }
 
-interface DiffPayload {
-  diffText: string
-  filePath?: string
-}
-
-function extractDiffPayload(toolName: string, state: ToolState): DiffPayload | null {
-
-  if (!diffCapableTools.has(toolName)) return null
-  if (!state) return null
-  
-  const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-    ? state.metadata || {}
-    : {}
-  
-  const output = isToolStateCompleted(state) ? state.output : undefined
-  const candidates = [metadata.diff, output, metadata.output]
-  let diffText: string | null = null
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && isRenderableDiffText(candidate)) {
-      diffText = candidate
-      break
-    }
-  }
-
-  if (!diffText) {
-    return null
-  }
-
-  const input = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-    ? state.input as Record<string, unknown>
-    : {}
-  const filePath = (typeof input.filePath === "string" ? input.filePath : undefined) || 
-                   (typeof metadata.filePath === "string" ? metadata.filePath : undefined) || 
-                   (typeof input.path === "string" ? input.path : undefined)
-
-  return { diffText, filePath }
-}
 
 function normalizeDiagnosticPath(path: string) {
   return path.replace(/\\/g, "/")
@@ -198,7 +86,7 @@ function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
   return { label: "INFO", icon: "i", rank: 2 }
 }
 
-function extractDiagnostics(toolName: string, state: ToolState | undefined): DiagnosticEntry[] {
+function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {
   if (!state) return []
   const supportsMetadata = isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state)
   if (!supportsMetadata) return []
@@ -270,7 +158,6 @@ function renderDiagnosticsSection(
   entries: DiagnosticEntry[],
   expanded: boolean,
   toggle: () => void,
-  toolIcon: string,
   fileLabel: string,
 ) {
   if (entries.length === 0) return null
@@ -320,6 +207,7 @@ export default function ToolCall(props: ToolCallProps) {
   const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
   const toolCallMemo = createMemo(() => props.toolCall)
+  const toolName = createMemo(() => toolCallMemo()?.tool || "")
   const toolCallId = () => props.toolCallId || toolCallMemo()?.id || ""
   const toolState = createMemo(() => toolCallMemo()?.state)
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -393,10 +281,9 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const diagnosticsEntries = createMemo(() => {
-    const tool = toolCallMemo()?.tool || ""
     const state = toolState()
     if (!state) return []
-    return extractDiagnostics(tool, state)
+    return extractDiagnostics(state)
   })
 
 
@@ -494,224 +381,9 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
 
-  const renderToolAction = () => {
-    const toolName = toolCallMemo()?.tool || ""
-    switch (toolName) {
-      case "task":
-        return "Delegating..."
-      case "bash":
-        return "Writing command..."
-      case "edit":
-        return "Preparing edit..."
-      case "webfetch":
-        return "Fetching from the web..."
-      case "glob":
-        return "Finding files..."
-      case "grep":
-        return "Searching content..."
-      case "list":
-        return "Listing directory..."
-      case "read":
-        return "Reading file..."
-      case "write":
-        return "Preparing write..."
-      case "todowrite":
-      case "todoread":
-        return "Planning..."
-      case "patch":
-        return "Preparing patch..."
-      default:
-        return "Working..."
-    }
-  }
+  const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
-  async function handlePermissionResponse(response: "once" | "always" | "reject") {
-    const permission = permissionDetails()
-    if (!permission || !isPermissionActive()) {
-      return
-    }
-    setPermissionSubmitting(true)
-    setPermissionError(null)
-    try {
-      const sessionId = permission.sessionID || props.sessionId
-      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
-    } catch (error) {
-      console.error("Failed to send permission response:", error)
-      setPermissionError(error instanceof Error ? error.message : "Unable to update permission")
-    } finally {
-      setPermissionSubmitting(false)
-    }
-  }
-
-  type TodoViewStatus = "pending" | "in_progress" | "completed" | "cancelled"
-
-  interface TodoViewItem {
-    id: string
-    content: string
-    status: TodoViewStatus
-  }
-
-  function normalizeTodoStatus(rawStatus: unknown): TodoViewStatus {
-    if (rawStatus === "completed" || rawStatus === "in_progress" || rawStatus === "cancelled") return rawStatus
-    return "pending"
-  }
-
-  function extractTodosFromState(state: ToolState | undefined): TodoViewItem[] {
-    if (!state) return []
-    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? state.metadata || {}
-      : {}
-    const todos = Array.isArray((metadata as any).todos) ? (metadata as any).todos : []
-    const items: TodoViewItem[] = []
-
-    for (let index = 0; index < todos.length; index++) {
-      const todo = todos[index]
-      const content = typeof todo?.content === "string" ? todo.content.trim() : ""
-      if (!content) continue
-      const status = normalizeTodoStatus((todo as any).status)
-      const id = typeof todo?.id === "string" && todo.id.length > 0 ? todo.id : `${index}-${content}`
-      items.push({ id, content, status })
-    }
-
-    return items
-  }
-
-  function summarizeTodos(todos: TodoViewItem[]) {
-    return todos.reduce(
-      (acc, todo) => {
-        acc.total += 1
-        acc[todo.status] = (acc[todo.status] || 0) + 1
-        return acc
-      },
-      { total: 0, pending: 0, in_progress: 0, completed: 0, cancelled: 0 } as Record<TodoViewStatus | "total", number>,
-    )
-  }
-
-  function getTodoStatusLabel(status: TodoViewStatus): string {
-    switch (status) {
-      case "completed":
-        return "Completed"
-      case "in_progress":
-        return "In progress"
-      case "cancelled":
-        return "Cancelled"
-      default:
-        return "Pending"
-    }
-  }
-
-  const getTodoTitle = () => {
-    const state = toolState()
-    if (!state) return "Plan"
-
-    const todos = extractTodosFromState(state)
-    if (state.status !== "completed" || todos.length === 0) return "Plan"
-
-    const counts = summarizeTodos(todos)
-    if (counts.pending === counts.total) return "Creating plan"
-    if (counts.completed === counts.total) return "Completing plan"
-    return "Updating plan"
-  }
-
-  const renderToolTitle = () => {
-    const toolName = toolCallMemo()?.tool || ""
-    const state = toolState()
-
-    if (!state) return renderToolAction()
-    if (state.status === "pending") return renderToolAction()
-
-    const input = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state)) 
-      ? (state.input as Record<string, unknown>)
-      : {} as Record<string, unknown>
-
-    if (isToolStateRunning(state) && state.title) {
-      return state.title
-    }
-    
-    if (isToolStateCompleted(state)) {
-      return state.title
-    }
-
-    const name = getToolName(toolName)
-
-    switch (toolName) {
-      case "read":
-        if (typeof input.filePath === "string") {
-          return `${name} ${getRelativePath(input.filePath)}`
-        }
-        return name
-
-      case "edit":
-      case "write":
-        if (typeof input.filePath === "string") {
-          return `${name} ${getRelativePath(input.filePath)}`
-        }
-        return name
-
-      case "bash":
-        if (typeof input.description === "string") {
-          return `${name} ${input.description}`
-        }
-        return name
-
-      case "task":
-        const description = input.description
-        const subagent = input.subagent_type
-        if (description && subagent) {
-          return `${name}[${subagent}] ${description}`
-        } else if (description) {
-          return `${name} ${description}`
-        }
-        return name
-
-      case "webfetch":
-        if (input.url) {
-          return `${name} ${input.url}`
-        }
-        return name
-
-      case "todowrite":
-        return getTodoTitle()
-
-      case "todoread":
-        return getTodoTitle()
-
-      case "invalid":
-        if (typeof input.tool === "string") {
-          return getToolName(input.tool)
-        }
-        return name
-
-      default:
-        return name
-    }
-  }
-
-  function renderToolBody() {
-    const toolName = toolCallMemo()?.tool || ""
-    const state = toolState() || {}
-
-    if (toolName === "todoread" || toolName === "todowrite") {
-      return renderTodoTool()
-    }
-
-    if (state.status === "pending") {
-      return null
-    }
-
-    if (toolName === "task") {
-      return renderTaskTool()
-    }
-
-    const diffPayload = extractDiffPayload(toolName, state)
-    if (diffPayload) {
-      return renderDiffTool(diffPayload)
-    }
-
-    return renderMarkdownTool(toolName, state)
-  }
-
-  function renderDiffTool(payload: DiffPayload, options?: { variant?: string; disableScrollTracking?: boolean; label?: string }) {
+  function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions) {
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
     const toolbarLabel = options?.label || (relativePath ? `Diff · ${relativePath}` : "Diff")
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
@@ -719,7 +391,6 @@ export default function ToolCall(props: ToolCallProps) {
     const diffMode = () => (preferences().diffViewMode || "split") as DiffViewMode
     const themeKey = isDark() ? "dark" : "light"
 
-    // Check if we have valid cache
     let cachedHtml: string | undefined
     const cached = cacheHandle.get<RenderCache>()
     const currentMode = diffMode()
@@ -738,7 +409,6 @@ export default function ToolCall(props: ToolCallProps) {
       props.onContentRendered?.()
     }
 
-
     return (
       <div
         class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
@@ -748,7 +418,6 @@ export default function ToolCall(props: ToolCallProps) {
         }}
         onScroll={options?.disableScrollTracking ? undefined : (event) => persistScrollSnapshot(event.currentTarget)}
       >
-
         <div class="tool-call-diff-toolbar" role="group" aria-label="Diff view mode">
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
           <div class="tool-call-diff-toggle">
@@ -783,17 +452,16 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  function renderMarkdownTool(toolName: string, state: ToolState) {
-    const content = getMarkdownContent(toolName, state)
-    if (!content) {
+  function renderMarkdownContent(options: MarkdownRenderOptions) {
+    if (!options.content) {
       return null
     }
 
-    const isLarge = toolName === "edit" || toolName === "write" || toolName === "patch"
-    const messageClass = `message-text tool-call-markdown${isLarge ? " tool-call-markdown-large" : ""}`
-    const disableHighlight = state?.status === "running"
+    const size = options.size || "default"
+    const disableHighlight = options.disableHighlight || false
+    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
 
-    const markdownPart: TextPart = { type: "text", text: content }
+    const markdownPart: TextPart = { type: "text", text: options.content }
     const cached = markdownCache.get<RenderCache>()
     if (cached) {
       markdownPart.renderCache = cached
@@ -804,7 +472,6 @@ export default function ToolCall(props: ToolCallProps) {
       handleScrollRendered()
       props.onContentRendered?.()
     }
-
 
     return (
       <div
@@ -822,257 +489,55 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  function getMarkdownContent(toolName: string, state: ToolState): string | null {
-    if (!state) return null
-    
-    const input = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? state.input as Record<string, unknown>
-      : {}
-    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? state.metadata || {}
-      : {}
-
-    switch (toolName) {
-      case "read": {
-        const preview = typeof metadata.preview === "string" ? metadata.preview : null
-        const language = getLanguageFromPath(typeof input.filePath === "string" ? input.filePath : "")
-        return ensureMarkdownContent(preview, language, true)
-      }
-
-      case "edit": {
-        const diffText = typeof metadata.diff === "string" ? metadata.diff : null
-        const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
-        return ensureMarkdownContent(diffText || fallback, "diff", true)
-      }
-
-      case "write": {
-        const content = typeof input.content === "string" ? input.content : null
-        const metadataContent = typeof metadata.content === "string" ? metadata.content : null
-        const language = getLanguageFromPath(typeof input.filePath === "string" ? input.filePath : "")
-        return ensureMarkdownContent(content || metadataContent, language, true)
-      }
-
-      case "patch": {
-        const patchContent = typeof metadata.diff === "string" ? metadata.diff : null
-        const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
-        return ensureMarkdownContent(patchContent || fallback, "diff", true)
-      }
-
-      case "bash": {
-        const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-        const outputResult = formatUnknown(
-          isToolStateCompleted(state) ? state.output : 
-          (isToolStateRunning(state) || isToolStateError(state)) && metadata.output ? metadata.output : 
-          undefined
-        )
-        const parts = [command, outputResult?.text].filter(Boolean)
-        const combined = parts.join("\n")
-        return ensureMarkdownContent(combined, "bash", true)
-      }
-
-      case "webfetch": {
-        const result = formatUnknown(
-          isToolStateCompleted(state) ? state.output : 
-          (isToolStateRunning(state) || isToolStateError(state)) && metadata.output ? metadata.output : 
-          undefined
-        )
-        if (!result) return null
-        return ensureMarkdownContent(result.text, result.language, true)
-      }
-
-      default: {
-        const result = formatUnknown(
-          isToolStateCompleted(state) ? state.output : 
-          (isToolStateRunning(state) || isToolStateError(state)) && metadata.output ? metadata.output : 
-          metadata.diff ?? metadata.preview ?? input.content,
-        )
-        if (!result) return null
-        return ensureMarkdownContent(result.text, result.language, true)
-      }
-    }
+  const rendererContext: ToolRendererContext = {
+    toolCall: toolCallMemo,
+    toolState,
+    toolName,
+    renderMarkdown: renderMarkdownContent,
+    renderDiff: renderDiffContent,
   }
 
-  function ensureMarkdownContent(
-    value: string | null,
-    language?: string,
-    forceFence = false,
-  ): string | null {
-    if (!value) {
-      return null
-    }
+  const getRendererAction = () => renderer().getAction?.(rendererContext) ?? getDefaultToolAction(toolName())
 
-    const trimmed = value.replace(/\s+$/, "")
-    if (!trimmed) {
-      return null
-    }
-
-    const startsWithFence = trimmed.trimStart().startsWith("```")
-    if (startsWithFence && !forceFence) {
-      return trimmed
-    }
-
-    const langSuffix = language ? language : ""
-    if (language || forceFence) {
-      return `\u0060\u0060\u0060${langSuffix}\n${trimmed}\n\u0060\u0060\u0060`
-    }
-
-    return trimmed
-  }
-
-  function formatUnknown(value: unknown): { text: string; language?: string } | null {
-    if (value === null || value === undefined) {
-      return null
-    }
-
-    if (typeof value === "string") {
-      return { text: value }
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-      return { text: String(value) }
-    }
-
-    if (Array.isArray(value)) {
-      const parts = value
-        .map((item) => {
-          const formatted = formatUnknown(item)
-          return formatted?.text ?? ""
-        })
-        .filter(Boolean)
-
-      if (parts.length === 0) {
-        return null
-      }
-
-      return { text: parts.join("\n") }
-    }
-
-    if (typeof value === "object") {
-      try {
-        return { text: JSON.stringify(value, null, 2), language: "json" }
-      } catch (error) {
-        console.error("Failed to stringify tool call output", error)
-        return { text: String(value) }
-      }
-    }
-
-    return null
-  }
-
-  const renderTodoTool = () => {
+  const renderToolTitle = () => {
     const state = toolState()
-    if (!state) return null
+    if (!state) return getRendererAction()
+    if (state.status === "pending") return getRendererAction()
 
-    const todos = extractTodosFromState(state)
-    const counts = summarizeTodos(todos)
-
-    if (counts.total === 0) {
-      return <div class="tool-call-todo-empty">No plan items yet.</div>
+    if (isToolStateRunning(state) && state.title) {
+      return state.title
     }
 
-    return (
-      <div class="tool-call-todo-region">
-        <div class="tool-call-todos" role="list">
-          <For each={todos}>
-            {(todo) => {
-              const label = getTodoStatusLabel(todo.status)
+    if (isToolStateCompleted(state) && state.title) {
+      return state.title
+    }
 
-              return (
-                <div
-                  class="tool-call-todo-item"
-                  classList={{
-                    "tool-call-todo-item-completed": todo.status === "completed",
-                    "tool-call-todo-item-cancelled": todo.status === "cancelled",
-                    "tool-call-todo-item-active": todo.status === "in_progress",
-                  }}
-                  role="listitem"
-                >
-                  <span class="tool-call-todo-checkbox" data-status={todo.status} aria-label={label}></span>
-                  <div class="tool-call-todo-body">
-                    <div class="tool-call-todo-heading">
-                      <span class="tool-call-todo-text">{todo.content}</span>
-                      <span class={`tool-call-todo-status tool-call-todo-status-${todo.status}`}>{label}</span>
-                    </div>
-                  </div>
-                </div>
-              )
-            }}
-          </For>
-        </div>
-      </div>
-    )
+    const customTitle = renderer().getTitle?.(rendererContext)
+    if (customTitle) return customTitle
+
+    return getToolName(toolName())
   }
 
-  type TaskSummaryItem = {
-    id: string
-    tool: string
-    input: Record<string, any>
+  const renderToolBody = () => {
+    return renderer().renderBody(rendererContext)
   }
 
-  const taskSummary = createMemo(() => {
-    const state = toolState()
-    if (!state) return []
-    const metadata = (isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))
-      ? (state.metadata || {}) as Record<string, unknown>
-      : ({} as Record<string, unknown>)
-    const rawSummary = Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
-    if (rawSummary.length === 0) {
-      taskSummaryCache.delete(toolCallId())
-      return []
+  async function handlePermissionResponse(response: "once" | "always" | "reject") {
+    const permission = permissionDetails()
+    if (!permission || !isPermissionActive()) {
+      return
     }
-    const signature = JSON.stringify(rawSummary)
-    const cacheKey = toolCallId() || "__unknown__"
-    const cached = taskSummaryCache.get(cacheKey)
-    if (cached && cached.signature === signature) {
-      return cached.items
+    setPermissionSubmitting(true)
+    setPermissionError(null)
+    try {
+      const sessionId = permission.sessionID || props.sessionId
+      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
+    } catch (error) {
+      console.error("Failed to send permission response:", error)
+      setPermissionError(error instanceof Error ? error.message : "Unable to update permission")
+    } finally {
+      setPermissionSubmitting(false)
     }
-    const normalized: TaskSummaryItem[] = rawSummary.map((entry, index) => {
-      const tool = typeof entry?.tool === "string" ? (entry.tool as string) : "unknown"
-      const input = typeof (entry as any)?.state?.input === "object" && entry.state?.input ? entry.state.input : {}
-      const id = typeof entry?.id === "string" && entry.id.length > 0 ? entry.id : `${tool}-${index}`
-      return { id, tool, input }
-    })
-    taskSummaryCache.set(cacheKey, { signature, items: normalized })
-    return normalized
-  })
-
-  const renderTaskTool = () => {
-    const items = taskSummary()
-    if (items.length === 0) return null
-
-    return (
-      <div class="message-text tool-call-markdown tool-call-task-container">
-        <div class="tool-call-task-summary">
-          <For each={items}>
-            {(item) => {
-              const icon = getToolIcon(item.tool)
-              const input = item.input || {}
-
-              let description = ""
-              switch (item.tool) {
-                case "bash":
-                  description = input.description || input.command || ""
-                  break
-                case "edit":
-                case "read":
-                case "write":
-                  description = `${item.tool} ${getRelativePath(input.filePath || "")}`
-                  break
-                default:
-                  description = item.tool
-              }
-
-              return (
-                <div class="tool-call-task-item" data-task-id={item.id}>
-                  <span class="tool-call-task-icon">{icon}</span>
-                  <span class="tool-call-task-text">{description}</span>
-                </div>
-              )
-            }}
-          </For>
-        </div>
-      </div>
-    )
   }
 
 
@@ -1087,6 +552,7 @@ export default function ToolCall(props: ToolCallProps) {
     }
     return null
   }
+
 
   const renderPermissionBlock = () => {
     const permission = permissionDetails()
@@ -1118,7 +584,7 @@ export default function ToolCall(props: ToolCallProps) {
           <Show when={diffPayload}>
             {(payload) => (
               <div class="tool-call-permission-diff">
-                {renderDiffTool(payload(), {
+                {renderDiffContent(payload(), {
                   variant: "permission-diff",
                   disableScrollTracking: true,
                   label: payload().filePath ? `Requested diff · ${getRelativePath(payload().filePath || "")}` : "Requested diff",
@@ -1175,7 +641,6 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  const toolName = () => toolCallMemo()?.tool || ""
   const status = () => toolState()?.status || ""
 
   return (
@@ -1222,10 +687,39 @@ export default function ToolCall(props: ToolCallProps) {
             const current = prev === undefined ? diagnosticsDefaultExpanded() : prev
             return !current
           }),
-          getToolIcon(toolName()),
           diagnosticFileName(diagnosticsEntries()),
         )}
       </Show>
     </div>
   )
+}
+
+function getDefaultToolAction(toolName: string) {
+  switch (toolName) {
+    case "task":
+      return "Delegating..."
+    case "bash":
+      return "Writing command..."
+    case "edit":
+      return "Preparing edit..."
+    case "webfetch":
+      return "Fetching from the web..."
+    case "glob":
+      return "Finding files..."
+    case "grep":
+      return "Searching content..."
+    case "list":
+      return "Listing directory..."
+    case "read":
+      return "Reading file..."
+    case "write":
+      return "Preparing write..."
+    case "todowrite":
+    case "todoread":
+      return "Planning..."
+    case "patch":
+      return "Preparing patch..."
+    default:
+      return "Working..."
+  }
 }
