@@ -240,7 +240,6 @@ export default function VirtualItem(props: VirtualItemProps) {
   const shouldHideContent = createMemo(() => {
     if (props.forceVisible?.()) return false
     if (!virtualizationEnabled()) return false
-    if (!hasMeasured()) return false
     return !isIntersecting()
   })
  
