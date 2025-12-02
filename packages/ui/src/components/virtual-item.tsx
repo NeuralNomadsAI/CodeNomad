@@ -4,6 +4,89 @@ const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
 const MIN_PLACEHOLDER_HEIGHT = 32
 
+type ObserverRoot = Element | Document | null
+
+type IntersectionCallback = (entry: IntersectionObserverEntry) => void
+
+interface SharedObserver {
+  observer: IntersectionObserver
+  listeners: Map<Element, Set<IntersectionCallback>>
+}
+
+const NULL_ROOT_KEY = "__null__"
+const rootIds = new WeakMap<Element | Document, number>()
+let sharedRootId = 0
+const sharedObservers = new Map<string, SharedObserver>()
+
+function getRootKey(root: ObserverRoot, margin: number): string {
+  if (!root) {
+    return `${NULL_ROOT_KEY}:${margin}`
+  }
+  let id = rootIds.get(root)
+  if (id === undefined) {
+    id = ++sharedRootId
+    rootIds.set(root, id)
+  }
+  return `${id}:${margin}`
+}
+
+function createSharedObserver(root: ObserverRoot, margin: number): SharedObserver {
+  const listeners = new Map<Element, Set<IntersectionCallback>>()
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        const callbacks = listeners.get(entry.target as Element)
+        if (!callbacks) return
+        callbacks.forEach((fn) => fn(entry))
+      })
+    },
+    {
+      root: root ?? undefined,
+      rootMargin: `${margin}px 0px ${margin}px 0px`,
+    },
+  )
+  return { observer, listeners }
+}
+
+function subscribeToSharedObserver(
+  target: Element,
+  root: ObserverRoot,
+  margin: number,
+  callback: IntersectionCallback,
+): () => void {
+  if (typeof IntersectionObserver === "undefined") {
+    callback({ isIntersecting: true } as IntersectionObserverEntry)
+    return () => {}
+  }
+  const key = getRootKey(root, margin)
+  let shared = sharedObservers.get(key)
+  if (!shared) {
+    shared = createSharedObserver(root, margin)
+    sharedObservers.set(key, shared)
+  }
+  let targetCallbacks = shared.listeners.get(target)
+  if (!targetCallbacks) {
+    targetCallbacks = new Set()
+    shared.listeners.set(target, targetCallbacks)
+    shared.observer.observe(target)
+  }
+  targetCallbacks.add(callback)
+  return () => {
+    const current = shared?.listeners.get(target)
+    if (current) {
+      current.delete(callback)
+      if (current.size === 0) {
+        shared?.listeners.delete(target)
+        shared?.observer.unobserve(target)
+      }
+    }
+    if (shared && shared.listeners.size === 0) {
+      shared.observer.disconnect()
+      sharedObservers.delete(key)
+    }
+  }
+}
+
 interface VirtualItemProps {
   cacheKey: string
   children: JSX.Element
@@ -26,7 +109,7 @@ export default function VirtualItem(props: VirtualItemProps) {
   let wrapperRef: HTMLDivElement | undefined
   let contentRef: HTMLDivElement | undefined
   let resizeObserver: ResizeObserver | undefined
-  let intersectionObserver: IntersectionObserver | undefined
+  let intersectionCleanup: (() => void) | undefined
 
   function cleanupResizeObserver() {
     if (resizeObserver) {
@@ -36,9 +119,9 @@ export default function VirtualItem(props: VirtualItemProps) {
   }
 
   function cleanupIntersectionObserver() {
-    if (intersectionObserver) {
-      intersectionObserver.disconnect()
-      intersectionObserver = undefined
+    if (intersectionCleanup) {
+      intersectionCleanup()
+      intersectionCleanup = undefined
     }
   }
 
@@ -74,25 +157,18 @@ export default function VirtualItem(props: VirtualItemProps) {
 
   function refreshIntersectionObserver(targetRoot: Element | Document | null) {
     cleanupIntersectionObserver()
-    if (!wrapperRef || typeof IntersectionObserver === "undefined") {
+    if (!wrapperRef) {
+      setIsIntersecting(true)
+      return
+    }
+    if (typeof IntersectionObserver === "undefined") {
       setIsIntersecting(true)
       return
     }
     const margin = props.threshold ?? DEFAULT_MARGIN_PX
-    intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.target === wrapperRef) {
-            setIsIntersecting(entry.isIntersecting)
-          }
-        }
-      },
-      {
-        root: targetRoot,
-        rootMargin: `${margin}px 0px ${margin}px 0px`,
-      },
-    )
-    intersectionObserver.observe(wrapperRef)
+    intersectionCleanup = subscribeToSharedObserver(wrapperRef, targetRoot, margin, (entry) => {
+      setIsIntersecting(entry.isIntersecting)
+    })
   }
 
   function setWrapperRef(element: HTMLDivElement | null) {
