@@ -58,6 +58,18 @@ This command starts the server and opens the web client in your default browser.
 - **[OpenCode CLI](https://opencode.ai)**: Must be installed and available in your `PATH`.
 - **Node.js 18+**: Required if running the CLI server or building from source.
 
+## Troubleshooting
+
+### macOS says the app is damaged
+If macOS reports that "CodeNomad.app is damaged and can't be opened," Gatekeeper flagged the download because the app is not yet notarized. You can clear the quarantine flag after moving CodeNomad into `/Applications`:
+
+```bash
+xattr -l /Applications/CodeNomad.app
+xattr -dr com.apple.quarantine /Applications/CodeNomad.app
+```
+
+After removing the quarantine attribute, launch the app normally. On Intel Macs you may also need to approve CodeNomad from **System Settings → Privacy & Security** the first time you run it.
+
 ## Architecture & Development
 
 CodeNomad is a monorepo split into specialized packages. If you want to contribute or build from source, check out the individual package documentation:
