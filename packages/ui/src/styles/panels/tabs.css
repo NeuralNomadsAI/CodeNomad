@@ -51,7 +51,7 @@
 }
 
 .tab-close {
-  @apply opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white rounded p-0.5 transition-all cursor-pointer;
+  @apply opacity-100 hover:bg-red-500 hover:text-white rounded p-0.5 transition-all cursor-pointer;
 }
 
 .tab-close:focus-visible {
