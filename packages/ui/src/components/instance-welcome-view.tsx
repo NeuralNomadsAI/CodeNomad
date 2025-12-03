@@ -215,9 +215,11 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                 </div>
                 <p class="panel-empty-state-title">No Previous Sessions</p>
                 <p class="panel-empty-state-description">Create a new session below to get started</p>
-                <button type="button" class="button-tertiary mt-4 lg:hidden" onClick={openInstanceInfoOverlay}>
-                  View Instance Info
-                </button>
+                <Show when={!showInstanceInfoOverlay()}>
+                  <button type="button" class="button-tertiary mt-4 lg:hidden" onClick={openInstanceInfoOverlay}>
+                    View Instance Info
+                  </button>
+                </Show>
               </div>
             }
           >
@@ -230,13 +232,15 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                       {parentSessions().length} {parentSessions().length === 1 ? "session" : "sessions"} available
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    class="button-tertiary lg:hidden flex-shrink-0"
-                    onClick={openInstanceInfoOverlay}
-                  >
-                    View Instance Info
-                  </button>
+                  <Show when={!showInstanceInfoOverlay()}>
+                    <button
+                      type="button"
+                      class="button-tertiary lg:hidden flex-shrink-0"
+                      onClick={openInstanceInfoOverlay}
+                    >
+                      View Instance Info
+                    </button>
+                  </Show>
                 </div>
               </div>
               <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto">
@@ -334,20 +338,22 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
 
       <Show when={showInstanceInfoOverlay()}>
         <div
-          class="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm lg:hidden"
+          class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
           onClick={closeInstanceInfoOverlay}
         >
-          <div
-            class="w-full max-w-md space-y-3"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div class="flex justify-end">
-              <button type="button" class="button-tertiary" onClick={closeInstanceInfoOverlay}>
-                Close
-              </button>
-            </div>
-            <div class="max-h-[80vh] overflow-y-auto pr-1">
-              <InstanceInfo instance={props.instance} />
+          <div class="flex min-h-full items-start justify-center p-4 overflow-y-auto">
+            <div
+              class="w-full max-w-md space-y-3"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div class="flex justify-end">
+                <button type="button" class="button-tertiary" onClick={closeInstanceInfoOverlay}>
+                  Close
+                </button>
+              </div>
+              <div class="max-h-[85vh] overflow-y-auto pr-1">
+                <InstanceInfo instance={props.instance} />
+              </div>
             </div>
           </div>
         </div>
