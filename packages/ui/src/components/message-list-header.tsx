@@ -21,7 +21,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
 
   return (
     <div class="connection-status">
-      <div class="connection-status-text connection-status-info flex flex-wrap items-center gap-3 text-sm font-medium">
+      <div class="connection-status-menu">
         <Show when={props.showSidebarToggle}>
           <button
             type="button"
@@ -32,7 +32,10 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
             <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
           </button>
         </Show>
-        <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
+      </div>
+
+      <div class="connection-status-text connection-status-info">
+        <div class="connection-status-usage">
           <div class={METRIC_CHIP_CLASS}>
             <span class={METRIC_LABEL_CLASS}>Used</span>
             <span class="font-semibold text-primary">{props.formatTokens(props.usedTokens)}</span>

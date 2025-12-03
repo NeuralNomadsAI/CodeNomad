@@ -5,8 +5,14 @@
 .connection-status {
   @apply grid items-center px-4 py-2 gap-4;
   grid-template-columns: 1fr auto 1fr;
+  grid-template-areas: "info shortcut meta";
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--border-base);
+}
+
+.connection-status-menu {
+  display: none;
+  grid-area: menu;
 }
 
 .session-sidebar-menu-button {
@@ -52,15 +58,26 @@
 }
 
 .connection-status-info {
-  justify-self: start;
+  @apply flex flex-wrap items-center gap-3 text-sm font-medium;
+  grid-area: info;
+  justify-self: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.connection-status-usage {
+  @apply flex flex-wrap items-center justify-center gap-2 text-xs;
+  color: var(--text-primary);
 }
 
 .connection-status-shortcut {
+  grid-area: shortcut;
   justify-self: center;
   text-align: center;
 }
 
 .connection-status-meta {
+  grid-area: meta;
   justify-self: end;
 }
 
@@ -102,6 +119,36 @@
   .connection-status-button {
     width: 100%;
     justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .connection-status {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "menu shortcut meta"
+      "info info info";
+    row-gap: 0.5rem;
+  }
+
+  .connection-status-menu {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .connection-status-info {
+    justify-self: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .connection-status-shortcut {
+    justify-self: center;
+  }
+
+  .connection-status-meta {
+    justify-self: end;
   }
 }
 
