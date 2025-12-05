@@ -12,6 +12,7 @@ import { formatTokenTotal } from "../lib/formatters"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 
 const SCROLL_SCOPE = "session"
+const SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
@@ -103,10 +104,13 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
+  const [topSentinel, setTopSentinel] = createSignal<HTMLDivElement | null>(null)
   const [bottomSentinel, setBottomSentinel] = createSignal<HTMLDivElement | null>(null)
   const [autoScroll, setAutoScroll] = createSignal(true)
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
+  const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
+  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
 
   let containerRef: HTMLDivElement | undefined
   let pendingScrollFrame: number | null = null
@@ -157,19 +161,10 @@ export default function MessageSection(props: MessageSectionProps) {
     attachScrollIntentListeners(containerRef)
   }
 
-  function isNearBottom(element: HTMLDivElement, offset = 48) {
-    const { scrollTop, scrollHeight, clientHeight } = element
-    return scrollHeight - (scrollTop + clientHeight) <= offset
-  }
-
-  function isNearTop(element: HTMLDivElement, offset = 48) {
-    return element.scrollTop <= offset
-  }
-
-  function updateScrollIndicators(element: HTMLDivElement) {
+  function updateScrollIndicatorsFromVisibility() {
     const hasItems = messageIds().length > 0
-    setShowScrollBottomButton(hasItems && !isNearBottom(element))
-    setShowScrollTopButton(hasItems && !isNearTop(element))
+    setShowScrollBottomButton(hasItems && !bottomSentinelVisible())
+    setShowScrollTopButton(hasItems && !topSentinelVisible())
   }
 
   function scheduleScrollPersist() {
@@ -177,30 +172,30 @@ export default function MessageSection(props: MessageSectionProps) {
     pendingScrollPersist = requestAnimationFrame(() => {
       pendingScrollPersist = null
       if (!containerRef) return
-      scrollCache.persist(containerRef, { atBottomOffset: 48 })
+      scrollCache.persist(containerRef, { atBottomOffset: SCROLL_SENTINEL_MARGIN_PX })
     })
   }
-
+ 
   function scrollToBottom(immediate = false) {
     if (!containerRef) return
+    const sentinel = bottomSentinel()
     const behavior = immediate ? "auto" : "smooth"
     if (!immediate) {
       suppressAutoScrollOnce = true
     }
-    containerRef.scrollTo({ top: containerRef.scrollHeight, behavior })
+    sentinel?.scrollIntoView({ block: "end", inline: "nearest", behavior })
     setAutoScroll(true)
-    updateScrollIndicators(containerRef)
     scheduleScrollPersist()
   }
-
+ 
   function scrollToTop(immediate = false) {
     if (!containerRef) return
     const behavior = immediate ? "auto" : "smooth"
     setAutoScroll(false)
-    containerRef.scrollTo({ top: 0, behavior })
-    updateScrollIndicators(containerRef)
+    topSentinel()?.scrollIntoView({ block: "start", inline: "nearest", behavior })
     scheduleScrollPersist()
   }
+
 
   function scheduleAnchorScroll(immediate = false) {
     if (!autoScroll()) return
@@ -212,7 +207,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     pendingAnchorScroll = requestAnimationFrame(() => {
       pendingAnchorScroll = null
-      sentinel.scrollIntoView({ block: "end", inline: "nearest", behavior: immediate ? "auto" : "auto" })
+      sentinel.scrollIntoView({ block: "end", inline: "nearest", behavior: immediate ? "auto" : "smooth" })
     })
   }
 
@@ -235,7 +230,7 @@ export default function MessageSection(props: MessageSectionProps) {
     pendingScrollFrame = requestAnimationFrame(() => {
       pendingScrollFrame = null
       if (!containerRef) return
-      const atBottom = isNearBottom(containerRef)
+      const atBottom = bottomSentinelVisible()
 
       if (isUserScroll) {
         if (atBottom) {
@@ -245,7 +240,6 @@ export default function MessageSection(props: MessageSectionProps) {
         }
       }
 
-      updateScrollIndicators(containerRef)
       scheduleScrollPersist()
     })
   }
@@ -260,9 +254,9 @@ export default function MessageSection(props: MessageSectionProps) {
         if (snapshot) {
           setAutoScroll(snapshot.atBottom)
         } else {
-          setAutoScroll(isNearBottom(target))
+          setAutoScroll(bottomSentinelVisible())
         }
-        updateScrollIndicators(target)
+        updateScrollIndicatorsFromVisibility()
       },
     })
 
@@ -303,13 +297,43 @@ export default function MessageSection(props: MessageSectionProps) {
       setShowScrollTopButton(false)
       setShowScrollBottomButton(false)
       setAutoScroll(true)
+      return
+    }
+    updateScrollIndicatorsFromVisibility()
+  })
+
+  createEffect(() => {
+    if (autoScroll() && bottomSentinel()) {
+      scheduleAnchorScroll()
     }
   })
 
   createEffect(() => {
-    if (bottomSentinel()) {
-      scheduleAnchorScroll(true)
-    }
+    const container = scrollElement()
+    const topTarget = topSentinel()
+    const bottomTarget = bottomSentinel()
+    if (!container || !topTarget || !bottomTarget) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let visibilityChanged = false
+        for (const entry of entries) {
+          if (entry.target === topTarget) {
+            setTopSentinelVisible(entry.isIntersecting)
+            visibilityChanged = true
+          } else if (entry.target === bottomTarget) {
+            setBottomSentinelVisible(entry.isIntersecting)
+            visibilityChanged = true
+          }
+        }
+        if (visibilityChanged) {
+          updateScrollIndicatorsFromVisibility()
+        }
+      },
+      { root: container, threshold: 0, rootMargin: `${SCROLL_SENTINEL_MARGIN_PX}px 0px ${SCROLL_SENTINEL_MARGIN_PX}px 0px` },
+    )
+    observer.observe(topTarget)
+    observer.observe(bottomTarget)
+    onCleanup(() => observer.disconnect())
   })
 
   onCleanup(() => {
@@ -326,7 +350,7 @@ export default function MessageSection(props: MessageSectionProps) {
       detachScrollIntentListeners()
     }
     if (containerRef) {
-      scrollCache.persist(containerRef, { atBottomOffset: 48 })
+      scrollCache.persist(containerRef, { atBottomOffset: SCROLL_SENTINEL_MARGIN_PX })
     }
   })
 
@@ -343,6 +367,7 @@ export default function MessageSection(props: MessageSectionProps) {
       />
 
       <div class="message-stream" ref={setContainerRef} onScroll={handleScroll}>
+        <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
         <Show when={!props.loading && messageIds().length === 0}>
           <div class="empty-state">
             <div class="empty-state-content">

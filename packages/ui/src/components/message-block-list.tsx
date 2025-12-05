@@ -99,7 +99,7 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           )
         }}
       </Index>
-      <div ref={props.setBottomSentinel} aria-hidden="true" />
+      <div ref={props.setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
     </>
   )
 }
