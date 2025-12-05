@@ -17,6 +17,9 @@ import CommandPalette from "../command-palette"
 import Kbd from "../kbd"
 import ContextUsagePanel from "../session/context-usage-panel"
 import SessionView from "../session/session-view"
+import { getLogger } from "../../lib/logger"
+const log = getLogger("session")
+
 
 interface InstanceShellProps {
   instance: Instance
@@ -119,13 +122,13 @@ const InstanceShell: Component<InstanceShellProps> = (props) => {
               onClose={(id) => {
                 const result = props.onCloseSession(id)
                 if (result instanceof Promise) {
-                  void result.catch((error) => console.error("Failed to close session:", error))
+                  void result.catch((error) => log.error("Failed to close session:", error))
                 }
               }}
               onNew={() => {
                 const result = props.onNewSession()
                 if (result instanceof Promise) {
-                  void result.catch((error) => console.error("Failed to create session:", error))
+                  void result.catch((error) => log.error("Failed to create session:", error))
                 }
               }}
               showHeader

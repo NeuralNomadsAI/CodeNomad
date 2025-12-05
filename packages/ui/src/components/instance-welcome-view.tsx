@@ -6,6 +6,9 @@ import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import { keyboardRegistry, type KeyboardShortcut } from "../lib/keyboard-registry"
 import { isMac } from "../lib/keyboard-utils"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 
 interface InstanceWelcomeViewProps {
@@ -189,7 +192,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
       const session = await createSession(props.instance.id)
       setActiveParentSession(props.instance.id, session.id)
     } catch (error) {
-      console.error("Failed to create session:", error)
+      log.error("Failed to create session:", error)
     } finally {
       setIsCreating(false)
     }

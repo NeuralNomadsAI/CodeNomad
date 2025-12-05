@@ -4,6 +4,9 @@ import type { Session, Agent } from "../types/session"
 import { getParentSessions, createSession, setActiveParentSession } from "../stores/sessions"
 import { instances, stopInstance } from "../stores/instances"
 import { agents } from "../stores/sessions"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 interface SessionPickerProps {
   instanceId: string
@@ -55,7 +58,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
       setActiveParentSession(props.instanceId, session.id)
       props.onClose()
     } catch (error) {
-      console.error("Failed to create session:", error)
+      log.error("Failed to create session:", error)
     } finally {
       setIsCreating(false)
     }

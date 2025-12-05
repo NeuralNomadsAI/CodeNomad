@@ -10,6 +10,9 @@ import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraftPrompt } from "../stores/sessions"
 import { showAlertDialog } from "../stores/alerts"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 interface PromptInputProps {
   instanceId: string
@@ -563,7 +566,7 @@ export default function PromptInput(props: PromptInputProps) {
         })
         setHistoryIndex(-1)
       } catch (historyError) {
-        console.error("Failed to update prompt history:", historyError)
+        log.error("Failed to update prompt history:", historyError)
       }
     }
 
@@ -586,7 +589,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
       void refreshHistory()
     } catch (error) {
-      console.error("Failed to send message:", error)
+      log.error("Failed to send message:", error)
       showAlertDialog("Failed to send message", {
         title: "Send failed",
         detail: error instanceof Error ? error.message : String(error),

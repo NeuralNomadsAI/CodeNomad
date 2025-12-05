@@ -1,6 +1,9 @@
 import { createContext, createMemo, createSignal, onCleanup, type Accessor, type ParentComponent, useContext } from "solid-js"
 import type { InstanceData } from "../../../server/src/api-types"
 import { storage } from "../lib/storage"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("api")
 
 const DEFAULT_INSTANCE_DATA: InstanceData = { messageHistory: [], agentModelSelections: {} }
 
@@ -54,7 +57,7 @@ async function ensureInstanceConfig(instanceId: string): Promise<void> {
       attachSubscription(instanceId)
     })
     .catch((error) => {
-      console.warn("Failed to load instance data:", error)
+      log.warn("Failed to load instance data", error)
       setInstanceData(instanceId, DEFAULT_INSTANCE_DATA)
       attachSubscription(instanceId)
     })
@@ -74,7 +77,7 @@ async function updateInstanceConfig(instanceId: string, mutator: (draft: Instanc
   try {
     await storage.saveInstanceData(instanceId, draft)
   } catch (error) {
-    console.warn("Failed to persist instance data:", error)
+    log.warn("Failed to persist instance data", error)
   }
   setInstanceData(instanceId, draft)
 }

@@ -15,16 +15,15 @@ import type {
 } from "@opencode-ai/sdk"
 import type { MessageStatus } from "./message-v2/types"
 
+import { getLogger } from "../lib/logger"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { instances, addPermissionToQueue, removePermissionFromQueue } from "./instances"
 import { showAlertDialog } from "./alerts"
-import {
-  sessions,
-  setSessions,
-  withSession,
-} from "./session-state"
+import { sessions, setSessions, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
+
+const log = getLogger("sse")
 import { loadMessages } from "./session-api"
 import { setSessionCompactionState } from "./session-compaction"
 import {
@@ -213,7 +212,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
 
-    console.log(`[SSE] New session created: ${info.id}`, newSession)
+    log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
     const mergedTime = {
       ...existingSession.time,
@@ -252,14 +251,14 @@ function handleSessionIdle(_instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
-  console.log(`[SSE] Session idle: ${sessionId}`)
+  log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
   const sessionID = event.properties?.sessionID
   if (!sessionID) return
 
-  console.log(`[SSE] Session compacted: ${sessionID}`)
+  log.info(`[SSE] Session compacted: ${sessionID}`)
 
   setSessionCompactionState(instanceId, sessionID, false)
 
@@ -269,7 +268,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
     session.time = time
   })
 
-  loadMessages(instanceId, sessionID, true).catch(console.error)
+  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload session after compaction", error))
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
@@ -287,7 +286,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
 
 function handleSessionError(_instanceId: string, event: EventSessionError): void {
   const error = event.properties?.error
-  console.error(`[SSE] Session error:`, error)
+  log.error(`[SSE] Session error:`, error)
 
   let message = "Unknown error"
 
@@ -309,16 +308,16 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
   const sessionID = event.properties?.sessionID
   if (!sessionID) return
 
-  console.log(`[SSE] Message removed from session ${sessionID}, reloading messages`)
-  loadMessages(instanceId, sessionID, true).catch(console.error)
+  log.info(`[SSE] Message removed from session ${sessionID}, reloading messages`)
+  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload messages after removal", error))
 }
 
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
   const sessionID = event.properties?.sessionID
   if (!sessionID) return
 
-  console.log(`[SSE] Message part removed from session ${sessionID}, reloading messages`)
-  loadMessages(instanceId, sessionID, true).catch(console.error)
+  log.info(`[SSE] Message part removed from session ${sessionID}, reloading messages`)
+  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload messages after part removal", error))
 }
 
 function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
@@ -342,7 +341,7 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionUpdat
   const permission = event.properties
   if (!permission) return
 
-  console.log(`[SSE] Permission updated: ${permission.id} (${permission.type})`)
+  log.info(`[SSE] Permission updated: ${permission.id} (${permission.type})`)
   addPermissionToQueue(instanceId, permission)
   upsertPermissionV2(instanceId, permission)
 }
@@ -351,7 +350,7 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionRepli
   const { permissionID } = event.properties
   if (!permissionID) return
 
-  console.log(`[SSE] Permission replied: ${permissionID}`)
+  log.info(`[SSE] Permission replied: ${permissionID}`)
   removePermissionFromQueue(instanceId, permissionID)
   removePermissionV2(instanceId, permissionID)
 }

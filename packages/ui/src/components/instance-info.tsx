@@ -1,6 +1,9 @@
 import { Component, Show, For, createSignal, createEffect, onCleanup } from "solid-js"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { fetchLspStatus, updateInstance } from "../stores/instances"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 interface InstanceInfoProps {
   instance: Instance
@@ -113,7 +116,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
 
       } catch (error) {
         if (!cancelled) {
-          console.error("Failed to load instance metadata:", error)
+          log.error("Failed to load instance metadata", error)
         }
       } finally {
         pendingMetadataRequests.delete(instanceId)

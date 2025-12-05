@@ -2,6 +2,9 @@ import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup
 import { Folder as FolderIcon, File as FileIcon, Loader2, Search, X, ArrowUpLeft } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 const MAX_RESULTS = 200
 
@@ -172,7 +175,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
 
   function handleNavigateTo(path: string) {
     void fetchDirectory(path, true).catch((err) => {
-      console.error("Failed to open directory", err)
+      log.error("Failed to open directory", err)
       setError(err instanceof Error ? err.message : "Unable to open directory")
     })
   }

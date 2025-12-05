@@ -6,6 +6,9 @@ import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 export interface SessionInfo {
   cost: number
@@ -248,7 +251,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     const response = await instance.client.session.messages({ path: { id: session.id } })
     messages = response.data || []
   } catch (error) {
-    console.error(`Failed to fetch messages for session ${session.id}:`, error)
+    log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
   }
 
@@ -309,13 +312,13 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
       if (!isBlank) return false
 
       await deleteSession(instanceId, sessionId).catch((error: Error) => {
-        console.error(`Failed to delete blank session ${sessionId}:`, error)
+        log.error(`Failed to delete blank session ${sessionId}`, error)
       })
       return true
     })
 
   if (cleanupPromises.length > 0) {
-    console.log(`Cleaning up ${cleanupPromises.length} blank sessions`)
+    log.info(`Cleaning up ${cleanupPromises.length} blank sessions`)
     const deletionResults = await Promise.all(cleanupPromises)
     const deletedCount = deletionResults.filter(Boolean).length
 

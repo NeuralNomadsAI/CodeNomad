@@ -3,6 +3,9 @@ import { For, Show, createEffect, createMemo } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Agent } from "../types/session"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 interface AgentSelectorProps {
   instanceId: string
@@ -49,9 +52,10 @@ export default function AgentSelector(props: AgentSelectorProps) {
 
   createEffect(() => {
     if (instanceAgents().length === 0) {
-      fetchAgents(props.instanceId).catch(console.error)
+      fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
     }
   })
+
 
   const handleChange = async (value: Agent | null) => {
     if (value && value.name !== props.currentAgent) {

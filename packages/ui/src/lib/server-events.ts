@@ -1,16 +1,17 @@
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
+import { getLogger } from "./logger"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
-const SSE_PREFIX = "[SSE]"
+const log = getLogger("sse")
 
 function logSse(message: string, context?: Record<string, unknown>) {
   if (context) {
-    console.log(`${SSE_PREFIX} ${message}`, context)
+    log.info(message, context)
     return
   }
-  console.log(`${SSE_PREFIX} ${message}`)
+  log.info(message)
 }
 
 class ServerEvents {

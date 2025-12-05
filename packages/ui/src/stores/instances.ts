@@ -19,6 +19,9 @@ import { setSessionPendingPermission } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForInstance } from "../lib/global-cache"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("api")
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -99,7 +102,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   })
   sseManager.seedStatus(descriptor.id, "connecting")
   void hydrateInstanceData(descriptor.id).catch((error) => {
-    console.error("Failed to hydrate instance data", error)
+    log.error("Failed to hydrate instance data", error)
   })
 }
 
@@ -123,7 +126,7 @@ async function hydrateInstanceData(instanceId: string) {
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)
   } catch (error) {
-    console.error("Failed to fetch initial data:", error)
+    log.error("Failed to fetch initial data", error)
   }
 }
 
@@ -135,7 +138,7 @@ void (async function initializeWorkspaces() {
       setHasInstances(false)
     }
   } catch (error) {
-    console.error("Failed to load workspaces", error)
+    log.error("Failed to load workspaces", error)
   }
 })()
 
@@ -305,7 +308,7 @@ async function createInstance(folder: string, _binaryPath?: string): Promise<str
     setActiveInstanceId(workspace.id)
     return workspace.id
   } catch (error) {
-    console.error("Failed to create workspace", error)
+    log.error("Failed to create workspace", error)
     throw error
   }
 }
@@ -319,7 +322,7 @@ async function stopInstance(id: string) {
   try {
     await serverApi.deleteWorkspace(id)
   } catch (error) {
-    console.error("Failed to stop workspace", error)
+    log.error("Failed to stop workspace", error)
   }
 
   removeInstance(id)
@@ -331,19 +334,19 @@ async function stopInstance(id: string) {
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
   const instance = instances().get(instanceId)
   if (!instance) {
-    console.warn(`[LSP] Skipping fetch; instance ${instanceId} not found`)
+    log.warn("[LSP] Skipping status fetch; instance not found", { instanceId })
     return undefined
   }
   if (!instance.client) {
-    console.warn(`[LSP] Skipping fetch; instance ${instanceId} client not ready`)
+    log.warn("[LSP] Skipping status fetch; client not ready", { instanceId })
     return undefined
   }
   const lsp = instance.client.lsp
   if (!lsp?.status) {
-    console.warn(`[LSP] Skipping fetch; lsp.status API unavailable for instance ${instanceId}`)
+    log.warn("[LSP] Skipping status fetch; API unavailable", { instanceId })
     return undefined
   }
-  console.log(`[HTTP] GET /lsp.status for instance ${instanceId}`)
+  log.info("lsp.status", { instanceId })
   const response = await lsp.status()
   return response.data ?? []
 }
@@ -536,13 +539,13 @@ async function sendPermissionResponse(
   try {
     await instance.client.postSessionIdPermissionsPermissionId({
       path: { id: sessionId, permissionID: permissionId },
-      body: { response }
+      body: { response },
     })
 
     // Remove from queue after successful response
     removePermissionFromQueue(instanceId, permissionId)
   } catch (error) {
-    console.error("Failed to send permission response:", error)
+    log.error("Failed to send permission response", error)
     throw error
   }
 }
@@ -561,7 +564,7 @@ sseManager.onConnectionLost = (instanceId, reason) => {
 }
 
 sseManager.onLspUpdated = async (instanceId) => {
-  console.log(`[LSP] Received lsp.updated event for instance ${instanceId}`)
+  log.info("lsp.updated", { instanceId })
   try {
     const lspStatus = await fetchLspStatus(instanceId)
     if (!lspStatus) {
@@ -569,7 +572,7 @@ sseManager.onLspUpdated = async (instanceId) => {
     }
     const instance = instances().get(instanceId)
     if (!instance) {
-      console.warn(`[LSP] Instance ${instanceId} disappeared before metadata update`)
+      log.warn("[LSP] Instance disappeared before metadata update", { instanceId })
       return
     }
     updateInstance(instanceId, {
@@ -579,7 +582,7 @@ sseManager.onLspUpdated = async (instanceId) => {
       },
     })
   } catch (error) {
-    console.error("Failed to refresh LSP status:", error)
+    log.error("Failed to refresh LSP status", error)
   }
 }
 
@@ -592,7 +595,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
   try {
     await stopInstance(pending.id)
   } catch (error) {
-    console.error("Failed to stop disconnected instance:", error)
+    log.error("Failed to stop disconnected instance", error)
   } finally {
     setDisconnectedInstance(null)
     if (instances().size === 0) {

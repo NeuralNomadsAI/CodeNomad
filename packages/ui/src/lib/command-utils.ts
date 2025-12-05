@@ -2,6 +2,9 @@ import type { Command } from "./commands"
 import type { Command as SDKCommand } from "@opencode-ai/sdk"
 import { showAlertDialog } from "../stores/alerts"
 import { activeSessionId, executeCustomCommand } from "../stores/sessions"
+import { getLogger } from "./logger"
+
+const log = getLogger("actions")
 
 export function commandRequiresArguments(template?: string): boolean {
   if (!template) return false
@@ -47,7 +50,7 @@ export function buildCustomCommandEntries(instanceId: string, commands: SDKComma
       try {
         await executeCustomCommand(instanceId, sessionId, cmd.name, args)
       } catch (error) {
-        console.error("Failed to run custom command:", error)
+        log.error("Failed to run custom command", error)
         showAlertDialog("Failed to run custom command. Check the console for details.", {
           title: "Command failed",
           variant: "error",

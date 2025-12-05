@@ -1,4 +1,7 @@
 import { runtimeEnv } from "../runtime-env"
+import { getLogger } from "../logger"
+const log = getLogger("actions")
+
 
 export async function restartCli(): Promise<boolean> {
   try {
@@ -20,7 +23,7 @@ export async function restartCli(): Promise<boolean> {
       return false
     }
   } catch (error) {
-    console.error("Failed to restart CLI", error)
+    log.error("Failed to restart CLI", error)
     return false
   }
 

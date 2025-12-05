@@ -14,6 +14,7 @@
     "@kobalte/core": "0.13.11",
     "@opencode-ai/sdk": "^1.0.133",
     "@solidjs/router": "^0.13.0",
+    "debug": "^4.4.3",
     "github-markdown-css": "^5.8.1",
     "lucide-solid": "^0.300.0",
     "marked": "^12.0.0",

@@ -2,6 +2,9 @@ import { isRenderableDiffText } from "../../lib/diff-utils"
 import { getLanguageFromPath } from "../../lib/markdown"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { DiffPayload } from "./types"
+import { getLogger } from "../../lib/logger"
+const log = getLogger("session")
+
 
 export type ToolStateRunning = import("@opencode-ai/sdk").ToolStateRunning
 export type ToolStateCompleted = import("@opencode-ai/sdk").ToolStateCompleted
@@ -134,7 +137,7 @@ export function formatUnknown(value: unknown): { text: string; language?: string
     try {
       return { text: JSON.stringify(value, null, 2), language: "json" }
     } catch (error) {
-      console.error("Failed to stringify tool call output", error)
+      log.error("Failed to stringify tool call output", error)
       return { text: String(value) }
     }
   }

@@ -3,6 +3,9 @@ import { createEffect, createMemo, createSignal } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Model } from "../types/session"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 interface ModelSelectorProps {
   instanceId: string
@@ -25,7 +28,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   createEffect(() => {
     if (instanceProviders().length === 0) {
-      fetchProviders(props.instanceId).catch(console.error)
+      fetchProviders(props.instanceId).catch((error) => log.error("Failed to fetch providers", error))
     }
   })
 

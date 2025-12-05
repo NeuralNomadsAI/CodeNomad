@@ -1,5 +1,8 @@
 import { marked } from "marked"
 import { createHighlighter, type Highlighter, bundledLanguages } from "shiki/bundle/full"
+import { getLogger } from "./logger"
+
+const log = getLogger("actions")
 
 let highlighter: Highlighter | null = null
 let highlighterPromise: Promise<Highlighter> | null = null
@@ -71,7 +74,7 @@ function triggerLanguageListeners() {
     try {
       listener()
     } catch (error) {
-      console.error("Error in language listener:", error)
+      log.error("Error in language listener", error)
     }
   }
 }

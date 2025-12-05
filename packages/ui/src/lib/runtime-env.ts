@@ -1,3 +1,5 @@
+import { getLogger } from "./logger"
+
 export type HostRuntime = "electron" | "tauri" | "web"
 export type PlatformKind = "desktop" | "mobile"
 
@@ -61,6 +63,8 @@ function detectPlatform(): PlatformKind {
   return "desktop"
 }
 
+const log = getLogger("actions")
+
 let cachedEnv: RuntimeEnvironment | null = null
 
 export function detectRuntimeEnvironment(): RuntimeEnvironment {
@@ -71,9 +75,8 @@ export function detectRuntimeEnvironment(): RuntimeEnvironment {
     host: detectHost(),
     platform: detectPlatform(),
   }
-  if (typeof console !== "undefined") {
-    const message = `[runtime] host=${cachedEnv.host} platform=${cachedEnv.platform}`
-    console.info(message)
+  if (typeof window !== "undefined") {
+    log.info(`[runtime] host=${cachedEnv.host} platform=${cachedEnv.platform}`)
   }
   return cachedEnv
 }

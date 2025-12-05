@@ -9,7 +9,8 @@
         try {
           document.documentElement.setAttribute('data-theme', 'dark')
         } catch (error) {
-          console.warn('Failed to apply initial theme', error)
+          const rawConsole = globalThis?.["console"]
+          rawConsole?.warn?.('Failed to apply initial theme', error)
         }
       })()
     </script>

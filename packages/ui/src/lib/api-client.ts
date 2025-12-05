@@ -17,6 +17,7 @@ import type {
   WorkspaceEventPayload,
   WorkspaceEventType,
 } from "../../../server/src/api-types"
+import { getLogger } from "./logger"
 
 const FALLBACK_API_BASE = "http://127.0.0.1:9898"
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
@@ -38,15 +39,15 @@ function buildEventsUrl(base: string | undefined, path: string): string {
   return path
 }
 
-const HTTP_PREFIX = "[HTTP]"
+const httpLogger = getLogger("api")
+const sseLogger = getLogger("sse")
 
 function logHttp(message: string, context?: Record<string, unknown>) {
-
   if (context) {
-    console.log(`${HTTP_PREFIX} ${message}`, context)
+    httpLogger.info(message, context)
     return
   }
-  console.log(`${HTTP_PREFIX} ${message}`)
+  httpLogger.info(message)
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -186,18 +187,18 @@ export const serverApi = {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
-    console.log(`[SSE] Connecting to ${EVENTS_URL}`)
+    sseLogger.info(`Connecting to ${EVENTS_URL}`)
     const source = new EventSource(EVENTS_URL)
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEventPayload
         onEvent(payload)
       } catch (error) {
-        console.error("[SSE] Failed to parse event", error)
+        sseLogger.error("Failed to parse event", error)
       }
     }
     source.onerror = () => {
-      console.warn("[SSE] EventSource error, closing stream")
+      sseLogger.warn("EventSource error, closing stream")
       onError?.()
     }
     return source

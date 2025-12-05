@@ -4,6 +4,9 @@ import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
 import FileSystemBrowserDialog from "./filesystem-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 interface BinaryOption {
   path: string
@@ -83,7 +86,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
     setTimeout(() => {
       pathsToValidate.forEach((path) => {
-        validateBinary(path).catch(console.error)
+        validateBinary(path).catch((error) => log.error("Failed to validate binary", { path, error }))
       })
     }, 0)
   })

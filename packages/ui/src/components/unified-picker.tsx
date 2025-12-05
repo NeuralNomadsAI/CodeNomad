@@ -2,6 +2,9 @@ import { Component, createSignal, createEffect, For, Show, onCleanup } from "sol
 import type { Agent } from "../types/session"
 import type { OpencodeClient } from "@opencode-ai/sdk/client"
 import { serverApi } from "../lib/api-client"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 const SEARCH_RESULT_LIMIT = 100
 const SEARCH_DEBOUNCE_MS = 200
@@ -124,7 +127,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         return snapshot
       })
       .catch((error) => {
-        console.error(`[UnifiedPicker] Failed to load workspace files:`, error)
+        log.error(`[UnifiedPicker] Failed to load workspace files:`, error)
         setAllFiles([])
         setCachedWorkspaceId(null)
         throw error
@@ -178,7 +181,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       applyFileResults(mapEntriesToFileItems(results))
     } catch (error) {
       if (workspaceId === props.workspaceId) {
-        console.error(`[UnifiedPicker] Failed to fetch files:`, error)
+        log.error(`[UnifiedPicker] Failed to fetch files:`, error)
         if (shouldApplyResults(requestId, workspaceId)) {
           applyFileResults([])
         }

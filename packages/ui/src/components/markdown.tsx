@@ -1,6 +1,9 @@
 import { createEffect, createSignal, onMount, onCleanup } from "solid-js"
 import { renderMarkdown, onLanguagesLoaded, initMarkdown, decodeHtmlEntities } from "../lib/markdown"
 import type { TextPart } from "../types/message"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 interface MarkdownProps {
   part: TextPart
@@ -43,7 +46,7 @@ export function Markdown(props: MarkdownProps) {
           notifyRendered()
         }
       } catch (error) {
-        console.error("Failed to render markdown:", error)
+        log.error("Failed to render markdown:", error)
         if (latestRequestedText === text) {
           setHtml(text)
           notifyRendered()
@@ -68,7 +71,7 @@ export function Markdown(props: MarkdownProps) {
         notifyRendered()
       }
     } catch (error) {
-      console.error("Failed to render markdown:", error)
+      log.error("Failed to render markdown:", error)
       if (latestRequestedText === text) {
         setHtml(text)
         part.renderCache = { text, html: text, theme: themeKey }
@@ -124,7 +127,7 @@ export function Markdown(props: MarkdownProps) {
           notifyRendered()
         }
       } catch (error) {
-        console.error("Failed to re-render markdown after language load:", error)
+        log.error("Failed to re-render markdown after language load:", error)
       }
     })
 

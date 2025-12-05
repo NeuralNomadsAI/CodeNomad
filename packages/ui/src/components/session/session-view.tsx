@@ -8,6 +8,9 @@ import PromptInput from "../prompt-input"
 import { instances } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand } from "../../stores/sessions"
 import { showAlertDialog } from "../../stores/alerts"
+import { getLogger } from "../../lib/logger"
+
+const log = getLogger("session")
 
 function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text: string } {
   return part?.type === "text" && typeof (part as any).text === "string"
@@ -33,7 +36,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     const currentSession = session()
     if (currentSession) {
-      loadMessages(props.instanceId, currentSession.id).catch(console.error)
+      loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
   })
 
@@ -84,7 +87,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }
       }
     } catch (error) {
-      console.error("Failed to revert:", error)
+      log.error("Failed to revert message", error)
       showAlertDialog("Failed to revert to message", {
         title: "Revert failed",
         variant: "error",
@@ -94,7 +97,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function handleFork(messageId?: string) {
     if (!messageId) {
-      console.warn("Fork requires a user message id")
+      log.warn("Fork requires a user message id")
       return
     }
 
@@ -109,7 +112,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         setActiveSession(props.instanceId, forkedSession.id)
       }
 
-      await loadMessages(props.instanceId, forkedSession.id).catch(console.error)
+      await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
 
       if (restoredText) {
         const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
@@ -120,7 +123,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }
       }
     } catch (error) {
-      console.error("Failed to fork session:", error)
+      log.error("Failed to fork session", error)
       showAlertDialog("Failed to fork session", {
         title: "Fork failed",
         variant: "error",

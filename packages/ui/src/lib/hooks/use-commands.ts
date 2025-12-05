@@ -17,6 +17,9 @@ import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
+import { getLogger } from "../logger"
+
+const log = getLogger("actions")
 
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
@@ -236,15 +239,16 @@ export function useCommands(options: UseCommandsOptions) {
               modelID: session.model.modelId,
             },
           })
-        } catch (error: unknown) {
+        } catch (error) {
           setSessionCompactionState(instance.id, sessionId, false)
-          console.error("Failed to compact session:", error)
+          log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : "Failed to compact session"
           showAlertDialog(`Compact failed: ${message}`, {
             title: "Compact failed",
             variant: "error",
           })
         }
+
       },
     })
 
@@ -322,12 +326,13 @@ export function useCommands(options: UseCommandsOptions) {
             }
           }
         } catch (error) {
-          console.error("Failed to revert message:", error)
+          log.error("Failed to revert message", error)
           showAlertDialog("Failed to revert message", {
             title: "Undo failed",
             variant: "error",
           })
         }
+
       },
     })
 
@@ -503,7 +508,7 @@ export function useCommands(options: UseCommandsOptions) {
       category: "System",
       keywords: ["/help", "shortcuts", "help"],
       action: () => {
-        console.log("Show help modal (not implemented)")
+        log.info("Show help modal (not implemented)")
       },
     })
   }
@@ -513,11 +518,11 @@ export function useCommands(options: UseCommandsOptions) {
       const result = command.action?.()
       if (result instanceof Promise) {
         void result.catch((error) => {
-          console.error("Command execution failed:", error)
+          log.error("Command execution failed", error)
         })
       }
     } catch (error) {
-      console.error("Command execution failed:", error)
+      log.error("Command execution failed", error)
     }
   }
 

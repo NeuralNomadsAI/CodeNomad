@@ -6,6 +6,9 @@ import {
   getInstanceConfig,
   updateInstanceConfig as updateInstanceData,
 } from "./instance-config"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("actions")
 
 type DeepReadonly<T> = T extends (...args: any[]) => unknown
   ? T
@@ -81,7 +84,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
     try {
       return JSON.stringify(a) === JSON.stringify(b)
     } catch (error) {
-      console.warn("Failed to compare preference values", error)
+      log.warn("Failed to compare preference values", error)
     }
   }
   return false
@@ -148,11 +151,11 @@ async function syncConfig(source?: ConfigData): Promise<void> {
     applyConfig(cleaned)
     if (migrated) {
       void storage.updateConfig(cleaned).catch((error: unknown) => {
-        console.error("Failed to persist legacy config cleanup:", error)
+        log.error("Failed to persist legacy config cleanup", error)
       })
     }
   } catch (error) {
-    console.error("Failed to load config:", error)
+    log.error("Failed to load config", error)
     applyConfig(buildFallbackConfig())
   }
 }
@@ -172,7 +175,7 @@ function logConfigDiff(previous: ConfigData, next: ConfigData) {
   }
   const changes = diffObjects(previous, next)
   if (changes.length > 0) {
-    console.debug("[Config] Changes", changes)
+    log.info("[Config] Changes", changes)
   }
 }
 
@@ -214,9 +217,9 @@ async function persistFullConfig(next: ConfigData): Promise<void> {
     await ensureConfigLoaded()
     await storage.updateConfig(next)
   } catch (error) {
-    console.error("Failed to save config:", error)
+    log.error("Failed to save config", error)
     void syncConfig().catch((syncError: unknown) => {
-      console.error("Failed to refresh config:", syncError)
+      log.error("Failed to refresh config", syncError)
     })
   }
 }
@@ -303,8 +306,9 @@ function toggleUsageMetrics(): void {
 }
 
 function toggleAutoCleanupBlankSessions(): void {
-  console.log("toggle auto cleanup")
-  updatePreferences({ autoCleanupBlankSessions: !preferences().autoCleanupBlankSessions })
+  const nextValue = !preferences().autoCleanupBlankSessions
+  log.info("toggle auto cleanup", { value: nextValue })
+  updatePreferences({ autoCleanupBlankSessions: nextValue })
 }
 
 function addRecentFolder(path: string): void {
@@ -394,7 +398,7 @@ async function getAgentModelPreference(instanceId: string, agent: string): Promi
 }
 
 void ensureConfigLoaded().catch((error: unknown) => {
-  console.error("Failed to initialize config:", error)
+  log.error("Failed to initialize config", error)
 })
 
 interface ConfigContextValue {
@@ -466,12 +470,12 @@ const configContextValue: ConfigContextValue = {
 const ConfigProvider: ParentComponent = (props) => {
   onMount(() => {
     ensureConfigLoaded().catch((error: unknown) => {
-      console.error("Failed to initialize config:", error)
+      log.error("Failed to initialize config", error)
     })
 
     const unsubscribe = storage.onConfigChanged((config) => {
       syncConfig(config).catch((error: unknown) => {
-        console.error("Failed to refresh config:", error)
+        log.error("Failed to refresh config", error)
       })
     })
 

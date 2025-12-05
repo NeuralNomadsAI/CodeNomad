@@ -8,6 +8,9 @@ import { serverApi } from "../lib/api-client"
 import { restartCli } from "../lib/native/cli"
 import { preferences, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
+import { getLogger } from "../lib/logger"
+const log = getLogger("actions")
+
 
 interface RemoteAccessOverlayProps {
   open: boolean
@@ -62,7 +65,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
         const dataUrl = await toDataURL(url, { margin: 1, scale: 4 })
         setQrCodes((prev) => ({ ...prev, [url]: dataUrl }))
       } catch (err) {
-        console.error("Failed to generate QR code", err)
+        log.error("Failed to generate QR code", err)
       }
     }
   }
@@ -101,7 +104,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
     try {
       window.open(url, "_blank", "noopener,noreferrer")
     } catch (err) {
-      console.error("Failed to open URL", err)
+      log.error("Failed to open URL", err)
     }
   }
 

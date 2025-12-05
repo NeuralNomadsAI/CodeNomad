@@ -1,4 +1,7 @@
 import type { NativeDialogOptions } from "../native-functions"
+import { getLogger } from "../../logger"
+const log = getLogger("actions")
+
 
 interface TauriDialogModule {
   open?: (
@@ -49,7 +52,7 @@ export async function openTauriNativeDialog(options: NativeDialogOptions): Promi
 
     return response
   } catch (error) {
-    console.error("[native] tauri dialog failed", error)
+    log.error("[native] tauri dialog failed", error)
     return null
   }
 }

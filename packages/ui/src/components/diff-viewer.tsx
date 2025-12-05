@@ -8,6 +8,9 @@ import { normalizeDiffText } from "../lib/diff-utils"
 import { setCacheEntry } from "../lib/global-cache"
 import type { CacheEntryParams } from "../lib/global-cache"
 import type { DiffViewMode } from "../stores/preferences"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 disableCache()
 
@@ -110,7 +113,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
             >
               {(data) => (
                 <ErrorBoundary fallback={(error) => {
-                  console.warn("Failed to render diff view", error)
+                  log.warn("Failed to render diff view", error)
                   return <pre class="tool-call-diff-fallback">{props.diffText}</pre>
                 }}>
                   <DiffView

@@ -30,6 +30,9 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("api")
 
 interface SessionForkResponse {
   id: string
@@ -65,7 +68,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
   })
 
   try {
-    console.log(`[HTTP] GET /session.list for instance ${instanceId}`)
+    log.info("session.list", { instanceId })
     const response = await instance.client.session.list()
 
     const sessionMap = new Map<string, Session>()
@@ -132,7 +135,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
     pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
   } catch (error) {
-    console.error("Failed to fetch sessions:", error)
+    log.error("Failed to fetch sessions:", error)
     throw error
   } finally {
     setLoading((prev) => {
@@ -166,7 +169,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   })
 
   try {
-    console.log(`[HTTP] POST /session.create for instance ${instanceId}`)
+    log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
     const response = await instance.client.session.create()
 
     if (!response.data) {
@@ -237,7 +240,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
     return session
   } catch (error) {
-    console.error("Failed to create session:", error)
+    log.error("Failed to create session:", error)
     throw error
   } finally {
     setLoading((prev) => {
@@ -269,7 +272,7 @@ async function forkSession(
     request.body = { messageID: options.messageId }
   }
 
-  console.log(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
+  log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
   const response = await instance.client.session.fork(request)
 
   if (!response.data) {
@@ -352,7 +355,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   })
 
   try {
-    console.log(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
+    log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
     await instance.client.session.delete({ path: { id: sessionId } })
 
     setSessions((prev) => {
@@ -394,7 +397,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
       })
     }
   } catch (error) {
-    console.error("Failed to delete session:", error)
+    log.error("Failed to delete session:", error)
     throw error
   } finally {
     setLoading((prev) => {
@@ -415,7 +418,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
   }
 
   try {
-    console.log(`[HTTP] GET /app.agents for instance ${instanceId}`)
+    log.info(`[HTTP] GET /app.agents for instance ${instanceId}`)
     const response = await instance.client.app.agents()
     const agentList = (response.data ?? []).map((agent) => ({
       name: agent.name,
@@ -435,7 +438,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
       return next
     })
   } catch (error) {
-    console.error("Failed to fetch agents:", error)
+    log.error("Failed to fetch agents:", error)
   }
 }
 
@@ -446,7 +449,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 
   try {
-    console.log(`[HTTP] GET /config.providers for instance ${instanceId}`)
+    log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
     const response = await instance.client.config.providers()
     if (!response.data) return
 
@@ -469,7 +472,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
       return next
     })
   } catch (error) {
-    console.error("Failed to fetch providers:", error)
+    log.error("Failed to fetch providers:", error)
   }
 }
 
@@ -515,7 +518,7 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   })
 
   try {
-    console.log(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
+    log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const response = await instance.client.session["messages"]({ path: { id: sessionId } })
 
     if (!response.data || !Array.isArray(response.data)) {
@@ -604,7 +607,7 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
 
   } catch (error) {
-    console.error("Failed to load messages:", error)
+    log.error("Failed to load messages:", error)
     throw error
   } finally {
     setLoading((prev) => {

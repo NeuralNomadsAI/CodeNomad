@@ -7,6 +7,9 @@ import Kbd from "./kbd"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
+import { getLogger } from "../lib/logger"
+const log = getLogger("session")
+
 
 
 interface SessionListProps {
@@ -106,7 +109,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       await navigator.clipboard.writeText(sessionId)
       showToastNotification({ message: "Session ID copied", variant: "success" })
     } catch (error) {
-      console.error(`Failed to copy session ID ${sessionId}:`, error)
+      log.error(`Failed to copy session ID ${sessionId}:`, error)
       showToastNotification({ message: "Unable to copy session ID", variant: "error" })
     }
   }

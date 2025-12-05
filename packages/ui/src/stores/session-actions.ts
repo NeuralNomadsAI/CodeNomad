@@ -6,6 +6,9 @@ import { sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("actions")
 
 const ID_LENGTH = 26
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -168,26 +171,27 @@ async function sendMessage(
       }),
   }
 
-  console.log("[sendMessage] Sending prompt:", {
+  log.info("sendMessage", {
+    instanceId,
     sessionId,
     requestBody,
   })
 
   try {
-    console.log(`[HTTP] POST /session.prompt_async for instance ${instanceId}`, { sessionId, requestBody })
-    const response = await instance.client.session.promptAsync({
+    log.info("session.prompt", { instanceId, sessionId, requestBody })
+    const response = await instance.client.session.prompt({
       path: { id: sessionId },
       body: requestBody,
     })
 
-    console.log("[sendMessage] Response:", response)
+    log.info("sendMessage response", response)
 
     if (response.error) {
-      console.error("[sendMessage] Server returned error:", response.error)
+      log.error("sendMessage server error", response.error)
       throw new Error(JSON.stringify(response.error) || "Failed to send message")
     }
   } catch (error) {
-    console.error("[sendMessage] Failed to send prompt:", error)
+    log.error("Failed to send prompt", error)
     throw error
   }
 }
@@ -262,16 +266,16 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     throw new Error("Instance not ready")
   }
 
-  console.log("[abortSession] Aborting session:", { instanceId, sessionId })
+  log.info("abortSession", { instanceId, sessionId })
 
   try {
-    console.log(`[HTTP] POST /session.abort for instance ${instanceId}`, { sessionId })
+    log.info("session.abort", { instanceId, sessionId })
     await instance.client.session.abort({
       path: { id: sessionId },
     })
-    console.log("[abortSession] Session aborted successfully")
+    log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
-    console.error("[abortSession] Failed to abort session:", error)
+    log.error("Failed to abort session", error)
     throw error
   }
 }
@@ -314,7 +318,7 @@ async function updateSessionModel(
   }
 
   if (!isModelValid(instanceId, model)) {
-    console.warn("Invalid model selection", model)
+    log.warn("Invalid model selection", model)
     return
   }
 

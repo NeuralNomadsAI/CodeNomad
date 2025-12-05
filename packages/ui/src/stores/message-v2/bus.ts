@@ -1,6 +1,9 @@
 import { createInstanceMessageStore } from "./instance-store"
 import type { InstanceMessageStore } from "./instance-store"
 import { clearCacheForInstance } from "../../lib/global-cache"
+import { getLogger } from "../../lib/logger"
+
+const log = getLogger("session")
 
 class MessageStoreBus {
   private stores = new Map<string, InstanceMessageStore>()
@@ -55,7 +58,7 @@ class MessageStoreBus {
       try {
         handler(instanceId)
       } catch (error) {
-        console.error("Failed to run message store teardown handler", error)
+        log.error("Failed to run message store teardown handler", error)
       }
     }
   }

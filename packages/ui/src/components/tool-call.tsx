@@ -11,6 +11,9 @@ import type { TextPart, RenderCache } from "../types/message"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import type { DiffPayload, DiffRenderOptions, MarkdownRenderOptions, ToolCallPart, ToolRendererContext } from "./tool-call/types"
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning } from "./tool-call/utils"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 type ToolState = import("@opencode-ai/sdk").ToolState
 
@@ -540,7 +543,7 @@ export default function ToolCall(props: ToolCallProps) {
       const sessionId = permission.sessionID || props.sessionId
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
     } catch (error) {
-      console.error("Failed to send permission response:", error)
+      log.error("Failed to send permission response", error)
       setPermissionError(error instanceof Error ? error.message : "Unable to update permission")
     } finally {
       setPermissionSubmitting(false)

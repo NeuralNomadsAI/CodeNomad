@@ -12,6 +12,7 @@ import { initMarkdown } from "./lib/markdown"
 import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
+import { getLogger } from "./lib/logger"
 import {
   hasInstances,
   isSelectingFolder,
@@ -42,6 +43,8 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 
+const log = getLogger("actions")
+
 const App: Component = () => {
   const { isDark } = useTheme()
   const {
@@ -61,7 +64,7 @@ const App: Component = () => {
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
 
   createEffect(() => {
-    void initMarkdown(isDark()).catch(console.error)
+    void initMarkdown(isDark()).catch((error) => log.error("Failed to initialize markdown", error))
   })
 
   const activeInstance = createMemo(() => getActiveInstance())
@@ -106,13 +109,16 @@ const App: Component = () => {
       setShowFolderSelection(false)
       setIsAdvancedSettingsOpen(false)
 
-      console.log("Created instance:", instanceId, "Port:", instances().get(instanceId)?.port)
+      log.info("Created instance", {
+        instanceId,
+        port: instances().get(instanceId)?.port,
+      })
     } catch (error) {
       clearLaunchError()
       if (isMissingBinaryError(error)) {
         setLaunchErrorBinary(selectedBinary)
       }
-      console.error("Failed to create instance:", error)
+      log.error("Failed to create instance", error)
     } finally {
       setIsSelectingFolder(false)
     }
@@ -137,7 +143,7 @@ const App: Component = () => {
     try {
       await acknowledgeDisconnectedInstance()
     } catch (error) {
-      console.error("Failed to finalize disconnected instance:", error)
+      log.error("Failed to finalize disconnected instance", error)
     }
   }
 
@@ -165,7 +171,7 @@ const App: Component = () => {
       const session = await createSession(instanceId)
       setActiveParentSession(instanceId, session.id)
     } catch (error) {
-      console.error("Failed to create session:", error)
+      log.error("Failed to create session", error)
     }
   }
 
@@ -189,7 +195,7 @@ const App: Component = () => {
     try {
       await fetchSessions(instanceId)
     } catch (error) {
-      console.error("Failed to refresh sessions after closing:", error)
+      log.error("Failed to refresh sessions after closing", error)
     }
   }
 

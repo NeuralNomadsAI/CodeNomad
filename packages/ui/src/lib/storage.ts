@@ -1,6 +1,9 @@
 import type { AppConfig, InstanceData } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { serverEvents } from "./server-events"
+import { getLogger } from "./logger"
+
+const log = getLogger("actions")
 
 export type ConfigData = AppConfig
 
@@ -19,7 +22,7 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
     try {
       return JSON.stringify(a) === JSON.stringify(b)
     } catch (error) {
-      console.warn("Failed to compare config objects", error)
+      log.warn("Failed to compare config objects", error)
     }
   }
 

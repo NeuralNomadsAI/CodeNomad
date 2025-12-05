@@ -8,6 +8,9 @@ import { keyboardRegistry } from "../keyboard-registry"
 import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
+import { getLogger } from "../logger"
+
+const log = getLogger("actions")
 
 interface UseAppLifecycleOptions {
   setEscapeInDebounce: (value: boolean) => void
@@ -115,9 +118,9 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
         try {
           await abortSession(instance.id, sessionId)
-          console.log("Session aborted successfully")
+          log.info("Session aborted successfully", { instanceId: instance.id, sessionId })
         } catch (error) {
-          console.error("Failed to abort session:", error)
+          log.error("Failed to abort session", error)
         }
       },
       () => {

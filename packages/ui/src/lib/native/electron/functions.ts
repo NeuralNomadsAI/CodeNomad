@@ -1,4 +1,7 @@
 import type { NativeDialogOptions } from "../native-functions"
+import { getLogger } from "../../logger"
+const log = getLogger("actions")
+
 
 interface ElectronDialogResult {
   canceled?: boolean
@@ -33,7 +36,7 @@ export async function openElectronNativeDialog(options: NativeDialogOptions): Pr
     const result = await api.openDialog(options)
     return coerceFirstPath(result)
   } catch (error) {
-    console.error("[native] electron dialog failed", error)
+    log.error("[native] electron dialog failed", error)
     return null
   }
 }

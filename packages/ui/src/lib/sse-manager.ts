@@ -20,6 +20,9 @@ import type {
   InstanceStreamStatus,
   WorkspaceEventPayload,
 } from "../../../server/src/api-types"
+import { getLogger } from "./logger"
+
+const log = getLogger("sse")
 
 type InstanceEventPayload = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 type InstanceStatusPayload = Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>
@@ -80,11 +83,11 @@ class SSEManager {
 
   private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent): void {
     if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") {
-      console.warn("[SSE] Dropping malformed event", event)
+      log.warn("Dropping malformed event", event)
       return
     }
 
-    console.log("[SSE] Received event:", event.type, event)
+    log.info("Received event", { type: event.type, event })
 
     switch (event.type) {
       case "message.updated":
@@ -124,7 +127,7 @@ class SSEManager {
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
         break
       default:
-        console.warn("[SSE] Unknown event type:", event.type)
+        log.warn("Unknown SSE event type", { type: event.type })
     }
   }
 
