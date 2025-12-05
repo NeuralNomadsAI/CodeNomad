@@ -1,14 +1,21 @@
 import { FastifyInstance } from "fastify"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
+import { Logger } from "../../logger"
 
 interface RouteDeps {
   eventBus: EventBus
   registerClient: (cleanup: () => void) => () => void
+  logger: Logger
 }
+
+let nextClientId = 0
 
 export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
+    const clientId = ++nextClientId
+    deps.logger.debug({ clientId }, "SSE client connected")
+
     const origin = request.headers.origin ?? "*"
     reply.raw.setHeader("Access-Control-Allow-Origin", origin)
     reply.raw.setHeader("Access-Control-Allow-Credentials", "true")
@@ -19,6 +26,10 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.hijack()
 
     const send = (event: WorkspaceEventPayload) => {
+      deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
+      if (deps.logger.isLevelEnabled("trace")) {
+        deps.logger.trace({ clientId, event }, "SSE event payload")
+      }
       reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
     }
 
@@ -34,6 +45,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       clearInterval(heartbeat)
       unsubscribe()
       reply.raw.end?.()
+      deps.logger.debug({ clientId }, "SSE client disconnected")
     }
 
     const unregister = deps.registerClient(close)

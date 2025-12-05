@@ -47,6 +47,8 @@ const DEFAULT_HTTP_PORT = 9898
 export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify({ logger: false })
   const proxyLogger = deps.logger.child({ component: "proxy" })
+  const apiLogger = deps.logger.child({ component: "http" })
+  const sseLogger = deps.logger.child({ component: "sse" })
 
   const sseClients = new Set<() => void>()
   const registerSseClient = (cleanup: () => void) => {
@@ -59,6 +61,29 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     sseClients.clear()
   }
+
+  app.addHook("onRequest", (request, _reply, done) => {
+    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
+      start: process.hrtime.bigint(),
+    }
+    done()
+  })
+
+  app.addHook("onResponse", (request, reply, done) => {
+    const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
+    const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
+    const base = {
+      method: request.method,
+      url: request.url,
+      status: reply.statusCode,
+      durationMs,
+    }
+    apiLogger.debug(base, "HTTP request completed")
+    if (apiLogger.isLevelEnabled("trace")) {
+      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+    }
+    done()
+  })
 
   app.register(cors, {
     origin: true,
@@ -79,7 +104,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerConfigRoutes(app, { configStore: deps.configStore, binaryRegistry: deps.binaryRegistry })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
-  registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient })
+  registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -224,6 +249,11 @@ async function proxyWorkspaceRequest(args: {
   const queryIndex = (request.raw.url ?? "").indexOf("?")
   const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
   const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
+
+  logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
+  if (logger.isLevelEnabled("trace")) {
+    logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
+  }
 
   return reply.from(targetUrl, {
     onError: (proxyReply, { error }) => {

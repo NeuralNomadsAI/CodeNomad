@@ -52,9 +52,10 @@ export class ConfigStore {
     this.cache = next
     this.loaded = true
     this.persist()
+    const published = Boolean(this.eventBus)
     this.eventBus?.publish({ type: "config.appChanged", config: this.cache })
-    this.logger.info("Config updated")
-    this.logger.debug({ config: this.cache }, "Config payload")
+    this.logger.debug({ broadcast: published }, "Config SSE event emitted")
+    this.logger.trace({ config: this.cache }, "Config payload")
   }
 
   private persist() {

@@ -159,6 +159,10 @@ export class InstanceEventBridge {
 
     try {
       const event = JSON.parse(payload) as InstanceStreamEvent
+      this.options.logger.debug({ workspaceId, eventType: event.type }, "Instance SSE event received")
+      if (this.options.logger.isLevelEnabled("trace")) {
+        this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
+      }
       this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
     } catch (error) {
       this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
@@ -166,6 +170,7 @@ export class InstanceEventBridge {
   }
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {
+    this.options.logger.debug({ instanceId, status, reason }, "Instance SSE status updated")
     this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, reason })
   }
 

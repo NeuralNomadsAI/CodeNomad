@@ -9,7 +9,10 @@ export class EventBus extends EventEmitter {
 
   publish(event: WorkspaceEventPayload): boolean {
     if (event.type !== "instance.event" && event.type !== "instance.eventStatus") {
-      this.logger?.debug({ event }, "Publishing workspace event")
+      this.logger?.debug({ type: event.type }, "Publishing workspace event")
+      if (this.logger?.isLevelEnabled("trace")) {
+        this.logger.trace({ event }, "Workspace event payload")
+      }
     }
     return super.emit(event.type, event)
   }
