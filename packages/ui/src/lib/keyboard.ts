@@ -27,6 +27,11 @@ export function setupTabKeyboardShortcuts(
   })
 
   window.addEventListener("keydown", (e) => {
+    // Allow clipboard shortcuts to work normally
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && ['c', 'v', 'a', 'x', 'z', 'y'].includes(e.key.toLowerCase())) {
+      return
+    }
+
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
       e.preventDefault()
       handleCommandPalette()

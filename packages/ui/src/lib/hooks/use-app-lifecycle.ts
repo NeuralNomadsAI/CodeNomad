@@ -130,6 +130,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
 
+      // Allow clipboard shortcuts to work normally
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && ['c', 'v', 'a', 'x', 'z', 'y'].includes(e.key.toLowerCase())) {
+        return
+      }
+
       const isInCombobox = target.closest('[role="combobox"]') !== null
       const isInListbox = target.closest('[role="listbox"]') !== null
       const isInAgentSelect = target.closest('[role="button"][data-agent-selector]') !== null
