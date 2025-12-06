@@ -1,12 +1,13 @@
 import { Component, For, Show, createSignal, createEffect, onCleanup, onMount, createMemo, JSX } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { MessageSquare, Info, X, Copy } from "lucide-solid"
+import { MessageSquare, Info, X, Copy, Trash2 } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
+import { deleteSession, loading } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
 const log = getLogger("session")
 
@@ -66,10 +67,16 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [startX, setStartX] = createSignal(0)
   const [startWidth, setStartWidth] = createSignal(DEFAULT_WIDTH)
   const infoShortcut = keyboardRegistry.get("switch-to-info")
-
+ 
+  const isSessionDeleting = (sessionId: string) => {
+    const deleting = loading().deletingSession.get(props.instanceId)
+    return deleting ? deleting.has(sessionId) : false
+  }
+ 
   const selectSession = (sessionId: string) => {
     props.onSelect(sessionId)
   }
+
 
   let mouseMoveHandler: ((event: MouseEvent) => void) | null = null
   let mouseUpHandler: (() => void) | null = null
@@ -114,7 +121,20 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
   }
  
+  const handleDeleteSession = async (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation()
+    if (isSessionDeleting(sessionId)) return
+ 
+    try {
+      await deleteSession(props.instanceId, sessionId)
+    } catch (error) {
+      log.error(`Failed to delete session ${sessionId}:`, error)
+      showToastNotification({ message: "Unable to delete session", variant: "error" })
+    }
+  }
+ 
   const clampWidth = (width: number) => Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width))
+
  
 
   const removeMouseListeners = () => {
@@ -260,6 +280,30 @@ const SessionList: Component<SessionListProps> = (props) => {
                 title="Copy session ID"
               >
                 <Copy class="w-3 h-3" />
+              </span>
+              <span
+                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
+                onClick={(event) => handleDeleteSession(event, rowProps.sessionId)}
+                role="button"
+                tabIndex={0}
+                aria-label="Delete session"
+                title="Delete session"
+              >
+                <Show
+                  when={!isSessionDeleting(rowProps.sessionId)}
+                  fallback={
+                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                  }
+                >
+                  <Trash2 class="w-3 h-3" />
+                </Show>
               </span>
             </div>
           </div>
