@@ -50,8 +50,11 @@
   z-index: 30;
 }
 
-.session-sidebar-toggle {
-  @apply border-b border-base px-4 py-3 bg-surface-secondary;
+.session-sidebar-menu-button--floating {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 20;
 }
 
 .session-sidebar-header {

@@ -194,19 +194,19 @@ const InstanceShell: Component<InstanceShellProps> = (props) => {
           </div>
 
           <div class="content-area flex-1 min-h-0 overflow-hidden flex flex-col">
-            <Show when={shouldShowSidebarToggle()}>
-              <div class="session-sidebar-toggle">
-                <button
-                  type="button"
-                  class="session-sidebar-menu-button"
-                  onClick={() => setIsSidebarOpen(true)}
-                  aria-controls={sidebarId}
-                  aria-expanded={isSidebarOpen()}
-                  aria-label="Open session list"
-                >
-                  <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
-                </button>
-              </div>
+            <Show
+              when={shouldShowSidebarToggle() && (!activeSessionIdForInstance() || activeSessionIdForInstance() === "info")}
+            >
+              <button
+                type="button"
+                class="session-sidebar-menu-button session-sidebar-menu-button--floating"
+                onClick={() => setIsSidebarOpen(true)}
+                aria-controls={sidebarId}
+                aria-expanded={isSidebarOpen()}
+                aria-label="Open session list"
+              >
+                <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
+              </button>
             </Show>
             <Show
               when={activeSessionIdForInstance() === "info"}
