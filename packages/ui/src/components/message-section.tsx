@@ -30,6 +30,7 @@ export interface MessageSectionProps {
   registerScrollToBottom?: (fn: () => void) => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
+  forceCompactStatusLayout?: boolean
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -358,6 +359,7 @@ export default function MessageSection(props: MessageSectionProps) {
         formatTokens={formatTokens}
         showSidebarToggle={props.showSidebarToggle}
         onSidebarToggle={props.onSidebarToggle}
+        forceCompactStatusLayout={props.forceCompactStatusLayout}
       />
 
       <div class="message-stream" ref={setContainerRef} onScroll={handleScroll}>

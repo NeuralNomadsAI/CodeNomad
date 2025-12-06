@@ -232,6 +232,7 @@ const InstanceShell: Component<InstanceShellProps> = (props) => {
                       escapeInDebounce={props.escapeInDebounce}
                       showSidebarToggle={shouldShowSidebarToggle()}
                       onSidebarToggle={() => setIsSidebarOpen(true)}
+                      forceCompactStatusLayout={shouldShowSidebarToggle()}
                     />
                   )}
                 </Show>

@@ -24,6 +24,7 @@ interface SessionViewProps {
   escapeInDebounce: boolean
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
+  forceCompactStatusLayout?: boolean
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
@@ -157,6 +158,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                }}
                showSidebarToggle={props.showSidebarToggle}
                onSidebarToggle={props.onSidebarToggle}
+               forceCompactStatusLayout={props.forceCompactStatusLayout}
              />
 
 

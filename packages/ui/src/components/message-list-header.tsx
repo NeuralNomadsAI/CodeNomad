@@ -13,16 +13,18 @@ interface MessageListHeaderProps {
   formatTokens: (value: number) => string
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
+  forceCompactStatusLayout?: boolean
 }
 
 export default function MessageListHeader(props: MessageListHeaderProps) {
+
   const hasAvailableTokens = () => typeof props.availableTokens === "number"
   const availableDisplay = () => (hasAvailableTokens() ? props.formatTokens(props.availableTokens as number) : "--")
 
   return (
-    <div class="connection-status">
-      <div class="connection-status-menu">
-        <Show when={props.showSidebarToggle}>
+    <div class={props.forceCompactStatusLayout ? "connection-status connection-status--compact" : "connection-status"}>
+      <Show when={props.showSidebarToggle}>
+        <div class="connection-status-menu">
           <button
             type="button"
             class="session-sidebar-menu-button"
@@ -31,8 +33,8 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
           >
             <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
           </button>
-        </Show>
-      </div>
+        </div>
+      </Show>
 
       <div class="connection-status-text connection-status-info">
         <div class="connection-status-usage">

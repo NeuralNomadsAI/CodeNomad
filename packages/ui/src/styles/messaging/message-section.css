@@ -15,6 +15,40 @@
   grid-area: menu;
 }
 
+.connection-status--compact {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "menu shortcut meta"
+    "info info info";
+  row-gap: 0.5rem;
+}
+
+.connection-status--compact .connection-status-menu {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.connection-status--compact .connection-status-info {
+  justify-self: stretch;
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+.connection-status--compact .connection-status-usage {
+  justify-content: center;
+  width: 100%;
+}
+
+.connection-status--compact .connection-status-shortcut {
+  justify-self: center;
+}
+
+.connection-status--compact .connection-status-meta {
+  justify-self: end;
+}
+
 .session-sidebar-menu-button {
   @apply inline-flex items-center justify-center border rounded-md px-2 py-1 text-sm font-medium;
   border-color: var(--border-base);
