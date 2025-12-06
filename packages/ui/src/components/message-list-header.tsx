@@ -21,8 +21,8 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
 
   return (
     <div class="connection-status">
-      <Show when={props.showSidebarToggle}>
-        <div class="connection-status-menu">
+      <div class="connection-status-menu">
+        <Show when={props.showSidebarToggle}>
           <button
             type="button"
             class="session-sidebar-menu-button"
@@ -31,8 +31,8 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
           >
             <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
           </button>
-        </div>
-      </Show>
+        </Show>
+      </div>
 
       <div class="connection-status-text connection-status-info">
         <div class="connection-status-usage">

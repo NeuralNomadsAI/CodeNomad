@@ -11,7 +11,7 @@
 }
 
 .connection-status-menu {
-  @apply flex items-center;
+  display: none;
   grid-area: menu;
 }
 
