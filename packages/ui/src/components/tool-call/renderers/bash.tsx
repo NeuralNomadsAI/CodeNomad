@@ -9,10 +9,16 @@ export const bashRenderer: ToolRenderer = {
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
     const name = getToolName("bash")
-    if (typeof input.description === "string" && input.description.length > 0) {
-      return `${name} ${input.description}`
+    const description = typeof input.description === "string" && input.description.length > 0 ? input.description : ""
+    const timeout = typeof input.timeout === "number" && input.timeout > 0 ? input.timeout : undefined
+
+    const baseTitle = description ? `${name} ${description}` : name
+    if (!timeout) {
+      return baseTitle
     }
-    return name
+
+    const timeoutLabel = `${timeout}ms`
+    return `${baseTitle} · Timeout: ${timeoutLabel}`
   },
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
