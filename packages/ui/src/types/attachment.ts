@@ -47,6 +47,19 @@ export interface AgentSource {
   name: string
 }
 
+// Generate UUID with fallback for browsers without crypto.randomUUID
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  // Fallback: generate a simple UUID v4
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === "x" ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 export function createFileAttachment(
   path: string,
   filename: string,
@@ -63,7 +76,7 @@ export function createFileAttachment(
   }
 
   return {
-    id: crypto.randomUUID(),
+    id: generateUUID(),
     type: "file",
     display: `@${filename}`,
     url: fileUrl,
@@ -81,7 +94,7 @@ export function createFileAttachment(
 export function createTextAttachment(value: string, display: string, filename: string): Attachment {
   const base64 = encodeTextAsBase64(value)
   return {
-    id: crypto.randomUUID(),
+    id: generateUUID(),
     type: "text",
     display,
     url: `data:text/plain;base64,${base64}`,
@@ -114,7 +127,7 @@ function encodeTextAsBase64(value: string): string {
 
 export function createAgentAttachment(agentName: string): Attachment {
   return {
-    id: crypto.randomUUID(),
+    id: generateUUID(),
     type: "agent",
     display: `@${agentName}`,
     url: "",
