@@ -17,6 +17,7 @@ import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
+import { startReleaseMonitor } from "./releases/release-monitor"
 
 const require = createRequire(import.meta.url)
 
@@ -149,6 +150,19 @@ async function main() {
     addresses: [],
   }
 
+  const releaseMonitor = startReleaseMonitor({
+    currentVersion: packageJson.version,
+    logger: logger.child({ component: "release-monitor" }),
+    onUpdate: (release) => {
+      if (release) {
+        serverMeta.latestRelease = release
+        eventBus.publish({ type: "app.releaseAvailable", release })
+      } else {
+        delete serverMeta.latestRelease
+      }
+    },
+  })
+
   const server = createHttpServer({
     host: options.host,
     port: options.port,
@@ -195,6 +209,8 @@ async function main() {
     } catch (error) {
       logger.error({ err: error }, "Workspace manager shutdown failed")
     }
+
+    releaseMonitor.stop()
 
     logger.info("Exiting process")
     process.exit(0)

@@ -13,6 +13,7 @@ import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
+import { initReleaseNotifications } from "./stores/releases"
 import {
   hasInstances,
   isSelectingFolder,
@@ -65,6 +66,10 @@ const App: Component = () => {
 
   createEffect(() => {
     void initMarkdown(isDark()).catch((error) => log.error("Failed to initialize markdown", error))
+  })
+
+  createEffect(() => {
+    initReleaseNotifications()
   })
 
   const activeInstance = createMemo(() => getActiveInstance())
@@ -352,9 +357,8 @@ const App: Component = () => {
         <RemoteAccessOverlay open={remoteAccessOpen()} onClose={() => setRemoteAccessOpen(false)} />
  
         <AlertDialog />
- 
-        <Toaster
 
+        <Toaster
           position="top-right"
           gutter={16}
           toastOptions={{
@@ -366,5 +370,6 @@ const App: Component = () => {
     </>
   )
 }
+
 
 export default App

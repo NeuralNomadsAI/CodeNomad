@@ -8,6 +8,7 @@ import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/nat
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
+
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string, binaryPath?: string) => void
   isLoading?: boolean
@@ -253,6 +254,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           <div class="space-y-4 flex-1 min-h-0 overflow-hidden flex flex-col">
 
             <Show
+
+
               when={folders().length > 0}
               fallback={
                 <div class="panel panel-empty-state flex-1">
