@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js"
+import { For, Show, createSignal } from "solid-js"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -18,6 +18,7 @@ interface MessageItemProps {
  }
  
  export default function MessageItem(props: MessageItemProps) {
+  const [copied, setCopied] = createSignal(false)
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -143,6 +144,22 @@ interface MessageItemProps {
     }
   }
 
+  const getRawContent = () => {
+    return props.parts
+      .filter(part => part.type === "text" || part.type === "reasoning")
+      .map(part => (part as { text?: string }).text || "")
+      .filter(text => text.trim().length > 0)
+      .join("\n\n")
+  }
+
+  const handleCopy = async () => {
+    const content = getRawContent()
+    if (!content) return
+    await navigator.clipboard.writeText(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (!isUser() && !hasContent()) {
     return null
   }
@@ -218,7 +235,29 @@ interface MessageItemProps {
                   Fork
                 </button>
               </Show>
+              <button
+                class="message-action-button"
+                onClick={handleCopy}
+                title="Copy message"
+                aria-label="Copy message"
+              >
+                <Show when={copied()} fallback="Copy">
+                  Copied!
+                </Show>
+              </button>
             </div>
+          </Show>
+          <Show when={!isUser()}>
+            <button
+              class="message-action-button"
+              onClick={handleCopy}
+              title="Copy message"
+              aria-label="Copy message"
+            >
+              <Show when={copied()} fallback="Copy">
+                Copied!
+              </Show>
+            </button>
           </Show>
           <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
         </div>
