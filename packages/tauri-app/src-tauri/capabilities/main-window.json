@@ -3,15 +3,14 @@
   "identifier": "main-window-native-dialogs",
   "description": "Grant the main window access to required core features and native dialog commands.",
   "remote": {
-    "urls": [
-      "http://127.0.0.1:*",
-      "http://localhost:*"
-    ]
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
   },
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:menu:default",
     "dialog:allow-open",
-    "opener:allow-default-urls"
+    "opener:allow-default-urls",
+    "core:webview:allow-set-webview-zoom"
   ]
 }
