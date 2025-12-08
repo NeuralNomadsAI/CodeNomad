@@ -259,16 +259,20 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (typeof window === "undefined") return
     clearHoverTimer()
     const target = event.currentTarget as HTMLButtonElement
-    hoverTimer = window.setTimeout(() => {
-      const rect = target.getBoundingClientRect()
-      const preferredTop = rect.top + rect.height / 2
-      const clampedTop = Math.min(window.innerHeight - 220, Math.max(16, preferredTop - 110))
-      const tooltipWidth = 360
-      const preferredLeft = rect.right + 12
-      const clampedLeft = Math.min(window.innerWidth - tooltipWidth - 16, preferredLeft)
-      setTooltipCoords({ top: clampedTop, left: clampedLeft })
-      setHoveredSegment(segment)
-    }, 200)
+      hoverTimer = window.setTimeout(() => {
+        const rect = target.getBoundingClientRect()
+        const tooltipWidth = 360
+        const tooltipHeight = 420
+        const verticalGap = 16
+        const horizontalGap = 16
+        const preferredTop = rect.top + rect.height / 2 - tooltipHeight / 2
+        const clampedTop = Math.min(window.innerHeight - tooltipHeight - verticalGap, Math.max(verticalGap, preferredTop))
+        const preferredLeft = rect.left - tooltipWidth - horizontalGap
+        const clampedLeft = Math.max(horizontalGap, preferredLeft)
+        setTooltipCoords({ top: clampedTop, left: clampedLeft })
+        setHoveredSegment(segment)
+      }, 200)
+
   }
  
   const handleMouseLeave = () => {
