@@ -16,6 +16,7 @@ const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
+const QUOTE_SELECTION_MAX_LENGTH = 2000
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
 function formatTokens(tokens: number): string {
@@ -32,6 +33,7 @@ export interface MessageSectionProps {
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
+  onQuoteSelection?: (text: string) => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -137,10 +139,14 @@ export default function MessageSection(props: MessageSectionProps) {
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
   const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
+  const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
 
   let containerRef: HTMLDivElement | undefined
+  let shellRef: HTMLDivElement | undefined
   let pendingScrollFrame: number | null = null
+
   let pendingAnchorScroll: number | null = null
+
   let pendingScrollPersist: number | null = null
   let userScrollIntentUntil = 0
   let detachScrollIntentListeners: (() => void) | undefined
@@ -185,9 +191,20 @@ export default function MessageSection(props: MessageSectionProps) {
     containerRef = element || undefined
     setScrollElement(containerRef)
     attachScrollIntentListeners(containerRef)
+    if (!containerRef) {
+      clearQuoteSelection()
+    }
   }
 
+  function setShellElement(element: HTMLDivElement | null) {
+    shellRef = element || undefined
+    if (!shellRef) {
+      clearQuoteSelection()
+    }
+  }
+ 
   function updateScrollIndicatorsFromVisibility() {
+
     const hasItems = messageIds().length > 0
     setShowScrollBottomButton(hasItems && !bottomSentinelVisible())
     setShowScrollTopButton(hasItems && !topSentinelVisible())
@@ -237,7 +254,74 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   }
 
+  function clearQuoteSelection() {
+    setQuoteSelection(null)
+  }
+
+  function isSelectionWithinStream(range: Range | null) {
+    if (!range || !containerRef) return false
+    const node = range.commonAncestorContainer
+    if (!node) return false
+    return containerRef.contains(node)
+  }
+
+  function updateQuoteSelectionFromSelection() {
+    if (!props.onQuoteSelection || typeof window === "undefined") {
+      clearQuoteSelection()
+      return
+    }
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      clearQuoteSelection()
+      return
+    }
+    const range = selection.getRangeAt(0)
+    if (!isSelectionWithinStream(range)) {
+      clearQuoteSelection()
+      return
+    }
+    const shell = shellRef
+    if (!shell) {
+      clearQuoteSelection()
+      return
+    }
+    const rawText = selection.toString().trim()
+    if (!rawText) {
+      clearQuoteSelection()
+      return
+    }
+    const limited =
+      rawText.length > QUOTE_SELECTION_MAX_LENGTH ? rawText.slice(0, QUOTE_SELECTION_MAX_LENGTH).trimEnd() : rawText
+    if (!limited) {
+      clearQuoteSelection()
+      return
+    }
+    const rects = range.getClientRects()
+    const anchorRect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
+    const shellRect = shell.getBoundingClientRect()
+    const relativeTop = Math.max(anchorRect.top - shellRect.top - 40, 8)
+    const maxLeft = Math.max(shell.clientWidth - 180, 8)
+    const relativeLeft = Math.min(Math.max(anchorRect.left - shellRect.left, 8), maxLeft)
+    setQuoteSelection({ text: limited, top: relativeTop, left: relativeLeft })
+  }
+
+  function handleStreamMouseUp() {
+    updateQuoteSelectionFromSelection()
+  }
+
+  function handleQuoteSelectionRequest() {
+    const info = quoteSelection()
+    if (!info || !props.onQuoteSelection) return
+    props.onQuoteSelection(info.text)
+    clearQuoteSelection()
+    if (typeof window !== "undefined") {
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+    }
+  }
+ 
   function handleContentRendered() {
+
     scheduleAnchorScroll()
   }
 
@@ -260,9 +344,11 @@ export default function MessageSection(props: MessageSectionProps) {
         }
       }
 
+      clearQuoteSelection()
       scheduleScrollPersist()
     })
   }
+
 
   createEffect(() => {
     if (props.registerScrollToBottom) {
@@ -271,9 +357,39 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
+    if (!props.onQuoteSelection) {
+      clearQuoteSelection()
+    }
+  })
+
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    const handleSelectionChange = () => updateQuoteSelectionFromSelection()
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!shellRef) return
+      if (!shellRef.contains(event.target as Node)) {
+        clearQuoteSelection()
+      }
+    }
+    document.addEventListener("selectionchange", handleSelectionChange)
+    document.addEventListener("pointerdown", handlePointerDown)
+    onCleanup(() => {
+      document.removeEventListener("selectionchange", handleSelectionChange)
+      document.removeEventListener("pointerdown", handlePointerDown)
+    })
+  })
+ 
+  createEffect(() => {
+    if (props.loading) {
+      clearQuoteSelection()
+    }
+  })
+
+  createEffect(() => {
     const target = containerRef
     const loading = props.loading
     if (!target || loading || hasRestoredScroll) return
+
 
     scrollCache.restore(target, {
       onApplied: (snapshot) => {
@@ -407,6 +523,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (containerRef) {
       scrollCache.persist(containerRef, { atBottomOffset: SCROLL_SENTINEL_MARGIN_PX })
     }
+    clearQuoteSelection()
   })
 
   return (
@@ -423,8 +540,8 @@ export default function MessageSection(props: MessageSectionProps) {
       />
 
       <div class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}>
-        <div class="message-stream-shell">
-          <div class="message-stream" ref={setContainerRef} onScroll={handleScroll}>
+        <div class="message-stream-shell" ref={setShellElement}>
+          <div class="message-stream" ref={setContainerRef} onScroll={handleScroll} onMouseUp={handleStreamMouseUp}>
             <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
             <Show when={!props.loading && messageIds().length === 0}>
               <div class="empty-state">
@@ -493,6 +610,19 @@ export default function MessageSection(props: MessageSectionProps) {
                 </button>
               </Show>
             </div>
+          </Show>
+
+          <Show when={quoteSelection()}>
+            {(selection) => (
+              <div
+                class="message-quote-popover"
+                style={{ top: `${selection().top}px`, left: `${selection().left}px` }}
+              >
+                <button type="button" class="message-quote-button" onClick={handleQuoteSelectionRequest}>
+                  Add to prompt
+                </button>
+              </div>
+            )}
           </Show>
         </div>
  

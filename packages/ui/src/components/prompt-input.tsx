@@ -25,6 +25,7 @@ interface PromptInputProps {
   escapeInDebounce?: boolean
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>
+  registerQuoteHandler?: (handler: (text: string) => void) => void | (() => void)
 }
 
 export default function PromptInput(props: PromptInputProps) {
@@ -42,6 +43,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
   const [mode, setMode] = createSignal<"normal" | "shell">("normal")
+  const QUOTE_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
   let containerRef: HTMLDivElement | undefined
 
@@ -50,6 +52,16 @@ export default function PromptInput(props: PromptInputProps) {
 
   const attachments = () => getAttachments(props.instanceId, props.sessionId)
   const instanceAgents = () => agents().get(props.instanceId) || []
+
+  createEffect(() => {
+    if (!props.registerQuoteHandler) return
+    const cleanup = props.registerQuoteHandler((text) => insertQuotedSelection(text))
+    onCleanup(() => {
+      if (typeof cleanup === "function") {
+        cleanup()
+      }
+    })
+  })
 
   const setPrompt = (value: string) => {
     setPromptInternal(value)
@@ -867,6 +879,45 @@ export default function PromptInput(props: PromptInputProps) {
     }
 
     textareaRef?.focus()
+  }
+
+  function insertQuotedSelection(rawText: string) {
+    const normalized = (rawText ?? "").replace(/\r/g, "").trim()
+    if (!normalized) return
+    const limited =
+      normalized.length > QUOTE_INSERT_MAX_LENGTH ? normalized.slice(0, QUOTE_INSERT_MAX_LENGTH).trimEnd() : normalized
+    const lines = limited
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+    if (lines.length === 0) return
+
+    const blockquote = lines.map((line) => `> ${line}`).join("\n")
+    if (!blockquote) return
+
+    const textarea = textareaRef
+    const current = prompt()
+    const start = textarea ? textarea.selectionStart : current.length
+    const end = textarea ? textarea.selectionEnd : current.length
+    const before = current.substring(0, start)
+    const after = current.substring(end)
+    const needsLeading = before.length > 0 && !before.endsWith("\n") ? "\n" : ""
+    const insertion = `${needsLeading}${blockquote}\n\n`
+    const nextValue = before + insertion + after
+
+    setPrompt(nextValue)
+    setHistoryIndex(-1)
+    setHistoryDraft(null)
+    setShowPicker(false)
+    setAtPosition(null)
+
+    if (textarea) {
+      setTimeout(() => {
+        const cursor = before.length + insertion.length
+        textarea.focus()
+        textarea.setSelectionRange(cursor, cursor)
+      }, 0)
+    }
   }
 
   const canStop = () => Boolean(props.isSessionBusy && props.onAbortSession)

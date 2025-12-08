@@ -228,3 +228,35 @@
   font-size: var(--font-size-lg);
   color: var(--accent-primary);
 }
+
+.message-quote-popover {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.message-quote-button {
+  pointer-events: auto;
+  @apply inline-flex items-center gap-2;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid var(--list-item-highlight-border);
+  background-color: var(--list-item-highlight-bg-solid);
+  color: var(--text-primary);
+  box-shadow: var(--panel-shadow, 0 4px 16px rgba(0, 0, 0, 0.2));
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.message-quote-button:hover {
+  background-color: var(--surface-hover);
+}
+
+.message-quote-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+}

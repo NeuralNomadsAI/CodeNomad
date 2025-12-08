@@ -38,6 +38,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return getSessionBusyStatus(props.instanceId, currentSession.id)
   })
   let scrollToBottomHandle: (() => void) | undefined
+  let quoteHandler: ((text: string) => void) | null = null
  
   createEffect(() => {
     const currentSession = session()
@@ -45,6 +46,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
   })
+
+  function registerQuoteHandler(handler: (text: string) => void) {
+    quoteHandler = handler
+    return () => {
+      if (quoteHandler === handler) {
+        quoteHandler = null
+      }
+    }
+  }
+
+  function handleQuoteSelection(text: string) {
+    if (quoteHandler) {
+      quoteHandler(text)
+    }
+  }
  
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
 
@@ -183,6 +199,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                showSidebarToggle={props.showSidebarToggle}
                onSidebarToggle={props.onSidebarToggle}
                forceCompactStatusLayout={props.forceCompactStatusLayout}
+               onQuoteSelection={handleQuoteSelection}
              />
 
 
@@ -195,6 +212,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               escapeInDebounce={props.escapeInDebounce}
               isSessionBusy={sessionBusy()}
               onAbortSession={handleAbortSession}
+              registerQuoteHandler={registerQuoteHandler}
             />
           </div>
         )

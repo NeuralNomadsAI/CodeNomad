@@ -45,6 +45,7 @@
   --session-status-permission-fg: #c2410c;
   --session-status-permission-bg: rgba(251, 191, 36, 0.25);
   --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
+  --list-item-highlight-bg-solid: #e5f0ff;
   --list-item-highlight-border: rgba(0, 102, 255, 0.25);
   --attachment-chip-bg: rgba(0, 102, 255, 0.1);
   --attachment-chip-text: #0066ff;
@@ -192,8 +193,10 @@
     --session-status-idle-bg: rgba(74, 222, 128, 0.22);
     --session-status-permission-fg: #fbbf24;
     --session-status-permission-bg: rgba(251, 191, 36, 0.35);
-    --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
-    --list-item-highlight-border: rgba(0, 128, 255, 0.4);
+  --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
+  --list-item-highlight-bg-solid: #15324e;
+  --list-item-highlight-border: rgba(0, 128, 255, 0.4);
+
     --attachment-chip-bg: rgba(0, 128, 255, 0.1);
     --attachment-chip-text: #0080ff;
     --attachment-chip-ring: rgba(0, 128, 255, 0.2);
@@ -345,6 +348,7 @@
   --session-status-permission-fg: #fbbf24;
   --session-status-permission-bg: rgba(251, 191, 36, 0.35);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
+  --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);
   --attachment-chip-bg: rgba(0, 128, 255, 0.1);
   --attachment-chip-text: #0080ff;
