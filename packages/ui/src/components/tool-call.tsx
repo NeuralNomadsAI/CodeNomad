@@ -886,7 +886,7 @@ export default function ToolCall(props: ToolCallProps) {
           <Show when={status() === "pending" && !pendingPermission()}>
             <div class="tool-call-pending-message">
               <span class="spinner-small"></span>
-              <span>Waiting for permission...</span>
+              <span>Waiting to run...</span>
             </div>
           </Show>
         </div>
