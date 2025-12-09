@@ -27,24 +27,45 @@ interface MessageBlockListProps {
   onContentRendered?: () => void
   setBottomSentinel: (element: HTMLDivElement | null) => void
   suspendMeasurements?: () => boolean
+  onInitialRenderComplete?: () => void
 }
 
 export default function MessageBlockList(props: MessageBlockListProps) {
+  const totalMessages = () => props.messageIds().length
+  let renderedCount = 0
+  let initialRenderReported = false
+  const handleBlockRendered = () => {
+    if (initialRenderReported) return
+    renderedCount += 1
+    if (renderedCount >= totalMessages() && totalMessages() > 0) {
+      initialRenderReported = true
+      renderedCount = 0
+      props.onInitialRenderComplete?.()
+    }
+  }
+
+  createEffect(() => {
+    if (props.loading) {
+      renderedCount = 0
+      initialRenderReported = false
+    }
+  })
+
   return (
     <>
       <Index each={props.messageIds()}>
         {(messageId) => {
           return (
             <VirtualItem
-               id={getMessageAnchorId(messageId())}
-               cacheKey={messageId()}
-               scrollContainer={props.scrollContainer}
-               threshold={VIRTUAL_ITEM_MARGIN_PX}
-               placeholderClass="message-stream-placeholder"
-               virtualizationEnabled={() => !props.loading}
-               suspendMeasurements={props.suspendMeasurements}
-             >
-
+              id={getMessageAnchorId(messageId())}
+              cacheKey={messageId()}
+              scrollContainer={props.scrollContainer}
+              threshold={VIRTUAL_ITEM_MARGIN_PX}
+              placeholderClass="message-stream-placeholder"
+              virtualizationEnabled={() => !props.loading}
+              suspendMeasurements={props.suspendMeasurements}
+              onMeasured={handleBlockRendered}
+            >
               <MessageBlock
                 messageId={messageId()}
                 instanceId={props.instanceId}

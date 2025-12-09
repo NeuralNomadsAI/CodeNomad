@@ -162,6 +162,9 @@ export default function MessageSection(props: MessageSectionProps) {
   let pendingActiveScroll = false
   let scrollToBottomFrame: number | null = null
   let scrollToBottomDelayedFrame: number | null = null
+  let pendingInitialScroll = true
+
+  const [initialRenderComplete, setInitialRenderComplete] = createSignal(false)
 
   function markUserScrollIntent() {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
@@ -368,11 +371,18 @@ export default function MessageSection(props: MessageSectionProps) {
   }
  
   function handleContentRendered() {
-
+    if (props.loading) {
+      return
+    }
     scheduleAnchorScroll()
   }
 
+  function handleInitialRenderComplete() {
+    setInitialRenderComplete(true)
+  }
+
   function handleScroll() {
+
     if (!containerRef) return
     if (pendingScrollFrame !== null) {
       cancelAnimationFrame(pendingScrollFrame)
@@ -413,10 +423,24 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
+    const loading = Boolean(props.loading)
+    if (loading) {
+      pendingInitialScroll = true
+      setInitialRenderComplete(false)
+      return
+    }
+    if (pendingInitialScroll && initialRenderComplete()) {
+      pendingInitialScroll = false
+      requestScrollToBottom(false)
+    }
+  })
+
+  createEffect(() => {
     if (!props.onQuoteSelection) {
       clearQuoteSelection()
     }
   })
+
 
   createEffect(() => {
     if (typeof document === "undefined") return
@@ -647,6 +671,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onContentRendered={handleContentRendered}
               setBottomSentinel={setBottomSentinel}
               suspendMeasurements={() => props.isActive === false}
+              onInitialRenderComplete={handleInitialRenderComplete}
             />
 
 
