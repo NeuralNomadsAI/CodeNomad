@@ -632,6 +632,17 @@ export default function ToolCall(props: ToolCallProps) {
     const disableHighlight = options.disableHighlight || false
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
 
+    const state = toolState()
+    const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
+    if (shouldDeferMarkdown) {
+      return (
+        <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
+          <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
+          {scrollHelpers.renderSentinel()}
+        </div>
+      )
+    }
+
     const markdownPart: TextPart = { type: "text", text: options.content }
     const cached = markdownCache.get<RenderCache>()
     if (cached) {
