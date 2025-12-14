@@ -690,7 +690,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const sessionLayout = (
     <div
-      class="session-shell-panels flex flex-col flex-1 min-h-0"
+      class="session-shell-panels flex flex-col flex-1 min-h-0 overflow-x-hidden"
       ref={(element) => {
         setDrawerHost(element)
         measureDrawerHost()
@@ -838,12 +838,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         </Toolbar>
       </AppBar>
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <Box sx={{ display: "flex", flex: 1, minHeight: 0, overflowX: "hidden" }}>
         {renderLeftPanel()}
 
         <Box
           component="main"
-          sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+          sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
           <Show
