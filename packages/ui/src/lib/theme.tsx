@@ -159,6 +159,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
               color: paletteColors.textPrimary,
               boxShadow: "none",
               borderBottom: `1px solid ${paletteColors.divider}`,
+              zIndex: 10,
             },
           },
         },
