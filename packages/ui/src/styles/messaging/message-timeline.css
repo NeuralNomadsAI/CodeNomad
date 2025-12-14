@@ -5,15 +5,31 @@
   width: 100%;
   min-height: 0;
   flex: 1 1 auto;
+  position: relative;
 }
 
 .message-layout--with-timeline {
   grid-template-columns: minmax(0, 1fr) 64px;
 }
 
+.message-layout--with-timeline::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 64px;
+  width: 1px;
+  background-color: var(--border-muted);
+  pointer-events: none;
+}
+
 @media (max-width: 720px) {
   .message-layout--with-timeline {
     grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .message-layout--with-timeline::after {
+    right: 40px;
   }
 }
 
@@ -22,19 +38,21 @@
   display: flex;
   flex-direction: column;
   position: relative;
-}
+ }
 
-.message-stream-shell .message-stream {
+
+ .message-stream-shell .message-stream {
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.message-timeline-sidebar {
+ }
+ 
+ .message-timeline-sidebar {
   width: 64px;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
+ }
+
 
 @media (max-width: 720px) {
   .message-timeline-sidebar {
