@@ -47,9 +47,10 @@
 }
 
 .selector-popover {
-  @apply rounded-md shadow-lg overflow-hidden z-50 min-w-[300px];
+  @apply rounded-md shadow-lg overflow-hidden min-w-[300px];
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
+  z-index: 1600;
 }
 
 .selector-search-container {
