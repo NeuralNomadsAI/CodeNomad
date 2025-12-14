@@ -368,12 +368,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const focusModelSelectorControl = () => {
-    const trigger = leftDrawerContentEl()?.querySelector<HTMLElement>(
-      "[data-model-selector-control] .selector-trigger",
-    )
-    if (!trigger) return false
-    trigger.focus()
-    setTimeout(() => triggerKeyboardEvent(trigger, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
+    const input = leftDrawerContentEl()?.querySelector<HTMLInputElement>("[data-model-selector]")
+    if (!input) return false
+    input.focus()
+    setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
     return true
   }
 
