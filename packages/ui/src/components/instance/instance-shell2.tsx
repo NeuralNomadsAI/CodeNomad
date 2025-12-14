@@ -924,28 +924,31 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </div>
             }
           >
-            <div class="session-toolbar-left flex items-center gap-3 min-w-0">
-              <IconButton
-                ref={setLeftToggleButtonEl}
-                color="inherit"
-                onClick={handleLeftAppBarButtonClick}
-                aria-label={leftAppBarButtonLabel()}
-                size="small"
-                aria-expanded={leftDrawerState() !== "floating-closed"}
-                disabled={leftDrawerState() === "pinned"}
-              >
-                {leftAppBarButtonIcon()}
-              </IconButton>
+             <div class="session-toolbar-left flex items-center gap-3 min-w-0">
+               <IconButton
+                 ref={setLeftToggleButtonEl}
+                 color="inherit"
+                 onClick={handleLeftAppBarButtonClick}
+                 aria-label={leftAppBarButtonLabel()}
+                 size="small"
+                 aria-expanded={leftDrawerState() !== "floating-closed"}
+                 disabled={leftDrawerState() === "pinned"}
+               >
+                 {leftAppBarButtonIcon()}
+               </IconButton>
 
-              <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
-                <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-              </div>
-              <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
-                <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-              </div>
-            </div>
+               <Show when={!showingInfoView()}>
+                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
+                   <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                 </div>
+                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
+                   <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
+                 </div>
+               </Show>
+             </div>
+
 
               <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
                 <button
@@ -1009,41 +1012,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           class="content-area"
         >
           <Show
-            when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
+            when={showingInfoView()}
             fallback={
-              <div class="flex items-center justify-center h-full">
-                <div class="text-center text-gray-500 dark:text-gray-400">
-                  <p class="mb-2">No session selected</p>
-                  <p class="text-sm">Select a session to view messages</p>
-                </div>
-              </div>
+              <Show
+                when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
+                fallback={
+                  <div class="flex items-center justify-center h-full">
+                    <div class="text-center text-gray-500 dark:text-gray-400">
+                      <p class="mb-2">No session selected</p>
+                      <p class="text-sm">Select a session to view messages</p>
+                    </div>
+                  </div>
+                }
+              >
+                <For each={cachedSessionIds()}>
+                  {(sessionId) => {
+                    const isActive = () => activeSessionIdForInstance() === sessionId
+                    return (
+                      <div
+                        class="session-cache-pane flex flex-col flex-1 min-h-0"
+                        style={{ display: isActive() ? "flex" : "none" }}
+                        data-session-id={sessionId}
+                        aria-hidden={!isActive()}
+                      >
+                        <SessionView
+                          sessionId={sessionId}
+                          activeSessions={activeSessions()}
+                          instanceId={props.instance.id}
+                          instanceFolder={props.instance.folder}
+                          escapeInDebounce={props.escapeInDebounce}
+                          showSidebarToggle={showEmbeddedSidebarToggle()}
+                          onSidebarToggle={() => setLeftOpen(true)}
+                          forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                          isActive={isActive()}
+                        />
+                      </div>
+                    )
+                  }}
+                </For>
+              </Show>
             }
           >
-            <For each={cachedSessionIds()}>
-              {(sessionId) => {
-                const isActive = () => activeSessionIdForInstance() === sessionId
-                return (
-                  <div
-                    class="session-cache-pane flex flex-col flex-1 min-h-0"
-                    style={{ display: isActive() ? "flex" : "none" }}
-                    data-session-id={sessionId}
-                    aria-hidden={!isActive()}
-                  >
-                    <SessionView
-                      sessionId={sessionId}
-                      activeSessions={activeSessions()}
-                      instanceId={props.instance.id}
-                      instanceFolder={props.instance.folder}
-                      escapeInDebounce={props.escapeInDebounce}
-                      showSidebarToggle={showEmbeddedSidebarToggle()}
-                      onSidebarToggle={() => setLeftOpen(true)}
-                      forceCompactStatusLayout={showEmbeddedSidebarToggle()}
-                      isActive={isActive()}
-                    />
-                  </div>
-                )
-              }}
-            </For>
+            <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
+              <InfoView instanceId={props.instance.id} />
+            </div>
           </Show>
         </Box>
 
@@ -1056,9 +1068,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     <>
       <div class="instance-shell2 flex flex-col flex-1 min-h-0">
         <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
-          <Show when={showingInfoView()} fallback={sessionLayout}>
-            <InfoView instanceId={props.instance.id} />
-          </Show>
+          {sessionLayout}
         </Show>
       </div>
 
