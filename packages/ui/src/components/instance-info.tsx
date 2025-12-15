@@ -1,6 +1,6 @@
-import { Component, For, Show } from "solid-js"
+import { Component, For, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
-import { useInstanceMetadata } from "../lib/hooks/use-instance-metadata"
+import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
 
 interface InstanceInfoProps {
@@ -9,10 +9,19 @@ interface InstanceInfoProps {
 }
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
-  const { isLoading: isLoadingMetadata } = useInstanceMetadata(() => props.instance)
+  const metadataContext = useOptionalInstanceMetadataContext()
+  const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
+  const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
+  const metadataAccessor = metadataContext?.metadata ?? (() => props.instance.metadata)
 
-  const metadata = () => props.instance.metadata
-  const binaryVersion = () => props.instance.binaryVersion || metadata()?.version
+  const currentInstance = () => instanceAccessor()
+  const metadata = () => metadataAccessor()
+  const binaryVersion = () => currentInstance().binaryVersion || metadata()?.version
+  const environmentVariables = () => currentInstance().environmentVariables
+  const environmentEntries = createMemo(() => {
+    const env = environmentVariables()
+    return env ? Object.entries(env) : []
+  })
 
   return (
     <div class="panel">
@@ -23,7 +32,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <div>
           <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Folder</div>
           <div class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
-            {props.instance.folder}
+            {currentInstance().folder}
           </div>
         </div>
 
@@ -72,24 +81,24 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </Show>
 
-        <Show when={props.instance.binaryPath}>
+        <Show when={currentInstance().binaryPath}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               Binary Path
             </div>
             <div class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
-              {props.instance.binaryPath}
+              {currentInstance().binaryPath}
             </div>
           </div>
         </Show>
 
-        <Show when={props.instance.environmentVariables && Object.keys(props.instance.environmentVariables).length > 0}>
+        <Show when={environmentEntries().length > 0}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">
-              Environment Variables ({Object.keys(props.instance.environmentVariables!).length})
+              Environment Variables ({environmentEntries().length})
             </div>
             <div class="space-y-1">
-              <For each={Object.entries(props.instance.environmentVariables!)}>
+              <For each={environmentEntries()}>
                 {([key, value]) => (
                   <div class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
@@ -105,11 +114,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </Show>
 
-        <InstanceServiceStatus
-          instanceId={props.instance.id}
-          initialInstance={props.instance}
-          class="space-y-3"
-        />
+        <InstanceServiceStatus initialInstance={props.instance} class="space-y-3" />
 
         <Show when={isLoadingMetadata()}>
           <div class="text-xs text-muted py-1">
@@ -132,21 +137,19 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           <div class="space-y-1 text-xs">
             <div class="flex justify-between items-center">
               <span class="text-secondary">Port:</span>
-              <span class="text-primary font-mono">{props.instance.port}</span>
+              <span class="text-primary font-mono">{currentInstance().port}</span>
             </div>
             <div class="flex justify-between items-center">
               <span class="text-secondary">PID:</span>
-              <span class="text-primary font-mono">{props.instance.pid}</span>
+              <span class="text-primary font-mono">{currentInstance().pid}</span>
             </div>
             <div class="flex justify-between items-center">
               <span class="text-secondary">Status:</span>
-              <span
-                class={`status-badge ${props.instance.status}`}
-              >
+              <span class={`status-badge ${currentInstance().status}`}>
                 <div
-                  class={`status-dot ${props.instance.status === "ready" ? "ready" : props.instance.status === "starting" ? "starting" : props.instance.status === "error" ? "error" : "stopped"} ${props.instance.status === "ready" || props.instance.status === "starting" ? "animate-pulse" : ""}`}
+                  class={`status-dot ${currentInstance().status === "ready" ? "ready" : currentInstance().status === "starting" ? "starting" : currentInstance().status === "error" ? "error" : "stopped"} ${currentInstance().status === "ready" || currentInstance().status === "starting" ? "animate-pulse" : ""}`}
                 />
-                {props.instance.status}
+                {currentInstance().status}
               </span>
             </div>
           </div>

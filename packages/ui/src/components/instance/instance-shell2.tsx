@@ -132,7 +132,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
-
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
   const tabletQuery = useMediaQuery("(min-width: 768px)")
@@ -860,7 +859,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         label: "LSP Servers",
         render: () => (
           <InstanceServiceStatus
-            instanceId={props.instance.id}
             initialInstance={props.instance}
             sections={["lsp"]}
             showSectionHeadings={false}
@@ -873,7 +871,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         label: "MCP Servers",
         render: () => (
           <InstanceServiceStatus
-            instanceId={props.instance.id}
             initialInstance={props.instance}
             sections={["mcp"]}
             showSectionHeadings={false}

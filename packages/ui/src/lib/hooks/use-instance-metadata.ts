@@ -1,4 +1,3 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { Instance, RawMcpStatus } from "../../types/instance"
 import { fetchLspStatus, updateInstance } from "../../stores/instances"
 import { getLogger } from "../../lib/logger"
@@ -6,87 +5,66 @@ import { getLogger } from "../../lib/logger"
 const log = getLogger("session")
 const pendingMetadataRequests = new Set<string>()
 
-export function useInstanceMetadata(instanceAccessor: Accessor<Instance | undefined>) {
-  const [isLoading, setIsLoading] = createSignal(true)
+function hasMetadataLoaded(metadata?: Instance["metadata"]): boolean {
+  if (!metadata) return false
+  return "project" in metadata && "mcpStatus" in metadata && "lspStatus" in metadata
+}
 
-  createEffect(() => {
-    const instance = instanceAccessor()
-    if (!instance) {
-      setIsLoading(false)
-      return
+export async function loadInstanceMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
+  const client = instance.client
+  if (!client) {
+    log.warn("[metadata] Skipping fetch; client missing", { instanceId: instance.id })
+    return
+  }
+
+  if (!options?.force && hasMetadataLoaded(instance.metadata)) {
+    return
+  }
+
+  if (pendingMetadataRequests.has(instance.id)) {
+    return
+  }
+
+  pendingMetadataRequests.add(instance.id)
+
+  try {
+    const [projectResult, mcpResult, lspResult] = await Promise.allSettled([
+      client.project.current(),
+      client.mcp.status(),
+      fetchLspStatus(instance.id),
+    ])
+
+    const project = projectResult.status === "fulfilled" ? projectResult.value.data : undefined
+    const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
+    const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
+
+    const nextMetadata: Instance["metadata"] = {
+      ...(instance.metadata ?? {}),
     }
 
-    const instanceId = instance.id
-    const client = instance.client
-    const hasMetadata = Boolean(instance.metadata)
-
-    if (!client) {
-      setIsLoading(false)
-      pendingMetadataRequests.delete(instanceId)
-      return
+    if (projectResult.status === "fulfilled") {
+      nextMetadata.project = project ?? undefined
     }
 
-    if (hasMetadata) {
-      setIsLoading(false)
-      pendingMetadataRequests.delete(instanceId)
-      return
+    if (mcpResult.status === "fulfilled") {
+      nextMetadata.mcpStatus = mcpStatus ?? nextMetadata.mcpStatus ?? {}
     }
 
-    if (pendingMetadataRequests.has(instanceId)) {
-      setIsLoading(true)
-      return
+    if (lspResult.status === "fulfilled") {
+      nextMetadata.lspStatus = lspStatus ?? []
     }
 
-    let cancelled = false
-    pendingMetadataRequests.add(instanceId)
-    setIsLoading(true)
+    if (!nextMetadata?.version && instance.binaryVersion) {
+      nextMetadata.version = instance.binaryVersion
+    }
 
-    void (async () => {
-      try {
-        const [projectResult, mcpResult, lspResult] = await Promise.allSettled([
-          client.project.current(),
-          client.mcp.status(),
-          fetchLspStatus(instanceId),
-        ])
-
-        if (cancelled) {
-          return
-        }
-
-        const project = projectResult.status === "fulfilled" ? projectResult.value.data : undefined
-        const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
-        const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
-
-        const nextMetadata: Instance["metadata"] = {
-          ...(instance.metadata ?? {}),
-          ...(project ? { project } : {}),
-          ...(mcpStatus ? { mcpStatus } : {}),
-          ...(lspStatus ? { lspStatus } : {}),
-        }
-
-        if (!nextMetadata?.version && instance.binaryVersion) {
-          nextMetadata.version = instance.binaryVersion
-        }
-
-        updateInstance(instanceId, { metadata: nextMetadata })
-      } catch (error) {
-        if (!cancelled) {
-          log.error("Failed to load instance metadata", error)
-        }
-      } finally {
-        pendingMetadataRequests.delete(instanceId)
-        if (!cancelled) {
-          setIsLoading(false)
-        }
-      }
-    })()
-
-    onCleanup(() => {
-      cancelled = true
-    })
-  })
-
-  return {
-    isLoading,
+    updateInstance(instance.id, { metadata: nextMetadata })
+  } catch (error) {
+    log.error("Failed to load instance metadata", error)
+  } finally {
+    pendingMetadataRequests.delete(instance.id)
   }
 }
+
+export { hasMetadataLoaded }
+

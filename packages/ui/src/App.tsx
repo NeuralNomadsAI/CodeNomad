@@ -8,6 +8,7 @@ import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { RemoteAccessOverlay } from "./components/remote-access-overlay"
+import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { initMarkdown } from "./lib/markdown"
 
 import { useTheme } from "./lib/theme"
@@ -351,22 +352,25 @@ const App: Component = () => {
                 {(instance) => {
                   const isActiveInstance = () => activeInstanceId() === instance.id
                   const isVisible = () => isActiveInstance() && !showFolderSelection()
-                  return (
-                    <div class="flex-1 min-h-0 overflow-hidden" style={{ display: isVisible() ? "flex" : "none" }}>
-                      <InstanceShell
-                        instance={instance}
-                        escapeInDebounce={escapeInDebounce()}
-                        paletteCommands={paletteCommands}
-                        onCloseSession={(sessionId) => handleCloseSession(instance.id, sessionId)}
-                        onNewSession={() => handleNewSession(instance.id)}
-                        handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
-                        handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
-                        onExecuteCommand={executeCommand}
-                        tabBarOffset={instanceTabBarHeight()}
-                      />
+                    return (
+                      <div class="flex-1 min-h-0 overflow-hidden" style={{ display: isVisible() ? "flex" : "none" }}>
+                        <InstanceMetadataProvider instance={instance}>
+                          <InstanceShell
+                            instance={instance}
+                            escapeInDebounce={escapeInDebounce()}
+                            paletteCommands={paletteCommands}
+                            onCloseSession={(sessionId) => handleCloseSession(instance.id, sessionId)}
+                            onNewSession={() => handleNewSession(instance.id)}
+                            handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
+                            handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
+                            onExecuteCommand={executeCommand}
+                            tabBarOffset={instanceTabBarHeight()}
+                          />
+                        </InstanceMetadataProvider>
 
-                    </div>
-                  )
+                      </div>
+                    )
+
                 }}
               </For>
 

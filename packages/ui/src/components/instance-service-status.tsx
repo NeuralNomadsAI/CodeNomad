@@ -1,8 +1,7 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { Instance, RawMcpStatus } from "../types/instance"
-import { instances, updateInstance } from "../stores/instances"
-import { useInstanceMetadata } from "../lib/hooks/use-instance-metadata"
+import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
@@ -10,11 +9,10 @@ const log = getLogger("session")
 type ServiceSection = "lsp" | "mcp"
 
 interface InstanceServiceStatusProps {
-  instanceId: string
-  initialInstance?: Instance
   sections?: ServiceSection[]
   showSectionHeadings?: boolean
   class?: string
+  initialInstance?: Instance
 }
 
 type ParsedMcpStatus = {
@@ -44,16 +42,29 @@ function parseMcpStatus(status?: RawMcpStatus): ParsedMcpStatus[] {
 }
 
 const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => {
-  const instance = createMemo(() => instances().get(props.instanceId) ?? props.initialInstance)
+  const metadataContext = useOptionalInstanceMetadataContext()
+  const instance = metadataContext?.instance ?? (() => {
+    if (props.initialInstance) {
+      return props.initialInstance
+    }
+    throw new Error("InstanceServiceStatus requires InstanceMetadataProvider or initialInstance prop")
+  })
+  const isLoading = metadataContext?.isLoading ?? (() => false)
+  const refreshMetadata = metadataContext?.refreshMetadata ?? (async () => Promise.resolve())
   const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["lsp", "mcp"])
   const includeLsp = createMemo(() => sections().includes("lsp"))
   const includeMcp = createMemo(() => sections().includes("mcp"))
   const showHeadings = () => props.showSectionHeadings !== false
-  const { isLoading } = useInstanceMetadata(instance)
 
-  const metadata = createMemo(() => instance()?.metadata)
+  const metadata = createMemo(() => instance().metadata)
+  const hasLspMetadata = () => metadata()?.lspStatus !== undefined
+  const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
   const lspServers = createMemo(() => metadata()?.lspStatus ?? [])
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus))
+
+  const isLspLoading = () => isLoading() || !hasLspMetadata()
+  const isMcpLoading = () => isLoading() || !hasMcpMetadata()
+
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
 
@@ -66,26 +77,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     })
   }
 
-  const refreshMcpStatus = async () => {
-    const client = instance()?.client
-    if (!client?.mcp?.status) return
-    try {
-      const result = await client.mcp.status()
-      const status = result.data as RawMcpStatus | undefined
-      if (!status) return
-      updateInstance(props.instanceId, {
-        metadata: {
-          ...(instance()?.metadata ?? {}),
-          mcpStatus: status,
-        },
-      })
-    } catch (error) {
-      log.error("Failed to refresh MCP status", error)
-    }
-  }
-
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
-    const client = instance()?.client
+    const client = instance().client
     if (!client?.mcp) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
     setPendingMcpAction(serverName, action)
@@ -95,7 +88,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
       } else {
         await client.mcp.disconnect({ path: { name: serverName } })
       }
-      await refreshMcpStatus()
+      await refreshMetadata()
     } catch (error) {
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {
@@ -117,8 +110,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         </div>
       </Show>
       <Show
-        when={!isLoading() && lspServers().length > 0}
-        fallback={renderEmptyState(isLoading() ? "Loading server status..." : "No LSP servers detected.")}
+        when={!isLspLoading() && lspServers().length > 0}
+        fallback={renderEmptyState(isLspLoading() ? "Loading LSP servers..." : "No LSP servers detected.")}
       >
         <div class="space-y-1.5">
           <For each={lspServers()}>
@@ -152,8 +145,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         </div>
       </Show>
       <Show
-        when={!isLoading() && mcpServers().length > 0}
-        fallback={renderEmptyState(isLoading() ? "Loading server status..." : "No MCP servers detected.")}
+        when={!isMcpLoading() && mcpServers().length > 0}
+        fallback={renderEmptyState(isMcpLoading() ? "Loading MCP servers..." : "No MCP servers detected.")}
       >
         <div class="space-y-1.5">
           <For each={mcpServers()}>
@@ -161,7 +154,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
               const pendingAction = () => pendingMcpActions()[server.name]
               const isPending = () => Boolean(pendingAction())
               const isRunning = () => server.status === "running"
-              const switchDisabled = () => isPending() || !instance()?.client
+              const switchDisabled = () => isPending() || !instance().client
               const statusDotClass = () => {
                 if (isPending()) return "status-dot animate-pulse"
                 if (server.status === "running") return "status-dot ready animate-pulse"
