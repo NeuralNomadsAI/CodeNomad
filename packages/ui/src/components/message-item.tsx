@@ -16,7 +16,7 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
  }
- 
+
  export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
 
@@ -37,7 +37,7 @@ interface MessageItemProps {
   }
 
   const messageParts = () => props.parts
- 
+
   const fileAttachments = () =>
     messageParts().filter((part): part is FilePart => part?.type === "file" && typeof (part as FilePart).url === "string")
 
@@ -146,7 +146,7 @@ interface MessageItemProps {
 
   const getRawContent = () => {
     return props.parts
-      .filter(part => part.type === "text" || part.type === "reasoning")
+      .filter(part => part.type === "text")
       .map(part => (part as { text?: string }).text || "")
       .filter(text => text.trim().length > 0)
       .join("\n\n")
