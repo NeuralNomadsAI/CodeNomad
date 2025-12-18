@@ -1,17 +1,134 @@
 /* Modal utilities */
+
+.modal-header {
+  @apply px-5 py-4 border-b;
+  border-color: var(--border-base);
+}
+
+.modal-body {
+  @apply flex-1 overflow-y-auto p-5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.modal-footer {
+  @apply px-5 py-3 border-t flex justify-end;
+  border-color: var(--border-base);
+  gap: var(--space-sm);
+}
+
 .modal-overlay {
   @apply fixed inset-0 z-50;
   background-color: var(--overlay-scrim);
 }
 
 .modal-surface {
-  @apply rounded-lg shadow-2xl flex flex-col;
+  @apply rounded-xl shadow-2xl flex flex-col;
   background-color: var(--surface-base);
   color: var(--text-primary);
   max-width: min(100%, calc(100vw - 32px));
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 0;
+}
+
+/* Modal button styles - unified taxonomy */
+.modal-button {
+  @apply px-4 py-2 text-sm rounded-md transition-colors cursor-pointer inline-flex items-center justify-center font-medium;
+  gap: var(--space-xs);
+  border: 1px solid transparent;
+}
+
+.modal-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+.modal-button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.modal-button--primary {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+  border-color: var(--accent-primary);
+}
+
+.modal-button--primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.modal-button--secondary {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-base);
+}
+
+.modal-button--secondary:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.modal-button--ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-base);
+}
+
+.modal-button--ghost:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.modal-button--danger {
+  background-color: transparent;
+  color: var(--status-error);
+  border-color: var(--border-base);
+}
+
+.modal-button--danger:hover:not(:disabled) {
+  background-color: var(--danger-soft-bg);
+}
+
+/* Modal input styles - unified inputs */
+.modal-input {
+  @apply w-full px-3 py-2 text-sm rounded-md transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.1);
+}
+
+.modal-input::placeholder {
+  color: var(--text-muted);
+}
+
+.modal-input:disabled {
+  @apply opacity-50 cursor-not-allowed;
+  background-color: var(--surface-secondary);
+}
+
+/* Modal section grouping */
+.modal-section {
+  @apply flex flex-col;
+  gap: var(--space-lg);
+}
+
+.modal-section-header {
+  @apply flex items-center pb-2 mb-1 border-b text-xs font-semibold uppercase tracking-wide;
+  border-color: var(--border-base);
+  color: var(--text-muted);
+  gap: var(--space-sm);
+}
+
+.modal-section-header svg {
+  @apply w-3.5 h-3.5;
 }
 
 .modal-search-container {

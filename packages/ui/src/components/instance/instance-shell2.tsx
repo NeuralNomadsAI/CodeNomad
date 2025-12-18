@@ -12,20 +12,23 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown } from "lucide-solid"
+import {
+  ChevronDown,
+  PanelLeftOpen,
+  PanelLeftClose,
+  PanelRightOpen,
+  PanelRightClose,
+  Pin,
+  PinOff,
+  Settings,
+} from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Divider from "@suid/material/Divider"
 import Drawer from "@suid/material/Drawer"
-import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
 import Typography from "@suid/material/Typography"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import CloseIcon from "@suid/icons-material/Close"
-import MenuIcon from "@suid/icons-material/Menu"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
-import PushPinIcon from "@suid/icons-material/PushPin"
-import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import {
@@ -46,6 +49,8 @@ import KeyboardHint from "../keyboard-hint"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import InstanceServiceStatus from "../instance-service-status"
+import InstanceMcpControl from "../instance-mcp-control"
+import AdvancedSettingsModal from "../advanced-settings-modal"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import CommandPalette from "../command-palette"
@@ -61,6 +66,7 @@ import {
   type SessionSidebarRequestAction,
   type SessionSidebarRequestDetail,
 } from "../../lib/session-sidebar-events"
+import { useConfig } from "../../stores/preferences"
 
 const log = getLogger("session")
 
@@ -129,6 +135,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["lsp", "mcp"])
+  const [advancedSettingsOpen, setAdvancedSettingsOpen] = createSignal(false)
+
+  const { preferences, updateLastUsedBinary } = useConfig()
+  const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")
+
+  createEffect(() => {
+    const next = preferences().lastUsedBinary
+    if (next && next !== selectedBinary()) {
+      setSelectedBinary(next)
+    }
+  })
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -635,14 +652,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const leftAppBarButtonIcon = () => {
     const state = leftDrawerState()
-    if (state === "floating-closed") return <MenuIcon fontSize="small" />
-    return <MenuOpenIcon fontSize="small" />
+    if (state === "floating-closed") return <PanelLeftOpen class="w-4 h-4" />
+    return <PanelLeftClose class="w-4 h-4" />
   }
 
   const rightAppBarButtonIcon = () => {
     const state = rightDrawerState()
-    if (state === "floating-closed") return <MenuIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-    return <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+    if (state === "floating-closed") return <PanelRightOpen class="w-4 h-4" />
+    return <PanelRightClose class="w-4 h-4" />
   }
 
 
@@ -769,14 +786,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         </div>
           <div class="flex items-center gap-2">
             <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
+              <button
+                type="button"
+                class="icon-button icon-button--md icon-button--ghost"
                 aria-label={leftPinned() ? "Unpin left drawer" : "Pin left drawer"}
                 onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
               >
-                {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
+                {leftPinned() ? <Pin class="w-4 h-4" /> : <PinOff class="w-4 h-4" />}
+              </button>
             </Show>
           </div>
 
@@ -866,18 +883,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           />
         ),
       },
-      {
-        id: "mcp",
-        label: "MCP Servers",
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["mcp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
+       {
+         id: "mcp",
+         label: "MCP Servers",
+         render: () => (
+           <InstanceMcpControl
+             instance={props.instance}
+             class="space-y-2"
+             onManage={() => setAdvancedSettingsOpen(true)}
+           />
+         ),
+       },
       {
         id: "plan",
         label: "Plan",
@@ -899,23 +915,31 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     return (
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
-        <div class="flex items-center justify-between px-4 py-2 border-b border-base">
-          <Typography variant="subtitle2" class="uppercase tracking-wide text-xs font-semibold">
-            Status Panel
-          </Typography>
-          <div class="flex items-center gap-2">
-            <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
-                onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+          <div class="control-panel-header">
+            <Typography variant="subtitle2" class="control-panel-title">
+              Status Panel
+            </Typography>
+            <div class="control-panel-actions">
+              <button
+                type="button"
+                class="icon-button icon-button--md icon-button--ghost"
+                aria-label="Open advanced settings"
+                onClick={() => setAdvancedSettingsOpen(true)}
               >
-                {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
+                <Settings class="w-4 h-4" />
+              </button>
+              <Show when={!isPhoneLayout()}>
+                <button
+                  type="button"
+                  class="icon-button icon-button--md icon-button--ghost"
+                  aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
+                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+                >
+                  {rightPinned() ? <Pin class="w-4 h-4" /> : <PinOff class="w-4 h-4" />}
+                </button>
+              </Show>
+            </div>
           </div>
-        </div>
         <div class="flex-1 overflow-y-auto">
           <Accordion.Root
             class="flex flex-col"
@@ -928,17 +952,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               {(section) => (
                 <Accordion.Item
                   value={section.id}
-                  class="w-full border border-base bg-surface-secondary text-primary"
+                  class="control-panel-section"
                 >
                   <Accordion.Header>
-                    <Accordion.Trigger class="w-full flex items-center justify-between gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">
+                    <Accordion.Trigger class="control-panel-trigger">
                       <span>{section.label}</span>
                       <ChevronDown
                         class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
                       />
                     </Accordion.Trigger>
                   </Accordion.Header>
-                  <Accordion.Content class="w-full px-3 pb-3 text-sm text-primary">
+                  <Accordion.Content class="control-panel-content text-sm text-primary">
                     {section.render()}
                   </Accordion.Content>
                 </Accordion.Item>
@@ -1081,6 +1105,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         measureDrawerHost()
       }}
     >
+      <AdvancedSettingsModal
+        open={advancedSettingsOpen()}
+        onClose={() => setAdvancedSettingsOpen(false)}
+        selectedBinary={selectedBinary()}
+        onBinaryChange={(binary) => {
+          setSelectedBinary(binary)
+          updateLastUsedBinary(binary)
+        }}
+      />
+
       <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
         <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
           <Show
@@ -1088,17 +1122,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             fallback={
               <div class="flex flex-col w-full gap-1.5">
                 <div class="flex flex-wrap items-center justify-between gap-2 w-full">
-                  <IconButton
+                  <button
                     ref={setLeftToggleButtonEl}
-                    color="inherit"
+                    type="button"
+                    class="icon-button icon-button--md icon-button--ghost"
                     onClick={handleLeftAppBarButtonClick}
                     aria-label={leftAppBarButtonLabel()}
-                    size="small"
                     aria-expanded={leftDrawerState() !== "floating-closed"}
                     disabled={leftDrawerState() === "pinned"}
                   >
                     {leftAppBarButtonIcon()}
-                  </IconButton>
+                  </button>
 
                   <div class="flex flex-wrap items-center gap-1 justify-center">
                     <button
@@ -1121,17 +1155,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </span>
                   </div>
 
-                  <IconButton
+                  <button
                     ref={setRightToggleButtonEl}
-                    color="inherit"
+                    type="button"
+                    class="icon-button icon-button--md icon-button--ghost"
                     onClick={handleRightAppBarButtonClick}
                     aria-label={rightAppBarButtonLabel()}
-                    size="small"
                     aria-expanded={rightDrawerState() !== "floating-closed"}
                     disabled={rightDrawerState() === "pinned"}
                   >
                     {rightAppBarButtonIcon()}
-                  </IconButton>
+                  </button>
                 </div>
 
                 <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
@@ -1148,17 +1182,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
              <div class="session-toolbar-left flex items-center gap-3 min-w-0">
-               <IconButton
+               <button
                  ref={setLeftToggleButtonEl}
-                 color="inherit"
+                 type="button"
+                 class="icon-button icon-button--md icon-button--ghost"
                  onClick={handleLeftAppBarButtonClick}
                  aria-label={leftAppBarButtonLabel()}
-                 size="small"
                  aria-expanded={leftDrawerState() !== "floating-closed"}
                  disabled={leftDrawerState() === "pinned"}
                >
                  {leftAppBarButtonIcon()}
-               </IconButton>
+               </button>
 
                <Show when={!showingInfoView()}>
                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
@@ -1210,17 +1244,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </span>
                 </Show>
               </div>
-              <IconButton
+              <button
                 ref={setRightToggleButtonEl}
-                color="inherit"
+                type="button"
+                class="icon-button icon-button--md icon-button--ghost"
                 onClick={handleRightAppBarButtonClick}
                 aria-label={rightAppBarButtonLabel()}
-                size="small"
                 aria-expanded={rightDrawerState() !== "floating-closed"}
                 disabled={rightDrawerState() === "pinned"}
               >
                 {rightAppBarButtonIcon()}
-              </IconButton>
+              </button>
             </div>
           </Show>
         </Toolbar>

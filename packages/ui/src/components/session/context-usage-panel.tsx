@@ -1,6 +1,7 @@
 import { createMemo, type Component } from "solid-js"
 import { getSessionInfo } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
+import ContextProgressBar from "../context-progress-bar"
 
 interface ContextUsagePanelProps {
   instanceId: string

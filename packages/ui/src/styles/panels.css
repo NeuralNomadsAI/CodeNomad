@@ -3,6 +3,7 @@
 @import "./panels/modal.css";
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
+@import "./panels/control-panel.css";
 
 
 .tab-bar-instance {
@@ -585,6 +586,21 @@
 .session-list-item {
   @apply border-b last:border-b-0;
   border-color: var(--border-base);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.session-item-menu {
+  @apply flex-shrink-0;
+  color: var(--text-muted);
+}
+
+.session-item-menu:hover {
+  color: var(--text-primary);
+}
+
+.session-item-actions-group {
+  @apply flex items-center gap-0.5 flex-shrink-0;
 }
 
 .session-item-base {

@@ -14,7 +14,9 @@ import {
   clearInstanceDraftPrompts,
 } from "./sessions"
 import { fetchCommands, clearCommands } from "./commands"
-import { preferences } from "./preferences"
+import { preferences, setAgentModelPreference } from "./preferences"
+import { isModelValid } from "./session-models"
+import { instanceApi } from "../lib/instance-api"
 import { setSessionPendingPermission } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -121,12 +123,83 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
+async function applyGlobalModelDefaults(instanceId: string) {
+  const defaults = preferences().modelDefaultsByAgent ?? {}
+  const entries = Object.entries(defaults)
+  if (entries.length === 0) return
+
+  for (const [agentName, model] of entries) {
+    if (!agentName) continue
+    if (!isModelValid(instanceId, model)) {
+      continue
+    }
+    await setAgentModelPreference(instanceId, agentName, model)
+  }
+}
+
+async function applyGlobalMcpRegistry(instanceId: string) {
+  const config = preferences()
+  if (!config.mcpAutoApply) return
+
+  const registry = config.mcpRegistry ?? {}
+  const entries = Object.entries(registry)
+  if (entries.length === 0) return
+
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+
+  for (const [name, serverConfig] of entries) {
+    if (!name) continue
+
+    const desired = config.mcpDesiredState?.[name] ?? (serverConfig.enabled ?? true)
+
+    try {
+      await instanceApi.upsertMcp(instance, name, { ...serverConfig, enabled: desired })
+      if (desired) {
+        await instanceApi.connectMcp(instance, name)
+      } else {
+        await instanceApi.disconnectMcp(instance, name)
+      }
+    } catch (error) {
+      log.error("Failed to sync MCP server", { instanceId, name, error })
+    }
+  }
+
+  try {
+    const mcpResult = await instance.client.mcp.status()
+    updateInstance(instanceId, {
+      metadata: {
+        ...(instance.metadata ?? {}),
+        mcpStatus: (mcpResult.data as any) ?? {},
+      },
+    })
+  } catch (error) {
+    log.error("Failed to refresh MCP metadata after sync", { instanceId, error })
+  }
+}
+
+async function applyGlobalSettingsToInstance(instanceId: string) {
+  try {
+    await applyGlobalModelDefaults(instanceId)
+  } catch (error) {
+    log.error("Failed to apply global model defaults", { instanceId, error })
+  }
+
+  try {
+    await applyGlobalMcpRegistry(instanceId)
+  } catch (error) {
+    log.error("Failed to apply global MCP registry", { instanceId, error })
+  }
+}
+
 async function hydrateInstanceData(instanceId: string) {
   try {
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
     await ensureInstanceConfigLoaded(instanceId)
+    await applyGlobalSettingsToInstance(instanceId)
+
     const instance = instances().get(instanceId)
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)

@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, JSX } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { MessageSquare, Info, X, Copy, Trash2, Pencil } from "lucide-solid"
+import { MessageSquare, X, Copy, Trash2, Pencil, MoreVertical, Plus, Info } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -10,6 +10,7 @@ import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
 import { deleteSession, loading, renameSession } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
+import { DropdownMenu } from "@kobalte/core"
 const log = getLogger("session")
 
 

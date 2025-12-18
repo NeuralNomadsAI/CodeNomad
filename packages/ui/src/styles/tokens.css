@@ -20,6 +20,13 @@
   /* Accent tokens */
   --accent-primary: #0066ff;
   --accent-hover: #0052cc;
+
+  /* Context progress tokens */
+  --context-progress-track: rgba(0, 0, 0, 0.08);
+  --context-progress-low: #22c55e;
+  --context-progress-moderate: #3b82f6;
+  --context-progress-warning: #f59e0b;
+  --context-progress-critical: #ef4444;
   
   /* Status tokens */
   --status-success: #4caf50;

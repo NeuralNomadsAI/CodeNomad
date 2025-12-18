@@ -124,8 +124,9 @@
 }
 
 .connection-status-button {
-  @apply inline-flex items-center gap-2 px-3 py-1 text-sm font-medium border rounded-md transition-colors;
+  @apply inline-flex items-center gap-2 px-3 py-1 text-sm font-medium border transition-colors;
   border-color: var(--border-base);
+  border-radius: var(--button-radius);
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -135,9 +136,8 @@
 }
 
 .connection-status-button:focus-visible {
-  @apply ring-2 ring-offset-1;
-  ring-color: var(--accent-primary);
-  ring-offset-color: var(--surface-secondary);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }
 
 .connection-status-shortcut-hint {

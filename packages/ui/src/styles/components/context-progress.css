@@ -1,0 +1,105 @@
+/* Context Progress Bar */
+.context-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 180px;
+}
+
+.context-progress--compact {
+  min-width: 140px;
+  gap: var(--space-xs);
+}
+
+.context-progress-bar-container {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  min-width: 60px;
+  max-width: 120px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.context-progress--compact .context-progress-bar-container {
+  height: 4px;
+  min-width: 40px;
+  max-width: 80px;
+}
+
+.context-progress-track {
+  position: absolute;
+  inset: 0;
+  background-color: var(--context-progress-track);
+  border-radius: var(--radius-full);
+}
+
+.context-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease-out, background-color 0.2s ease;
+  z-index: 1;
+}
+
+.context-progress-bar--low {
+  background-color: var(--context-progress-low);
+}
+
+.context-progress-bar--moderate {
+  background-color: var(--context-progress-moderate);
+}
+
+.context-progress-bar--warning {
+  background-color: var(--context-progress-warning);
+}
+
+.context-progress-bar--critical {
+  background-color: var(--context-progress-critical);
+}
+
+.context-progress-labels {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  white-space: nowrap;
+}
+
+.context-progress--compact .context-progress-labels {
+  font-size: 10px;
+}
+
+.context-progress-used,
+.context-progress-available,
+.context-progress-total {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.context-progress-label {
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-family: var(--font-family-sans);
+  font-weight: var(--font-weight-medium);
+}
+
+.context-progress--compact .context-progress-label {
+  font-size: 8px;
+}
+
+.context-progress-value {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.context-progress-divider {
+  color: var(--text-muted);
+  opacity: 0.5;
+}

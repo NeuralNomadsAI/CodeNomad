@@ -4,6 +4,13 @@
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
+  position: relative;
+  z-index: 1;
+}
+
+/* Ensure shrink-0 panels have higher z-index to prevent overlap issues */
+.panel.shrink-0 {
+  z-index: 2;
 }
 
 .panel-footer-hints {

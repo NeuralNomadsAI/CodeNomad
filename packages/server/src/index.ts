@@ -147,6 +147,7 @@ async function main() {
     port: options.port,
     hostLabel: options.host,
     workspaceRoot: options.rootDir,
+    unrestrictedRoot: options.unrestrictedRoot,
     addresses: [],
   }
 

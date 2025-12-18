@@ -213,6 +213,8 @@ export interface ServerMeta {
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */
   workspaceRoot: string
+  /** True when the server allows browsing the full filesystem. */
+  unrestrictedRoot?: boolean
   /** Reachable addresses for this server, external first. */
   addresses: NetworkAddress[]
   /** Optional metadata about the most recent public release. */

@@ -1,0 +1,59 @@
+.control-panel-header {
+  @apply flex items-center justify-between px-4 py-2;
+  border-bottom: 1px solid var(--border-base);
+  background: linear-gradient(180deg, var(--surface-secondary) 0%, var(--surface-base) 100%);
+}
+
+.control-panel-title {
+  @apply uppercase tracking-wide text-xs font-semibold;
+  color: var(--text-secondary);
+}
+
+.control-panel-actions {
+  @apply flex items-center gap-1;
+}
+
+.control-panel-section {
+  @apply w-full overflow-hidden border-b;
+  border-color: var(--border-base);
+  background-color: transparent;
+}
+
+.control-panel-trigger {
+  @apply w-full flex items-center justify-between gap-3 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide transition-colors;
+  color: var(--text-secondary);
+  background-color: transparent;
+  outline: none;
+}
+
+.control-panel-trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+.control-panel-trigger:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.control-panel-content {
+  @apply w-full px-4 pb-4;
+  border-top: 1px solid var(--border-base);
+  background-color: var(--surface-base);
+}
+
+.control-panel-empty {
+  @apply text-[11px] italic;
+  color: var(--text-muted);
+}
+
+.control-panel-inline-button {
+  @apply inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium transition-colors;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  color: var(--text-secondary);
+}
+
+.control-panel-inline-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}

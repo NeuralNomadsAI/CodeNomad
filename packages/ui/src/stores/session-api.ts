@@ -254,7 +254,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 async function forkSession(
   instanceId: string,
   sourceSessionId: string,
-  options?: { messageId?: string },
+  options?: { messageId?: string; parentId?: string },
 ): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {

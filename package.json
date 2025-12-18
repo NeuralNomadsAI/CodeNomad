@@ -23,5 +23,8 @@
   "dependencies": {
     "7zip-bin": "^5.2.0",
     "google-auth-library": "^10.5.0"
+  },
+  "devDependencies": {
+    "@rollup/rollup-darwin-arm64": "^4.53.3"
   }
 }

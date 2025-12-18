@@ -13,23 +13,35 @@ interface DialogOpenResult {
   paths: string[]
 }
 
+let ipcInitialized = false
+let activeWindow: BrowserWindow | null = null
+
+function sendToWindow(channel: string, payload: unknown) {
+  const target = activeWindow
+  if (!target || target.isDestroyed()) {
+    return
+  }
+  target.webContents.send(channel, payload)
+}
+
 export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessManager) {
+  activeWindow = mainWindow
+
+  if (ipcInitialized) {
+    return
+  }
+  ipcInitialized = true
+
   cliManager.on("status", (status: CliStatus) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("cli:status", status)
-    }
+    sendToWindow("cli:status", status)
   })
 
   cliManager.on("ready", (status: CliStatus) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("cli:ready", status)
-    }
+    sendToWindow("cli:ready", status)
   })
 
   cliManager.on("error", (error: Error) => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("cli:error", { message: error.message })
-    }
+    sendToWindow("cli:error", { message: error.message })
   })
 
   ipcMain.handle("cli:getStatus", async () => cliManager.getStatus())
@@ -49,7 +61,7 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       extensions: filter.extensions,
     }))
 
-    const windowTarget = mainWindow.isDestroyed() ? undefined : mainWindow
+    const windowTarget = activeWindow && !activeWindow.isDestroyed() ? activeWindow : undefined
     const dialogOptions: OpenDialogOptions = {
       title: request.title,
       defaultPath: request.defaultPath,

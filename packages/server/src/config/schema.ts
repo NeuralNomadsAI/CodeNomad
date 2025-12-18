@@ -8,6 +8,25 @@ const ModelPreferenceSchema = z.object({
 const AgentModelSelectionSchema = z.record(z.string(), ModelPreferenceSchema)
 const AgentModelSelectionsSchema = z.record(z.string(), AgentModelSelectionSchema)
 
+const McpLocalServerConfigSchema = z.object({
+  type: z.literal("local"),
+  command: z.array(z.string()).min(1),
+  environment: z.record(z.string()).optional(),
+  enabled: z.boolean().optional(),
+  timeout: z.number().int().positive().optional(),
+})
+
+const McpRemoteServerConfigSchema = z.object({
+  type: z.literal("remote"),
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+  oauth: z.union([z.boolean(), z.record(z.unknown())]).optional(),
+  enabled: z.boolean().optional(),
+  timeout: z.number().int().positive().optional(),
+})
+
+const McpServerConfigSchema = z.union([McpLocalServerConfigSchema, McpRemoteServerConfigSchema])
+
 const PreferencesSchema = z.object({
   showThinkingBlocks: z.boolean().default(false),
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
@@ -21,6 +40,12 @@ const PreferencesSchema = z.object({
   showUsageMetrics: z.boolean().default(true),
   autoCleanupBlankSessions: z.boolean().default(true),
   listeningMode: z.enum(["local", "all"]).default("local"),
+
+  modelDefaultsByAgent: z.record(ModelPreferenceSchema).default({}),
+
+  mcpRegistry: z.record(McpServerConfigSchema).default({}),
+  mcpDesiredState: z.record(z.boolean()).default({}),
+  mcpAutoApply: z.boolean().default(true),
 })
 
 const RecentFolderSchema = z.object({
@@ -48,6 +73,9 @@ export {
   ModelPreferenceSchema,
   AgentModelSelectionSchema,
   AgentModelSelectionsSchema,
+  McpLocalServerConfigSchema,
+  McpRemoteServerConfigSchema,
+  McpServerConfigSchema,
   PreferencesSchema,
   RecentFolderSchema,
   OpenCodeBinarySchema,
@@ -58,6 +86,9 @@ export {
 export type ModelPreference = z.infer<typeof ModelPreferenceSchema>
 export type AgentModelSelection = z.infer<typeof AgentModelSelectionSchema>
 export type AgentModelSelections = z.infer<typeof AgentModelSelectionsSchema>
+export type McpLocalServerConfig = z.infer<typeof McpLocalServerConfigSchema>
+export type McpRemoteServerConfig = z.infer<typeof McpRemoteServerConfigSchema>
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>
 export type Preferences = z.infer<typeof PreferencesSchema>
 export type RecentFolder = z.infer<typeof RecentFolderSchema>
 export type OpenCodeBinary = z.infer<typeof OpenCodeBinarySchema>

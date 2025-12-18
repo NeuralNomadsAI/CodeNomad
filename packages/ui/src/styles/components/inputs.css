@@ -1,0 +1,337 @@
+/* Input component styles - refined design system */
+
+/* Base input styles */
+.input,
+input.input,
+textarea.input {
+  width: 100%;
+  padding: var(--input-padding-y) var(--input-padding-x);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-sans);
+  line-height: var(--line-height-normal);
+  color: var(--input-text);
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder,
+input.input::placeholder,
+textarea.input::placeholder {
+  color: var(--input-placeholder);
+}
+
+.input:hover:not(:disabled):not(:focus),
+input.input:hover:not(:disabled):not(:focus),
+textarea.input:hover:not(:disabled):not(:focus) {
+  border-color: var(--input-border-hover);
+}
+
+.input:focus,
+input.input:focus,
+textarea.input:focus {
+  outline: none;
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.input:disabled,
+input.input:disabled,
+textarea.input:disabled {
+  background-color: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Input sizes */
+.input--sm {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-sm);
+}
+
+.input--md {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+}
+
+.input--lg {
+  padding: var(--space-md) var(--space-lg);
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-md);
+}
+
+/* Textarea specific */
+textarea.input {
+  min-height: 80px;
+  resize: vertical;
+}
+
+textarea.input--no-resize {
+  resize: none;
+}
+
+/* Input with icon */
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-wrapper .input {
+  padding-left: 2.5rem;
+}
+
+.input-wrapper .input-icon {
+  position: absolute;
+  left: var(--space-sm);
+  color: var(--text-muted);
+  pointer-events: none;
+  width: 1rem;
+  height: 1rem;
+}
+
+.input-wrapper .input:focus + .input-icon,
+.input-wrapper .input:focus ~ .input-icon {
+  color: var(--accent-primary);
+}
+
+/* Input with trailing icon/button */
+.input-wrapper--trailing .input {
+  padding-left: var(--input-padding-x);
+  padding-right: 2.5rem;
+}
+
+.input-wrapper--trailing .input-icon {
+  left: auto;
+  right: var(--space-sm);
+}
+
+/* Input with both icons */
+.input-wrapper--both .input {
+  padding-left: 2.5rem;
+  padding-right: 2.5rem;
+}
+
+/* Input error state */
+.input--error,
+.input-wrapper--error .input {
+  border-color: var(--status-error);
+}
+
+.input--error:focus,
+.input-wrapper--error .input:focus {
+  border-color: var(--status-error);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+/* Input success state */
+.input--success,
+.input-wrapper--success .input {
+  border-color: var(--status-success);
+}
+
+.input--success:focus,
+.input-wrapper--success .input:focus {
+  border-color: var(--status-success);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+/* Form field container */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.form-field-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.form-field-label--required::after {
+  content: " *";
+  color: var(--status-error);
+}
+
+.form-field-helper {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.form-field-error {
+  font-size: var(--font-size-xs);
+  color: var(--status-error);
+}
+
+/* Select input */
+.select,
+select.select {
+  appearance: none;
+  width: 100%;
+  padding: var(--input-padding-y) var(--input-padding-x);
+  padding-right: 2.5rem;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-sans);
+  line-height: var(--line-height-normal);
+  color: var(--input-text);
+  background-color: var(--input-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem;
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.select:hover:not(:disabled),
+select.select:hover:not(:disabled) {
+  border-color: var(--input-border-hover);
+}
+
+.select:focus,
+select.select:focus {
+  outline: none;
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.select:disabled,
+select.select:disabled {
+  background-color: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Checkbox and radio base */
+.checkbox,
+.radio {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--input-border);
+  background-color: var(--input-bg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.checkbox {
+  border-radius: var(--radius-xs);
+}
+
+.radio {
+  border-radius: var(--radius-full);
+}
+
+.checkbox:hover:not(:disabled),
+.radio:hover:not(:disabled) {
+  border-color: var(--input-border-hover);
+}
+
+.checkbox:checked,
+.radio:checked {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.checkbox:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.625rem;
+}
+
+.radio:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Ccircle cx='4' cy='4' r='4' fill='white'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.375rem;
+}
+
+.checkbox:focus-visible,
+.radio:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+.checkbox:disabled,
+.radio:disabled {
+  background-color: var(--input-disabled-bg);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Checkbox/Radio with label */
+.checkbox-label,
+.radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkbox-label:has(:disabled),
+.radio-label:has(:disabled) {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* Switch/Toggle */
+.switch {
+  appearance: none;
+  position: relative;
+  width: 2.5rem;
+  height: 1.5rem;
+  background-color: var(--surface-muted);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1rem;
+  height: 1rem;
+  background-color: var(--text-muted);
+  border-radius: var(--radius-full);
+  transition: all 0.2s ease;
+}
+
+.switch:hover:not(:disabled) {
+  border-color: var(--border-secondary);
+}
+
+.switch:checked {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.switch:checked::after {
+  left: calc(100% - 1.125rem);
+  background-color: #ffffff;
+}
+
+.switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

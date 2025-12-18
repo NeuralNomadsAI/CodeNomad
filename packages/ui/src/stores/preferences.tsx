@@ -1,4 +1,4 @@
-import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createMemo, createRoot, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type ConfigData } from "../lib/storage"
 import {
@@ -32,6 +32,25 @@ export type ExpansionPreference = "expanded" | "collapsed"
 
 export type ListeningMode = "local" | "all"
 
+export type McpLocalServerConfig = {
+  type: "local"
+  command: string[]
+  environment?: Record<string, string>
+  enabled?: boolean
+  timeout?: number
+}
+
+export type McpRemoteServerConfig = {
+  type: "remote"
+  url: string
+  headers?: Record<string, string>
+  oauth?: boolean | Record<string, unknown>
+  enabled?: boolean
+  timeout?: number
+}
+
+export type McpServerConfig = McpLocalServerConfig | McpRemoteServerConfig
+
 export interface Preferences {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
@@ -45,6 +64,12 @@ export interface Preferences {
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
   listeningMode: ListeningMode
+
+  modelDefaultsByAgent: Record<string, ModelPreference>
+
+  mcpRegistry: Record<string, McpServerConfig>
+  mcpDesiredState: Record<string, boolean>
+  mcpAutoApply: boolean
 }
 
 
@@ -77,6 +102,12 @@ const defaultPreferences: Preferences = {
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
   listeningMode: "local",
+
+  modelDefaultsByAgent: {},
+
+  mcpRegistry: {},
+  mcpDesiredState: {},
+  mcpAutoApply: true,
 }
 
 
@@ -102,6 +133,11 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
   const sourceModelRecents = sanitized.modelRecents ?? defaultPreferences.modelRecents
   const modelRecents = sourceModelRecents.map((item) => ({ ...item }))
 
+  const modelDefaultsByAgent = { ...(sanitized.modelDefaultsByAgent ?? defaultPreferences.modelDefaultsByAgent) }
+
+  const mcpRegistry = { ...(sanitized.mcpRegistry ?? defaultPreferences.mcpRegistry) }
+  const mcpDesiredState = { ...(sanitized.mcpDesiredState ?? defaultPreferences.mcpDesiredState) }
+
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultPreferences.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
@@ -115,18 +151,42 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultPreferences.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultPreferences.autoCleanupBlankSessions,
     listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
+
+    modelDefaultsByAgent,
+
+    mcpRegistry,
+    mcpDesiredState,
+    mcpAutoApply: sanitized.mcpAutoApply ?? defaultPreferences.mcpAutoApply,
   }
 }
 
-const [internalConfig, setInternalConfig] = createSignal<ConfigData>(buildFallbackConfig())
-
-const config = createMemo<DeepReadonly<ConfigData>>(() => internalConfig())
-const [isConfigLoaded, setIsConfigLoaded] = createSignal(false)
-const preferences = createMemo<Preferences>(() => internalConfig().preferences)
-const recentFolders = createMemo<RecentFolder[]>(() => internalConfig().recentFolders ?? [])
-const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => internalConfig().opencodeBinaries ?? [])
-const themePreference = createMemo<ThemePreference>(() => internalConfig().theme ?? "dark")
+// Wrap module-level signals in createRoot to avoid "computations created outside a createRoot" warning
+let internalConfig: () => ConfigData
+let setInternalConfig: (v: ConfigData | ((prev: ConfigData) => ConfigData)) => void
+let config: () => DeepReadonly<ConfigData>
+let isConfigLoaded: () => boolean
+let setIsConfigLoaded: (v: boolean) => void
+let preferences: () => Preferences
+let recentFolders: () => RecentFolder[]
+let opencodeBinaries: () => OpenCodeBinary[]
+let themePreference: () => ThemePreference
 let loadPromise: Promise<void> | null = null
+
+createRoot(() => {
+  const [_internalConfig, _setInternalConfig] = createSignal<ConfigData>(buildFallbackConfig())
+  internalConfig = _internalConfig
+  setInternalConfig = _setInternalConfig
+
+  config = createMemo<DeepReadonly<ConfigData>>(() => _internalConfig())
+  const [_isConfigLoaded, _setIsConfigLoaded] = createSignal(false)
+  isConfigLoaded = _isConfigLoaded
+  setIsConfigLoaded = _setIsConfigLoaded
+
+  preferences = createMemo<Preferences>(() => _internalConfig().preferences)
+  recentFolders = createMemo<RecentFolder[]>(() => _internalConfig().recentFolders ?? [])
+  opencodeBinaries = createMemo<OpenCodeBinary[]>(() => _internalConfig().opencodeBinaries ?? [])
+  themePreference = createMemo<ThemePreference>(() => _internalConfig().theme ?? "dark")
+})
 
 function normalizeConfig(config?: ConfigData | null): ConfigData {
   return {

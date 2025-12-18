@@ -79,9 +79,12 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   const { themePreference, setThemePreference } = useConfig()
   const [isDark, setIsDarkSignal] = createSignal(true)
 
-  const resolveDarkTheme = () => {
-    themePreference()
-    return true
+  const resolveDarkTheme = (): boolean => {
+    const pref = themePreference()
+    if (pref === "light") return false
+    if (pref === "dark") return true
+    // "system" preference - use media query
+    return mediaQuery?.matches ?? true
   }
 
   const applyResolvedTheme = () => {
@@ -107,12 +110,12 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     }
   })
 
-  const setTheme = (_dark: boolean) => {
-    setThemePreference("dark")
+  const setTheme = (dark: boolean) => {
+    setThemePreference(dark ? "dark" : "light")
   }
 
   const toggleTheme = () => {
-    setTheme(true)
+    setTheme(!isDark())
   }
 
   const muiTheme = createMemo(() => {

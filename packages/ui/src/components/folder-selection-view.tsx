@@ -5,6 +5,7 @@ import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { getServerMeta } from "../lib/server-meta"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -24,6 +25,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
+  const [manualPath, setManualPath] = createSignal("")
+  const [manualPathError, setManualPathError] = createSignal<string | null>(null)
+  const [workspaceRoot, setWorkspaceRoot] = createSignal<string | null>(null)
+  const [unrestrictedRoot, setUnrestrictedRoot] = createSignal<boolean>(false)
+
   const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
  
@@ -153,6 +159,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   onMount(() => {
     window.addEventListener("keydown", handleKeyDown)
+    void getServerMeta()
+      .then((meta) => {
+        setWorkspaceRoot(meta.workspaceRoot)
+        setUnrestrictedRoot(Boolean((meta as { unrestrictedRoot?: boolean }).unrestrictedRoot))
+      })
+      .catch(() => {
+        // ignore
+      })
+
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
     })
@@ -237,6 +252,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 type="button"
                 class="selector-button selector-button-secondary inline-flex items-center justify-center"
                 onClick={() => props.onOpenRemoteAccess?.()}
+                title="Remote access"
               >
                 <MonitorUp class="w-4 h-4" />
               </button>
@@ -251,7 +267,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         </div>
 
  
-          <div class="space-y-4 flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div class="space-y-4 flex-1 min-h-0 overflow-auto flex flex-col isolate">
 
             <Show
 
@@ -333,25 +349,76 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             </Show>
 
             <div class="panel shrink-0">
-              <div class="panel-header hidden sm:block">
-                <h2 class="panel-title">Browse for Folder</h2>
-                <p class="panel-subtitle">Select any folder on your computer</p>
-              </div>
+               <div class="panel-header hidden sm:block">
+                 <h2 class="panel-title">Browse for Folder</h2>
+                 <p class="panel-subtitle">Select any folder on your computer</p>
+               </div>
 
-              <div class="panel-body">
-                <button
-                  onClick={() => void handleBrowse()}
-                  disabled={props.isLoading}
-                  class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                  onMouseEnter={() => setFocusMode("new")}
-                >
-                  <div class="flex items-center gap-2">
-                    <FolderPlus class="w-4 h-4" />
-                    <span>{props.isLoading ? "Opening..." : "Browse Folders"}</span>
-                  </div>
-                  <Kbd shortcut="cmd+n" class="ml-2" />
-                </button>
-              </div>
+               <div class="panel-body space-y-4">
+                 <button
+                   onClick={() => void handleBrowse()}
+                   disabled={props.isLoading}
+                   class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                   onMouseEnter={() => setFocusMode("new")}
+                 >
+                   <div class="flex items-center gap-2">
+                     <FolderPlus class="w-4 h-4" />
+                     <span>{props.isLoading ? "Opening..." : "Browse Folders"}</span>
+                   </div>
+                   <Kbd shortcut="cmd+n" class="ml-2" />
+                 </button>
+
+                 <div class="rounded-lg border border-base bg-surface-secondary p-3 space-y-2">
+                   <div class="text-xs text-secondary">
+                     <Show when={workspaceRoot()} fallback={<span>Workspace root: unknown</span>}>
+                       {(root) => (
+                         <span>
+                           Workspace root: <span class="font-mono text-muted">{root()}</span>
+                           <Show when={unrestrictedRoot()}>
+                             <span class="ml-2 neutral-badge">full filesystem</span>
+                           </Show>
+                         </span>
+                       )}
+                     </Show>
+                     <Show when={!unrestrictedRoot()}>
+                       <div class="text-[11px] text-muted mt-1">
+                         Tip: paste an absolute path below to open any folder, or start the server with <span class="font-mono">--unrestricted-root</span> to browse the full filesystem.
+                       </div>
+                     </Show>
+                   </div>
+
+                   <div class="flex flex-col gap-2">
+                     <input
+                       class="selector-search-input"
+                       value={manualPath()}
+                       onInput={(event) => {
+                         setManualPath(event.currentTarget.value)
+                         setManualPathError(null)
+                       }}
+                       placeholder="Open by path…  /Users/you/projects/my-repo"
+                       disabled={isLoading()}
+                     />
+                     <button
+                       type="button"
+                       class="selector-button selector-button-primary"
+                       disabled={isLoading() || manualPath().trim().length === 0}
+                       onClick={() => {
+                         const value = manualPath().trim()
+                         if (!value) {
+                           setManualPathError("Enter a folder path")
+                           return
+                         }
+                         handleFolderSelect(value)
+                       }}
+                     >
+                       Open Folder
+                     </button>
+                     <Show when={manualPathError()}>
+                       {(message) => <div class="text-[11px]" style={{ color: "var(--status-error)" }}>{message()}</div>}
+                     </Show>
+                   </div>
+                 </div>
+               </div>
 
               {/* Advanced settings section */}
               <div class="panel-section w-full">

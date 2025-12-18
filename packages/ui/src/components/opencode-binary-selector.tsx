@@ -219,21 +219,21 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   return (
     <>
       <div class="panel">
-        <div class="panel-header flex items-center justify-between gap-3">
+        <div class="panel-header flex items-center justify-between" style={{ gap: "var(--space-md)" }}>
           <div>
             <h3 class="panel-title">OpenCode Binary</h3>
             <p class="panel-subtitle">Choose which executable OpenCode should run</p>
           </div>
           <Show when={validating()}>
-            <div class="selector-loading text-xs">
-              <Loader2 class="selector-loading-spinner" />
+            <div class="flex items-center text-xs text-muted" style={{ gap: "var(--space-sm)" }}>
+              <Loader2 class="w-4 h-4 animate-spin text-accent" />
               <span>Checking versions…</span>
             </div>
           </Show>
         </div>
 
-        <div class="panel-body space-y-3">
-          <div class="selector-input-group">
+        <div class="panel-body" style={{ gap: "var(--space-md)" }}>
+          <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
             <input
               type="text"
               value={customPath()}
@@ -246,13 +246,13 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
               }}
               disabled={props.disabled}
               placeholder="Enter path to opencode binary…"
-              class="selector-input"
+              class="modal-input flex-1"
             />
             <button
               type="button"
               onClick={handleCustomPathSubmit}
               disabled={props.disabled || !customPath().trim()}
-              class="selector-button selector-button-primary"
+              class="modal-button modal-button--primary"
             >
               <Plus class="w-4 h-4" />
               Add
@@ -263,17 +263,17 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
             type="button"
             onClick={() => void handleBrowseBinary()}
             disabled={props.disabled}
-            class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2"
+            class="modal-button modal-button--secondary w-full"
           >
             <FolderOpen class="w-4 h-4" />
             Browse for Binary…
           </button>
 
           <Show when={validationError()}>
-            <div class="selector-validation-error">
-              <div class="selector-validation-error-content">
-                <AlertCircle class="selector-validation-error-icon" />
-                <span class="selector-validation-error-text">{validationError()}</span>
+            <div class="px-3 py-2 rounded-md bg-danger-soft-bg border border-base">
+              <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
+                <AlertCircle class="w-4 h-4 text-status-error flex-shrink-0" />
+                <span class="text-sm text-status-error">{validationError()}</span>
               </div>
             </div>
           </Show>

@@ -520,7 +520,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           draft.partIds = [...draft.partIds, partId]
         }
         const existing = draft.parts[partId]
-        const nextRevision = existing ? existing.revision + 1 : cloned.version ?? 0
+        const nextRevision = existing ? existing.revision + 1 : 0
         draft.parts[partId] = {
           id: partId,
           data: cloned,
