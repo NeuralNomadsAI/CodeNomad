@@ -7,7 +7,8 @@ import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
-import { deleteSession, loading, renameSession } from "../stores/sessions"
+import { deleteSession, loading, renameSession, getSessionInfo } from "../stores/sessions"
+import { formatTokenTotal } from "../lib/formatters"
 import { getLogger } from "../lib/logger"
 import { DropdownMenu } from "@kobalte/core"
 import { getActiveInstance } from "../stores/instances"
@@ -142,6 +143,27 @@ const SessionList: Component<SessionListProps> = (props) => {
     const pendingPermission = () => Boolean(session()?.pendingPermission)
     const statusClassName = () => (pendingPermission() ? "session-permission" : `session-${status()}`)
     const statusText = () => (pendingPermission() ? "Needs Permission" : statusLabel())
+    const isParent = () => session()?.parentId === null
+
+    const sessionInfo = createMemo(() => getSessionInfo(props.instanceId, rowProps.sessionId))
+    const contextUsed = () => sessionInfo()?.actualUsageTokens ?? 0
+    const contextAvail = () => sessionInfo()?.contextAvailableTokens ?? null
+    const contextTotal = () => {
+      const avail = contextAvail()
+      if (avail === null) return null
+      return contextUsed() + avail
+    }
+    const contextPercentage = () => {
+      const total = contextTotal()
+      if (total === null || total === 0) return 0
+      return Math.min((contextUsed() / total) * 100, 100)
+    }
+    const contextLevel = () => {
+      const pct = contextPercentage()
+      if (pct >= 90) return "critical"
+      if (pct >= 75) return "warning"
+      return "normal"
+    }
 
     return (
        <div class="session-list-item group">
@@ -157,6 +179,9 @@ const SessionList: Component<SessionListProps> = (props) => {
             <div class="session-item-title-row">
               <MessageSquare class="w-4 h-4 flex-shrink-0" />
               <span class="session-item-title truncate">{title()}</span>
+              <span class={`session-type-pill ${isParent() ? "session-type-pill--parent" : "session-type-pill--agent"}`}>
+                {isParent() ? "Parent" : "Agent"}
+              </span>
             </div>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger
@@ -217,6 +242,17 @@ const SessionList: Component<SessionListProps> = (props) => {
             </DropdownMenu.Root>
           </div>
           <div class="session-item-row session-item-meta">
+            <div class="session-item-progress">
+              <div class="context-progress-track">
+                <div
+                  class={`context-progress-fill context-progress-fill--${contextLevel()}`}
+                  style={{ width: `${contextPercentage()}%` }}
+                />
+              </div>
+              <span class="session-progress-label">
+                {formatTokenTotal(contextUsed())}/{contextTotal() !== null ? formatTokenTotal(contextTotal()!) : "--"}
+              </span>
+            </div>
             <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
               <span class="status-dot" />
               {statusText()}
@@ -332,7 +368,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         <Show when={userSessionIds().length > 0}>
           <div class="session-section">
             <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
-              Main
+              Agents
             </div>
             <For each={userSessionIds()}>{(id) => <SessionRow sessionId={id} canClose />}</For>
           </div>

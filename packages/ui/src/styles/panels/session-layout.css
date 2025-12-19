@@ -524,3 +524,24 @@ session-sidebar-controls .selector-trigger-primary {
   height: 1px;
   background-color: var(--border-base);
 }
+
+/* Session type pills */
+.session-type-pill {
+  @apply text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0;
+}
+
+.session-type-pill--parent {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+}
+
+.session-type-pill--agent {
+  background-color: var(--surface-muted, rgba(255,255,255,0.1));
+  color: var(--text-secondary);
+  border: 1px solid var(--border-base);
+}
+
+/* Session item meta row with progress */
+.session-item-meta {
+  @apply flex items-center justify-between gap-2;
+}

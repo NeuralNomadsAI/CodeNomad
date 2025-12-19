@@ -1,7 +1,6 @@
 import { createMemo, type Component } from "solid-js"
 import { getSessionInfo } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
-import ContextProgressBar from "../context-progress-bar"
 
 interface ContextUsagePanelProps {
   instanceId: string
@@ -30,24 +29,15 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
 
   const inputTokens = createMemo(() => info().inputTokens ?? 0)
   const outputTokens = createMemo(() => info().outputTokens ?? 0)
-  const actualUsageTokens = createMemo(() => info().actualUsageTokens ?? 0)
-  const availableTokens = createMemo(() => info().contextAvailableTokens)
-  const outputLimit = createMemo(() => info().modelOutputLimit ?? 0)
   const costValue = createMemo(() => {
     const value = info().isSubscriptionModel ? 0 : info().cost
     return value > 0 ? value : 0
   })
 
-
-  const formatTokenValue = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return "--"
-    return formatTokenTotal(value)
-  }
-
   const costDisplay = createMemo(() => `$${costValue().toFixed(2)}`)
 
   return (
-    <div class="session-context-panel border-r border-base border-b px-3 py-3 space-y-3">
+    <div class="session-context-panel border-r border-base border-b px-3 py-3">
       <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
         <div class={headingClass}>Tokens</div>
         <div class={chipClass}>
@@ -61,18 +51,6 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
         <div class={chipClass}>
           <span class={chipLabelClass}>Cost</span>
           <span class="font-semibold text-primary">{costDisplay()}</span>
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
-        <div class={headingClass}>Context</div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>Used</span>
-          <span class="font-semibold text-primary">{formatTokenTotal(actualUsageTokens())}</span>
-        </div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>Avail</span>
-          <span class="font-semibold text-primary">{formatTokenValue(availableTokens())}</span>
         </div>
       </div>
     </div>

@@ -59,6 +59,7 @@ import ShortcutsDialog from "../shortcuts-dialog"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
+import ContextProgressBar from "../context-progress-bar"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
@@ -307,6 +308,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return {
       used: usage?.actualUsageTokens ?? info?.actualUsageTokens ?? 0,
       avail: info?.contextAvailableTokens ?? null,
+      inputTokens: info?.inputTokens ?? 0,
+      outputTokens: info?.outputTokens ?? 0,
+      cost: info?.isSubscriptionModel ? 0 : (info?.cost ?? 0),
     }
   })
 
@@ -1141,14 +1145,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </button>
                 </div>
 
-                <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
-                    <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                <div class="header-stats-bar">
+                  <div class="header-stats-item">
+                    <span class="header-stats-label">In</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
                   </div>
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
-                    <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
+                  <span class="header-stats-divider">|</span>
+                  <div class="header-stats-item">
+                    <span class="header-stats-label">Out</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
+                  </div>
+                  <ContextProgressBar
+                    used={tokenStats().used}
+                    available={tokenStats().avail}
+                    size="sm"
+                  />
+                  <div class="header-stats-item">
+                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -1176,34 +1189,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                >
                  <HelpCircle class="w-4 h-4" />
                </button>
-
-               <Show when={!showingInfoView()}>
-                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
-                   <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-                 </div>
-                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
-                   <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                 </div>
-               </Show>
              </div>
 
 
-              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                <button
-                  type="button"
-                  class="connection-status-button px-2 py-0.5 text-xs"
-                  onClick={handleCommandPaletteClick}
-                  aria-label="Open command palette"
-                  style={{ flex: "0 0 auto", width: "auto" }}
-                >
-                  Command Palette
-                </button>
-                <span class="connection-status-shortcut-hint">
-                  <Kbd shortcut="cmd+shift+p" />
-                </span>
-              </div>
+              <Show
+                when={!showingInfoView()}
+                fallback={
+                  <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
+                    <button
+                      type="button"
+                      class="connection-status-button px-2 py-0.5 text-xs"
+                      onClick={handleCommandPaletteClick}
+                      aria-label="Open command palette"
+                    >
+                      Command Palette
+                    </button>
+                    <Kbd shortcut="cmd+shift+p" />
+                  </div>
+                }
+              >
+                <div class="header-stats-bar">
+                  <div class="header-stats-item">
+                    <span class="header-stats-label">In</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
+                  </div>
+                  <span class="header-stats-divider">|</span>
+                  <div class="header-stats-item">
+                    <span class="header-stats-label">Out</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
+                  </div>
+                  <ContextProgressBar
+                    used={tokenStats().used}
+                    available={tokenStats().avail}
+                    size="md"
+                  />
+                  <div class="header-stats-item">
+                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
+                  </div>
+                </div>
+              </Show>
 
 
             <div class="session-toolbar-right flex items-center gap-3">
