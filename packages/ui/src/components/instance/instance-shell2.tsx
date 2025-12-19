@@ -1145,14 +1145,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
                 <div class="header-stats-bar header-stats-bar--compact">
                   <div class="header-context-window">
-                    <span class="header-context-stat">
-                      <span class="header-context-stat-label">In</span>
-                      <span class="header-context-stat-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                    </span>
-                    <span class="header-context-stat">
-                      <span class="header-context-stat-label">Out</span>
-                      <span class="header-context-stat-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                    </span>
                     <span class="header-context-window-label">Context</span>
                     <span class="header-context-value header-context-value--used">{formatTokenTotal(tokenStats().used)}</span>
                     <ContextProgressBar
@@ -1163,6 +1155,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       class="header-context-progress header-context-progress--thick"
                     />
                     <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
+                  </div>
+                  <div class="header-stats-pill header-stats-pill--compact">
+                    <span class="header-stats-label">In</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
+                  </div>
+                  <div class="header-stats-pill header-stats-pill--compact">
+                    <span class="header-stats-label">Out</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
                   </div>
                   <div class="header-stats-pill header-stats-pill--compact">
                     <span class="header-stats-label">Cost</span>
@@ -1215,14 +1215,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               >
                 <div class="header-stats-bar">
                   <div class="header-context-window">
-                    <span class="header-context-stat">
-                      <span class="header-context-stat-label">In</span>
-                      <span class="header-context-stat-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                    </span>
-                    <span class="header-context-stat">
-                      <span class="header-context-stat-label">Out</span>
-                      <span class="header-context-stat-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                    </span>
                     <span class="header-context-window-label">Context</span>
                     <span class="header-context-value header-context-value--used">{formatTokenTotal(tokenStats().used)}</span>
                     <ContextProgressBar
@@ -1233,6 +1225,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       class="header-context-progress header-context-progress--thick"
                     />
                     <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
+                  </div>
+                  <div class="header-stats-pill">
+                    <span class="header-stats-label">In</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
+                  </div>
+                  <div class="header-stats-pill">
+                    <span class="header-stats-label">Out</span>
+                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
                   </div>
                   <div class="header-stats-pill">
                     <span class="header-stats-label">Cost</span>
