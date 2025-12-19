@@ -58,7 +58,6 @@ import CommandPalette from "../command-palette"
 import ShortcutsDialog from "../shortcuts-dialog"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
-import ContextUsagePanel from "../session/context-usage-panel"
 import ContextProgressBar from "../context-progress-bar"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
@@ -811,8 +810,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         <Show when={activeSessionForInstance()}>
           {(activeSession) => (
             <>
-              <ContextUsagePanel instanceId={props.instance.id} sessionId={activeSession().id} />
-              <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
+              <div class="session-sidebar-controls px-4 py-4 pb-6 border-t border-base flex flex-col gap-3">
                 <AgentSelector
                   instanceId={props.instance.id}
                   sessionId={activeSession().id}
@@ -1145,22 +1143,24 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </button>
                 </div>
 
-                <div class="header-stats-bar">
-                  <div class="header-stats-item">
+                <div class="header-stats-bar header-stats-bar--compact">
+                  <div class="header-stats-pill header-stats-pill--compact">
                     <span class="header-stats-label">In</span>
                     <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
                   </div>
-                  <span class="header-stats-divider">|</span>
-                  <div class="header-stats-item">
+                  <div class="header-stats-pill header-stats-pill--compact">
                     <span class="header-stats-label">Out</span>
                     <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
                   </div>
                   <ContextProgressBar
                     used={tokenStats().used}
                     available={tokenStats().avail}
-                    size="sm"
+                    size="md"
+                    showLabels={false}
+                    class="header-context-progress"
                   />
-                  <div class="header-stats-item">
+                  <div class="header-stats-pill header-stats-pill--compact">
+                    <span class="header-stats-label">Cost</span>
                     <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
                   </div>
                 </div>
@@ -1209,12 +1209,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 }
               >
                 <div class="header-stats-bar">
-                  <div class="header-stats-item">
+                  <div class="header-stats-pill">
                     <span class="header-stats-label">In</span>
                     <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
                   </div>
-                  <span class="header-stats-divider">|</span>
-                  <div class="header-stats-item">
+                  <div class="header-stats-pill">
                     <span class="header-stats-label">Out</span>
                     <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
                   </div>
@@ -1222,8 +1221,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     used={tokenStats().used}
                     available={tokenStats().avail}
                     size="md"
+                    showLabels={false}
+                    class="header-context-progress"
                   />
-                  <div class="header-stats-item">
+                  <div class="header-stats-pill">
+                    <span class="header-stats-label">Cost</span>
                     <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
                   </div>
                 </div>

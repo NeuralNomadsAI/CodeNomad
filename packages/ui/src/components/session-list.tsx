@@ -242,16 +242,19 @@ const SessionList: Component<SessionListProps> = (props) => {
             </DropdownMenu.Root>
           </div>
           <div class="session-item-row session-item-meta">
-            <div class="session-item-progress">
-              <div class="context-progress-track">
-                <div
-                  class={`context-progress-fill context-progress-fill--${contextLevel()}`}
-                  style={{ width: `${contextPercentage()}%` }}
-                />
+            <div class="session-item-context">
+              <span class="session-context-pill">Context Window</span>
+              <div class="session-item-progress session-item-progress--thick">
+                <div class="context-progress-track">
+                  <div
+                    class={`context-progress-fill context-progress-fill--${contextLevel()}`}
+                    style={{ width: `${contextPercentage()}%` }}
+                  />
+                </div>
+                <span class="session-progress-label">
+                  {formatTokenTotal(contextUsed())}/{contextTotal() !== null ? formatTokenTotal(contextTotal()!) : "--"}
+                </span>
               </div>
-              <span class="session-progress-label">
-                {formatTokenTotal(contextUsed())}/{contextTotal() !== null ? formatTokenTotal(contextTotal()!) : "--"}
-              </span>
             </div>
             <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
               <span class="status-dot" />
@@ -354,12 +357,12 @@ const SessionList: Component<SessionListProps> = (props) => {
                     </span>
                   </div>
                 </Show>
-                <div class="instance-info-row">
-                  <span class="instance-info-label">Session</span>
-                  <span class="instance-info-value instance-info-session">
-                    {parentSession() ?? "—"}
-                  </span>
-                </div>
+              </div>
+              <div class="session-name-section">
+                <span class="session-name-label">Session</span>
+                <span class="session-name-value">
+                  {parentSession() ?? "—"}
+                </span>
               </div>
             </button>
           </div>

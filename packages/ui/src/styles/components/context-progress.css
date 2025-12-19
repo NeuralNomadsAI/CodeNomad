@@ -186,17 +186,35 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 16px;
   flex: 1;
   min-width: 0;
 }
 
-.header-stats-item {
+.header-stats-bar--compact {
+  gap: 8px;
+}
+
+/* Progress bar styling within header */
+.header-stats-bar > .context-progress-bar {
+  flex-shrink: 0;
+}
+
+.header-stats-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: var(--surface-muted, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-full, 999px);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.header-stats-pill--compact {
+  padding: 2px 8px;
+  gap: 4px;
+  font-size: 10px;
 }
 
 .header-stats-label {
@@ -207,10 +225,47 @@
   font-weight: var(--font-weight-medium);
 }
 
+.header-stats-pill--compact .header-stats-label {
+  font-size: 8px;
+}
+
 .header-stats-value {
   font-family: var(--font-family-mono);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+
+/* Center the progress bar with fixed width */
+.header-stats-bar .context-progress-bar {
+  flex: 0 0 auto;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.header-stats-bar--compact .context-progress-bar {
+  min-width: 80px;
+  max-width: 140px;
+}
+
+/* Header-specific progress bar styling for visibility */
+.header-context-progress {
+  display: flex !important;
+  position: relative !important;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-width: 80px;
+}
+
+.header-context-progress .context-progress-track {
+  height: 6px !important;
+  min-width: 80px !important;
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.header-stats-bar--compact .header-context-progress .context-progress-track {
+  height: 5px !important;
+  min-width: 60px !important;
 }
 
 .header-stats-divider {

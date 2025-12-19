@@ -545,3 +545,49 @@ session-sidebar-controls .selector-trigger-primary {
 .session-item-meta {
   @apply flex items-center justify-between gap-2;
 }
+
+/* Session name section in instance panel */
+.session-name-section {
+  @apply flex flex-col gap-1;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-base);
+}
+
+.session-name-label {
+  @apply text-xs uppercase tracking-wide;
+  color: var(--text-muted);
+  font-weight: var(--font-weight-medium);
+  margin-bottom: 2px;
+}
+
+.session-name-value {
+  @apply text-sm;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+/* Session item context section */
+.session-item-context {
+  @apply flex flex-col gap-1;
+}
+
+.session-context-pill {
+  @apply text-[8px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full inline-flex self-start;
+  background-color: var(--surface-muted, rgba(255,255,255,0.1));
+  color: var(--text-muted);
+  border: 1px solid var(--border-base);
+  margin-bottom: 2px;
+}
+
+/* Thicker progress bar for session items */
+.session-item-progress--thick .context-progress-track {
+  height: 5px !important;
+  flex: 1;
+  max-width: 120px;
+}
+
+.session-item-progress--thick {
+  @apply flex items-center gap-2;
+}
