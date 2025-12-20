@@ -1,5 +1,5 @@
 .control-panel-header {
-  @apply flex items-center justify-between px-4 py-2;
+  @apply flex items-center justify-between px-4 py-3;
   border-bottom: 1px solid var(--border-base);
   background: linear-gradient(180deg, var(--surface-secondary) 0%, var(--surface-base) 100%);
 }
@@ -10,7 +10,7 @@
 }
 
 .control-panel-actions {
-  @apply flex items-center gap-1;
+  @apply flex items-center gap-2;
 }
 
 .control-panel-section {
@@ -20,7 +20,7 @@
 }
 
 .control-panel-trigger {
-  @apply w-full flex items-center justify-between gap-3 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide transition-colors;
+  @apply w-full flex items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold uppercase tracking-wide transition-colors;
   color: var(--text-secondary);
   background-color: transparent;
   outline: none;
@@ -36,13 +36,13 @@
 }
 
 .control-panel-content {
-  @apply w-full px-4 pb-4;
+  @apply w-full px-4 pt-3 pb-5;
   border-top: 1px solid var(--border-base);
   background-color: var(--surface-base);
 }
 
 .control-panel-empty {
-  @apply text-[11px] italic;
+  @apply text-xs py-2;
   color: var(--text-muted);
 }
 
