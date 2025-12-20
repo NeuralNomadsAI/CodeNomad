@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on } from "solid-js"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -6,7 +6,7 @@ import type { ClientPart, MessageInfo } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
-import { messageStoreBus } from "../stores/message-v2/bus"
+import { messageStoreBus, collapseGeneration } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
@@ -219,6 +219,16 @@ export default function MessageBlock(props: MessageBlockProps) {
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
   const [collapsed, setCollapsed] = createSignal(false)
+
+  // Auto-collapse when user submits a new message (collapseGeneration changes)
+  createEffect(
+    on(collapseGeneration, (gen, prevGen) => {
+      // Skip initial run (when prevGen is undefined)
+      if (prevGen !== undefined && gen !== prevGen) {
+        setCollapsed(true)
+      }
+    })
+  )
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
     const current = record()

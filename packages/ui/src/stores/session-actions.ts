@@ -5,7 +5,7 @@ import { addRecentModelPreference, setAgentModelPreference } from "./preferences
 import { sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { messageStoreBus } from "./message-v2/bus"
+import { messageStoreBus, triggerCollapseAll } from "./message-v2/bus"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("actions")
@@ -60,6 +60,9 @@ async function sendMessage(
   prompt: string,
   attachments: any[] = [],
 ): Promise<void> {
+  // Auto-collapse all tool calls when user submits a new message
+  triggerCollapseAll()
+
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")

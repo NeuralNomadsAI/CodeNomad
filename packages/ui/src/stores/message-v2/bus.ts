@@ -1,9 +1,19 @@
+import { createSignal } from "solid-js"
 import { createInstanceMessageStore } from "./instance-store"
 import type { InstanceMessageStore } from "./instance-store"
 import { clearCacheForInstance } from "../../lib/global-cache"
 import { getLogger } from "../../lib/logger"
 
 const log = getLogger("session")
+
+// Signal to trigger auto-collapse of tool calls when user submits a new message
+const [collapseGeneration, setCollapseGeneration] = createSignal(0)
+
+export function triggerCollapseAll() {
+  setCollapseGeneration((prev) => prev + 1)
+}
+
+export { collapseGeneration }
 
 class MessageStoreBus {
   private stores = new Map<string, InstanceMessageStore>()
