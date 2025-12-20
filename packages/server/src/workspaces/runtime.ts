@@ -4,6 +4,7 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
+import { registerWorkspacePid, unregisterWorkspacePid } from "./pid-registry"
 
 interface LaunchOptions {
   workspaceId: string
@@ -80,6 +81,8 @@ export class WorkspaceRuntime {
       const handleExit = (code: number | null, signal: NodeJS.Signals | null) => {
         this.logger.info({ workspaceId: options.workspaceId, code, signal }, "OpenCode process exited")
         this.processes.delete(options.workspaceId)
+        // Unregister workspace PID from registry
+        unregisterWorkspacePid(options.workspaceId, this.logger)
         cleanupStreams()
         child.removeListener("error", handleError)
         child.removeListener("exit", handleExit)
@@ -120,6 +123,8 @@ export class WorkspaceRuntime {
               child.removeListener("error", handleError)
               const port = parseInt(portMatch[1], 10)
               this.logger.info({ workspaceId: options.workspaceId, port }, "Workspace runtime allocated port")
+              // Register workspace PID for orphan cleanup
+              registerWorkspacePid(options.workspaceId, child.pid!, options.folder, this.logger)
               resolve({ pid: child.pid!, port })
             }
           }

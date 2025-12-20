@@ -1,7 +1,7 @@
 import type { Session } from "../types/session"
 import type { Message } from "../types/message"
 
-import { instances } from "./instances"
+import { instances, stopInstance } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import { setSessionCompactionState } from "./session-compaction"
 import {
@@ -394,6 +394,16 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
         const next = new Map(prev)
         next.delete(instanceId)
         return next
+      })
+    }
+
+    // Check if this was the last session and stop instance if preference is enabled
+    const remainingSessions = sessions().get(instanceId)
+    const hasRemainingSessions = remainingSessions && remainingSessions.size > 0
+    if (!hasRemainingSessions && preferences().stopInstanceOnLastSessionDelete) {
+      log.info(`Stopping instance ${instanceId} because last session was deleted`)
+      void stopInstance(instanceId).catch((error) => {
+        log.error("Failed to stop instance after last session delete:", error)
       })
     }
   } catch (error) {

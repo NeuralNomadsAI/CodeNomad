@@ -18,6 +18,7 @@ import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { startReleaseMonitor } from "./releases/release-monitor"
+import { cleanupOrphanedWorkspaces } from "./workspaces/pid-registry"
 
 const require = createRequire(import.meta.url)
 
@@ -120,6 +121,9 @@ async function main() {
   const eventLogger = logger.child({ component: "events" })
 
   logger.info({ options }, "Starting CodeNomad CLI server")
+
+  // Clean up any orphaned workspace processes from previous crashes
+  cleanupOrphanedWorkspaces(workspaceLogger)
 
   const eventBus = new EventBus(eventLogger)
   const configStore = new ConfigStore(options.configPath, eventBus, configLogger)

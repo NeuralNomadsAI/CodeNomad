@@ -39,6 +39,7 @@ const PreferencesSchema = z.object({
   diagnosticsExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   showUsageMetrics: z.boolean().default(true),
   autoCleanupBlankSessions: z.boolean().default(true),
+  stopInstanceOnLastSessionDelete: z.boolean().default(false),
   listeningMode: z.enum(["local", "all"]).default("local"),
 
   modelDefaultsByAgent: z.record(ModelPreferenceSchema).default({}),

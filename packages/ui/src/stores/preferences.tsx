@@ -63,6 +63,7 @@ export interface Preferences {
   diagnosticsExpansion: ExpansionPreference
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
+  stopInstanceOnLastSessionDelete: boolean
   listeningMode: ListeningMode
 
   modelDefaultsByAgent: Record<string, ModelPreference>
@@ -101,6 +102,7 @@ const defaultPreferences: Preferences = {
   diagnosticsExpansion: "expanded",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
+  stopInstanceOnLastSessionDelete: false,
   listeningMode: "local",
 
   modelDefaultsByAgent: {},
@@ -150,6 +152,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultPreferences.diagnosticsExpansion,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultPreferences.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultPreferences.autoCleanupBlankSessions,
+    stopInstanceOnLastSessionDelete: sanitized.stopInstanceOnLastSessionDelete ?? defaultPreferences.stopInstanceOnLastSessionDelete,
     listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
 
     modelDefaultsByAgent,
@@ -378,6 +381,12 @@ function toggleAutoCleanupBlankSessions(): void {
   updatePreferences({ autoCleanupBlankSessions: nextValue })
 }
 
+function toggleStopInstanceOnLastSessionDelete(): void {
+  const nextValue = !preferences().stopInstanceOnLastSessionDelete
+  log.info("toggle stop instance on last session delete", { value: nextValue })
+  updatePreferences({ stopInstanceOnLastSessionDelete: nextValue })
+}
+
 function addRecentFolder(path: string): void {
   updateConfig((draft) => {
     draft.recentFolders = buildRecentFolderList(path, draft.recentFolders)
@@ -481,6 +490,7 @@ interface ConfigContextValue {
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
+  toggleStopInstanceOnLastSessionDelete: typeof toggleStopInstanceOnLastSessionDelete
 
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
@@ -517,6 +527,7 @@ const configContextValue: ConfigContextValue = {
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
+  toggleStopInstanceOnLastSessionDelete,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
@@ -575,6 +586,7 @@ export {
   toggleShowThinkingBlocks,
   toggleShowTimelineTools,
   toggleAutoCleanupBlankSessions,
+  toggleStopInstanceOnLastSessionDelete,
   toggleUsageMetrics,
   recentFolders,
   addRecentFolder,
