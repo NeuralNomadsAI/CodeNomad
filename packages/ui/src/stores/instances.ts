@@ -749,7 +749,7 @@ function startIdleInstanceChecker(): void {
     return // Already running
   }
   idleCheckInterval = setInterval(checkIdleInstances, IDLE_CHECK_INTERVAL_MS)
-  log.debug("Started idle instance checker")
+  log.info("Started idle instance checker")
 }
 
 /**
@@ -759,7 +759,7 @@ function stopIdleInstanceChecker(): void {
   if (idleCheckInterval) {
     clearInterval(idleCheckInterval)
     idleCheckInterval = null
-    log.debug("Stopped idle instance checker")
+    log.info("Stopped idle instance checker")
   }
 }
 
