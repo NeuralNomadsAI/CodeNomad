@@ -218,6 +218,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
+  const [collapsed, setCollapsed] = createSignal(false)
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
     const current = record()
@@ -395,101 +396,156 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
+  // Split items into primary (first content/reasoning) and collapsible children (tools, etc.)
+  const primaryItems = createMemo(() => {
+    const items = block()?.items ?? []
+    const result: MessageBlockItem[] = []
+    for (const item of items) {
+      if (item.type === "content" || item.type === "reasoning") {
+        result.push(item)
+        break
+      }
+    }
+    return result
+  })
+
+  const collapsibleItems = createMemo(() => {
+    const items = block()?.items ?? []
+    let foundPrimary = false
+    const result: MessageBlockItem[] = []
+    for (const item of items) {
+      if (!foundPrimary && (item.type === "content" || item.type === "reasoning")) {
+        foundPrimary = true
+        continue
+      }
+      if (foundPrimary || item.type === "tool" || item.type === "step-finish") {
+        result.push(item)
+      }
+    }
+    return result
+  })
+
+  const hasCollapsibleContent = createMemo(() => collapsibleItems().length > 0)
+
+  const toggleCollapsed = () => setCollapsed((prev) => !prev)
+
+  const renderItem = (item: MessageBlockItem) => (
+    <Switch>
+      <Match when={item.type === "content"}>
+        <MessageItem
+          record={(item as ContentDisplayItem).record}
+          messageInfo={(item as ContentDisplayItem).messageInfo}
+          parts={(item as ContentDisplayItem).parts}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+          isQueued={(item as ContentDisplayItem).isQueued}
+          showAgentMeta={(item as ContentDisplayItem).showAgentMeta}
+          onRevert={props.onRevert}
+          onFork={props.onFork}
+          onContentRendered={props.onContentRendered}
+        />
+      </Match>
+      <Match when={item.type === "tool"}>
+        {(() => {
+          const toolItem = item as ToolDisplayItem
+          const toolState = toolItem.toolPart.state as ToolState | undefined
+          const hasToolState =
+            Boolean(toolState) && (isToolStateRunning(toolState) || isToolStateCompleted(toolState) || isToolStateError(toolState))
+          const taskSessionId = hasToolState ? extractTaskSessionId(toolState) : ""
+          const taskLocation = taskSessionId ? findTaskSessionLocation(taskSessionId) : null
+          const handleGoToTaskSession = (event: MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (!taskLocation) return
+            navigateToTaskSession(taskLocation)
+          }
+
+          return (
+            <div class="tool-call-message" data-key={toolItem.key}>
+              <div class="tool-call-header-label">
+                <div class="tool-call-header-meta">
+                  <span class="tool-call-icon">{TOOL_ICON}</span>
+                  <span>Tool Call</span>
+                  <span class="tool-name">{toolItem.toolPart.tool || "unknown"}</span>
+                </div>
+                <Show when={taskSessionId}>
+                  <button
+                    class="tool-call-header-button"
+                    type="button"
+                    disabled={!taskLocation}
+                    onClick={handleGoToTaskSession}
+                    title={!taskLocation ? "Session not available yet" : "Go to session"}
+                  >
+                    Go to Session
+                  </button>
+                </Show>
+              </div>
+              <ToolCall
+                toolCall={toolItem.toolPart}
+                toolCallId={toolItem.key}
+                messageId={toolItem.messageId}
+                messageVersion={toolItem.messageVersion}
+                partVersion={toolItem.partVersion}
+                instanceId={props.instanceId}
+                sessionId={props.sessionId}
+                onContentRendered={props.onContentRendered}
+              />
+            </div>
+          )
+        })()}
+      </Match>
+      <Match when={item.type === "step-start"}>
+        <StepCard kind="start" part={(item as StepDisplayItem).part} messageInfo={(item as StepDisplayItem).messageInfo} showAgentMeta />
+      </Match>
+      <Match when={item.type === "step-finish"}>
+        <StepCard
+          kind="finish"
+          part={(item as StepDisplayItem).part}
+          messageInfo={(item as StepDisplayItem).messageInfo}
+          showUsage={props.showUsageMetrics()}
+          borderColor={(item as StepDisplayItem).accentColor}
+        />
+      </Match>
+      <Match when={item.type === "reasoning"}>
+        <ReasoningCard
+          part={(item as ReasoningDisplayItem).part}
+          messageInfo={(item as ReasoningDisplayItem).messageInfo}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+          showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
+          defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
+        />
+      </Match>
+    </Switch>
+  )
+
   return (
     <Show when={block()} keyed>
       {(resolvedBlock) => (
         <div class="message-stream-block" data-message-id={resolvedBlock.record.id}>
-          <For each={resolvedBlock.items}>
-            {(item) => (
-              <Switch>
-                <Match when={item.type === "content"}>
-                  <MessageItem
-                    record={(item as ContentDisplayItem).record}
-                    messageInfo={(item as ContentDisplayItem).messageInfo}
-                    parts={(item as ContentDisplayItem).parts}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    isQueued={(item as ContentDisplayItem).isQueued}
-                    showAgentMeta={(item as ContentDisplayItem).showAgentMeta}
-                    onRevert={props.onRevert}
-                    onFork={props.onFork}
-                    onContentRendered={props.onContentRendered}
-                  />
-                </Match>
-                <Match when={item.type === "tool"}>
-                  {(() => {
-                    const toolItem = item as ToolDisplayItem
-                    const toolState = toolItem.toolPart.state as ToolState | undefined
-                    const hasToolState =
-                      Boolean(toolState) && (isToolStateRunning(toolState) || isToolStateCompleted(toolState) || isToolStateError(toolState))
-                    const taskSessionId = hasToolState ? extractTaskSessionId(toolState) : ""
-                    const taskLocation = taskSessionId ? findTaskSessionLocation(taskSessionId) : null
-                    const handleGoToTaskSession = (event: MouseEvent) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      if (!taskLocation) return
-                      navigateToTaskSession(taskLocation)
-                    }
+          {/* Primary message content */}
+          <For each={primaryItems()}>{(item) => renderItem(item)}</For>
 
-                    return (
-                      <div class="tool-call-message" data-key={toolItem.key}>
-                        <div class="tool-call-header-label">
-                          <div class="tool-call-header-meta">
-                            <span class="tool-call-icon">{TOOL_ICON}</span>
-                            <span>Tool Call</span>
-                            <span class="tool-name">{toolItem.toolPart.tool || "unknown"}</span>
-                          </div>
-                          <Show when={taskSessionId}>
-                            <button
-                              class="tool-call-header-button"
-                              type="button"
-                              disabled={!taskLocation}
-                              onClick={handleGoToTaskSession}
-                              title={!taskLocation ? "Session not available yet" : "Go to session"}
-                            >
-                              Go to Session
-                            </button>
-                          </Show>
-                        </div>
-                        <ToolCall
-                          toolCall={toolItem.toolPart}
-                          toolCallId={toolItem.key}
-                          messageId={toolItem.messageId}
-                          messageVersion={toolItem.messageVersion}
-                          partVersion={toolItem.partVersion}
-                          instanceId={props.instanceId}
-                          sessionId={props.sessionId}
-                          onContentRendered={props.onContentRendered}
-                        />
-                      </div>
-                    )
-                  })()}
-                </Match>
-                <Match when={item.type === "step-start"}>
-                  <StepCard kind="start" part={(item as StepDisplayItem).part} messageInfo={(item as StepDisplayItem).messageInfo} showAgentMeta />
-                </Match>
-                <Match when={item.type === "step-finish"}>
-                  <StepCard
-                    kind="finish"
-                    part={(item as StepDisplayItem).part}
-                    messageInfo={(item as StepDisplayItem).messageInfo}
-                    showUsage={props.showUsageMetrics()}
-                    borderColor={(item as StepDisplayItem).accentColor}
-                  />
-                </Match>
-                <Match when={item.type === "reasoning"}>
-                  <ReasoningCard
-                    part={(item as ReasoningDisplayItem).part}
-                    messageInfo={(item as ReasoningDisplayItem).messageInfo}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
-                    defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
-                  />
-                </Match>
-              </Switch>
-            )}
-          </For>
+          {/* Collapse toggle for tool calls */}
+          <Show when={hasCollapsibleContent()}>
+            <button
+              type="button"
+              class="message-block-collapse-toggle"
+              onClick={toggleCollapsed}
+              aria-expanded={!collapsed()}
+              aria-label={collapsed() ? "Expand tool calls" : "Collapse tool calls"}
+            >
+              <span class="message-block-collapse-icon">{collapsed() ? "▶" : "▼"}</span>
+              <span class="message-block-collapse-label">
+                {collapsed() ? `Show ${collapsibleItems().length} tool call${collapsibleItems().length === 1 ? "" : "s"}` : "Hide tool calls"}
+              </span>
+            </button>
+          </Show>
+
+          {/* Collapsible tool calls and secondary items */}
+          <Show when={!collapsed()}>
+            <For each={collapsibleItems()}>{(item) => renderItem(item)}</For>
+          </Show>
         </div>
       )}
     </Show>
