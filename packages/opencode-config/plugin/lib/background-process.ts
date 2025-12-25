@@ -1,3 +1,4 @@
+import path from "path"
 import { tool } from "@opencode-ai/plugin/tool"
 
 type BackgroundProcess = {
@@ -16,7 +17,16 @@ type CodeNomadConfig = {
   baseUrl: string
 }
 
-export function createBackgroundProcessTools(config: CodeNomadConfig) {
+type BackgroundProcessOptions = {
+  baseDir: string
+}
+
+type ParsedCommand = {
+  head: string
+  args: string[]
+}
+
+export function createBackgroundProcessTools(config: CodeNomadConfig, options: BackgroundProcessOptions) {
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
     const base = config.baseUrl.replace(/\/+$/, "")
@@ -52,6 +62,7 @@ export function createBackgroundProcessTools(config: CodeNomadConfig) {
         command: tool.schema.string().describe("Shell command to run in the workspace"),
       },
       async execute(args) {
+        assertCommandWithinBase(args.command, options.baseDir)
         const process = await request<BackgroundProcess>("", {
           method: "POST",
           body: JSON.stringify({ title: args.title, command: args.command }),
@@ -136,6 +147,144 @@ export function createBackgroundProcessTools(config: CodeNomadConfig) {
       },
     }),
   }
+}
+
+const FILE_COMMANDS = new Set(["cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown"])
+const EXPANSION_CHARS = /[~*$?\[\]`$]/
+
+function assertCommandWithinBase(command: string, baseDir: string) {
+  const normalizedBase = path.resolve(baseDir)
+  const commands = splitCommands(command)
+
+  for (const item of commands) {
+    if (!FILE_COMMANDS.has(item.head)) {
+      continue
+    }
+
+    for (const arg of item.args) {
+      if (!arg) continue
+      if (arg.startsWith("-") || (item.head === "chmod" && arg.startsWith("+"))) continue
+
+      const literalArg = unquote(arg)
+      if (EXPANSION_CHARS.test(literalArg)) {
+        throw new Error(`Background process commands may only reference paths within ${normalizedBase}.`)
+      }
+
+      const resolved = path.isAbsolute(literalArg) ? path.normalize(literalArg) : path.resolve(normalizedBase, literalArg)
+      if (!isWithinBase(normalizedBase, resolved)) {
+        throw new Error(`Background process commands may only reference paths within ${normalizedBase}.`)
+      }
+    }
+  }
+}
+
+function splitCommands(command: string): ParsedCommand[] {
+  const tokens = tokenize(command)
+  const commands: ParsedCommand[] = []
+  let current: string[] = []
+
+  for (const token of tokens) {
+    if (isSeparator(token)) {
+      if (current.length > 0) {
+        commands.push({ head: current[0], args: current.slice(1) })
+        current = []
+      }
+      continue
+    }
+    current.push(token)
+  }
+
+  if (current.length > 0) {
+    commands.push({ head: current[0], args: current.slice(1) })
+  }
+
+  return commands
+}
+
+function tokenize(input: string): string[] {
+  const tokens: string[] = []
+  let current = ""
+  let quote: "'" | '"' | null = null
+  let escape = false
+
+  const flush = () => {
+    if (current.length > 0) {
+      tokens.push(current)
+      current = ""
+    }
+  }
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]
+
+    if (escape) {
+      current += char
+      escape = false
+      continue
+    }
+
+    if (char === "\\" && quote !== "'") {
+      escape = true
+      continue
+    }
+
+    if (quote) {
+      current += char
+      if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char
+      current += char
+      continue
+    }
+
+    if (char === " " || char === "\n" || char === "\t") {
+      flush()
+      continue
+    }
+
+    if (char === "|" || char === "&" || char === ";") {
+      flush()
+      const next = input[index + 1]
+      if ((char === "|" || char === "&") && next === char) {
+        tokens.push(char + next)
+        index += 1
+      } else {
+        tokens.push(char)
+      }
+      continue
+    }
+
+    current += char
+  }
+
+  flush()
+  return tokens
+}
+
+function isSeparator(token: string) {
+  return token === "|" || token === "||" || token === "&&" || token === ";" || token === "&"
+}
+
+function unquote(value: string) {
+  if (value.length >= 2) {
+    const first = value[0]
+    const last = value[value.length - 1]
+    if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
+      return value.slice(1, -1)
+    }
+  }
+  return value
+}
+
+function isWithinBase(baseDir: string, target: string) {
+  const relative = path.relative(baseDir, target)
+  if (!relative) return true
+  return !relative.startsWith("..") && !path.isAbsolute(relative)
 }
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
