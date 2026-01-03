@@ -745,24 +745,17 @@ export default function PromptInput(props: PromptInputProps) {
     let commandModeActive = false
     let commandText = ""
 
-    // Case 1: Already in shell mode, user types / at the end
+    // Case 1: Already in shell mode, user types / anywhere
     if (mode() === "shell") {
-      if (value.startsWith("!") && cursorPos === value.length) {
-        const lastChar = value.slice(-1)
-        if (lastChar === "/") {
-          // User just typed / in shell mode - show all commands
-          commandModeActive = true
-          commandText = ""
-          console.log("[PromptInput] Command mode via shell+/, query:", commandText)
-        } else {
-          // Check if we already had / and user is typing query
-          const lastSlashIndex = value.lastIndexOf("/")
-          if (lastSlashIndex !== -1) {
-            commandModeActive = true
-            commandText = value.substring(lastSlashIndex + 1, cursorPos)
-            console.log("[PromptInput] Command mode (shell+query), query:", commandText)
-          }
-        }
+      // In shell mode, look for / character to trigger command suggestions
+      const lastSlashIndex = value.lastIndexOf("/")
+      if (lastSlashIndex !== -1 && cursorPos > lastSlashIndex) {
+        // Found a /, extract query after it (up to cursor position)
+        commandModeActive = true
+        commandText = value.substring(lastSlashIndex + 1, cursorPos)
+        console.log("[PromptInput] ✓ Command mode (shell+/), query:", commandText || "(empty - showing all)")
+        console.log("[PromptInput]   Available commands:", getCommands(props.instanceId).length)
+        console.log("[PromptInput]   Filtered commands:", filterCommands(commandText, getCommands(props.instanceId)).length)
       }
     } else {
       // Case 2: Normal mode, check for !/ sequence
@@ -779,7 +772,9 @@ export default function PromptInput(props: PromptInputProps) {
         ) {
           commandModeActive = true
           commandText = afterExclamation.substring(1) // Strip / from !/query
-          console.log("[PromptInput] Command mode via !/, query:", commandText)
+          console.log("[PromptInput] ✓ Command mode via !/, query:", commandText)
+          console.log("[PromptInput]   Available commands:", getCommands(props.instanceId).length)
+          console.log("[PromptInput]   Filtered commands:", filterCommands(commandText, getCommands(props.instanceId)).length)
         }
       }
     }

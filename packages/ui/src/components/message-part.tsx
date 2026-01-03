@@ -141,6 +141,7 @@ interface MessagePartProps {
           toolCallId={props.part?.id}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          onOpenPreview={props.onOpenPreview}
         />
       </Match>
 
