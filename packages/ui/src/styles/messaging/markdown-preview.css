@@ -380,6 +380,13 @@
   line-height: 1.5;
 }
 
+.markdown-preview-error-hint {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  font-style: italic;
+}
+
 /**
  * Empty state
  * Message when no content is available

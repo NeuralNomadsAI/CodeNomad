@@ -1,5 +1,9 @@
 import { createSignal, Accessor } from "solid-js"
 import { validateMarkdownPath } from "../file-path-validator"
+import { getActiveInstance } from "../../stores/instances"
+import { getLogger } from "../logger"
+
+const log = getLogger("api")
 
 /**
  * Hook for fetching and caching markdown file previews
@@ -24,7 +28,7 @@ export function useMarkdownPreview() {
 
   /**
    * Fetches markdown file content for preview
-   * Uses cache to avoid duplicate network requests
+   * Uses server API to fetch actual file content from workspace
    *
    * @param filePath - Path to markdown file
    */
@@ -38,10 +42,20 @@ export function useMarkdownPreview() {
     }
 
     const sanitized = validation.sanitized
+    const instance = getActiveInstance()
+    if (!instance) {
+      setError("No active instance")
+      setContent(null)
+      return
+    }
+
+    // Instance ID is the workspace ID (1:1 mapping)
+    const workspaceId = instance.id
 
     // Check cache first
-    if (cache.has(sanitized)) {
-      const cachedContent = cache.get(sanitized)
+    const cacheKey = `${workspaceId}:${sanitized}`
+    if (cache.has(cacheKey)) {
+      const cachedContent = cache.get(cacheKey)
       if (cachedContent) {
         setContent(cachedContent)
         setError(null)
@@ -54,23 +68,23 @@ export function useMarkdownPreview() {
     setError(null)
 
     try {
-      // MVP: Mock implementation (placeholder)
-      // In production, this would call: GET /api/files/preview?path={sanitized}
-      const mockContent = await fetchMarkdownContent(sanitized)
+      // Call server API to fetch actual file content
+      const fileContent = await fetchMarkdownContentFromServer(workspaceId, sanitized)
 
       // Update cache
       if (cache.size >= MAX_CACHE_SIZE) {
         const firstKey = cache.keys().next().value as string
         cache.delete(firstKey)
       }
-      cache.set(sanitized, mockContent)
+      cache.set(cacheKey, fileContent)
 
-      setContent(mockContent)
+      setContent(fileContent)
       setLastFilePath(sanitized)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to fetch markdown file"
       setError(errorMsg)
       setContent(null)
+      log.error("Failed to fetch markdown file", { filePath: sanitized, error: err })
     } finally {
       setIsLoading(false)
     }
@@ -106,83 +120,43 @@ export function useMarkdownPreview() {
 }
 
 /**
- * Fetches markdown file content
- * MVP: Returns mock content
- * TODO: Replace with actual server API call
+ * Fetches markdown file content from server
+ * Calls workspace API to read file from instance workspace
  *
+ * @param workspaceId - Workspace ID (same as instance ID)
  * @param filePath - Validated and sanitized file path
  * @returns Markdown content as string
  */
-async function fetchMarkdownContent(filePath: string): Promise<string> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 300))
+async function fetchMarkdownContentFromServer(workspaceId: string, filePath: string): Promise<string> {
+  try {
+    const response = await fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(filePath)}`
+    )
 
-  // MVP: Mock content - in production replace with real API call
-  // const response = await fetch(`/api/files/preview?path=${encodeURIComponent(filePath)}`)
-  // if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`)
-  // return await response.text()
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`File not found: ${filePath}`)
+      }
+      if (response.status === 400) {
+        const errorData = (await response.json()) as { error?: string }
+        throw new Error(errorData?.error || `Invalid file path: ${filePath}`)
+      }
+      throw new Error(`Failed to fetch file (${response.status}): ${response.statusText}`)
+    }
 
-  // Mock data for MVP
-  const mockFiles: Record<string, string> = {
-    "README.md": `# README
+    const data = (await response.json()) as {
+      workspaceId: string
+      relativePath: string
+      contents: string
+    }
 
-This is a sample markdown preview.
-
-## Features
-- Markdown rendering
-- Code syntax highlighting
-- Theme support
-
-## Installation
-\`\`\`bash
-npm install
-\`\`\`
-
-## Usage
-See the documentation for details.`,
-
-    "docs/guide.md": `# Getting Started Guide
-
-Welcome to the guide!
-
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-
-### Step 1: Setup
-\`\`\`bash
-npm install
-npm run dev
-\`\`\`
-
-### Step 2: Configure
-Create a config file...`,
-
-    "docs/api.md": `# API Reference
-
-## Endpoints
-
-### GET /api/files/preview
-Fetches preview of a markdown file.
-
-**Parameters:**
-- \`path\` (string): File path
-
-**Response:**
-\`\`\`json
-{
-  "content": "# Markdown content...",
-  "path": "path/to/file.md"
-}
-\`\`\``,
+    return data.contents
+  } catch (err) {
+    if (err instanceof Error) {
+      throw err
+    }
+    throw new Error("Unexpected error fetching file content")
   }
-
-  const content = mockFiles[filePath]
-  if (!content) {
-    throw new Error(`File not found: ${filePath}`)
-  }
-
-  return content
 }
 
 /**

@@ -64,7 +64,23 @@ interface CommandSuggestionsProps {
  */
 const CommandSuggestions: Component<CommandSuggestionsProps> = (props) => {
   const maxVisible = () => props.maxVisibleItems ?? 8
-  const filteredCommands = () => filterCommands(props.searchQuery(), props.commands())
+  const commands = () => props.commands()
+
+  // Debug logging
+  createEffect(() => {
+    if (props.isOpen()) {
+      console.log("[CommandSuggestions] Panel is OPEN")
+      console.log("[CommandSuggestions] Total commands:", commands().length)
+      console.log("[CommandSuggestions] Search query:", props.searchQuery())
+      console.log("[CommandSuggestions] Filtered commands:", filteredCommands().length)
+    }
+  })
+
+  const filteredCommands = () => {
+    const filtered = filterCommands(props.searchQuery(), commands())
+    console.log("[CommandSuggestions] Filter result:", filtered.map((c) => c.name).join(", "))
+    return filtered
+  }
   const hasResults = () => filteredCommands().length > 0
 
   let containerRef: HTMLDivElement | undefined

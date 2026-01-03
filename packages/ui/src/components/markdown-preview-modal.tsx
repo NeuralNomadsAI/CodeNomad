@@ -111,6 +111,9 @@ const MarkdownPreviewModal: Component<MarkdownPreviewModalProps> = (props) => {
                   <div class="markdown-preview-error-content">
                     <h3>Could not load file</h3>
                     <p>{props.error}</p>
+                    <p class="markdown-preview-error-hint">
+                      The file {props.filePath} could not be read from the workspace.
+                    </p>
                   </div>
                 </div>
               </Show>
