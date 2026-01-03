@@ -12,7 +12,7 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, TerminalSquare, Trash2, XOctagon, FolderTree } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Divider from "@suid/material/Divider"
@@ -50,6 +50,7 @@ import InstanceServiceStatus from "../instance-service-status"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import CommandPalette from "../command-palette"
+import FolderTreeBrowser from "../folder-tree-browser"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
@@ -142,6 +143,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   ])
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
+  const [folderTreeBrowserOpen, setFolderTreeBrowserOpen] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -1308,6 +1310,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <span class="connection-status-shortcut-hint">
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
+
+                <Show when={!showingInfoView()}>
+                  <button
+                    type="button"
+                    class="connection-status-button px-2 py-0.5 text-xs flex items-center gap-1"
+                    onClick={() => setFolderTreeBrowserOpen(true)}
+                    aria-label="Browse workspace files"
+                    style={{ flex: "0 0 auto", width: "auto" }}
+                  >
+                    <FolderTree size={14} />
+                    Files
+                  </button>
+                </Show>
               </div>
 
 
@@ -1423,6 +1438,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}
+      />
+
+      <FolderTreeBrowser
+        isOpen={folderTreeBrowserOpen()}
+        workspaceId={props.instance.id}
+        workspaceName={props.instance.folder}
+        onClose={() => setFolderTreeBrowserOpen(false)}
       />
 
       <BackgroundProcessOutputDialog
