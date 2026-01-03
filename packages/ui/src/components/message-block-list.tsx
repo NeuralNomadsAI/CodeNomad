@@ -23,6 +23,7 @@ interface MessageBlockListProps {
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  onOpenPreview?: (filePath: string) => void
   setBottomSentinel: (element: HTMLDivElement | null) => void
   suspendMeasurements?: () => boolean
 }
@@ -54,6 +55,7 @@ export default function MessageBlockList(props: MessageBlockListProps) {
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={props.onContentRendered}
+              onOpenPreview={props.onOpenPreview}
             />
           </VirtualItem>
         )}

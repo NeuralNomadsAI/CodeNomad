@@ -1,0 +1,554 @@
+/**
+ * Markdown Preview Styling
+ * Handles modal dialog and icon button for markdown file preview
+ */
+
+/* ======================================
+   MARKDOWN PREVIEW ICON BUTTON
+   ====================================== */
+
+/**
+ * Book icon button positioned on message headers
+ * Non-intrusive, clickable icon for opening file preview
+ */
+.markdown-preview-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary, #6b7280);
+  transition: all 150ms ease-in-out;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.markdown-preview-icon-btn:hover {
+  background: var(--bg-hover, #f3f4f6);
+  border-color: var(--border-default, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+
+.markdown-preview-icon-btn:active {
+  background: var(--bg-pressed, #e5e7eb);
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-icon-btn {
+    color: var(--text-secondary, #9ca3af);
+  }
+
+  .markdown-preview-icon-btn:hover {
+    background: var(--bg-hover, #374151);
+    border-color: var(--border-default, #4b5563);
+    color: var(--text-primary, #f3f4f6);
+  }
+
+  .markdown-preview-icon-btn:active {
+    background: var(--bg-pressed, #4b5563);
+  }
+}
+
+/* Icon SVG styling */
+.markdown-preview-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* ======================================
+   MARKDOWN PREVIEW MODAL
+   ====================================== */
+
+/**
+ * Modal overlay (dark background when modal is open)
+ * Kobalte Dialog.Overlay handles this class automatically
+ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 40;
+  animation: fadeIn 150ms ease-in-out;
+}
+
+/**
+ * Modal content container
+ * Centers dialog in viewport with max width constraint
+ */
+.markdown-preview-modal-content {
+  position: relative;
+  background: var(--bg-base, #ffffff);
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 200ms ease-out;
+  z-index: 50;
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-content {
+    background: var(--bg-elevated, #1f2937);
+    border-color: var(--border-subtle, #374151);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/**
+ * Modal header
+ * Displays filename and close button, sticky at top
+ */
+.markdown-preview-modal-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-default, #e5e7eb);
+  background: var(--bg-base, #ffffff);
+  gap: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-header {
+    background: var(--bg-elevated, #1f2937);
+    border-bottom-color: var(--border-subtle, #374151);
+  }
+}
+
+/**
+ * Title container (filename + path)
+ * Flexible to grow and accommodate long filenames
+ */
+.markdown-preview-modal-title-container {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/**
+ * Modal title (filename)
+ * Large, prominent text for file being previewed
+ */
+.markdown-preview-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-title {
+    color: var(--text-primary, #f3f4f6);
+  }
+}
+
+/**
+ * File path subtitle
+ * Smaller, subtle text showing full path
+ */
+.markdown-preview-modal-path {
+  font-size: 12px;
+  color: var(--text-secondary, #6b7280);
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "Monaco", "Courier New", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-path {
+    color: var(--text-secondary, #9ca3af);
+  }
+}
+
+/**
+ * Close button (X icon)
+ * Top-right corner, easily accessible
+ */
+.markdown-preview-modal-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary, #6b7280);
+  transition: all 150ms ease-in-out;
+  flex-shrink: 0;
+}
+
+.markdown-preview-modal-close-btn:hover {
+  background: var(--bg-hover, #f3f4f6);
+  border-color: var(--border-default, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-close-btn {
+    color: var(--text-secondary, #9ca3af);
+  }
+
+  .markdown-preview-modal-close-btn:hover {
+    background: var(--bg-hover, #374151);
+    border-color: var(--border-subtle, #4b5563);
+    color: var(--text-primary, #f3f4f6);
+  }
+}
+
+.markdown-preview-modal-close-btn svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/**
+ * Modal body
+ * Main content area, scrollable
+ */
+.markdown-preview-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  background: var(--bg-base, #ffffff);
+
+  /* Custom scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default, #d1d5db) transparent;
+}
+
+.markdown-preview-modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.markdown-preview-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.markdown-preview-modal-body::-webkit-scrollbar-thumb {
+  background: var(--border-default, #d1d5db);
+  border-radius: 4px;
+  border: 2px solid var(--bg-base, #ffffff);
+}
+
+.markdown-preview-modal-body::-webkit-scrollbar-thumb:hover {
+  background: var(--border-subtle, #9ca3af);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-body {
+    background: var(--bg-elevated, #1f2937);
+    scrollbar-color: var(--border-subtle, #4b5563) transparent;
+  }
+
+  .markdown-preview-modal-body::-webkit-scrollbar-thumb {
+    border-color: var(--bg-elevated, #1f2937);
+    background: var(--border-subtle, #4b5563);
+  }
+
+  .markdown-preview-modal-body::-webkit-scrollbar-thumb:hover {
+    background: var(--border-default, #6b7280);
+  }
+}
+
+/**
+ * Rendered markdown content
+ * Applies GitHub markdown styling with proper spacing
+ */
+.markdown-preview-rendered {
+  width: 100%;
+  word-break: break-word;
+}
+
+/**
+ * Loading state
+ * Centered spinner with loading message
+ */
+.markdown-preview-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 200px;
+  color: var(--text-secondary, #6b7280);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-loading {
+    color: var(--text-secondary, #9ca3af);
+  }
+}
+
+/**
+ * Animated spinner
+ * Rotating circle animation
+ */
+.markdown-preview-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-default, #e5e7eb);
+  border-top-color: var(--accent-primary, #3b82f6);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-spinner {
+    border-color: var(--border-subtle, #4b5563);
+    border-top-color: var(--accent-primary, #60a5fa);
+  }
+}
+
+/**
+ * Error state
+ * Warning icon with error message
+ */
+.markdown-preview-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-error-light, #fef2f2);
+  border: 1px solid var(--border-error, #fecaca);
+  border-radius: 8px;
+  min-height: 100px;
+  color: var(--text-error, #7f1d1d);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-error {
+    background: var(--bg-error-light, #7f1d1d);
+    border-color: var(--border-error, #991b1b);
+    color: var(--text-error, #fecaca);
+  }
+}
+
+/**
+ * Error icon
+ * Warning symbol, large and visible
+ */
+.markdown-preview-error-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/**
+ * Error content
+ * Heading and error message description
+ */
+.markdown-preview-error-content {
+  flex: 1;
+}
+
+.markdown-preview-error-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.markdown-preview-error-content p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/**
+ * Empty state
+ * Message when no content is available
+ */
+.markdown-preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-secondary, #6b7280);
+  font-style: italic;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-empty {
+    color: var(--text-secondary, #9ca3af);
+  }
+}
+
+/**
+ * Modal footer
+ * Attribution and metadata
+ */
+.markdown-preview-modal-footer {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-default, #e5e7eb);
+  background: var(--bg-subtle, #f9fafb);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-footer {
+    background: var(--bg-subtle, #111827);
+    border-top-color: var(--border-subtle, #374151);
+  }
+}
+
+/**
+ * Attribution text
+ * Credit to github-markdown-css library
+ */
+.markdown-preview-modal-attribution {
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary, #6b7280);
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-preview-modal-attribution {
+    color: var(--text-secondary, #9ca3af);
+  }
+}
+
+.markdown-preview-modal-attribution a {
+  color: var(--accent-primary, #3b82f6);
+  text-decoration: none;
+  transition: opacity 150ms ease-in-out;
+}
+
+.markdown-preview-modal-attribution a:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+/* ======================================
+   ANIMATIONS
+   ====================================== */
+
+/**
+ * Fade in animation for overlay
+ * Smooth appearance of dark background
+ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/**
+ * Slide up animation for modal content
+ * Content slides up from bottom with slight scale
+ */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/**
+ * Spin animation for loading spinner
+ * Continuous rotation
+ */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ======================================
+   RESPONSIVE ADJUSTMENTS
+   ====================================== */
+
+/**
+ * Tablet and smaller screens
+ * Adjust modal size and spacing
+ */
+@media (max-width: 768px) {
+  .markdown-preview-modal-content {
+    max-width: calc(100% - 32px);
+    max-height: 85vh;
+    border-radius: 8px;
+  }
+
+  .markdown-preview-modal-header {
+    padding: 12px 16px;
+  }
+
+  .markdown-preview-modal-body {
+    padding: 16px;
+  }
+
+  .markdown-preview-modal-title {
+    font-size: 16px;
+  }
+
+  .markdown-preview-modal-path {
+    font-size: 11px;
+  }
+}
+
+/**
+ * Small mobile devices
+ * Further optimize for small screens
+ */
+@media (max-width: 480px) {
+  .markdown-preview-modal-content {
+    max-width: calc(100% - 16px);
+    max-height: 80vh;
+    border-radius: 6px;
+  }
+
+  .markdown-preview-modal-header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .markdown-preview-modal-title {
+    font-size: 14px;
+  }
+
+  .markdown-preview-modal-close-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .markdown-preview-modal-body {
+    padding: 12px;
+  }
+}

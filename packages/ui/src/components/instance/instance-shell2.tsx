@@ -78,6 +78,7 @@ interface InstanceShellProps {
   handleSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onExecuteCommand: (command: Command) => void
   tabBarOffset: number
+  onOpenPreview?: (filePath: string) => Promise<void> | void
 }
 
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
@@ -1388,6 +1389,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                          onOpenPreview={props.onOpenPreview}
                           isActive={isActive()}
                         />
                       </div>
