@@ -128,6 +128,10 @@
   border-color: var(--border-base);
   background-color: var(--surface-base);
   color: var(--text-primary);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .connection-status-button:hover {

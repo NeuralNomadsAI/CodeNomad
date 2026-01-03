@@ -81,6 +81,12 @@
   cursor: pointer;
   transition: all 0.2s ease;
   animation: web-permission-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+  z-index: 10;
+  min-width: 2rem;
+  min-height: 2rem;
+  max-width: 2rem;
+  max-height: 2rem;
 }
 
 .permission-indicator-button:hover {
@@ -112,6 +118,15 @@
   }
   50% {
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-warning) 20%, transparent);
+  }
+}
+
+/* Ensure button visibility in web toolbars */
+@supports (display: flex) {
+  .permission-indicator-button {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
