@@ -51,6 +51,8 @@ import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import CommandPalette from "../command-palette"
 import FolderTreeBrowser from "../folder-tree-browser"
+import PermissionNotificationBanner from "../permission-notification-banner"
+import PermissionApprovalModal from "../permission-approval-modal"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
@@ -144,6 +146,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [folderTreeBrowserOpen, setFolderTreeBrowserOpen] = createSignal(false)
+  const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -1323,6 +1326,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     Files
                   </button>
                 </Show>
+
+                <PermissionNotificationBanner
+                  instanceId={props.instance.id}
+                  onClick={() => setPermissionModalOpen(true)}
+                />
               </div>
 
 
@@ -1445,6 +1453,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         workspaceId={props.instance.id}
         workspaceName={props.instance.folder}
         onClose={() => setFolderTreeBrowserOpen(false)}
+      />
+
+      <PermissionApprovalModal
+        instanceId={props.instance.id}
+        isOpen={permissionModalOpen()}
+        onClose={() => setPermissionModalOpen(false)}
       />
 
       <BackgroundProcessOutputDialog
