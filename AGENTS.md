@@ -13,6 +13,7 @@
 - `npm run build:ui` - Build UI only
 - `npm run build:tauri` - Build Tauri app
 - `npm run build:mac-x64` - Build macOS x64 Electron binary
+- `npm run build:mac-arm64` - Build macOS for ARMx64
 - `npm run build:binaries` - Build all platform binaries (requires cross-compilation setup)
 
 **Local builds are macOS-only**. For other platforms, use CI/CD or set up cross-compilation.

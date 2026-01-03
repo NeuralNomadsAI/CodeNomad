@@ -16,6 +16,7 @@
     "build:tauri": "npm run build --workspace @codenomad/tauri-app",
     "build:ui": "npm run build --workspace @codenomad/ui",
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
+    "build:mac-arm64": "npm run build:mac-arm64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
     "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version"
@@ -23,5 +24,9 @@
   "dependencies": {
     "7zip-bin": "^5.2.0",
     "google-auth-library": "^10.5.0"
+  },
+  "devDependencies": {
+    "app-builder-bin": "^4.2.0",
+    "vite": "^7.3.0"
   }
 }

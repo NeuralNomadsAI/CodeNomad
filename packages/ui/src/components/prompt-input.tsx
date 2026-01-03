@@ -741,23 +741,46 @@ export default function PromptInput(props: PromptInputProps) {
     setShowPicker(false)
     setAtPosition(null)
 
-    // Command suggestions mode: !/
-    const lastExclamationIndex = value.lastIndexOf("!")
+    // Command suggestions mode: !/ OR just / when in shell mode
     let commandModeActive = false
     let commandText = ""
 
-    if (lastExclamationIndex !== -1) {
-      const afterExclamation = value.substring(lastExclamationIndex + 1, cursorPos)
-      const hasSpace = afterExclamation.includes(" ") || afterExclamation.includes("\n")
+    // Case 1: Already in shell mode, user types / at the end
+    if (mode() === "shell") {
+      if (value.startsWith("!") && cursorPos === value.length) {
+        const lastChar = value.slice(-1)
+        if (lastChar === "/") {
+          // User just typed / in shell mode - show all commands
+          commandModeActive = true
+          commandText = ""
+          console.log("[PromptInput] Command mode via shell+/, query:", commandText)
+        } else {
+          // Check if we already had / and user is typing query
+          const lastSlashIndex = value.lastIndexOf("/")
+          if (lastSlashIndex !== -1) {
+            commandModeActive = true
+            commandText = value.substring(lastSlashIndex + 1, cursorPos)
+            console.log("[PromptInput] Command mode (shell+query), query:", commandText)
+          }
+        }
+      }
+    } else {
+      // Case 2: Normal mode, check for !/ sequence
+      const lastExclamationIndex = value.lastIndexOf("!")
+      if (lastExclamationIndex !== -1) {
+        const afterExclamation = value.substring(lastExclamationIndex + 1, cursorPos)
+        const hasSpace = afterExclamation.includes(" ") || afterExclamation.includes("\n")
 
-      if (
-        !hasSpace &&
-        cursorPos === lastExclamationIndex + afterExclamation.length + 1 &&
-        lastExclamationIndex + 1 < cursorPos &&
-        value[lastExclamationIndex + 1] === "/" // Check for !/
-      ) {
-        commandModeActive = true
-        commandText = afterExclamation.substring(1) // Strip the / from !/query
+        if (
+          !hasSpace &&
+          cursorPos === lastExclamationIndex + afterExclamation.length + 1 &&
+          lastExclamationIndex + 1 < cursorPos &&
+          value[lastExclamationIndex + 1] === "/" // Check for !/
+        ) {
+          commandModeActive = true
+          commandText = afterExclamation.substring(1) // Strip / from !/query
+          console.log("[PromptInput] Command mode via !/, query:", commandText)
+        }
       }
     }
 
