@@ -153,10 +153,20 @@
   .connection-status-shortcut-hint {
     display: none;
   }
+}
+
+/* Hide button labels on small screens to fit in narrow viewports (phone portrait) */
+@media (max-width: 640px) {
+  .file-button-label {
+    display: none;
+  }
+
+  .session-toolbar-center {
+    gap: 0.5rem;
+  }
 
   .connection-status-button {
-    width: 100%;
-    justify-content: center;
+    padding: 0.25rem 0.5rem;
   }
 }
 
