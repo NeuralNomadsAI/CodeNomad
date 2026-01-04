@@ -1,0 +1,224 @@
+/**
+ * Folder Tree Browser Modal Styles
+ * VSCode-inspired file tree browser with collapsible folders
+ */
+
+/* Modal container */
+.folder-tree-browser-content {
+  @apply flex flex-col;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  width: 90vw;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Header */
+.folder-tree-browser-header {
+  @apply flex items-center justify-between px-5 py-4 border-b;
+  border-color: var(--border-primary);
+  background-color: var(--surface-secondary);
+  border-radius: 12px 12px 0 0;
+}
+
+.folder-tree-browser-title-container {
+  @apply flex items-center gap-3;
+}
+
+.folder-tree-browser-title {
+  @apply text-lg font-semibold;
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+}
+
+.folder-tree-browser-close-btn {
+  @apply flex items-center justify-center p-2 rounded-md transition-colors;
+  color: var(--text-secondary);
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.folder-tree-browser-close-btn:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.folder-tree-browser-close-btn:focus-visible {
+  @apply ring-2 ring-offset-2;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+  outline: none;
+}
+
+/* Body - scrollable tree area */
+.folder-tree-browser-body {
+  @apply flex-1 overflow-y-auto px-2 py-3;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.folder-tree-browser-tree {
+  @apply w-full;
+}
+
+/* Loading state */
+.folder-tree-browser-loading {
+  @apply flex flex-col items-center justify-center gap-3 py-12;
+  color: var(--text-secondary);
+}
+
+/* Error state */
+.folder-tree-browser-error {
+  @apply flex flex-col items-center justify-center gap-4 py-12 px-6;
+}
+
+.folder-tree-browser-error-icon {
+  @apply text-4xl;
+  color: var(--status-warning);
+}
+
+.folder-tree-browser-error-content {
+  @apply flex flex-col items-center gap-2 text-center;
+}
+
+.folder-tree-browser-error-content h3 {
+  @apply text-base font-semibold;
+  color: var(--text-primary);
+}
+
+.folder-tree-browser-error-content p {
+  @apply text-sm;
+  color: var(--text-secondary);
+}
+
+.folder-tree-browser-retry-btn {
+  @apply mt-3 px-4 py-2 rounded-md font-medium transition-colors;
+  background-color: var(--accent-primary);
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.folder-tree-browser-retry-btn:hover {
+  background-color: var(--accent-primary-hover);
+}
+
+/* Empty state */
+.folder-tree-browser-empty {
+  @apply flex items-center justify-center py-12 text-center;
+  color: var(--text-secondary);
+}
+
+/* Footer */
+.folder-tree-browser-footer {
+  @apply px-5 py-3 border-t text-center;
+  border-color: var(--border-primary);
+  background-color: var(--surface-secondary);
+  border-radius: 0 0 12px 12px;
+}
+
+.folder-tree-browser-hint {
+  @apply text-xs;
+  color: var(--text-tertiary);
+  font-family: var(--font-family-sans);
+}
+
+/* ========================================
+   Tree Node Styles
+   ======================================== */
+
+.folder-tree-node {
+  @apply w-full;
+}
+
+.folder-tree-node-row {
+  @apply flex items-center gap-1 py-1 px-2 rounded-md transition-colors cursor-pointer;
+  font-family: var(--font-family-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.folder-tree-node-row:hover {
+  background-color: var(--surface-hover);
+}
+
+.folder-tree-node-row:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+  outline: none;
+}
+
+/* Directory-specific styling */
+.folder-tree-node-directory {
+  font-weight: 500;
+}
+
+.folder-tree-node-directory:hover {
+  background-color: var(--surface-hover);
+}
+
+/* Markdown file highlighting */
+.folder-tree-node-markdown {
+  color: var(--accent-secondary);
+}
+
+.folder-tree-node-markdown:hover {
+  background-color: var(--accent-secondary-bg);
+  color: var(--accent-secondary);
+}
+
+/* Chevron icon */
+.folder-tree-node-chevron {
+  @apply flex items-center justify-center flex-shrink-0;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+/* File/Folder icon */
+.folder-tree-node-icon {
+  @apply flex items-center justify-center flex-shrink-0;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+.folder-tree-node-directory .folder-tree-node-icon {
+  color: var(--accent-secondary);
+}
+
+/* Name label */
+.folder-tree-node-name {
+  @apply flex-1 truncate;
+  user-select: none;
+}
+
+/* Children container */
+.folder-tree-node-children {
+  @apply w-full;
+}
+
+/* Loading indicator for child nodes */
+.folder-tree-node-loading {
+  @apply flex items-center gap-2 py-1 text-sm;
+  color: var(--text-tertiary);
+  font-family: var(--font-family-sans);
+}
+
+/* Error indicator for child nodes */
+.folder-tree-node-error {
+  @apply py-1 text-sm;
+  color: var(--status-error);
+  font-family: var(--font-family-sans);
+}
+
+/* Spinner animation (reuse existing) */
+.spinner-small {
+  @apply inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin;
+}

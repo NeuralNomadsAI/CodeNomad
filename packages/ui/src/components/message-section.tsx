@@ -26,6 +26,7 @@ export interface MessageSectionProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
+  onOpenPreview?: (filePath: string) => void
   isActive?: boolean
 }
 
@@ -793,6 +794,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
+              onOpenPreview={props.onOpenPreview}
               setBottomSentinel={setBottomSentinel}
               suspendMeasurements={() => !isActive()}
             />

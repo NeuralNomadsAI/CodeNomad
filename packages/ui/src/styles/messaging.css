@@ -1,5 +1,7 @@
 @import "./messaging/message-base.css";
 @import "./messaging/prompt-input.css";
+@import "./messaging/command-suggestions.css";
+@import "./messaging/markdown-preview.css";
 @import "./messaging/message-section.css";
 @import "./messaging/message-block-list.css";
 @import "./messaging/message-timeline.css";

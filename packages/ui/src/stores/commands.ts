@@ -7,6 +7,13 @@ const [commandMap, setCommandMap] = createSignal<Map<string, SDKCommand[]>>(new 
 export async function fetchCommands(instanceId: string, client: OpencodeClient): Promise<void> {
   const response = await client.command.list()
   const commands = response.data ?? []
+  console.log("[Commands Store] fetchCommands(", instanceId, ") fetched", commands.length, "commands:")
+  console.table(commands.map((c) => ({
+    name: c.name,
+    description: c.description?.substring(0, 60) + "...",
+    template: c.template
+  })))
+  console.log("[Commands Store] Full command names:", commands.map((c) => c.name).sort())
   setCommandMap((prev) => {
     const next = new Map(prev)
     next.set(instanceId, commands)
@@ -15,7 +22,9 @@ export async function fetchCommands(instanceId: string, client: OpencodeClient):
 }
 
 export function getCommands(instanceId: string): SDKCommand[] {
-  return commandMap().get(instanceId) ?? []
+  const commands = commandMap().get(instanceId) ?? []
+  console.log("[Commands Store] getCommands(", instanceId, ") returning", commands.length, "commands:", commands.map((c) => c.name))
+  return commands
 }
 
 export function clearCommands(instanceId: string): void {

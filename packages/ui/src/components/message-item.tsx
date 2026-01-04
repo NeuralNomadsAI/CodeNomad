@@ -15,6 +15,7 @@ interface MessageItemProps {
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
   onContentRendered?: () => void
+  onOpenPreview?: (filePath: string) => void
  }
 
  export default function MessageItem(props: MessageItemProps) {
@@ -289,6 +290,7 @@ interface MessageItemProps {
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               onRendered={props.onContentRendered}
+              onOpenPreview={props.onOpenPreview}
             />
           )}
         </For>

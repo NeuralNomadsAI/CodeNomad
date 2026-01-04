@@ -1,7 +1,9 @@
-import { Show, Match, Switch } from "solid-js"
+import { Show, Match, Switch, For } from "solid-js"
 import ToolCall from "./tool-call"
+import MarkdownPreviewIcon from "./markdown-preview-icon"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
+import { detectMarkdownFiles } from "../lib/markdown-file-detector"
 import { useTheme } from "../lib/theme"
 import { useConfig } from "../stores/preferences"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
@@ -14,6 +16,7 @@ interface MessagePartProps {
   instanceId: string
   sessionId: string
   onRendered?: () => void
+  onOpenPreview?: (filePath: string) => void
  }
  export default function MessagePart(props: MessagePartProps) {
 
@@ -86,6 +89,12 @@ interface MessagePartProps {
     }
   }
 
+  const detectedMarkdownFiles = () => {
+    const text = plainTextContent()
+    if (!text) return []
+    return detectMarkdownFiles(text)
+  }
+
   function handleReasoningClick(e: Event) {
     e.preventDefault()
     toggleItemExpanded(reasoningId())
@@ -96,6 +105,20 @@ interface MessagePartProps {
       <Match when={partType() === "text"}>
         <Show when={!(props.part.type === "text" && props.part.synthetic) && partHasRenderableText(props.part)}>
           <div class={textContainerClass()}>
+            <Show when={detectedMarkdownFiles().length > 0}>
+              <div class="markdown-preview-icons-container flex gap-1 mb-2">
+                <For each={detectedMarkdownFiles()}>
+                  {(match) => (
+                    <Show when={props.onOpenPreview}>
+                      <MarkdownPreviewIcon
+                        filePath={match.filePath}
+                        onOpenPreview={props.onOpenPreview!}
+                      />
+                    </Show>
+                  )}
+                </For>
+              </div>
+            </Show>
             <Show
                when={isAssistantMessage()}
                fallback={<span>{plainTextContent()}</span>}
@@ -118,6 +141,7 @@ interface MessagePartProps {
           toolCallId={props.part?.id}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          onOpenPreview={props.onOpenPreview}
         />
       </Match>
 

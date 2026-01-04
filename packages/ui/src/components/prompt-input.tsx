@@ -1,12 +1,16 @@
 import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack } from "solid-js"
 import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
 import UnifiedPicker from "./unified-picker"
+import CommandSuggestions from "./command-suggestions"
 import { addToHistory, getHistory } from "../stores/message-history"
 import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
+import { getCommands } from "../stores/commands"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { filterCommands } from "../lib/command-filter"
 import { createFileAttachment, createTextAttachment, createAgentAttachment } from "../types/attachment"
 import type { Attachment } from "../types/attachment"
 import type { Agent } from "../types/session"
+import type { Command as SDKCommand } from "@opencode-ai/sdk"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraftPrompt } from "../stores/sessions"
@@ -43,6 +47,9 @@ export default function PromptInput(props: PromptInputProps) {
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
   const [mode, setMode] = createSignal<"normal" | "shell">("normal")
+  const [commandMode, setCommandMode] = createSignal(false)
+  const [commandQuery, setCommandQuery] = createSignal("")
+  const [selectedCommandIndex, setSelectedCommandIndex] = createSignal(0)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
   let containerRef: HTMLDivElement | undefined
@@ -380,6 +387,31 @@ export default function PromptInput(props: PromptInputProps) {
       return
     }
 
+    // Command mode navigation (!/mode)
+    if (commandMode()) {
+      const commands = filterCommands(commandQuery(), getCommands(props.instanceId))
+      switch (e.key) {
+        case "ArrowUp":
+          e.preventDefault()
+          setSelectedCommandIndex(Math.max(0, selectedCommandIndex() - 1))
+          return
+        case "ArrowDown":
+          e.preventDefault()
+          setSelectedCommandIndex(Math.min(commands.length - 1, selectedCommandIndex() + 1))
+          return
+        case "Enter":
+          e.preventDefault()
+          if (commands.length > 0) {
+            handleCommandSelect(commands[selectedCommandIndex()])
+          }
+          return
+        case "Escape":
+          e.preventDefault()
+          handleCommandClose()
+          return
+      }
+    }
+
     if (showPicker() && e.key === "Escape") {
       e.preventDefault()
       e.stopPropagation()
@@ -708,6 +740,53 @@ export default function PromptInput(props: PromptInputProps) {
 
     setShowPicker(false)
     setAtPosition(null)
+
+    // Command suggestions mode: !/ OR just / when in shell mode
+    let commandModeActive = false
+    let commandText = ""
+
+    // Case 1: Already in shell mode, user types / anywhere
+    if (mode() === "shell") {
+      // In shell mode, look for / character to trigger command suggestions
+      const lastSlashIndex = value.lastIndexOf("/")
+      if (lastSlashIndex !== -1 && cursorPos > lastSlashIndex) {
+        // Found a /, extract query after it (up to cursor position)
+        commandModeActive = true
+        commandText = value.substring(lastSlashIndex + 1, cursorPos)
+        console.log("[PromptInput] ✓ Command mode (shell+/), query:", commandText || "(empty - showing all)")
+        console.log("[PromptInput]   Available commands:", getCommands(props.instanceId).length)
+        console.log("[PromptInput]   Filtered commands:", filterCommands(commandText, getCommands(props.instanceId)).length)
+      }
+    } else {
+      // Case 2: Normal mode, check for !/ sequence
+      const lastExclamationIndex = value.lastIndexOf("!")
+      if (lastExclamationIndex !== -1) {
+        const afterExclamation = value.substring(lastExclamationIndex + 1, cursorPos)
+        const hasSpace = afterExclamation.includes(" ") || afterExclamation.includes("\n")
+
+        if (
+          !hasSpace &&
+          cursorPos === lastExclamationIndex + afterExclamation.length + 1 &&
+          lastExclamationIndex + 1 < cursorPos &&
+          value[lastExclamationIndex + 1] === "/" // Check for !/
+        ) {
+          commandModeActive = true
+          commandText = afterExclamation.substring(1) // Strip / from !/query
+          console.log("[PromptInput] ✓ Command mode via !/, query:", commandText)
+          console.log("[PromptInput]   Available commands:", getCommands(props.instanceId).length)
+          console.log("[PromptInput]   Filtered commands:", filterCommands(commandText, getCommands(props.instanceId)).length)
+        }
+      }
+    }
+
+    setCommandMode(commandModeActive)
+    if (commandModeActive) {
+      setCommandQuery(commandText)
+      setSelectedCommandIndex(0)
+    } else {
+      setCommandQuery("")
+      setSelectedCommandIndex(0)
+    }
   }
 
   function handlePickerSelect(
@@ -828,6 +907,41 @@ export default function PromptInput(props: PromptInputProps) {
     setShowPicker(false)
     setAtPosition(null)
     setSearchQuery("")
+    setTimeout(() => textareaRef?.focus(), 0)
+  }
+
+  function handleCommandSelect(command: SDKCommand) {
+    const currentPrompt = prompt()
+    const exclamationIndex = currentPrompt.lastIndexOf("!")
+    const cursorPos = textareaRef?.selectionStart || 0
+
+    if (exclamationIndex !== -1 && exclamationIndex < cursorPos) {
+      const before = currentPrompt.substring(0, exclamationIndex)
+      const after = currentPrompt.substring(cursorPos)
+
+      // Insert command template (e.g., "/analyze")
+      const commandText = command.template || `/${command.name}`
+      const newPrompt = before + commandText + " " + after
+
+      setPrompt(newPrompt)
+      setCommandMode(false)
+      setCommandQuery("")
+      setSelectedCommandIndex(0)
+
+      setTimeout(() => {
+        if (textareaRef) {
+          const newCursorPos = exclamationIndex + commandText.length + 1
+          textareaRef.setSelectionRange(newCursorPos, newCursorPos)
+          textareaRef.focus()
+        }
+      }, 0)
+    }
+  }
+
+  function handleCommandClose() {
+    setCommandMode(false)
+    setCommandQuery("")
+    setSelectedCommandIndex(0)
     setTimeout(() => textareaRef?.focus(), 0)
   }
 
@@ -988,6 +1102,19 @@ export default function PromptInput(props: PromptInputProps) {
             searchQuery={searchQuery()}
             textareaRef={textareaRef}
             workspaceId={props.instanceId}
+          />
+        </Show>
+
+        <Show when={commandMode()}>
+          <CommandSuggestions
+            commands={() => getCommands(props.instanceId)}
+            isOpen={() => commandMode()}
+            searchQuery={() => commandQuery()}
+            selectedIndex={() => selectedCommandIndex()}
+            onSelect={handleCommandSelect}
+            onClose={handleCommandClose}
+            onQueryChange={setCommandQuery}
+            onSelectedIndexChange={setSelectedCommandIndex}
           />
         </Show>
 

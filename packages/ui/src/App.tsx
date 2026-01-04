@@ -3,6 +3,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import MarkdownPreviewModal from "./components/markdown-preview-modal"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
@@ -10,6 +11,7 @@ import InstanceShell from "./components/instance/instance-shell2"
 import { RemoteAccessOverlay } from "./components/remote-access-overlay"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { initMarkdown } from "./lib/markdown"
+import { useMarkdownPreview } from "./lib/hooks/use-markdown-preview"
 
 import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
@@ -72,6 +74,20 @@ const App: Component = () => {
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
+  const [markdownPreviewOpen, setMarkdownPreviewOpen] = createSignal(false)
+  const [markdownPreviewFilePath, setMarkdownPreviewFilePath] = createSignal("")
+  const markdownPreview = useMarkdownPreview()
+
+  const handleMarkdownPreviewOpen = async (filePath: string) => {
+    setMarkdownPreviewFilePath(filePath)
+    setMarkdownPreviewOpen(true)
+    await markdownPreview.fetch(filePath)
+  }
+
+  const handleMarkdownPreviewClose = () => {
+    setMarkdownPreviewOpen(false)
+    markdownPreview.clearCurrent()
+  }
 
   const updateInstanceTabBarHeight = () => {
     if (typeof document === "undefined") return
@@ -363,9 +379,20 @@ const App: Component = () => {
               </div>
             </Dialog.Content>
           </div>
-        </Dialog.Portal>
-      </Dialog>
-      <div class="h-screen w-screen flex flex-col">
+         </Dialog.Portal>
+       </Dialog>
+
+       <MarkdownPreviewModal
+         isOpen={markdownPreviewOpen()}
+         filePath={markdownPreviewFilePath()}
+         content={markdownPreview.content()}
+         isLoading={markdownPreview.isLoading()}
+         error={markdownPreview.error()}
+         onClose={handleMarkdownPreviewClose}
+         isDarkMode={isDark()}
+       />
+
+       <div class="h-screen w-screen flex flex-col">
         <Show
           when={!hasInstances()}
           fallback={
@@ -396,6 +423,7 @@ const App: Component = () => {
                             handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
                             onExecuteCommand={executeCommand}
                             tabBarOffset={instanceTabBarHeight()}
+                            onOpenPreview={handleMarkdownPreviewOpen}
                           />
                         </InstanceMetadataProvider>
 

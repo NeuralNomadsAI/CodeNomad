@@ -26,6 +26,7 @@ interface SessionViewProps {
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
+  onOpenPreview?: (filePath: string) => void
   isActive?: boolean
 }
 
@@ -196,28 +197,28 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         if (!activeSession) return null
         return (
           <div ref={rootRef} class="session-view">
-            <MessageSection
-               instanceId={props.instanceId}
-               sessionId={activeSession.id}
-               loading={messagesLoading()}
-               onRevert={handleRevert}
-               onFork={handleFork}
-               isActive={props.isActive}
-                registerScrollToBottom={(fn) => {
-                  scrollToBottomHandle = fn
-                  if (props.isActive) {
-                    scheduleScrollToBottom()
-                  }
-                }}
+             <MessageSection
+                instanceId={props.instanceId}
+                sessionId={activeSession.id}
+                loading={messagesLoading()}
+                onRevert={handleRevert}
+                onFork={handleFork}
+                isActive={props.isActive}
+                 registerScrollToBottom={(fn) => {
+                   scrollToBottomHandle = fn
+                   if (props.isActive) {
+                     scheduleScrollToBottom()
+                   }
+                 }}
 
 
 
-
-               showSidebarToggle={props.showSidebarToggle}
-               onSidebarToggle={props.onSidebarToggle}
-               forceCompactStatusLayout={props.forceCompactStatusLayout}
-               onQuoteSelection={handleQuoteSelection}
-             />
+                showSidebarToggle={props.showSidebarToggle}
+                onSidebarToggle={props.onSidebarToggle}
+                forceCompactStatusLayout={props.forceCompactStatusLayout}
+                onQuoteSelection={handleQuoteSelection}
+                onOpenPreview={props.onOpenPreview}
+              />
 
 
             <PromptInput

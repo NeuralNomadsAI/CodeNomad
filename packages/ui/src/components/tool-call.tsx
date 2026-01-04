@@ -2,6 +2,7 @@ import { createSignal, Show, For, createEffect, createMemo, onCleanup } from "so
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { Markdown } from "./markdown"
 import { ToolCallDiffViewer } from "./diff-viewer"
+import MarkdownPreviewIcon from "./markdown-preview-icon"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
@@ -56,6 +57,7 @@ interface ToolCallProps {
   instanceId: string
   sessionId: string
   onContentRendered?: () => void
+  onOpenPreview?: (filePath: string) => void
  }
 
 
@@ -770,6 +772,18 @@ export default function ToolCall(props: ToolCallProps) {
 
   const getRendererAction = () => renderer().getAction?.(rendererContext) ?? getDefaultToolAction(toolName())
 
+  const getToolFilePath = (): string | null => {
+    const state = toolState()
+    if (!state) return null
+    const { input, metadata } = { input: (state as any).input || {}, metadata: (state as any).metadata || {} }
+    return (typeof input.filePath === "string" ? input.filePath : null) || 
+           (typeof metadata.filePath === "string" ? metadata.filePath : null)
+  }
+
+  const isMarkdownToolFile = (): boolean => {
+    const filePath = getToolFilePath()
+    return Boolean(filePath && filePath.toLowerCase().endsWith(".md"))
+  }
 
   const renderToolTitle = () => {
     const state = toolState()
@@ -953,6 +967,12 @@ export default function ToolCall(props: ToolCallProps) {
         <span class="tool-call-summary" data-tool-icon={getToolIcon(toolName())}>
           {renderToolTitle()}
         </span>
+        <Show when={isMarkdownToolFile() && props.onOpenPreview}>
+          <MarkdownPreviewIcon
+            filePath={getToolFilePath()!}
+            onOpenPreview={props.onOpenPreview!}
+          />
+        </Show>
       </button>
 
       {expanded() && (

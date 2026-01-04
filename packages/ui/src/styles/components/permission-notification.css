@@ -1,0 +1,395 @@
+/* Permission Notification Banner */
+.permission-notification-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.375rem 0.75rem;
+  background: linear-gradient(135deg, var(--status-warning) 0%, color-mix(in srgb, var(--status-warning) 85%, #000) 100%);
+  color: var(--text-inverted);
+  border: 1px solid color-mix(in srgb, var(--status-warning) 70%, #000);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--status-warning) 30%, transparent);
+  animation: permission-pulse 2s ease-in-out infinite;
+}
+
+.permission-notification-banner:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--status-warning) 85%, #000) 0%, color-mix(in srgb, var(--status-warning) 70%, #000) 100%);
+  box-shadow: 0 4px 8px color-mix(in srgb, var(--status-warning) 40%, transparent);
+  transform: translateY(-1px);
+}
+
+.permission-notification-banner:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--status-warning) 30%, transparent);
+}
+
+.permission-notification-icon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.permission-notification-text {
+  white-space: nowrap;
+  color: inherit;
+  font-size: inherit;
+}
+
+.permission-notification-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
+  background: color-mix(in srgb, #000 30%, transparent);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  color: inherit;
+  flex-shrink: 0;
+}
+
+@keyframes permission-pulse {
+  0%, 100% {
+    box-shadow: 0 2px 4px color-mix(in srgb, var(--status-warning) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--status-warning) 60%, transparent), 0 0 16px color-mix(in srgb, var(--status-warning) 30%, transparent);
+  }
+}
+
+/* Web Permission Indicator Button (for browser-based streaming) */
+.permission-indicator-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: color-mix(in srgb, var(--status-warning) 15%, transparent);
+  color: var(--status-warning);
+  border: 2px solid var(--status-warning);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  animation: web-permission-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+  z-index: 10;
+  min-width: 2rem;
+  min-height: 2rem;
+  max-width: 2rem;
+  max-height: 2rem;
+}
+
+.permission-indicator-button:hover {
+  background: color-mix(in srgb, var(--status-warning) 25%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--status-warning) 50%, transparent);
+  transform: scale(1.05);
+}
+
+.permission-indicator-button:active {
+  transform: scale(0.98);
+}
+
+.permission-indicator-button:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.permission-indicator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  color: inherit;
+}
+
+@keyframes web-permission-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-warning) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-warning) 20%, transparent);
+  }
+}
+
+/* Ensure button visibility in web toolbars */
+@supports (display: flex) {
+  .permission-indicator-button {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Permission Approval Modal */
+.permission-approval-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--text-inverted) 60%, transparent);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: var(--space-lg);
+  animation: modal-backdrop-fadein 0.2s ease;
+}
+
+@keyframes modal-backdrop-fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.permission-approval-modal {
+  background: var(--surface-base);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 20px 25px -5px color-mix(in srgb, #000 10%, transparent), 0 10px 10px -5px color-mix(in srgb, #000 4%, transparent);
+  max-width: 48rem;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: modal-slidein 0.3s ease;
+}
+
+@keyframes modal-slidein {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.permission-modal-empty {
+  padding: var(--space-xl);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.permission-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-base);
+  gap: var(--space-lg);
+}
+
+.permission-modal-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin: 0;
+  flex: 1;
+}
+
+.permission-modal-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-base);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.permission-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.permission-modal-type {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--status-warning) 20%, transparent);
+  color: var(--status-warning);
+  border: 1px solid color-mix(in srgb, var(--status-warning) 50%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: flex-start;
+}
+
+.permission-modal-message {
+  padding: var(--space-lg);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family-mono);
+  word-break: break-word;
+}
+
+.permission-modal-message code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.permission-modal-diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.permission-modal-diff-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.permission-modal-diff-viewer {
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-height: 24rem;
+  background: var(--surface-secondary);
+}
+
+.permission-modal-error {
+  padding: var(--space-sm) var(--space-lg);
+  background: color-mix(in srgb, var(--status-error) 20%, transparent);
+  color: var(--status-error);
+  border: 1px solid color-mix(in srgb, var(--status-error) 50%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.permission-modal-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  border-top: 1px solid var(--border-base);
+  background: var(--surface-secondary);
+}
+
+.permission-modal-buttons {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: stretch;
+}
+
+.permission-modal-button {
+  flex: 1;
+  padding: var(--button-padding-y) var(--button-padding-x);
+  border: 1px solid transparent;
+  border-radius: var(--button-radius);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: var(--font-family-sans);
+}
+
+.permission-modal-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.permission-modal-button:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.permission-modal-button-once {
+  background: var(--accent-primary);
+  color: var(--text-inverted);
+  border-color: var(--accent-primary);
+}
+
+.permission-modal-button-once:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.permission-modal-button-always {
+  background: var(--status-success);
+  color: var(--text-inverted);
+  border-color: var(--status-success);
+}
+
+.permission-modal-button-always:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-success) 85%, #000);
+  border-color: color-mix(in srgb, var(--status-success) 85%, #000);
+}
+
+.permission-modal-button-deny {
+  background: var(--status-error);
+  color: var(--text-inverted);
+  border-color: var(--status-error);
+}
+
+.permission-modal-button-deny:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error) 85%, #000);
+  border-color: color-mix(in srgb, var(--status-error) 85%, #000);
+}
+
+.permission-modal-shortcuts {
+  display: flex;
+  gap: var(--space-lg);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.permission-modal-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.permission-modal-shortcut kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.375rem;
+  background: var(--kbd-bg);
+  border: 1px solid var(--kbd-border);
+  color: var(--kbd-text);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, #000 10%, transparent);
+}
+
+/* Dark theme adjustments - already handled by CSS tokens above */
+/* The token system automatically applies correct colors for dark mode via
+   :root @media (prefers-color-scheme: dark) definitions */

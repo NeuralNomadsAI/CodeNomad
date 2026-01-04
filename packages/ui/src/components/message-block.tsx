@@ -1,10 +1,12 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
+import MarkdownPreviewIcon from "./markdown-preview-icon"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
+import { detectMarkdownFiles } from "../lib/markdown-file-detector"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
@@ -212,6 +214,7 @@ interface MessageBlockProps {
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  onOpenPreview?: (filePath: string) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -414,6 +417,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onRevert={props.onRevert}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
+                    onOpenPreview={props.onOpenPreview}
                   />
                 </Match>
                 <Match when={item.type === "tool"}>

@@ -12,7 +12,7 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, TerminalSquare, Trash2, XOctagon, FolderTree } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Divider from "@suid/material/Divider"
@@ -50,6 +50,9 @@ import InstanceServiceStatus from "../instance-service-status"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import CommandPalette from "../command-palette"
+import FolderTreeBrowser from "../folder-tree-browser"
+import PermissionNotificationBanner from "../permission-notification-banner"
+import PermissionApprovalModal from "../permission-approval-modal"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
@@ -78,6 +81,7 @@ interface InstanceShellProps {
   handleSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onExecuteCommand: (command: Command) => void
   tabBarOffset: number
+  onOpenPreview?: (filePath: string) => Promise<void> | void
 }
 
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
@@ -141,6 +145,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   ])
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
+  const [folderTreeBrowserOpen, setFolderTreeBrowserOpen] = createSignal(false)
+  const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -1240,6 +1246,26 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     >
                       <span class="status-dot" />
                     </span>
+
+                    <Show when={!showingInfoView()}>
+                      <button
+                        type="button"
+                        class="connection-status-button px-2 py-0.5 text-xs flex items-center gap-1 whitespace-nowrap"
+                        onClick={() => setFolderTreeBrowserOpen(true)}
+                        aria-label="Browse workspace files"
+                        style={{ flex: "0 0 auto" }}
+                      >
+                        <FolderTree size={14} />
+                        <span class="file-button-label">Files</span>
+                      </button>
+                    </Show>
+
+                    <div style={{ flex: "0 0 auto", display: "flex", "align-items": "center" }}>
+                      <PermissionNotificationBanner
+                        instanceId={props.instance.id}
+                        onClick={() => setPermissionModalOpen(true)}
+                      />
+                    </div>
                   </div>
 
                   <IconButton
@@ -1294,20 +1320,40 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
              </div>
 
 
-              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                <button
-                  type="button"
-                  class="connection-status-button px-2 py-0.5 text-xs"
-                  onClick={handleCommandPaletteClick}
-                  aria-label="Open command palette"
-                  style={{ flex: "0 0 auto", width: "auto" }}
-                >
-                  Command Palette
-                </button>
-                <span class="connection-status-shortcut-hint">
-                  <Kbd shortcut="cmd+shift+p" />
-                </span>
-              </div>
+               <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-0 flex-wrap">
+                 <button
+                   type="button"
+                   class="connection-status-button px-2 py-0.5 text-xs whitespace-nowrap"
+                   onClick={handleCommandPaletteClick}
+                   aria-label="Open command palette"
+                   style={{ flex: "0 0 auto" }}
+                 >
+                   Command Palette
+                 </button>
+                 <span class="connection-status-shortcut-hint">
+                   <Kbd shortcut="cmd+shift+p" />
+                 </span>
+
+                 <Show when={!showingInfoView()}>
+                    <button
+                      type="button"
+                      class="connection-status-button px-2 py-0.5 text-xs flex items-center gap-1 whitespace-nowrap"
+                      onClick={() => setFolderTreeBrowserOpen(true)}
+                      aria-label="Browse workspace files"
+                      style={{ flex: "0 0 auto" }}
+                    >
+                      <FolderTree size={14} />
+                      <span class="file-button-label">Files</span>
+                    </button>
+                 </Show>
+
+                 <div style={{ flex: "0 0 auto", display: "flex", "align-items": "center" }}>
+                   <PermissionNotificationBanner
+                     instanceId={props.instance.id}
+                     onClick={() => setPermissionModalOpen(true)}
+                   />
+                 </div>
+               </div>
 
 
             <div class="session-toolbar-right flex items-center gap-3">
@@ -1388,6 +1434,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                          onOpenPreview={props.onOpenPreview}
                           isActive={isActive()}
                         />
                       </div>
@@ -1421,6 +1468,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}
+      />
+
+      <FolderTreeBrowser
+        isOpen={folderTreeBrowserOpen()}
+        workspaceId={props.instance.id}
+        workspaceName={props.instance.folder}
+        onClose={() => setFolderTreeBrowserOpen(false)}
+      />
+
+      <PermissionApprovalModal
+        instanceId={props.instance.id}
+        isOpen={permissionModalOpen()}
+        onClose={() => setPermissionModalOpen(false)}
       />
 
       <BackgroundProcessOutputDialog
