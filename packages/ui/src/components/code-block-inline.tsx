@@ -2,6 +2,7 @@ import { createSignal, onMount, Show, createEffect } from "solid-js"
 import type { Highlighter } from "shiki/bundle/full"
 import { useTheme } from "../lib/theme"
 import { getSharedHighlighter, escapeHtml } from "../lib/markdown"
+import { copyToClipboard } from "../lib/clipboard"
 
 const inlineLoadedLanguages = new Set<string>()
 
@@ -61,9 +62,11 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
   }
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(props.code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const success = await copyToClipboard(props.code)
+    if (success) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   return (

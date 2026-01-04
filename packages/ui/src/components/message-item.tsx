@@ -3,6 +3,7 @@ import type { MessageInfo, ClientPart } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
+import { copyToClipboard } from "../lib/clipboard"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -156,8 +157,8 @@ interface MessageItemProps {
   const handleCopy = async () => {
     const content = getRawContent()
     if (!content) return
-    await navigator.clipboard.writeText(content)
-    setCopied(true)
+    const success = await copyToClipboard(content)
+    setCopied(success)
     setTimeout(() => setCopied(false), 2000)
   }
 

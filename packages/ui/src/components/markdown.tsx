@@ -2,6 +2,7 @@ import { createEffect, createSignal, onMount, onCleanup } from "solid-js"
 import { renderMarkdown, onLanguagesLoaded, initMarkdown, decodeHtmlEntities } from "../lib/markdown"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
+import { copyToClipboard } from "../lib/clipboard"
 const log = getLogger("session")
 
 const markdownRenderCache = new Map<string, RenderCache>()
@@ -125,13 +126,20 @@ export function Markdown(props: MarkdownProps) {
         const code = copyButton.getAttribute("data-code")
         if (code) {
           const decodedCode = decodeURIComponent(code)
-          await navigator.clipboard.writeText(decodedCode)
+          const success = await copyToClipboard(decodedCode)
           const copyText = copyButton.querySelector(".copy-text")
           if (copyText) {
-            copyText.textContent = "Copied!"
-            setTimeout(() => {
-              copyText.textContent = "Copy"
-            }, 2000)
+            if (success) {
+              copyText.textContent = "Copied!"
+              setTimeout(() => {
+                copyText.textContent = "Copy"
+              }, 2000)
+            } else {
+              copyText.textContent = "Failed"
+              setTimeout(() => {
+                copyText.textContent = "Copy"
+              }, 2000)
+            }
           }
         }
       }
