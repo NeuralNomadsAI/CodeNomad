@@ -29,7 +29,7 @@ import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./ses
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { deriveSessionStatusFromMessages } from "./session-status"
-import { seedSessionMessagesV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -610,11 +610,15 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     }
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
 
+    // Permissions can be hydrated before messages/tool parts exist in the store.
+    // After message hydration, try to attach any pending permissions to tool-call part ids.
+    reconcilePendingPermissionsV2(instanceId, sessionId)
+ 
     if (!alreadyLoaded) {
       const nextStatus = deriveSessionStatusFromMessages(instanceId, sessionId)
       setSessionStatus(instanceId, sessionId, nextStatus)
     }
-
+ 
   } catch (error) {
     log.error("Failed to load messages:", error)
     throw error

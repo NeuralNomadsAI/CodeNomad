@@ -164,6 +164,34 @@ export function upsertPermissionV2(instanceId: string, permission: PermissionReq
   })
 }
 
+export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: string): void {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const pending = store.state.permissions.queue
+  if (!pending || pending.length === 0) return
+
+  for (const entry of pending) {
+    if (!entry || entry.partId) continue
+    const permission = entry.permission
+    if (!permission) continue
+
+    const permissionSessionId = (permission as any)?.sessionID ?? (permission as any)?.sessionId ?? undefined
+    if (sessionId && permissionSessionId && permissionSessionId !== sessionId) {
+      continue
+    }
+
+    const messageId = entry.messageId ?? extractPermissionMessageId(permission)
+    const callId = extractPermissionCallId(permission)
+    const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
+    if (!resolvedPartId) continue
+
+    store.upsertPermission({
+      ...entry,
+      messageId,
+      partId: resolvedPartId,
+    })
+  }
+}
+
 export function removePermissionV2(instanceId: string, permissionId: string): void {
   if (!permissionId) return
   const store = messageStoreBus.getOrCreate(instanceId)
