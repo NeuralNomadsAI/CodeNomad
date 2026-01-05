@@ -94,28 +94,44 @@ applyTo: '**'
 
 # Merge History
 
-## 2026-01-05 - Upstream Merge Analysis (Phase 1 Complete)
-- Strategy: Hybrid (Auto + Manual Decision Required)
-- Upstream Status: 8 commits ahead (7 unique + 1 duplicate)
-- Origin Status: 14 commits ahead (unique custom features)
+## 2026-01-05 - Successful Merge & Build Complete ✅
+- Strategy: Hybrid (Auto-merge + Manual conflict resolution)
+- Upstream Status: 8 commits merged from trueupstream/dev
+- Origin Status: 14 custom commits preserved
 - Merge Branch: merge/trueupstream-dev-2026-01-05
-- Conflicts Detected: HIGH RISK on 2 commits
-  - fcb5998: Permission system SDK changes (overlaps with our permission notification)
-  - 1377bc6: v2 SDK migration (BREAKING - touches 15 core files)
-- Safe Merges: 3 commits (copy button, session status, ANSI package-lock)
-- Caution Merges: 2 commits (ANSI rendering architecture)
-- Manual Decision: 2 commits (permission SDK, v2 migration)
-- Tests: Pending merge execution
+- Merge Commit: 1559983
 
-## File Conflict Analysis
-### Critical Overlaps (Both branches modified)
-- ✅ packages/ui/src/lib/clipboard.ts - SAFE (we added, they have similar fix in different files)
-- 🔴 packages/ui/src/stores/instances.ts - CRITICAL (v2 SDK changes + our permission banner)
-- 🔴 packages/ui/src/stores/session-events.ts - HIGH (session status + our modifications)
-- 🟡 packages/ui/src/stores/session-api.ts - MEDIUM (v2 SDK + our changes)
-- 🟡 packages/ui/src/components/tool-call.tsx - MEDIUM (permission requestID + our rendering)
-- 🟡 packages/ui/src/lib/ansi.ts - MEDIUM (they added new file, we have inline rendering)
-- 🔴 packages/ui/src/types/permission.ts - HIGH (they added new file with types, we may have conflicts)
+### Conflicts Resolved
+1. **package-lock.json** - Accepted upstream, regenerated with npm install
+2. **message-item.tsx** - Kept origin's `onOpenPreview` prop
+3. **commands.ts** - Merged upstream's error handling with origin's debug logs
+
+### Post-Merge Fixes
+1. Added missing `fuzzysort` dependency (^3.1.0)
+2. Fixed TypeScript type compatibility in permission-approval-modal.tsx
+   - Changed `Permission` to `PermissionRequestLike` to match upstream types
+3. All TypeScript compilation passed ✅
+4. macOS ARM64 build successful ✅ (131MB zip file)
+
+### Tests Status
+- TypeScript: ✅ PASSED (0 errors)
+- Build: ✅ SUCCESS (packages/electron-app/release/CodeNomad-0.4.0-mac-arm64.zip)
+- Runtime: Awaiting user testing
+
+### Integrated Upstream Features
+- ✅ v2 SDK client migration (@opencode-ai/sdk 1.1.1)
+- ✅ Unified ANSI rendering with sequence parser
+- ✅ Session status tracking via SSE updates
+- ✅ Background process ANSI output rendering
+- ✅ Permission system SDK 1.0.166 updates
+- ✅ Copy button functionality improvements
+
+### Preserved Origin Features
+- ✅ Folder tree browser with markdown preview
+- ✅ Permission notification banner system
+- ✅ Command suggestions with shell mode
+- ✅ All UI/UX enhancements
+- ✅ Web browser compatibility improvements
 
 # Merge Patterns
 

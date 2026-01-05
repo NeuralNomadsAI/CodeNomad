@@ -1,5 +1,5 @@
 import { Show, createSignal, createMemo, createEffect, onCleanup, type Component } from "solid-js"
-import type { Permission } from "@opencode-ai/sdk"
+import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionQueue, activePermissionId, sendPermissionResponse } from "../stores/instances"
 import { ToolCallDiffViewer } from "./diff-viewer"
 import { useTheme } from "../lib/theme"
@@ -22,7 +22,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const queue = createMemo(() => getPermissionQueue(props.instanceId))
   const activePermId = createMemo(() => activePermissionId().get(props.instanceId) ?? null)
   
-  const activePermission = createMemo((): Permission | null => {
+  const activePermission = createMemo((): PermissionRequestLike | null => {
     const id = activePermId()
     if (!id) return null
     return queue().find((p) => p.id === id) ?? null
