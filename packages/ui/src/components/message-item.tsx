@@ -17,9 +17,9 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
   onOpenPreview?: (filePath: string) => void
- }
+}
 
- export default function MessageItem(props: MessageItemProps) {
+export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
 
   const isUser = () => props.record.role === "user"

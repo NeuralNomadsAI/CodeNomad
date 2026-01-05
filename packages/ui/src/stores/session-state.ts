@@ -1,12 +1,13 @@
 import { createSignal } from "solid-js"
 
-import type { Session, Agent, Provider } from "../types/session"
+import type { Session, SessionStatus, Agent, Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("session")
 
@@ -157,6 +158,11 @@ function setSessionCompactionState(instanceId: string, sessionId: string, isComp
     const time = { ...(session.time ?? {}) }
     time.compacting = isCompacting ? Date.now() : 0
     session.time = time
+    if (isCompacting) {
+      session.status = "compacting"
+    } else if (session.status === "compacting") {
+      session.status = "idle"
+    }
   })
 }
 
@@ -196,6 +202,12 @@ function clearActiveParentSession(instanceId: string): void {
     const next = new Map(prev)
     next.delete(instanceId)
     return next
+  })
+}
+
+function setSessionStatus(instanceId: string, sessionId: string, status: SessionStatus): void {
+  withSession(instanceId, sessionId, (session) => {
+    session.status = status
   })
 }
 
@@ -272,8 +284,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
   let messages: any[] = []
   try {
-    const response = await instance.client.session.messages({ path: { id: session.id } })
-    messages = response.data || []
+    messages = await requestData<any[]>(
+      instance.client.session.messages({ sessionID: session.id }),
+      "session.messages",
+    )
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
@@ -380,6 +394,7 @@ export {
   withSession,
   setSessionCompactionState,
   setSessionPendingPermission,
+  setSessionStatus,
   setActiveSession,
  
   setActiveParentSession,

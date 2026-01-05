@@ -1,4 +1,5 @@
-import type { Permission } from "@opencode-ai/sdk"
+import type { PermissionRequestLike } from "../../types/permission"
+import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
@@ -107,11 +108,11 @@ export function replaceMessageIdV2(instanceId: string, oldId: string, newId: str
   store.replaceMessageId({ oldId, newId })
 }
 
-function extractPermissionMessageId(permission: Permission): string | undefined {
-  return (permission as any).messageID || (permission as any).messageId
+function extractPermissionMessageId(permission: PermissionRequestLike): string | undefined {
+  return getPermissionMessageId(permission)
 }
 
-function extractPermissionPartId(permission: Permission): string | undefined {
+function extractPermissionPartId(permission: PermissionRequestLike): string | undefined {
   const metadata = (permission as any).metadata || {}
   return (
     (permission as any).partID ||
@@ -122,17 +123,8 @@ function extractPermissionPartId(permission: Permission): string | undefined {
   )
 }
 
-function extractPermissionCallId(permission: Permission): string | undefined {
-  const metadata = (permission as any).metadata || {}
-  return (
-    (permission as any).callID ||
-    (permission as any).callId ||
-    (permission as any).toolCallID ||
-    (permission as any).toolCallId ||
-    metadata.callID ||
-    metadata.callId ||
-    undefined
-  )
+function extractPermissionCallId(permission: PermissionRequestLike): string | undefined {
+  return getPermissionCallId(permission)
 }
 
 function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrCreate>, messageId?: string, callId?: string): string | undefined {
@@ -155,7 +147,7 @@ function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrC
   return undefined
 }
 
-export function upsertPermissionV2(instanceId: string, permission: Permission): void {
+export function upsertPermissionV2(instanceId: string, permission: PermissionRequestLike): void {
   if (!permission) return
   const store = messageStoreBus.getOrCreate(instanceId)
   const messageId = extractPermissionMessageId(permission)

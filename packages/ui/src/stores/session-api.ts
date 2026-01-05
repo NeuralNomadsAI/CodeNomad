@@ -19,6 +19,7 @@ import {
   setProviders,
   setSessionInfoByInstance,
   setSessions,
+  setSessionStatus,
   sessions,
   loading,
   setLoading,
@@ -27,10 +28,12 @@ import {
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
+import { deriveSessionStatusFromMessages } from "./session-status"
 import { seedSessionMessagesV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("api")
 
@@ -82,6 +85,10 @@ async function fetchSessions(instanceId: string): Promise<void> {
     for (const apiSession of response.data) {
       const existingSession = existingSessions?.get(apiSession.id)
 
+      const compactingFlag = (apiSession.time as (Session["time"] & { compacting?: number | boolean }) | undefined)?.compacting
+      const isCompacting = typeof compactingFlag === "number" ? compactingFlag > 0 : Boolean(compactingFlag)
+      const existingStatus = existingSession?.status
+
       sessionMap.set(apiSession.id, {
         id: apiSession.id,
         instanceId,
@@ -89,6 +96,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         parentId: apiSession.parentID || null,
         agent: existingSession?.agent ?? "",
         model: existingSession?.model ?? { providerId: "", modelId: "" },
+        status: isCompacting ? "compacting" : (existingStatus ?? "idle"),
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -183,6 +191,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       parentId: null,
       agent: selectedAgent,
       model: defaultModel,
+      status: "idle",
       version: response.data.version,
       time: {
         ...response.data.time,
@@ -261,25 +270,16 @@ async function forkSession(
     throw new Error("Instance not ready")
   }
 
-  const request: {
-    path: { id: string }
-    body?: { messageID: string }
-  } = {
-    path: { id: sourceSessionId },
-  }
-
-  if (options?.messageId) {
-    request.body = { messageID: options.messageId }
+  const request: { sessionID: string; messageID?: string } = {
+    sessionID: sourceSessionId,
+    messageID: options?.messageId,
   }
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
-  const response = await instance.client.session.fork(request)
-
-  if (!response.data) {
-    throw new Error("Failed to fork session: No data returned")
-  }
-
-  const info = response.data as SessionForkResponse
+  const info = await requestData<SessionForkResponse>(
+    instance.client.session.fork(request),
+    "session.fork",
+  )
   const forkedSession = {
     id: info.id,
     instanceId,
@@ -290,6 +290,7 @@ async function forkSession(
       providerId: info.model?.providerID || "",
       modelId: info.model?.modelID || "",
     },
+    status: "idle",
     version: "0",
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
@@ -356,7 +357,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await instance.client.session.delete({ path: { id: sessionId } })
+    await requestData(instance.client.session.delete({ sessionID: sessionId }), "session.delete")
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -519,14 +520,17 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const response = await instance.client.session["messages"]({ path: { id: sessionId } })
+    const apiMessages = await requestData<any[]>(
+      instance.client.session.messages({ sessionID: sessionId }),
+      "session.messages",
+    )
 
-    if (!response.data || !Array.isArray(response.data)) {
+    if (!Array.isArray(apiMessages) || apiMessages.length === 0) {
       return
     }
 
     const messagesInfo = new Map<string, any>()
-    const messages: Message[] = response.data.map((apiMessage: any) => {
+    const messages: Message[] = apiMessages.map((apiMessage: any) => {
       const info = apiMessage.info || apiMessage
       const role = info.role || "assistant"
       const messageId = info.id || String(Date.now())
@@ -552,8 +556,8 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     let providerID = ""
     let modelID = ""
 
-    for (let i = response.data.length - 1; i >= 0; i--) {
-      const apiMessage = response.data[i]
+    for (let i = apiMessages.length - 1; i >= 0; i--) {
+      const apiMessage = apiMessages[i]
       const info = apiMessage.info || apiMessage
 
       if (info.role === "assistant") {
@@ -605,6 +609,11 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       revert: session?.revert,
     }
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
+
+    if (!alreadyLoaded) {
+      const nextStatus = deriveSessionStatusFromMessages(instanceId, sessionId)
+      setSessionStatus(instanceId, sessionId, nextStatus)
+    }
 
   } catch (error) {
     log.error("Failed to load messages:", error)

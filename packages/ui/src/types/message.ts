@@ -6,8 +6,9 @@ import type {
   EventMessagePartRemoved as MessagePartRemovedEvent,
   Part as SDKPart,
   Message as SDKMessage,
-  Permission,
 } from "@opencode-ai/sdk"
+
+import type { PermissionRequestLike } from "./permission"
 
 // Re-export for other modules
 export type {
@@ -27,7 +28,7 @@ export interface RenderCache {
 }
 
 export interface PendingPermissionState {
-  permission: Permission
+  permission: PermissionRequestLike
   active: boolean
 }
 

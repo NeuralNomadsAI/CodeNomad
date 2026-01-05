@@ -521,6 +521,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         for (const [key, entry] of Object.entries(draft)) {
           if (!entry || entry.partId) continue
           const permissionCallId =
+            (entry.permission as any).tool?.callID ??
+            (entry.permission as any).tool?.callId ??
             (entry.permission as any).callID ??
             (entry.permission as any).callId ??
             (entry.permission as any).toolCallID ??

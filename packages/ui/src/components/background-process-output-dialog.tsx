@@ -2,6 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { BackgroundProcess } from "../../../server/src/api-types"
 import { buildBackgroundProcessStreamUrl, serverApi } from "../lib/api-client"
+import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 
 interface BackgroundProcessOutputDialogProps {
   open: boolean
@@ -12,8 +13,11 @@ interface BackgroundProcessOutputDialogProps {
 
 export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDialogProps) {
   const [output, setOutput] = createSignal("")
+  const [outputHtml, setOutputHtml] = createSignal("")
+  const [ansiEnabled, setAnsiEnabled] = createSignal(false)
   const [truncated, setTruncated] = createSignal(false)
   const [loading, setLoading] = createSignal(false)
+  let ansiRenderer = createAnsiStreamRenderer()
 
   createEffect(() => {
     const process = props.process
@@ -24,17 +28,48 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
     let eventSource: EventSource | null = null
     let active = true
 
+    let rawOutput = ""
+
+    const setRawOutput = (next: string) => {
+      rawOutput = next
+      setOutput(next)
+    }
+
+    const appendRawOutput = (chunk: string) => {
+      rawOutput += chunk
+      setOutput(rawOutput)
+    }
+
+    setAnsiEnabled(false)
+    setOutputHtml("")
+    setRawOutput("")
+    ansiRenderer.reset()
+
     setLoading(true)
     serverApi
       .fetchBackgroundProcessOutput(props.instanceId, process.id, { method: "full", maxBytes: undefined })
       .then((response) => {
         if (!active) return
-        setOutput(response.content)
+
+        setRawOutput(response.content)
         setTruncated(response.truncated)
+
+        const detectedAnsi = hasAnsi(response.content)
+        if (detectedAnsi) {
+          setAnsiEnabled(true)
+          ansiRenderer.reset()
+          setOutputHtml(ansiRenderer.render(response.content))
+        } else {
+          setAnsiEnabled(false)
+          setOutputHtml("")
+          ansiRenderer.reset()
+        }
       })
       .catch(() => {
         if (!active) return
-        setOutput("Failed to load output.")
+        setRawOutput("Failed to load output.")
+        setAnsiEnabled(false)
+        setOutputHtml("")
       })
       .finally(() => {
         if (!active) return
@@ -45,9 +80,28 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as { type?: string; content?: string }
-        if (payload?.type === "chunk" && typeof payload.content === "string") {
-          setOutput((prev) => `${prev}${payload.content}`)
+        if (payload?.type !== "chunk" || typeof payload.content !== "string") {
+          return
         }
+
+        const chunk = payload.content
+        const wasAnsiEnabled = ansiEnabled()
+
+        if (!wasAnsiEnabled) {
+          appendRawOutput(chunk)
+
+          if (hasAnsi(chunk)) {
+            setAnsiEnabled(true)
+            ansiRenderer.reset()
+            setOutputHtml(ansiRenderer.render(rawOutput))
+          }
+
+          return
+        }
+
+        appendRawOutput(chunk)
+        const htmlChunk = ansiRenderer.render(chunk)
+        setOutputHtml((prev) => `${prev}${htmlChunk}`)
       } catch {
         // ignore parse errors
       }
@@ -90,9 +144,19 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
                 <Show when={truncated()}>
                   <p class="text-xs text-secondary mb-2">Output truncated for display.</p>
                 </Show>
-                <pre class="text-xs whitespace-pre-wrap break-all text-primary bg-surface-secondary border border-base rounded-md p-4 font-mono">
-                  {output()}
-                </pre>
+                <Show
+                  when={ansiEnabled()}
+                  fallback={
+                    <pre class="text-xs whitespace-pre-wrap break-all text-primary bg-surface-secondary border border-base rounded-md p-4 font-mono">
+                      {output()}
+                    </pre>
+                  }
+                >
+                  <pre
+                    class="text-xs whitespace-pre-wrap break-all text-primary bg-surface-secondary border border-base rounded-md p-4 font-mono"
+                    innerHTML={outputHtml()}
+                  />
+                </Show>
               </Show>
             </div>
           </Dialog.Content>

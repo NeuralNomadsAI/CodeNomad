@@ -7,6 +7,7 @@ import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("actions")
 
@@ -179,17 +180,13 @@ async function sendMessage(
 
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
-    const response = await instance.client.session.promptAsync({
-      path: { id: sessionId },
-      body: requestBody,
-    })
-
-    log.info("sendMessage response", response)
-
-    if (response.error) {
-      log.error("sendMessage server error", response.error)
-      throw new Error(JSON.stringify(response.error) || "Failed to send message")
-    }
+    await requestData(
+      instance.client.session.promptAsync({
+        sessionID: sessionId,
+        ...(requestBody as any),
+      }),
+      "session.promptAsync",
+    )
   } catch (error) {
     log.error("Failed to send prompt", error)
     throw error
@@ -232,10 +229,13 @@ async function executeCustomCommand(
     body.model = `${session.model.providerId}/${session.model.modelId}`
   }
 
-  await instance.client.session.command({
-    path: { id: sessionId },
-    body,
-  })
+  await requestData(
+    instance.client.session.command({
+      sessionID: sessionId,
+      ...(body as any),
+    }),
+    "session.command",
+  )
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
@@ -251,13 +251,14 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
 
   const agent = session.agent || "build"
 
-  await instance.client.session.shell({
-    path: { id: sessionId },
-    body: {
+  await requestData(
+    instance.client.session.shell({
+      sessionID: sessionId,
       agent,
       command,
-    },
-  })
+    }),
+    "session.shell",
+  )
 }
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {
@@ -270,9 +271,12 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 
   try {
     log.info("session.abort", { instanceId, sessionId })
-    await instance.client.session.abort({
-      path: { id: sessionId },
-    })
+    await requestData(
+      instance.client.session.abort({
+        sessionID: sessionId,
+      }),
+      "session.abort",
+    )
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
@@ -350,10 +354,13 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
-  await instance.client.session.update({
-    path: { id: sessionId },
-    body: { title: trimmedTitle },
-  })
+  await requestData(
+    instance.client.session.update({
+      sessionID: sessionId,
+      title: trimmedTitle,
+    }),
+    "session.update",
+  )
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle

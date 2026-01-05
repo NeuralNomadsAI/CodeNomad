@@ -112,7 +112,7 @@ function isAssistantStillGeneratingRecord(record: MessageRecord, info?: MessageI
 }
 
 
-export function getSessionStatus(instanceId: string, sessionId: string): SessionStatus {
+export function deriveSessionStatusFromMessages(instanceId: string, sessionId: string): SessionStatus {
   const session = getSession(instanceId, sessionId)
   if (!session) {
     return "idle"
@@ -160,6 +160,14 @@ export function getSessionStatus(instanceId: string, sessionId: string): Session
   }
 
   return "idle"
+}
+
+export function getSessionStatus(instanceId: string, sessionId: string): SessionStatus {
+  const session = getSession(instanceId, sessionId)
+  if (!session) {
+    return "idle"
+  }
+  return session.status ?? deriveSessionStatusFromMessages(instanceId, sessionId)
 }
 
 export function isSessionBusy(instanceId: string, sessionId: string): boolean {
