@@ -170,6 +170,47 @@ export function getSessionStatus(instanceId: string, sessionId: string): Session
   return session.status ?? deriveSessionStatusFromMessages(instanceId, sessionId)
 }
 
+export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
+
+export function getInstanceSessionIndicatorStatus(instanceId: string): InstanceSessionIndicatorStatus {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions || instanceSessions.size === 0) {
+    return "idle"
+  }
+
+  let bestRank = 0
+  let best: InstanceSessionIndicatorStatus = "idle"
+
+  for (const session of instanceSessions.values()) {
+    let rank = 0
+    let status: InstanceSessionIndicatorStatus = "idle"
+
+    if (session.pendingPermission) {
+      status = "permission"
+      rank = 3
+    } else {
+      const sessionStatus = getSessionStatus(instanceId, session.id)
+      if (sessionStatus === "compacting") {
+        status = "compacting"
+        rank = 2
+      } else if (sessionStatus === "working") {
+        status = "working"
+        rank = 1
+      }
+    }
+
+    if (rank > bestRank) {
+      bestRank = rank
+      best = status
+      if (bestRank === 3) {
+        break
+      }
+    }
+  }
+
+  return best
+}
+
 export function isSessionBusy(instanceId: string, sessionId: string): boolean {
   const status = getSessionStatus(instanceId, sessionId)
   return status === "working" || status === "compacting"
