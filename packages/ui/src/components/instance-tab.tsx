@@ -1,7 +1,7 @@
 import { Component, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
-import { FolderOpen, X } from "lucide-solid"
+import { FolderOpen, ShieldAlert, X } from "lucide-solid"
 
 interface InstanceTabProps {
   instance: Instance
@@ -63,7 +63,11 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           title={statusTitle()}
           aria-label={`Instance status: ${statusTitle()}`}
         >
-          <span class="status-dot" />
+          {aggregatedStatus() === "permission" ? (
+            <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+          ) : (
+            <span class="status-dot" />
+          )}
         </span>
         <span
           class="tab-close"

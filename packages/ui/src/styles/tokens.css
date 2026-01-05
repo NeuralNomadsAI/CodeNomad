@@ -42,8 +42,8 @@
   --session-status-compacting-bg: rgba(109, 40, 217, 0.18);
   --session-status-idle-fg: #15803d;
   --session-status-idle-bg: rgba(22, 163, 74, 0.16);
-  --session-status-permission-fg: #c2410c;
-  --session-status-permission-bg: rgba(251, 191, 36, 0.25);
+  --session-status-permission-fg: #b91c1c;
+  --session-status-permission-bg: rgba(239, 68, 68, 0.16);
   --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
   --list-item-highlight-bg-solid: #e5f0ff;
   --list-item-highlight-border: rgba(0, 102, 255, 0.25);
@@ -191,8 +191,8 @@
     --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
     --session-status-idle-fg: #4ade80;
     --session-status-idle-bg: rgba(74, 222, 128, 0.22);
-    --session-status-permission-fg: #fbbf24;
-    --session-status-permission-bg: rgba(251, 191, 36, 0.35);
+    --session-status-permission-fg: #f87171;
+    --session-status-permission-bg: rgba(248, 113, 113, 0.22);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);
@@ -345,8 +345,8 @@
   --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
   --session-status-idle-fg: #4ade80;
   --session-status-idle-bg: rgba(74, 222, 128, 0.22);
-  --session-status-permission-fg: #fbbf24;
-  --session-status-permission-bg: rgba(251, 191, 36, 0.35);
+  --session-status-permission-fg: #f87171;
+  --session-status-permission-bg: rgba(248, 113, 113, 0.22);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);

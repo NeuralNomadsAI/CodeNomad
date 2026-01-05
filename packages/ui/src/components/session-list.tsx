@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, JSX } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { MessageSquare, Info, X, Copy, Trash2, Pencil } from "lucide-solid"
+import { MessageSquare, Info, X, Copy, Trash2, Pencil, ShieldAlert } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -172,7 +172,11 @@ const SessionList: Component<SessionListProps> = (props) => {
           </div>
           <div class="session-item-row session-item-meta">
             <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-              <span class="status-dot" />
+              {pendingPermission() ? (
+                <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <span class="status-dot" />
+              )}
               {statusText()}
             </span>
             <div class="session-item-actions">
