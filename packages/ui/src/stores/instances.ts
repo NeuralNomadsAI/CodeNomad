@@ -584,6 +584,9 @@ async function sendPermissionResponse(
 
     // Remove from queue after successful response
     removePermissionFromQueue(instanceId, requestId)
+    
+    // CRITICAL: Also remove from v2 message store to keep state in sync
+    removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
