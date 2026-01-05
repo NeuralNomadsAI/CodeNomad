@@ -8,6 +8,7 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
 import { sendPermissionResponse } from "../stores/instances"
+import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
 import type { TextPart, RenderCache } from "../types/message"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import type {
@@ -22,7 +23,7 @@ import type {
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
-import { ansiToHtml, hasAnsi } from "../lib/ansi"
+import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { escapeHtml } from "../lib/markdown"
 
 const log = getLogger("session")
@@ -264,6 +265,9 @@ export default function ToolCall(props: ToolCallProps) {
     const versionKey = typeof props.partVersion === "number" ? String(props.partVersion) : "noversion"
     return `ansi-final:${versionKey}`
   })
+  const runningAnsiRenderer = createAnsiStreamRenderer()
+  let runningAnsiSource = ""
+
   const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallIdentifier()))
   const pendingPermission = createMemo(() => {
     const state = permissionState()
@@ -649,35 +653,61 @@ export default function ToolCall(props: ToolCallProps) {
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
     const cacheHandle = options.variant === "running" ? ansiRunningCache : ansiFinalCache
     const cached = cacheHandle.get<AnsiRenderCache>()
-    if (cached) {
-      if (options.requireAnsi && !cached.hasAnsi) {
-        return null
+    const mode = typeof props.partVersion === "number" ? String(props.partVersion) : undefined
+    const isRunningVariant = options.variant === "running"
+
+    let nextCache: AnsiRenderCache
+
+    if (isRunningVariant) {
+      const content = options.content
+      const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
+
+      if (resetStreaming) {
+        const detectedAnsi = hasAnsi(content)
+        if (detectedAnsi) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else {
+          runningAnsiRenderer.reset()
+          nextCache = { text: content, html: escapeHtml(content), mode, hasAnsi: false }
+        }
+      } else {
+        const delta = content.slice(cached.text.length)
+        if (delta.length === 0) {
+          nextCache = { ...cached, mode }
+        } else if (!cached.hasAnsi && hasAnsi(delta)) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else if (cached.hasAnsi) {
+          const htmlChunk = runningAnsiRenderer.render(delta)
+          nextCache = { text: content, html: `${cached.html}${htmlChunk}`, mode, hasAnsi: true }
+        } else {
+          nextCache = { text: content, html: `${cached.html}${escapeHtml(delta)}`, mode, hasAnsi: false }
+        }
       }
-      return (
-        <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-          <pre class="tool-call-content tool-call-ansi" innerHTML={cached.html} />
-          {scrollHelpers.renderSentinel()}
-        </div>
-      )
+
+      runningAnsiSource = nextCache.text
+      cacheHandle.set(nextCache)
+    } else {
+      if (cached && cached.text === options.content) {
+        nextCache = { ...cached, mode }
+      } else {
+        const detectedAnsi = hasAnsi(options.content)
+        const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
+        nextCache = { text: options.content, html, mode, hasAnsi: detectedAnsi }
+        cacheHandle.set(nextCache)
+      }
     }
 
-    const detectedAnsi = hasAnsi(options.content)
-    const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
-    const cacheEntry: AnsiRenderCache = {
-      text: "",
-      html,
-      mode: typeof props.partVersion === "number" ? String(props.partVersion) : undefined,
-      hasAnsi: detectedAnsi,
-    }
-    cacheHandle.set(cacheEntry)
-
-    if (options.requireAnsi && !detectedAnsi) {
+    if (options.requireAnsi && !nextCache.hasAnsi) {
       return null
     }
 
     return (
       <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" innerHTML={html} />
+        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
         {scrollHelpers.renderSentinel()}
       </div>
     )
@@ -822,7 +852,7 @@ export default function ToolCall(props: ToolCallProps) {
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
-      const sessionId = permission.sessionID || props.sessionId
+      const sessionId = getPermissionSessionId(permission) || props.sessionId
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
     } catch (error) {
       log.error("Failed to send permission response", error)
@@ -867,11 +897,11 @@ export default function ToolCall(props: ToolCallProps) {
       <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
         <div class="tool-call-permission-header">
           <span class="tool-call-permission-label">{active ? "Permission Required" : "Permission Queued"}</span>
-          <span class="tool-call-permission-type">{permission.type}</span>
+          <span class="tool-call-permission-type">{getPermissionKind(permission)}</span>
         </div>
         <div class="tool-call-permission-body">
           <div class="tool-call-permission-title">
-            <code>{permission.title}</code>
+            <code>{getPermissionDisplayTitle(permission)}</code>
           </div>
           <Show when={diffPayload}>
             {(payload) => (

@@ -1,5 +1,5 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/client"
-import type { LspStatus, Project as SDKProject } from "@opencode-ai/sdk"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { LspStatus, Project as SDKProject } from "@opencode-ai/sdk/v2"
 
 export interface LogEntry {
   timestamp: number

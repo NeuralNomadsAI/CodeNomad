@@ -7,12 +7,12 @@ import {
 } from "../types/message"
 import type {
   EventLspUpdated,
-  EventPermissionReplied,
-  EventPermissionUpdated,
+
   EventSessionCompacted,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
+  EventSessionStatus,
 } from "@opencode-ai/sdk"
 import { serverEvents } from "./server-events"
 import type {
@@ -61,8 +61,8 @@ type SSEEvent =
   | EventSessionCompacted
   | EventSessionError
   | EventSessionIdle
-  | EventPermissionUpdated
-  | EventPermissionReplied
+  | { type: "permission.updated" | "permission.asked"; properties?: any }
+  | { type: "permission.replied"; properties?: any }
   | EventLspUpdated
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
@@ -134,11 +134,15 @@ class SSEManager {
       case "session.idle":
         this.onSessionIdle?.(instanceId, event as EventSessionIdle)
         break
+      case "session.status":
+        this.onSessionStatus?.(instanceId, event as EventSessionStatus)
+        break
       case "permission.updated":
-        this.onPermissionUpdated?.(instanceId, event as EventPermissionUpdated)
+      case "permission.asked":
+        this.onPermissionUpdated?.(instanceId, event as any)
         break
       case "permission.replied":
-        this.onPermissionReplied?.(instanceId, event as EventPermissionReplied)
+        this.onPermissionReplied?.(instanceId, event as any)
         break
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
@@ -171,8 +175,9 @@ class SSEManager {
   onSessionError?: (instanceId: string, event: EventSessionError) => void
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
-  onPermissionUpdated?: (instanceId: string, event: EventPermissionUpdated) => void
-  onPermissionReplied?: (instanceId: string, event: EventPermissionReplied) => void
+  onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
+  onPermissionUpdated?: (instanceId: string, event: any) => void
+  onPermissionReplied?: (instanceId: string, event: any) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void

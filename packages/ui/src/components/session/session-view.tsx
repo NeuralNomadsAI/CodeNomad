@@ -10,6 +10,7 @@ import { loadMessages, sendMessage, forkSession, isSessionMessagesLoading, setAc
 import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
+import { requestData } from "../../lib/opencode-api"
 
 const log = getLogger("session")
 
@@ -123,10 +124,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
-      await instance.client.session.revert({
-        path: { id: props.sessionId },
-        body: { messageID: messageId },
-      })
+      await requestData(
+        instance.client.session.revert({
+          sessionID: props.sessionId,
+          messageID: messageId,
+        }),
+        "session.revert",
+      )
 
       const restoredText = getUserMessageText(messageId)
       if (restoredText) {

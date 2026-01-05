@@ -27,6 +27,7 @@ export interface Session
   }
   version: string // Include version from SDK Session
   pendingPermission?: boolean // Indicates if session is waiting on user permission
+  status: SessionStatus // Single source of truth for session status
 }
 
 // Adapter function to convert SDK Session to client Session
@@ -42,6 +43,7 @@ export function createClientSession(
     parentId: sdkSession.parentID || null,
     agent,
     model,
+    status: "idle",
   }
 }
 

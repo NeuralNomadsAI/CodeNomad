@@ -1,5 +1,6 @@
 import { Show, createSignal, createMemo, createEffect, onCleanup, type Component } from "solid-js"
-import type { Permission } from "@opencode-ai/sdk"
+import type { PermissionRequestLike } from "../types/permission"
+import { getPermissionSessionId, getPermissionKind, getPermissionDisplayTitle } from "../types/permission"
 import { getPermissionQueue, activePermissionId, sendPermissionResponse } from "../stores/instances"
 import { ToolCallDiffViewer } from "./diff-viewer"
 import { useTheme } from "../lib/theme"
@@ -22,7 +23,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const queue = createMemo(() => getPermissionQueue(props.instanceId))
   const activePermId = createMemo(() => activePermissionId().get(props.instanceId) ?? null)
   
-  const activePermission = createMemo((): Permission | null => {
+  const activePermission = createMemo((): PermissionRequestLike | null => {
     const id = activePermId()
     if (!id) return null
     return queue().find((p) => p.id === id) ?? null
@@ -72,7 +73,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     setError(null)
 
     try {
-      const sessionId = (permission as any).sessionID || ""
+      const sessionId = getPermissionSessionId(permission) || ""
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
       
       // Wait a moment for queue to update before closing
@@ -134,10 +135,10 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
 
             <div class="permission-modal-body">
               <div class="permission-modal-type">
-                {activePermission()!.type}
+                {getPermissionKind(activePermission())}
               </div>
               <div class="permission-modal-message">
-                <code>{activePermission()!.title}</code>
+                <code>{getPermissionDisplayTitle(activePermission())}</code>
               </div>
 
               <Show when={diffPayload()}>

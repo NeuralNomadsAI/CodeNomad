@@ -1,5 +1,5 @@
 import type { ClientPart } from "../../types/message"
-import type { Permission } from "@opencode-ai/sdk"
+import type { PermissionRequestLike } from "../../types/permission"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
 export type MessageRole = "user" | "assistant"
@@ -47,7 +47,7 @@ export interface PendingPartEntry {
 }
 
 export interface PermissionEntry {
-  permission: Permission
+  permission: PermissionRequestLike
   messageId?: string
   partId?: string
   enqueuedAt: number

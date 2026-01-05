@@ -90,9 +90,9 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     setPendingMcpAction(serverName, action)
     try {
       if (shouldEnable) {
-        await client.mcp.connect({ path: { name: serverName } })
+        await client.mcp.connect({ name: serverName })
       } else {
-        await client.mcp.disconnect({ path: { name: serverName } })
+        await client.mcp.disconnect({ name: serverName })
       }
       await refreshMetadata()
     } catch (error) {
