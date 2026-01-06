@@ -243,7 +243,7 @@ jobs:
         run: npm install @rollup/rollup-darwin-arm64 --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli-darwin-arm64 @tauri-apps/cli-darwin-universal --no-save
+        run: npm install @tauri-apps/cli-darwin-arm64 --no-save
 
       - name: Build macOS bundle (Tauri, arm64)
         run: npm run build --workspace @codenomad/tauri-app

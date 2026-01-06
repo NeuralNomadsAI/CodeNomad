@@ -10,7 +10,8 @@ const cliRoot = path.resolve(__dirname, "..")
 const sourceDir = path.resolve(cliRoot, "../opencode-config")
 const targetDir = path.resolve(cliRoot, "dist/opencode-config")
 const nodeModulesDir = path.resolve(sourceDir, "node_modules")
-const npmCandidates = process.platform === "win32" ? ["npm.cmd", "npm"] : ["npm"]
+const npmExecPath = process.env.npm_execpath
+const npmNodeExecPath = process.env.npm_node_execpath
 
 if (!existsSync(sourceDir)) {
   console.error(`[copy-opencode-config] Missing source directory at ${sourceDir}`)
@@ -30,30 +31,19 @@ if (!existsSync(nodeModulesDir)) {
     "--workspaces=false",
   ]
 
-  let lastResult
-  for (const npmCmd of npmCandidates) {
-    const result = spawnSync(npmCmd, npmArgs, {
-      cwd: sourceDir,
-      stdio: "inherit",
-      env: { ...process.env, npm_config_workspaces: "false" },
-    })
+  const env = { ...process.env, npm_config_workspaces: "false" }
 
-    lastResult = result
+  const npmCli = npmExecPath && npmNodeExecPath ? [npmNodeExecPath, [npmExecPath, ...npmArgs]] : null
+  const result = npmCli
+    ? spawnSync(npmCli[0], npmCli[1], { cwd: sourceDir, stdio: "inherit", env })
+    : spawnSync("npm", npmArgs, { cwd: sourceDir, stdio: "inherit", env, shell: process.platform === "win32" })
 
-    if (result.error?.code === "ENOENT") {
-      console.warn(`[copy-opencode-config] ${npmCmd} not found on PATH, trying next candidate`)
-      continue
-    }
-
-    break
-  }
-
-  if (!lastResult || lastResult.status !== 0) {
-    if (lastResult?.error) {
-      console.error("[copy-opencode-config] npm install failed to start", lastResult.error)
+  if (result.status !== 0) {
+    if (result.error) {
+      console.error("[copy-opencode-config] npm install failed to start", result.error)
     }
     console.error("[copy-opencode-config] Failed to install opencode-config dependencies")
-    process.exit(lastResult?.status ?? 1)
+    process.exit(result.status ?? 1)
   }
 }
 
