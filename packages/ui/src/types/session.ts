@@ -4,6 +4,7 @@ import type {
   Provider as SDKProvider,
   Model as SDKModel,
 } from "@opencode-ai/sdk"
+import type { SessionStatus as SDKSessionStatus } from "@opencode-ai/sdk/v2/client"
 
 // Export SDK types for external use
 export type { 
@@ -14,6 +15,15 @@ export type {
 } from "@opencode-ai/sdk"
 
 export type SessionStatus = "idle" | "working" | "compacting"
+
+export function mapSdkSessionStatus(status: SDKSessionStatus | null | undefined): SessionStatus {
+  if (!status || status.type === "idle") {
+    return "idle"
+  }
+
+  // "busy" and "retry" both mean there's active work.
+  return "working"
+}
 
 // Our client-specific Session interface extending SDK Session
 export interface Session
@@ -27,6 +37,7 @@ export interface Session
   }
   version: string // Include version from SDK Session
   pendingPermission?: boolean // Indicates if session is waiting on user permission
+  status: SessionStatus // Single source of truth for session status
 }
 
 // Adapter function to convert SDK Session to client Session
@@ -35,6 +46,7 @@ export function createClientSession(
   instanceId: string,
   agent: string = "",
   model: { providerId: string; modelId: string } = { providerId: "", modelId: "" },
+  status: SessionStatus = "idle",
 ): Session {
   return {
     ...sdkSession,
@@ -42,6 +54,7 @@ export function createClientSession(
     parentId: sdkSession.parentID || null,
     agent,
     model,
+    status,
   }
 }
 

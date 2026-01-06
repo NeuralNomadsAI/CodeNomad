@@ -18,8 +18,11 @@ import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
+import { registerPluginRoutes } from "./routes/plugin"
+import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
+import { BackgroundProcessManager } from "../background-processes/manager"
 
 interface HttpServerDeps {
   host: string
@@ -100,6 +103,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
   })
 
+  const backgroundProcessManager = new BackgroundProcessManager({
+    workspaceManager: deps.workspaceManager,
+    eventBus: deps.eventBus,
+    logger: deps.logger.child({ component: "background-processes" }),
+  })
+
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerConfigRoutes(app, { configStore: deps.configStore, binaryRegistry: deps.binaryRegistry })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
@@ -110,6 +119,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
+  registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
+  registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 

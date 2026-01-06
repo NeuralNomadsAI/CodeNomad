@@ -1,6 +1,9 @@
 import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
-import type { LspStatus, Permission } from "@opencode-ai/sdk"
+import type { LspStatus } from "@opencode-ai/sdk/v2"
+import type { PermissionReply, PermissionRequestLike } from "../types/permission"
+import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permission"
+import { requestData } from "../lib/opencode-api"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
@@ -18,6 +21,7 @@ import { preferences } from "./preferences"
 import { setSessionPendingPermission } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { upsertPermissionV2, removePermissionV2 } from "./message-v2/bridge"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -31,9 +35,14 @@ const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(ne
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
 // Permission queue management per instance
-const [permissionQueues, setPermissionQueues] = createSignal<Map<string, Permission[]>>(new Map())
+const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequestLike[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 const permissionSessionCounts = new Map<string, Map<string, number>>()
+
+function syncHasInstancesFlag() {
+  const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
+  setHasInstances(readyExists)
+}
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
@@ -68,7 +77,6 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor) {
     updateInstance(descriptor.id, mapped)
   } else {
     addInstance(mapped)
-    setHasInstances(true)
   }
 
   if (descriptor.status === "ready") {
@@ -117,6 +125,37 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
+async function syncPendingPermissions(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+
+  try {
+    const remote = await requestData<PermissionRequestLike[]>(
+      instance.client.permission.list(),
+      "permission.list",
+    )
+
+    const remoteIds = new Set(remote.map((item) => item.id))
+    const local = getPermissionQueue(instanceId)
+
+    // Remove any stale local permissions missing from server.
+    for (const entry of local) {
+      if (!remoteIds.has(entry.id)) {
+        removePermissionFromQueue(instanceId, entry.id)
+        removePermissionV2(instanceId, entry.id)
+      }
+    }
+
+    // Upsert all server-side pending permissions.
+    for (const permission of remote) {
+      addPermissionToQueue(instanceId, permission)
+      upsertPermissionV2(instanceId, permission)
+    }
+  } catch (error) {
+    log.warn("Failed to sync pending permissions", { instanceId, error })
+  }
+}
+
 async function hydrateInstanceData(instanceId: string) {
   try {
     await fetchSessions(instanceId)
@@ -126,6 +165,7 @@ async function hydrateInstanceData(instanceId: string) {
     const instance = instances().get(instanceId)
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)
+    await syncPendingPermissions(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
   }
@@ -135,9 +175,6 @@ void (async function initializeWorkspaces() {
   try {
     const workspaces = await serverApi.fetchWorkspaces()
     workspaces.forEach((workspace) => upsertWorkspace(workspace))
-    if (workspaces.length === 0) {
-      setHasInstances(false)
-    }
   } catch (error) {
     log.error("Failed to load workspaces", error)
   }
@@ -159,9 +196,6 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     case "workspace.stopped":
       releaseInstanceResources(event.workspaceId)
       removeInstance(event.workspaceId)
-      if (instances().size === 0) {
-        setHasInstances(false)
-      }
       break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
@@ -249,6 +283,7 @@ function addInstance(instance: Instance) {
   })
   ensureLogContainer(instance.id)
   ensureLogStreamingState(instance.id)
+  syncHasInstancesFlag()
 }
 
 function updateInstance(id: string, updates: Partial<Instance>) {
@@ -260,6 +295,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     }
     return next
   })
+  syncHasInstancesFlag()
 }
 
 function removeInstance(id: string) {
@@ -301,6 +337,7 @@ function removeInstance(id: string) {
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
+  syncHasInstancesFlag()
 }
 
 async function createInstance(folder: string, _binaryPath?: string): Promise<string> {
@@ -328,9 +365,6 @@ async function stopInstance(id: string) {
   }
 
   removeInstance(id)
-  if (instances().size === 0) {
-    setHasInstances(false)
-  }
 }
 
 async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
@@ -349,8 +383,7 @@ async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefin
     return undefined
   }
   log.info("lsp.status", { instanceId })
-  const response = await lsp.status()
-  return response.data ?? []
+  return await requestData<LspStatus[]>(lsp.status(), "lsp.status")
 }
 
 function getActiveInstance(): Instance | null {
@@ -384,7 +417,7 @@ function clearLogs(id: string) {
 }
 
 // Permission management functions
-function getPermissionQueue(instanceId: string): Permission[] {
+function getPermissionQueue(instanceId: string): PermissionRequestLike[] {
   const queue = permissionQueues().get(instanceId)
   if (!queue) {
     return []
@@ -431,7 +464,7 @@ function clearSessionPendingCounts(instanceId: string): void {
   permissionSessionCounts.delete(instanceId)
 }
 
-function addPermissionToQueue(instanceId: string, permission: Permission): void {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
   let inserted = false
 
   setPermissionQueues((prev) => {
@@ -442,7 +475,7 @@ function addPermissionToQueue(instanceId: string, permission: Permission): void 
       return next
     }
 
-    const updatedQueue = [...queue, permission].sort((a, b) => a.time.created - b.time.created)
+    const updatedQueue = [...queue, permission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
     next.set(instanceId, updatedQueue)
     inserted = true
     return next
@@ -461,17 +494,19 @@ function addPermissionToQueue(instanceId: string, permission: Permission): void 
   })
 
   const sessionId = getPermissionSessionId(permission)
-  incrementSessionPendingCount(instanceId, sessionId)
-  setSessionPendingPermission(instanceId, sessionId, true)
+  if (sessionId) {
+    incrementSessionPendingCount(instanceId, sessionId)
+    setSessionPendingPermission(instanceId, sessionId, true)
+  }
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
-  let removedPermission: Permission | null = null
+  let removedPermission: PermissionRequestLike | null = null
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
-    const filtered: Permission[] = []
+    const filtered: PermissionRequestLike[] = []
 
     for (const item of queue) {
       if (item.id === permissionId) {
@@ -495,7 +530,7 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
     const next = new Map(prev)
     const activeId = next.get(instanceId)
     if (activeId === permissionId) {
-      const nextPermission = updatedQueue.length > 0 ? (updatedQueue[0] as Permission) : null
+      const nextPermission = updatedQueue.length > 0 ? (updatedQueue[0] as PermissionRequestLike) : null
       next.set(instanceId, nextPermission?.id ?? null)
     }
     return next
@@ -504,8 +539,10 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
   const removed = removedPermission
   if (removed) {
     const removedSessionId = getPermissionSessionId(removed)
-    const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
-    setSessionPendingPermission(instanceId, removedSessionId, remaining > 0)
+    if (removedSessionId) {
+      const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
+      setSessionPendingPermission(instanceId, removedSessionId, remaining > 0)
+    }
   }
 }
 
@@ -523,15 +560,13 @@ function clearPermissionQueue(instanceId: string): void {
   clearSessionPendingCounts(instanceId)
 }
 
-function getPermissionSessionId(permission: Permission): string {
-  return (permission as any).sessionID
-}
+
 
 async function sendPermissionResponse(
   instanceId: string,
   sessionId: string,
-  permissionId: string,
-  response: "once" | "always" | "reject"
+  requestId: string,
+  reply: PermissionReply
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
@@ -539,13 +574,16 @@ async function sendPermissionResponse(
   }
 
   try {
-    await instance.client.postSessionIdPermissionsPermissionId({
-      path: { id: sessionId, permissionID: permissionId },
-      body: { response },
-    })
+    await requestData(
+      instance.client.permission.reply({
+        requestID: requestId,
+        reply,
+      }),
+      "permission.reply",
+    )
 
     // Remove from queue after successful response
-    removePermissionFromQueue(instanceId, permissionId)
+    removePermissionFromQueue(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
@@ -590,9 +628,6 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
     log.error("Failed to stop disconnected instance", error)
   } finally {
     setDisconnectedInstance(null)
-    if (instances().size === 0) {
-      setHasInstances(false)
-    }
   }
 }
 

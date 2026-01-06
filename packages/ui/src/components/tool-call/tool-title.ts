@@ -48,6 +48,7 @@ function createStaticContext(snapshot: TitleSnapshot): ToolRendererContext {
   const messageVersionAccessor = () => undefined
   const partVersionAccessor = () => undefined
   const renderMarkdown: ToolRendererContext["renderMarkdown"] = () => null
+  const renderAnsi: ToolRendererContext["renderAnsi"] = () => null
   const renderDiff: ToolRendererContext["renderDiff"] = () => null
 
   return {
@@ -57,6 +58,7 @@ function createStaticContext(snapshot: TitleSnapshot): ToolRendererContext {
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown,
+    renderAnsi,
     renderDiff,
     scrollHelpers: undefined,
   }

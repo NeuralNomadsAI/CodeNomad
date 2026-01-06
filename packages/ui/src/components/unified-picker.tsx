@@ -1,6 +1,6 @@
 import { Component, createSignal, createEffect, For, Show, onCleanup } from "solid-js"
 import type { Agent } from "../types/session"
-import type { OpencodeClient } from "@opencode-ai/sdk/client"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")

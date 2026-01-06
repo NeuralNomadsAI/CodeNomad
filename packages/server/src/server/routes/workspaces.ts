@@ -35,10 +35,16 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.post("/api/workspaces", async (request, reply) => {
-    const body = WorkspaceCreateSchema.parse(request.body ?? {})
-    const workspace = await deps.workspaceManager.create(body.path, body.name)
-    reply.code(201)
-    return workspace
+    try {
+      const body = WorkspaceCreateSchema.parse(request.body ?? {})
+      const workspace = await deps.workspaceManager.create(body.path, body.name)
+      reply.code(201)
+      return workspace
+    } catch (error) {
+      request.log.error({ err: error }, "Failed to create workspace")
+      const message = error instanceof Error ? error.message : "Failed to create workspace"
+      reply.code(400).type("text/plain").send(message)
+    }
   })
 
   app.get<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {

@@ -51,16 +51,8 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
     return part.id
   }
 
-  const toolCallId =
-    (part as any).callID ??
-    (part as any).callId ??
-    (part as any).toolCallID ??
-    (part as any).toolCallId ??
-    undefined
-
-  if (part.type === "tool" && typeof toolCallId === "string" && toolCallId.length > 0) {
-    part.id = toolCallId
-    return toolCallId
+  if (part.type === "tool") {
+    throw new Error("Tool part missing id")
   }
 
   const fallbackId = `${messageId}-part-${index}`
@@ -191,6 +183,8 @@ export interface InstanceMessageStore {
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
+  removeMessage: (messageId: string) => void
+  removeMessagePart: (messageId: string, partId: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
   flushPendingParts: (messageId: string) => void
   replaceMessageId: (options: ReplaceMessageIdOptions) => void
@@ -502,16 +496,62 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
   }
 
+  function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
+    if (!messageId || !partId || part.type !== "tool") {
+      return
+    }
+
+    const toolCallId =
+      (part as any).callID ??
+      (part as any).callId ??
+      (part as any).toolCallID ??
+      (part as any).toolCallId ??
+      undefined
+    if (!toolCallId) {
+      return
+    }
+
+    setState(
+      "permissions",
+      "byMessage",
+      messageId,
+      produce((draft) => {
+        if (!draft) return
+        const existing = draft[partId]
+        for (const [key, entry] of Object.entries(draft)) {
+          if (!entry || entry.partId) continue
+          const permissionCallId =
+            (entry.permission as any).tool?.callID ??
+            (entry.permission as any).tool?.callId ??
+            (entry.permission as any).callID ??
+            (entry.permission as any).callId ??
+            (entry.permission as any).toolCallID ??
+            (entry.permission as any).toolCallId ??
+            (entry.permission as any).metadata?.callID ??
+            (entry.permission as any).metadata?.callId ??
+            undefined
+          if (permissionCallId !== toolCallId) continue
+          if (!existing || existing.permission.id === entry.permission.id) {
+            entry.partId = partId
+            draft[partId] = entry
+            delete draft[key]
+          }
+          break
+        }
+      }),
+    )
+  }
+
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
       bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
       return
     }
- 
+  
     const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
     const cloned = clonePart(input.part)
- 
+  
     setState(
       "messages",
       input.messageId,
@@ -520,7 +560,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           draft.partIds = [...draft.partIds, partId]
         }
         const existing = draft.parts[partId]
-        const nextRevision = existing ? existing.revision + 1 : cloned.version ?? 0
+        const nextRevision = existing ? existing.revision + 1 : (cloned as any).version ?? 0
         draft.parts[partId] = {
           id: partId,
           data: cloned,
@@ -533,6 +573,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }),
     )
 
+    rebindPermissionForPart(input.messageId, partId, cloned)
+
     if (isCompletedTodoPart(cloned)) {
       recordLatestTodoSnapshot(message.sessionId, {
         messageId: input.messageId,
@@ -540,10 +582,104 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         timestamp: Date.now(),
       })
     }
- 
+  
     // Any part update can change the rendered height of the message
     // list, so we treat it as a session revision for scroll purposes.
     bumpSessionRevision(message.sessionId)
+  }
+
+  function removeMessage(messageId: string) {
+    if (!messageId) return
+
+    const record = state.messages[messageId]
+    const sessionIds = new Set<string>()
+
+    if (record?.sessionId) {
+      sessionIds.add(record.sessionId)
+    } else {
+      Object.values(state.sessions).forEach((session) => {
+        if (session.messageIds.includes(messageId)) {
+          sessionIds.add(session.id)
+        }
+      })
+    }
+
+    clearRecordDisplayCacheForMessages(instanceId, [messageId])
+
+    batch(() => {
+      sessionIds.forEach((sessionId) => {
+        setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
+      })
+
+      setState("messages", (prev) => {
+        if (!prev[messageId]) return prev
+        const next = { ...prev }
+        delete next[messageId]
+        return next
+      })
+
+      setState("messageInfoVersion", (prev) => {
+        if (!(messageId in prev)) return prev
+        const next = { ...prev }
+        delete next[messageId]
+        return next
+      })
+
+      messageInfoCache.delete(messageId)
+
+      setState("pendingParts", (prev) => {
+        if (!prev[messageId]) return prev
+        const next = { ...prev }
+        delete next[messageId]
+        return next
+      })
+
+      setState("permissions", "byMessage", (prev) => {
+        if (!prev[messageId]) return prev
+        const next = { ...prev }
+        delete next[messageId]
+        return next
+      })
+
+      sessionIds.forEach((sessionId) => {
+        withUsageState(sessionId, (draft) => removeUsageEntry(draft, messageId))
+        if (state.latestTodos[sessionId]?.messageId === messageId) {
+          clearLatestTodoSnapshot(sessionId)
+        }
+        bumpSessionRevision(sessionId)
+      })
+    })
+  }
+
+  function removeMessagePart(messageId: string, partId: string) {
+    if (!messageId || !partId) return
+    const message = state.messages[messageId]
+    if (!message) return
+
+    clearRecordDisplayCacheForMessages(instanceId, [messageId])
+
+    batch(() => {
+      setState(
+        "messages",
+        messageId,
+        produce((draft: MessageRecord) => {
+          if (!draft.parts[partId] && !draft.partIds.includes(partId)) return
+          draft.partIds = draft.partIds.filter((id) => id !== partId)
+          delete draft.parts[partId]
+          draft.updatedAt = Date.now()
+          draft.revision += 1
+        }),
+      )
+
+      setState("permissions", "byMessage", messageId, (prev) => {
+        if (!prev || !prev[partId]) return prev
+        const next = { ...prev }
+        delete next[partId]
+        return next
+      })
+
+      bumpSessionRevision(message.sessionId)
+    })
   }
 
 
@@ -644,7 +780,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function upsertPermission(entry: PermissionEntry) {
     const messageKey = entry.messageId ?? "__global__"
-    const partKey = entry.partId ?? "__global__"
+    const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
 
     setState(
       "permissions",
@@ -868,8 +1004,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      addOrUpdateSession,
      hydrateMessages,
      upsertMessage,
-     applyPartUpdate,
-     bufferPendingPart,
+      applyPartUpdate,
+      removeMessage,
+      removeMessagePart,
+      bufferPendingPart,
      flushPendingParts,
      replaceMessageId,
      setMessageInfo,

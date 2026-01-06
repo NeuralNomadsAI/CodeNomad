@@ -21,11 +21,9 @@ import {
   hasInstances,
   isSelectingFolder,
   setIsSelectingFolder,
-  setHasInstances,
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { instances as instanceStore } from "./stores/instances"
 import { useConfig } from "./stores/preferences"
 import {
   createInstance,
@@ -65,7 +63,12 @@ const App: Component = () => {
     setThinkingBlocksExpansion,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
-  const [launchErrorBinary, setLaunchErrorBinary] = createSignal<string | null>(null)
+  interface LaunchErrorState {
+    message: string
+    binaryPath: string
+    missingBinary: boolean
+  }
+  const [launchError, setLaunchError] = createSignal<LaunchErrorState | null>(null)
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
@@ -105,14 +108,30 @@ const App: Component = () => {
   })
 
   const launchErrorPath = () => {
-    const value = launchErrorBinary()
+    const value = launchError()?.binaryPath
     if (!value) return "opencode"
     return value.trim() || "opencode"
   }
 
-  const isMissingBinaryError = (error: unknown): boolean => {
-    if (!error) return false
-    const message = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
+  const launchErrorMessage = () => launchError()?.message ?? ""
+
+  const formatLaunchErrorMessage = (error: unknown): string => {
+    if (!error) {
+      return "Failed to launch workspace"
+    }
+    const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed.error === "string") {
+        return parsed.error
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+    return raw
+  }
+
+  const isMissingBinaryMessage = (message: string): boolean => {
     const normalized = message.toLowerCase()
     return (
       normalized.includes("opencode binary not found") ||
@@ -123,7 +142,7 @@ const App: Component = () => {
     )
   }
 
-  const clearLaunchError = () => setLaunchErrorBinary(null)
+  const clearLaunchError = () => setLaunchError(null)
 
   async function handleSelectFolder(folderPath: string, binaryPath?: string) {
     if (!folderPath) {
@@ -135,7 +154,6 @@ const App: Component = () => {
       recordWorkspaceLaunch(folderPath, selectedBinary)
       clearLaunchError()
       const instanceId = await createInstance(folderPath, selectedBinary)
-      setHasInstances(true)
       setShowFolderSelection(false)
       setIsAdvancedSettingsOpen(false)
 
@@ -144,10 +162,13 @@ const App: Component = () => {
         port: instances().get(instanceId)?.port,
       })
     } catch (error) {
-      clearLaunchError()
-      if (isMissingBinaryError(error)) {
-        setLaunchErrorBinary(selectedBinary)
-      }
+      const message = formatLaunchErrorMessage(error)
+      const missingBinary = isMissingBinaryMessage(message)
+      setLaunchError({
+        message,
+        binaryPath: selectedBinary,
+        missingBinary,
+      })
       log.error("Failed to create instance", error)
     } finally {
       setIsSelectingFolder(false)
@@ -191,9 +212,6 @@ const App: Component = () => {
     if (!confirmed) return
 
     await stopInstance(instanceId)
-    if (instances().size === 0) {
-      setHasInstances(false)
-    }
   }
 
   async function handleNewSession(instanceId: string) {
@@ -304,7 +322,7 @@ const App: Component = () => {
         onClose={handleDisconnectedInstanceClose}
       />
 
-      <Dialog open={Boolean(launchErrorBinary())} modal>
+      <Dialog open={Boolean(launchError())} modal>
         <Dialog.Portal>
           <Dialog.Overlay class="modal-overlay" />
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -312,8 +330,8 @@ const App: Component = () => {
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">Unable to launch OpenCode</Dialog.Title>
                 <Dialog.Description class="text-sm text-secondary mt-2 break-words">
-                  Install the OpenCode CLI and make sure it is available in your PATH, or pick a custom binary from
-                  Advanced Settings.
+                  We couldn't start the selected OpenCode binary. Review the error output below or choose a different
+                  binary from Advanced Settings.
                 </Dialog.Description>
               </div>
 
@@ -322,10 +340,23 @@ const App: Component = () => {
                 <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
               </div>
 
+              <Show when={launchErrorMessage()}>
+                <div class="rounded-lg border border-base bg-surface-secondary p-4">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Error output</p>
+                  <pre class="text-sm font-mono text-primary whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{launchErrorMessage()}</pre>
+                </div>
+              </Show>
+
               <div class="flex justify-end gap-2">
-                <button type="button" class="selector-button selector-button-secondary" onClick={handleLaunchErrorAdvanced}>
-                  Open Advanced Settings
-                </button>
+                <Show when={launchError()?.missingBinary}>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary"
+                    onClick={handleLaunchErrorAdvanced}
+                  >
+                    Open Advanced Settings
+                  </button>
+                </Show>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
                   Close
                 </button>

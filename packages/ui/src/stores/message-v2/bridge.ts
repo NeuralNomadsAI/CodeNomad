@@ -1,4 +1,5 @@
-import type { Permission } from "@opencode-ai/sdk"
+import type { PermissionRequestLike } from "../../types/permission"
+import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
@@ -107,40 +108,106 @@ export function replaceMessageIdV2(instanceId: string, oldId: string, newId: str
   store.replaceMessageId({ oldId, newId })
 }
 
-function extractPermissionMessageId(permission: Permission): string | undefined {
-  return (permission as any).messageID || (permission as any).messageId
+function extractPermissionMessageId(permission: PermissionRequestLike): string | undefined {
+  return getPermissionMessageId(permission)
 }
 
-function extractPermissionPartId(permission: Permission): string | undefined {
+function extractPermissionPartId(permission: PermissionRequestLike): string | undefined {
   const metadata = (permission as any).metadata || {}
   return (
-    (permission as any).callID ||
-    (permission as any).callId ||
-    (permission as any).toolCallID ||
-    (permission as any).toolCallId ||
-    metadata.partId ||
+    (permission as any).partID ||
+    (permission as any).partId ||
     metadata.partID ||
-    metadata.callID ||
-    metadata.callId ||
+    metadata.partId ||
     undefined
   )
 }
 
-export function upsertPermissionV2(instanceId: string, permission: Permission): void {
+function extractPermissionCallId(permission: PermissionRequestLike): string | undefined {
+  return getPermissionCallId(permission)
+}
+
+function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrCreate>, messageId?: string, callId?: string): string | undefined {
+  if (!messageId || !callId) return undefined
+  const record = store.getMessage(messageId)
+  if (!record) return undefined
+  for (const partId of record.partIds) {
+    const part = record.parts[partId]?.data
+    if (!part || part.type !== "tool") continue
+    const toolCallId =
+      (part as any).callID ??
+      (part as any).callId ??
+      (part as any).toolCallID ??
+      (part as any).toolCallId ??
+      undefined
+    if (toolCallId === callId && typeof part.id === "string" && part.id.length > 0) {
+      return part.id
+    }
+  }
+  return undefined
+}
+
+export function upsertPermissionV2(instanceId: string, permission: PermissionRequestLike): void {
   if (!permission) return
   const store = messageStoreBus.getOrCreate(instanceId)
+  const messageId = extractPermissionMessageId(permission)
+  let partId = extractPermissionPartId(permission)
+  if (!partId) {
+    const callId = extractPermissionCallId(permission)
+    partId = resolvePartIdFromCallId(store, messageId, callId)
+  }
   store.upsertPermission({
     permission,
-    messageId: extractPermissionMessageId(permission),
-    partId: extractPermissionPartId(permission),
+    messageId,
+    partId,
     enqueuedAt: (permission as any).time?.created ?? Date.now(),
   })
+}
+
+export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: string): void {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const pending = store.state.permissions.queue
+  if (!pending || pending.length === 0) return
+
+  for (const entry of pending) {
+    if (!entry || entry.partId) continue
+    const permission = entry.permission
+    if (!permission) continue
+
+    const permissionSessionId = (permission as any)?.sessionID ?? (permission as any)?.sessionId ?? undefined
+    if (sessionId && permissionSessionId && permissionSessionId !== sessionId) {
+      continue
+    }
+
+    const messageId = entry.messageId ?? extractPermissionMessageId(permission)
+    const callId = extractPermissionCallId(permission)
+    const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
+    if (!resolvedPartId) continue
+
+    store.upsertPermission({
+      ...entry,
+      messageId,
+      partId: resolvedPartId,
+    })
+  }
 }
 
 export function removePermissionV2(instanceId: string, permissionId: string): void {
   if (!permissionId) return
   const store = messageStoreBus.getOrCreate(instanceId)
   store.removePermission(permissionId)
+}
+
+export function removeMessageV2(instanceId: string, messageId: string): void {
+  if (!messageId) return
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.removeMessage(messageId)
+}
+
+export function removeMessagePartV2(instanceId: string, messageId: string, partId: string): void {
+  if (!messageId || !partId) return
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.removeMessagePart(messageId, partId)
 }
 
 export function ensureSessionMetadataV2(instanceId: string, session: Session | null | undefined): void {

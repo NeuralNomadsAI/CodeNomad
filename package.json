@@ -1,6 +1,6 @@
 {
   "name": "codenomad-workspace",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "CodeNomad monorepo workspace",
   "workspaces": {
@@ -23,5 +23,8 @@
   "dependencies": {
     "7zip-bin": "^5.2.0",
     "google-auth-library": "^10.5.0"
+  },
+  "devDependencies": {
+    "baseline-browser-mapping": "^2.9.11"
   }
 }

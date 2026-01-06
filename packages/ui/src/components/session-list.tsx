@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, JSX } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { MessageSquare, Info, X, Copy, Trash2, Pencil } from "lucide-solid"
+import { MessageSquare, Info, X, Copy, Trash2, Pencil, ShieldAlert } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -10,6 +10,7 @@ import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
 import { deleteSession, loading, renameSession } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
+import { copyToClipboard } from "../lib/clipboard"
 const log = getLogger("session")
 
 
@@ -72,14 +73,14 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const copySessionId = async (event: MouseEvent, sessionId: string) => {
     event.stopPropagation()
- 
+
     try {
-      if (typeof navigator === "undefined" || !navigator.clipboard) {
-        throw new Error("Clipboard API unavailable")
+      const success = await copyToClipboard(sessionId)
+      if (success) {
+        showToastNotification({ message: "Session ID copied", variant: "success" })
+      } else {
+        showToastNotification({ message: "Unable to copy session ID", variant: "error" })
       }
- 
-      await navigator.clipboard.writeText(sessionId)
-      showToastNotification({ message: "Session ID copied", variant: "success" })
     } catch (error) {
       log.error(`Failed to copy session ID ${sessionId}:`, error)
       showToastNotification({ message: "Unable to copy session ID", variant: "error" })
@@ -171,7 +172,11 @@ const SessionList: Component<SessionListProps> = (props) => {
           </div>
           <div class="session-item-row session-item-meta">
             <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-              <span class="status-dot" />
+              {pendingPermission() ? (
+                <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <span class="status-dot" />
+              )}
               {statusText()}
             </span>
             <div class="session-item-actions">

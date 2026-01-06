@@ -219,6 +219,33 @@ export interface ServerMeta {
   latestRelease?: LatestReleaseInfo
 }
 
+export type BackgroundProcessStatus = "running" | "stopped" | "error"
+
+export interface BackgroundProcess {
+  id: string
+  workspaceId: string
+  title: string
+  command: string
+  cwd: string
+  status: BackgroundProcessStatus
+  pid?: number
+  startedAt: string
+  stoppedAt?: string
+  exitCode?: number
+  outputSizeBytes?: number
+}
+
+export interface BackgroundProcessListResponse {
+  processes: BackgroundProcess[]
+}
+
+export interface BackgroundProcessOutputResponse {
+  id: string
+  content: string
+  truncated: boolean
+  sizeBytes: number
+}
+
 export type {
   Preferences,
   ModelPreference,

@@ -6,7 +6,7 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
 
-type ServiceSection = "lsp" | "mcp"
+type ServiceSection = "lsp" | "mcp" | "plugins"
 
 interface InstanceServiceStatusProps {
   sections?: ServiceSection[]
@@ -51,20 +51,25 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   })
   const isLoading = metadataContext?.isLoading ?? (() => false)
   const refreshMetadata = metadataContext?.refreshMetadata ?? (async () => Promise.resolve())
-  const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["lsp", "mcp"])
+  const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["lsp", "mcp", "plugins"])
   const includeLsp = createMemo(() => sections().includes("lsp"))
   const includeMcp = createMemo(() => sections().includes("mcp"))
+  const includePlugins = createMemo(() => sections().includes("plugins"))
   const showHeadings = () => props.showSectionHeadings !== false
 
   const metadataAccessor = metadataContext?.metadata ?? (() => instance().metadata)
   const metadata = createMemo(() => metadataAccessor())
   const hasLspMetadata = () => metadata()?.lspStatus !== undefined
   const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
+  const hasPluginsMetadata = () => metadata()?.plugins !== undefined
+
   const lspServers = createMemo(() => metadata()?.lspStatus ?? [])
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
+  const plugins = createMemo(() => metadata()?.plugins ?? [])
 
   const isLspLoading = () => isLoading() || !hasLspMetadata()
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
+  const isPluginsLoading = () => isLoading() || !hasPluginsMetadata()
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
@@ -85,9 +90,9 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     setPendingMcpAction(serverName, action)
     try {
       if (shouldEnable) {
-        await client.mcp.connect({ path: { name: serverName } })
+        await client.mcp.connect({ name: serverName })
       } else {
-        await client.mcp.disconnect({ path: { name: serverName } })
+        await client.mcp.disconnect({ name: serverName })
       }
       await refreshMetadata()
     } catch (error) {
@@ -213,10 +218,35 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     </section>
   )
 
+  const renderPluginsSection = () => (
+    <section class="space-y-1.5">
+      <Show when={showHeadings()}>
+        <div class="text-xs font-medium text-muted uppercase tracking-wide">
+          Plugins
+        </div>
+      </Show>
+      <Show
+        when={!isPluginsLoading() && plugins().length > 0}
+        fallback={renderEmptyState(isPluginsLoading() ? "Loading plugins..." : "No plugins configured.")}
+      >
+        <div class="space-y-1.5">
+          <For each={plugins()}>
+            {(plugin) => (
+              <div class="px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                <div class="text-xs text-primary font-medium break-words whitespace-normal">{plugin}</div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </section>
+  )
+
   return (
     <div class={props.class}>
       <Show when={includeLsp()}>{renderLspSection()}</Show>
       <Show when={includeMcp()}>{renderMcpSection()}</Show>
+      <Show when={includePlugins()}>{renderPluginsSection()}</Show>
     </div>
   )
 }

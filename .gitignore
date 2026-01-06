@@ -7,3 +7,4 @@ release/
 .electron-vite/
 out/
 .dir-locals.el
+.opencode/bashOutputs/

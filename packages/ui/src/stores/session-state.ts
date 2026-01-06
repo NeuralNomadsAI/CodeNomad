@@ -1,12 +1,13 @@
 import { createSignal } from "solid-js"
 
-import type { Session, Agent, Provider } from "../types/session"
+import type { Session, SessionStatus, Agent, Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("session")
 
@@ -38,6 +39,130 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
+
+export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
+
+type InstanceIndicatorCounts = {
+  permission: number
+  working: number
+  compacting: number
+}
+
+const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
+
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission) {
+    return "permission"
+  }
+  const status = session.status ?? "idle"
+  return status
+}
+
+function adjustIndicatorCounts(
+  instanceId: string,
+  previous: InstanceSessionIndicatorStatus | "idle",
+  next: InstanceSessionIndicatorStatus | "idle",
+): void {
+  if (previous === next) return
+
+  const decKey = previous === "idle" ? null : previous
+  const incKey = next === "idle" ? null : next
+
+  setInstanceIndicatorCounts((prev) => {
+    const current = prev.get(instanceId) ?? { permission: 0, working: 0, compacting: 0 }
+    const updated: InstanceIndicatorCounts = { ...current }
+
+    if (decKey) {
+      updated[decKey] = Math.max(0, updated[decKey] - 1)
+    }
+
+    if (incKey) {
+      updated[incKey] = updated[incKey] + 1
+    }
+
+    const hasAny = updated.permission > 0 || updated.working > 0 || updated.compacting > 0
+    if (!hasAny) {
+      if (!prev.has(instanceId)) return prev
+      const nextMap = new Map(prev)
+      nextMap.delete(instanceId)
+      return nextMap
+    }
+
+    const same =
+      current.permission === updated.permission &&
+      current.working === updated.working &&
+      current.compacting === updated.compacting
+    if (same && prev.has(instanceId)) {
+      return prev
+    }
+
+    const nextMap = new Map(prev)
+    nextMap.set(instanceId, updated)
+    return nextMap
+  })
+}
+
+function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<string, Session> | undefined): void {
+  if (!instanceSessions || instanceSessions.size === 0) {
+    setInstanceIndicatorCounts((prev) => {
+      if (!prev.has(instanceId)) return prev
+      const next = new Map(prev)
+      next.delete(instanceId)
+      return next
+    })
+    return
+  }
+
+  let permission = 0
+  let working = 0
+  let compacting = 0
+
+  for (const session of instanceSessions.values()) {
+    if (session.pendingPermission) {
+      permission += 1
+      continue
+    }
+    const status = session.status ?? "idle"
+    if (status === "compacting") {
+      compacting += 1
+    } else if (status === "working") {
+      working += 1
+    }
+  }
+
+  if (permission === 0 && working === 0 && compacting === 0) {
+    setInstanceIndicatorCounts((prev) => {
+      if (!prev.has(instanceId)) return prev
+      const next = new Map(prev)
+      next.delete(instanceId)
+      return next
+    })
+    return
+  }
+
+  setInstanceIndicatorCounts((prev) => {
+    const current = prev.get(instanceId)
+    if (current && current.permission === permission && current.working === working && current.compacting === compacting) {
+      return prev
+    }
+    const next = new Map(prev)
+    next.set(instanceId, { permission, working, compacting })
+    return next
+  })
+}
+
+export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
+  const counts = instanceIndicatorCounts().get(instanceId)
+  if (!counts) return "idle"
+  if (counts.permission > 0) return "permission"
+  if (counts.compacting > 0) return "compacting"
+  if (counts.working > 0) return "working"
+  return "idle"
+}
+
+export function syncInstanceSessionIndicator(instanceId: string, instanceSessions?: Map<string, Session>): void {
+  recomputeIndicatorCounts(instanceId, instanceSessions ?? sessions().get(instanceId))
+}
 
 function clearLoadedFlag(instanceId: string, sessionId: string) {
   if (!instanceId || !sessionId) return
@@ -130,39 +255,44 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
   })
 }
 
-function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void) {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
-
-  const session = instanceSessions.get(sessionId)
-  if (!session) return
-
-  updater(session)
-
-  const updatedSession = {
-    ...session,
-  }
+function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void | boolean) {
+  let previousBucket: InstanceSessionIndicatorStatus | "idle" | null = null
+  let nextBucket: InstanceSessionIndicatorStatus | "idle" | null = null
+  let didUpdate = false
 
   setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const current = instanceSessions.get(sessionId)
+    if (!current) return prev
+
+    previousBucket = getIndicatorBucket(current)
+
+    const updatedSession: Session = { ...current }
+    const result = updater(updatedSession)
+    if (result === false) {
+      return prev
+    }
+
+    nextBucket = getIndicatorBucket(updatedSession)
+
+    instanceSessions.set(sessionId, updatedSession)
+    didUpdate = true
+
     const next = new Map(prev)
-    const newInstanceSessions = new Map(instanceSessions)
-    newInstanceSessions.set(sessionId, updatedSession)
-    next.set(instanceId, newInstanceSessions)
+    next.set(instanceId, instanceSessions)
     return next
   })
-}
 
-function setSessionCompactionState(instanceId: string, sessionId: string, isCompacting: boolean): void {
-  withSession(instanceId, sessionId, (session) => {
-    const time = { ...(session.time ?? {}) }
-    time.compacting = isCompacting ? Date.now() : 0
-    session.time = time
-  })
+  if (didUpdate && previousBucket && nextBucket) {
+    adjustIndicatorCounts(instanceId, previousBucket, nextBucket)
+  }
 }
 
 function setSessionPendingPermission(instanceId: string, sessionId: string, pending: boolean): void {
   withSession(instanceId, sessionId, (session) => {
-    if (session.pendingPermission === pending) return
+    if (session.pendingPermission === pending) return false
     session.pendingPermission = pending
   })
 }
@@ -196,6 +326,13 @@ function clearActiveParentSession(instanceId: string): void {
     const next = new Map(prev)
     next.delete(instanceId)
     return next
+  })
+}
+
+function setSessionStatus(instanceId: string, sessionId: string, status: SessionStatus): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.status === status) return false
+    session.status = status
   })
 }
 
@@ -272,8 +409,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
   let messages: any[] = []
   try {
-    const response = await instance.client.session.messages({ path: { id: session.id } })
-    messages = response.data || []
+    messages = await requestData<any[]>(
+      instance.client.session.messages({ sessionID: session.id }),
+      "session.messages",
+    )
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
@@ -378,8 +517,8 @@ export {
   clearInstanceDraftPrompts,
   pruneDraftPrompts,
   withSession,
-  setSessionCompactionState,
   setSessionPendingPermission,
+  setSessionStatus,
   setActiveSession,
  
   setActiveParentSession,

@@ -45,11 +45,15 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
     registerNavigationShortcuts()
     registerInputShortcuts(
       () => {
-        const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+        const textarea = document.querySelector(
+          ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
+        ) as HTMLTextAreaElement
         if (textarea) textarea.value = ""
       },
       () => {
-        const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+        const textarea = document.querySelector(
+          ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
+        ) as HTMLTextAreaElement
         textarea?.focus()
       },
     )

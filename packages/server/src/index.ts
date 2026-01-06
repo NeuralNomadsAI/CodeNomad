@@ -122,22 +122,6 @@ async function main() {
   logger.info({ options }, "Starting CodeNomad CLI server")
 
   const eventBus = new EventBus(eventLogger)
-  const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
-  const binaryRegistry = new BinaryRegistry(configStore, eventBus, configLogger)
-  const workspaceManager = new WorkspaceManager({
-    rootDir: options.rootDir,
-    configStore,
-    binaryRegistry,
-    eventBus,
-    logger: workspaceLogger,
-  })
-  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
-  const instanceStore = new InstanceStore()
-  const instanceEventBridge = new InstanceEventBridge({
-    workspaceManager,
-    eventBus,
-    logger: logger.child({ component: "instance-events" }),
-  })
 
   const serverMeta: ServerMeta = {
     httpBaseUrl: `http://${options.host}:${options.port}`,
@@ -149,6 +133,24 @@ async function main() {
     workspaceRoot: options.rootDir,
     addresses: [],
   }
+
+  const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
+  const binaryRegistry = new BinaryRegistry(configStore, eventBus, configLogger)
+  const workspaceManager = new WorkspaceManager({
+    rootDir: options.rootDir,
+    configStore,
+    binaryRegistry,
+    eventBus,
+    logger: workspaceLogger,
+    getServerBaseUrl: () => serverMeta.httpBaseUrl,
+  })
+  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
+  const instanceStore = new InstanceStore()
+  const instanceEventBridge = new InstanceEventBridge({
+    workspaceManager,
+    eventBus,
+    logger: logger.child({ component: "instance-events" }),
+  })
 
   const releaseMonitor = startReleaseMonitor({
     currentVersion: packageJson.version,

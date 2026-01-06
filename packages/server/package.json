@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "CodeNomad Server",
   "author": {
     "name": "Neural Nomads",
@@ -16,10 +16,11 @@
     "codenomad": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json",
+    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && npm run prepare-config",
     "build:ui": "npm run build --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
-    "dev": "cross-env CLI_UI_DEV_SERVER=http://localhost:3000 tsx src/index.ts",
+    "prepare-config": "node ./scripts/copy-opencode-config.mjs",
+    "dev": "cross-env CODENOMAD_DEV=1 CLI_UI_DEV_SERVER=http://localhost:3000 tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

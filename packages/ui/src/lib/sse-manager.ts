@@ -7,15 +7,16 @@ import {
 } from "../types/message"
 import type {
   EventLspUpdated,
-  EventPermissionReplied,
-  EventPermissionUpdated,
+
   EventSessionCompacted,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
+  EventSessionStatus,
 } from "@opencode-ai/sdk"
 import { serverEvents } from "./server-events"
 import type {
+  BackgroundProcess,
   InstanceStreamEvent,
   InstanceStreamStatus,
   WorkspaceEventPayload,
@@ -37,6 +38,20 @@ interface TuiToastEvent {
   }
 }
 
+interface BackgroundProcessUpdatedEvent {
+  type: "background.process.updated"
+  properties: {
+    process: BackgroundProcess
+  }
+}
+
+interface BackgroundProcessRemovedEvent {
+  type: "background.process.removed"
+  properties: {
+    processId: string
+  }
+}
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
@@ -46,10 +61,12 @@ type SSEEvent =
   | EventSessionCompacted
   | EventSessionError
   | EventSessionIdle
-  | EventPermissionUpdated
-  | EventPermissionReplied
+  | { type: "permission.updated" | "permission.asked"; properties?: any }
+  | { type: "permission.replied"; properties?: any }
   | EventLspUpdated
   | TuiToastEvent
+  | BackgroundProcessUpdatedEvent
+  | BackgroundProcessRemovedEvent
   | { type: string; properties?: Record<string, unknown> }
 
 type ConnectionStatus = InstanceStreamStatus
@@ -117,14 +134,24 @@ class SSEManager {
       case "session.idle":
         this.onSessionIdle?.(instanceId, event as EventSessionIdle)
         break
+      case "session.status":
+        this.onSessionStatus?.(instanceId, event as EventSessionStatus)
+        break
       case "permission.updated":
-        this.onPermissionUpdated?.(instanceId, event as EventPermissionUpdated)
+      case "permission.asked":
+        this.onPermissionUpdated?.(instanceId, event as any)
         break
       case "permission.replied":
-        this.onPermissionReplied?.(instanceId, event as EventPermissionReplied)
+        this.onPermissionReplied?.(instanceId, event as any)
         break
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
+        break
+      case "background.process.updated":
+        this.onBackgroundProcessUpdated?.(instanceId, event as BackgroundProcessUpdatedEvent)
+        break
+      case "background.process.removed":
+        this.onBackgroundProcessRemoved?.(instanceId, event as BackgroundProcessRemovedEvent)
         break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
@@ -148,9 +175,12 @@ class SSEManager {
   onSessionError?: (instanceId: string, event: EventSessionError) => void
   onTuiToast?: (instanceId: string, event: TuiToastEvent) => void
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
-  onPermissionUpdated?: (instanceId: string, event: EventPermissionUpdated) => void
-  onPermissionReplied?: (instanceId: string, event: EventPermissionReplied) => void
+  onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
+  onPermissionUpdated?: (instanceId: string, event: any) => void
+  onPermissionReplied?: (instanceId: string, event: any) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
+  onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
+  onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

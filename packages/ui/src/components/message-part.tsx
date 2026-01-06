@@ -102,6 +102,8 @@ interface MessagePartProps {
              >
               <Markdown
                 part={createTextPartForMarkdown()}
+                instanceId={props.instanceId}
+                sessionId={props.sessionId}
                 isDark={isDark()}
                 size={isAssistantMessage() ? "tight" : "base"}
                 onRendered={props.onRendered}

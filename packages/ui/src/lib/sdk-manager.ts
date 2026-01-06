@@ -1,18 +1,20 @@
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/client"
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 
 class SDKManager {
   private clients = new Map<string, OpencodeClient>()
 
   createClient(instanceId: string, proxyPath: string): OpencodeClient {
-    if (this.clients.has(instanceId)) {
-      return this.clients.get(instanceId)!
+    const existing = this.clients.get(instanceId)
+    if (existing) {
+      return existing
     }
 
     const baseUrl = buildInstanceBaseUrl(proxyPath)
     const client = createOpencodeClient({ baseUrl })
 
     this.clients.set(instanceId, client)
+
     return client
   }
 
@@ -28,6 +30,8 @@ class SDKManager {
     this.clients.clear()
   }
 }
+
+export type { OpencodeClient }
 
 function buildInstanceBaseUrl(proxyPath: string): string {
   const normalized = normalizeProxyPath(proxyPath)

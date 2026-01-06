@@ -26,35 +26,13 @@ function decodeTextSegment(segment: any): any {
   return segment
 }
 
-function deriveToolPartId(part: any): string | undefined {
-  if (!part || typeof part !== "object") {
-    return undefined
-  }
-  if (part.type !== "tool") {
-    return undefined
-  }
-  const callId =
-    part.callID ??
-    part.callId ??
-    part.toolCallID ??
-    part.toolCallId ??
-    undefined
-  if (typeof callId === "string" && callId.length > 0) {
-    return callId
-  }
-  return undefined
-}
-
 export function normalizeMessagePart(part: any): any {
   if (!part || typeof part !== "object") {
     return part
   }
 
-  if ((typeof part.id !== "string" || part.id.length === 0) && part.type === "tool") {
-    const inferredId = deriveToolPartId(part)
-    if (inferredId) {
-      part = { ...part, id: inferredId }
-    }
+  if (part.type === "tool" && (typeof part.id !== "string" || part.id.length === 0)) {
+    throw new Error("Tool part missing id")
   }
 
   if (part.type !== "text") {

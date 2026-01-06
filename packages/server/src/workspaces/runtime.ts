@@ -13,7 +13,7 @@ interface LaunchOptions {
   onExit?: (info: ProcessExitInfo) => void
 }
 
-interface ProcessExitInfo {
+export interface ProcessExitInfo {
   workspaceId: string
   code: number | null
   signal: NodeJS.Signals | null
@@ -30,15 +30,45 @@ export class WorkspaceRuntime {
 
   constructor(private readonly eventBus: EventBus, private readonly logger: Logger) {}
 
-  async launch(options: LaunchOptions): Promise<{ pid: number; port: number }> {
+  async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
 
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
+    let exitResolve: ((info: ProcessExitInfo) => void) | null = null
+    const exitPromise = new Promise<ProcessExitInfo>((resolveExit) => {
+      exitResolve = resolveExit
+    })
+
+    // Store recent output for debugging - keep last 50 lines from each stream
+    const MAX_OUTPUT_LINES = 50
+    const recentStdout: string[] = []
+    const recentStderr: string[] = []
+    const getLastOutput = () => {
+      const combined: string[] = []
+      if (recentStderr.length > 0) {
+        combined.push("Error Stream")
+        combined.push(...recentStderr.slice(-10))
+      }
+      if (recentStdout.length > 0) {
+        combined.push("Output Stream")
+        combined.push(...recentStdout.slice(-10))
+      }
+      return combined.join("\n")
+    }
+
     return new Promise((resolve, reject) => {
+      const commandLine = [options.binaryPath, ...args].join(" ")
       this.logger.info(
-        { workspaceId: options.workspaceId, folder: options.folder, binary: options.binaryPath },
+        {
+          workspaceId: options.workspaceId,
+          folder: options.folder,
+          binary: options.binaryPath,
+          args,
+          commandLine,
+          env,
+        },
         "Launching OpenCode process",
       )
       const child = spawn(options.binaryPath, args, {
@@ -83,11 +113,22 @@ export class WorkspaceRuntime {
         cleanupStreams()
         child.removeListener("error", handleError)
         child.removeListener("exit", handleExit)
+        const exitInfo: ProcessExitInfo = {
+          workspaceId: options.workspaceId,
+          code,
+          signal,
+          requested: managed.requestedStop,
+        }
+        if (exitResolve) {
+          exitResolve(exitInfo)
+          exitResolve = null
+        }
         if (!portFound) {
-          const reason = stderrBuffer || `Process exited with code ${code}`
+          const recentOutput = getLastOutput().trim()
+          const reason = recentOutput || stderrBuffer || `Process exited with code ${code}`
           reject(new Error(reason))
         } else {
-          options.onExit?.({ workspaceId: options.workspaceId, code, signal, requested: managed.requestedStop })
+          options.onExit?.(exitInfo)
         }
       }
 
@@ -96,6 +137,10 @@ export class WorkspaceRuntime {
         child.removeListener("exit", handleExit)
         this.processes.delete(options.workspaceId)
         this.logger.error({ workspaceId: options.workspaceId, err: error }, "Workspace runtime error")
+        if (exitResolve) {
+          exitResolve({ workspaceId: options.workspaceId, code: null, signal: null, requested: managed.requestedStop })
+          exitResolve = null
+        }
         reject(error)
       }
 
@@ -109,18 +154,25 @@ export class WorkspaceRuntime {
         stdoutBuffer = lines.pop() ?? ""
 
         for (const line of lines) {
-          if (!line.trim()) continue
+          const trimmed = line.trim()
+          if (!trimmed) continue
+
+          recentStdout.push(trimmed)
+          if (recentStdout.length > MAX_OUTPUT_LINES) {
+            recentStdout.shift()
+          }
+
           this.emitLog(options.workspaceId, "info", line)
 
           if (!portFound) {
             const portMatch = line.match(/opencode server listening on http:\/\/.+:(\d+)/i)
             if (portMatch) {
               portFound = true
-              cleanupStreams()
+              stopWarningTimer()
               child.removeListener("error", handleError)
               const port = parseInt(portMatch[1], 10)
               this.logger.info({ workspaceId: options.workspaceId, port }, "Workspace runtime allocated port")
-              resolve({ pid: child.pid!, port })
+              resolve({ pid: child.pid!, port, exitPromise, getLastOutput })
             }
           }
         }
@@ -133,7 +185,14 @@ export class WorkspaceRuntime {
         stderrBuffer = lines.pop() ?? ""
 
         for (const line of lines) {
-          if (!line.trim()) continue
+          const trimmed = line.trim()
+          if (!trimmed) continue
+
+          recentStderr.push(trimmed)
+          if (recentStderr.length > MAX_OUTPUT_LINES) {
+            recentStderr.shift()
+          }
+
           this.emitLog(options.workspaceId, "error", line)
         }
       })

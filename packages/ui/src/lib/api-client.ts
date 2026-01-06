@@ -1,5 +1,8 @@
 import type {
   AppConfig,
+  BackgroundProcess,
+  BackgroundProcessListResponse,
+  BackgroundProcessOutputResponse,
   BinaryCreateRequest,
   BinaryListResponse,
   BinaryUpdateRequest,
@@ -28,6 +31,12 @@ const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
 
+export function buildBackgroundProcessStreamUrl(instanceId: string, processId: string): string {
+  const encodedInstanceId = encodeURIComponent(instanceId)
+  const encodedProcessId = encodeURIComponent(processId)
+  return buildAbsoluteUrl(`/workspaces/${encodedInstanceId}/plugin/background-processes/${encodedProcessId}/stream`)
+}
+
 function buildEventsUrl(base: string | undefined, path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path
@@ -39,8 +48,40 @@ function buildEventsUrl(base: string | undefined, path: string): string {
   return path
 }
 
+function buildAbsoluteUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path
+  }
+  if (!API_BASE) {
+    return path
+  }
+  const normalized = path.startsWith("/") ? path : `/${path}`
+  return `${API_BASE}${normalized}`
+}
+
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+
+function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
+  const output: Record<string, string> = {}
+  if (!headers) return output
+
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      output[key] = value
+    })
+    return output
+  }
+
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      output[key] = value
+    }
+    return output
+  }
+
+  return { ...headers }
+}
 
 function logHttp(message: string, context?: Record<string, unknown>) {
   if (context) {
@@ -52,9 +93,9 @@ function logHttp(message: string, context?: Record<string, unknown>) {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...(init?.headers ?? {}),
+  const headers = normalizeHeaders(init?.headers)
+  if (init?.body !== undefined) {
+    headers["Content-Type"] = "application/json"
   }
 
   const method = (init?.method ?? "GET").toUpperCase()
@@ -185,6 +226,47 @@ export const serverApi = {
   },
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  listBackgroundProcesses(instanceId: string): Promise<BackgroundProcessListResponse> {
+    return request<BackgroundProcessListResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes`,
+    )
+  },
+  stopBackgroundProcess(instanceId: string, processId: string): Promise<BackgroundProcess> {
+    return request<BackgroundProcess>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/stop`,
+      { method: "POST" },
+    )
+  },
+  terminateBackgroundProcess(instanceId: string, processId: string): Promise<void> {
+    return request(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/terminate`,
+      { method: "POST" },
+    )
+  },
+  fetchBackgroundProcessOutput(
+    instanceId: string,
+    processId: string,
+    options?: { method?: "full" | "tail" | "head" | "grep"; pattern?: string; lines?: number; maxBytes?: number },
+  ): Promise<BackgroundProcessOutputResponse> {
+    const params = new URLSearchParams()
+    if (options?.method) {
+      params.set("method", options.method)
+    }
+    if (options?.pattern) {
+      params.set("pattern", options.pattern)
+    }
+    if (options?.lines) {
+      params.set("lines", String(options.lines))
+    }
+    if (options?.maxBytes !== undefined) {
+      params.set("maxBytes", String(options.maxBytes))
+    }
+    const query = params.toString()
+    const suffix = query ? `?${query}` : ""
+    return request<BackgroundProcessOutputResponse>(
+      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
+    )
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
     sseLogger.info(`Connecting to ${EVENTS_URL}`)

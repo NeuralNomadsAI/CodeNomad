@@ -8,7 +8,7 @@ const pendingMetadataRequests = new Set<string>()
 
 function hasMetadataLoaded(metadata?: Instance["metadata"]): boolean {
   if (!metadata) return false
-  return "project" in metadata && "mcpStatus" in metadata && "lspStatus" in metadata
+  return "project" in metadata && "mcpStatus" in metadata && "lspStatus" in metadata && "plugins" in metadata
 }
 
 export async function loadInstanceMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
@@ -30,15 +30,22 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
   pendingMetadataRequests.add(instance.id)
 
   try {
-    const [projectResult, mcpResult, lspResult] = await Promise.allSettled([
+    const [projectResult, mcpResult, lspResult, configResult] = await Promise.allSettled([
       client.project.current(),
       client.mcp.status(),
       fetchLspStatus(instance.id),
+      client.config.get(),
     ])
 
     const project = projectResult.status === "fulfilled" ? projectResult.value.data : undefined
     const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
     const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
+    const config = configResult.status === "fulfilled" ? (configResult.value.data as { plugin?: unknown } | undefined) : undefined
+    const plugins = Array.isArray(config?.plugin)
+      ? (config?.plugin as string[]).map((plugin) =>
+          plugin.startsWith("file://") ? plugin.slice("file://".length) : plugin,
+        )
+      : undefined
 
     const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
 
@@ -54,9 +61,14 @@ export async function loadInstanceMetadata(instance: Instance, options?: { force
       updates.lspStatus = lspStatus ?? []
     }
 
+    if (configResult.status === "fulfilled") {
+      updates.plugins = plugins ?? []
+    }
+ 
     if (!updates?.version && instance.binaryVersion) {
       updates.version = instance.binaryVersion
     }
+
 
     mergeInstanceMetadata(instance.id, updates)
   } catch (error) {

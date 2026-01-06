@@ -7,12 +7,14 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
 import { sendPermissionResponse } from "../stores/instances"
+import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
 import type { TextPart, RenderCache } from "../types/message"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import type {
   DiffPayload,
   DiffRenderOptions,
   MarkdownRenderOptions,
+  AnsiRenderOptions,
   ToolCallPart,
   ToolRendererContext,
   ToolScrollHelpers,
@@ -20,10 +22,14 @@ import type {
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
+import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
+import { escapeHtml } from "../lib/markdown"
 
 const log = getLogger("session")
 
 type ToolState = import("@opencode-ai/sdk").ToolState
+
+type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48
@@ -217,7 +223,13 @@ export default function ToolCall(props: ToolCallProps) {
   const { isDark } = useTheme()
   const toolCallMemo = createMemo(() => props.toolCall)
   const toolName = createMemo(() => toolCallMemo()?.tool || "")
-  const toolCallIdentifier = createMemo(() => toolCallMemo()?.callID || props.toolCallId || toolCallMemo()?.id || "")
+  const toolCallIdentifier = createMemo(() => {
+    const partId = toolCallMemo()?.id
+    if (!partId) {
+      throw new Error("Tool call requires a part id")
+    }
+    return partId
+  })
   const toolState = createMemo(() => toolCallMemo()?.state)
 
   const cacheContext = createMemo(() => ({
@@ -228,21 +240,36 @@ export default function ToolCall(props: ToolCallProps) {
 
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
 
-  const createVariantCache = (variant: string) =>
+  const cacheVersion = createMemo(() => {
+    if (typeof props.partVersion === "number") {
+      return String(props.partVersion)
+    }
+    if (typeof props.messageVersion === "number") {
+      return String(props.messageVersion)
+    }
+    return "noversion"
+  })
 
+  const createVariantCache = (variant: string | (() => string), version?: () => string) =>
     useGlobalCache({
       instanceId: () => props.instanceId,
       sessionId: () => props.sessionId,
       scope: TOOL_CALL_CACHE_SCOPE,
-      key: () => {
+      cacheId: () => {
         const context = cacheContext()
-        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, variant)
+        const resolvedVariant = typeof variant === "function" ? variant() : variant
+        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, resolvedVariant)
       },
+      version: () => (version ? version() : cacheVersion()),
     })
 
   const diffCache = createVariantCache("diff")
   const permissionDiffCache = createVariantCache("permission-diff")
-  const markdownCache = createVariantCache("markdown")
+  const ansiRunningCache = createVariantCache("ansi-running", () => "running")
+  const ansiFinalCache = createVariantCache("ansi-final")
+  const runningAnsiRenderer = createAnsiStreamRenderer()
+  let runningAnsiSource = ""
+
   const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallIdentifier()))
   const pendingPermission = createMemo(() => {
     const state = permissionState()
@@ -619,6 +646,75 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
+  function renderAnsiContent(options: AnsiRenderOptions) {
+    if (!options.content) {
+      return null
+    }
+
+    const size = options.size || "default"
+    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const cacheHandle = options.variant === "running" ? ansiRunningCache : ansiFinalCache
+    const cached = cacheHandle.get<AnsiRenderCache>()
+    const mode = typeof props.partVersion === "number" ? String(props.partVersion) : undefined
+    const isRunningVariant = options.variant === "running"
+
+    let nextCache: AnsiRenderCache
+
+    if (isRunningVariant) {
+      const content = options.content
+      const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
+
+      if (resetStreaming) {
+        const detectedAnsi = hasAnsi(content)
+        if (detectedAnsi) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else {
+          runningAnsiRenderer.reset()
+          nextCache = { text: content, html: escapeHtml(content), mode, hasAnsi: false }
+        }
+      } else {
+        const delta = content.slice(cached.text.length)
+        if (delta.length === 0) {
+          nextCache = { ...cached, mode }
+        } else if (!cached.hasAnsi && hasAnsi(delta)) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else if (cached.hasAnsi) {
+          const htmlChunk = runningAnsiRenderer.render(delta)
+          nextCache = { text: content, html: `${cached.html}${htmlChunk}`, mode, hasAnsi: true }
+        } else {
+          nextCache = { text: content, html: `${cached.html}${escapeHtml(delta)}`, mode, hasAnsi: false }
+        }
+      }
+
+      runningAnsiSource = nextCache.text
+      cacheHandle.set(nextCache)
+    } else {
+      if (cached && cached.text === options.content) {
+        nextCache = { ...cached, mode }
+      } else {
+        const detectedAnsi = hasAnsi(options.content)
+        const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
+        nextCache = { text: options.content, html, mode, hasAnsi: detectedAnsi }
+        cacheHandle.set(nextCache)
+      }
+    }
+
+    if (options.requireAnsi && !nextCache.hasAnsi) {
+      return null
+    }
+
+    return (
+      <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
+        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
+        {scrollHelpers.renderSentinel()}
+      </div>
+    )
+  }
+
   function renderMarkdownContent(options: MarkdownRenderOptions) {
     if (!options.content) {
       return null
@@ -639,14 +735,13 @@ export default function ToolCall(props: ToolCallProps) {
       )
     }
 
-    const markdownPart: TextPart = { type: "text", text: options.content }
-    const cached = markdownCache.get<RenderCache>()
-    if (cached) {
-      markdownPart.renderCache = cached
+    const partId = toolCallMemo()?.id
+    if (!partId) {
+      throw new Error("Tool call markdown requires a part id")
     }
+    const markdownPart: TextPart = { id: partId, type: "text", text: options.content, version: props.partVersion }
 
     const handleMarkdownRendered = () => {
-      markdownCache.set(markdownPart.renderCache)
       handleScrollRendered()
       props.onContentRendered?.()
     }
@@ -655,6 +750,8 @@ export default function ToolCall(props: ToolCallProps) {
       <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
         <Markdown
           part={markdownPart}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
           isDark={isDark()}
           disableHighlight={disableHighlight}
           onRendered={handleMarkdownRendered}
@@ -675,6 +772,7 @@ export default function ToolCall(props: ToolCallProps) {
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown: renderMarkdownContent,
+    renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
     scrollHelpers,
   }
@@ -741,7 +839,7 @@ export default function ToolCall(props: ToolCallProps) {
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
-      const sessionId = permission.sessionID || props.sessionId
+      const sessionId = getPermissionSessionId(permission) || props.sessionId
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
     } catch (error) {
       log.error("Failed to send permission response", error)
@@ -786,11 +884,11 @@ export default function ToolCall(props: ToolCallProps) {
       <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
         <div class="tool-call-permission-header">
           <span class="tool-call-permission-label">{active ? "Permission Required" : "Permission Queued"}</span>
-          <span class="tool-call-permission-type">{permission.type}</span>
+          <span class="tool-call-permission-type">{getPermissionKind(permission)}</span>
         </div>
         <div class="tool-call-permission-body">
           <div class="tool-call-permission-title">
-            <code>{permission.title}</code>
+            <code>{getPermissionDisplayTitle(permission)}</code>
           </div>
           <Show when={diffPayload}>
             {(payload) => (

@@ -11,13 +11,13 @@ import {
   getSessions,
   setActiveSession,
 } from "../../stores/sessions"
-import { setSessionCompactionState } from "../../stores/session-compaction"
 import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
+import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 
 const log = getLogger("actions")
@@ -240,16 +240,15 @@ export function useCommands(options: UseCommandsOptions) {
         if (!session) return
 
         try {
-          setSessionCompactionState(instance.id, sessionId, true)
-          await instance.client.session.summarize({
-            path: { id: sessionId },
-            body: {
+          await requestData(
+            instance.client.session.summarize({
+              sessionID: sessionId,
               providerID: session.model.providerId,
               modelID: session.model.modelId,
-            },
-          })
+            }),
+            "session.summarize",
+          )
         } catch (error) {
-          setSessionCompactionState(instance.id, sessionId, false)
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : "Failed to compact session"
           showAlertDialog(`Compact failed: ${message}`, {
@@ -260,6 +259,22 @@ export function useCommands(options: UseCommandsOptions) {
 
       },
     })
+
+    function escapeCss(value: string) {
+      if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
+        return (CSS as any).escape(value)
+      }
+      return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")
+    }
+
+    function findVisiblePromptTextarea(sessionId?: string): HTMLTextAreaElement | null {
+      if (typeof document === "undefined") return null
+      const base = ".session-cache-pane[aria-hidden=\"false\"]"
+      const selector = sessionId
+        ? `${base}[data-session-id=\"${escapeCss(sessionId)}\"] .prompt-input`
+        : `${base} .prompt-input`
+      return document.querySelector(selector) as HTMLTextAreaElement | null
+    }
 
     commandRegistry.register({
       id: "undo",
@@ -316,10 +331,13 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await instance.client.session.revert({
-            path: { id: sessionId },
-            body: { messageID },
-          })
+          await requestData(
+            instance.client.session.revert({
+              sessionID: sessionId,
+              messageID,
+            }),
+            "session.revert",
+          )
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)
@@ -327,7 +345,7 @@ export function useCommands(options: UseCommandsOptions) {
           }
 
           if (restoredText) {
-            const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+            const textarea = findVisiblePromptTextarea(sessionId)
             if (textarea) {
               textarea.value = restoredText
               textarea.dispatchEvent(new Event("input", { bubbles: true }))
@@ -381,7 +399,7 @@ export function useCommands(options: UseCommandsOptions) {
       keywords: ["clear", "reset"],
       shortcut: { key: "K", meta: true },
       action: () => {
-        const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+        const textarea = findVisiblePromptTextarea()
         if (textarea) textarea.value = ""
       },
     })

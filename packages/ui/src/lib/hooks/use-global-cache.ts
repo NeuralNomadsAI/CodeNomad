@@ -18,8 +18,9 @@ export function useGlobalCache(params: UseGlobalCacheParams): GlobalCacheHandle 
     const instanceId = normalizeId(resolveValue(params.instanceId))
     const sessionId = normalizeId(resolveValue(params.sessionId))
     const scope = resolveValue(params.scope)
-    const key = resolveValue(params.key)
-    return { instanceId, sessionId, scope, key }
+    const cacheId = resolveValue(params.cacheId)
+    const version = String(resolveValue(params.version))
+    return { instanceId, sessionId, scope, cacheId, version }
   })
 
   const scopeParams = createMemo(() => {
@@ -73,7 +74,8 @@ interface UseGlobalCacheParams {
   instanceId?: MaybeAccessor<string | undefined>
   sessionId?: MaybeAccessor<string | undefined>
   scope: MaybeAccessor<string>
-  key: MaybeAccessor<string>
+  cacheId: MaybeAccessor<string>
+  version: MaybeAccessor<string | number>
 }
 
 interface GlobalCacheHandle {

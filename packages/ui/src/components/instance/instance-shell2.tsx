@@ -12,7 +12,7 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown } from "lucide-solid"
+import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Divider from "@suid/material/Divider"
@@ -28,6 +28,7 @@ import PushPinIcon from "@suid/icons-material/PushPin"
 import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
+import type { BackgroundProcess } from "../../../../server/src/api-types"
 import {
   activeParentSessionId,
   activeSessionId as activeSessionMap,
@@ -56,6 +57,9 @@ import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
+import { serverApi } from "../../lib/api-client"
+import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
+import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import {
   SESSION_SIDEBAR_EVENT,
   type SessionSidebarRequestAction,
@@ -128,7 +132,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["lsp", "mcp"])
+  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
+    "plan",
+    "background-processes",
+    "mcp",
+    "lsp",
+    "plugins",
+  ])
+  const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
+  const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -151,6 +163,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (side === "right" && !rightPinningSupported()) return
     persistPinState(side, value)
   }
+
+  createEffect(() => {
+    const instanceId = props.instance.id
+    loadBackgroundProcesses(instanceId).catch((error) => {
+      log.warn("Failed to load background processes", error)
+    })
+  })
 
   createEffect(() => {
     switch (layoutMode()) {
@@ -314,6 +333,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return state
   })
 
+  const backgroundProcessList = createMemo(() => getBackgroundProcesses(props.instance.id))
+
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
     const status = connectionStatus()
@@ -324,6 +345,32 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
+  }
+
+  const openBackgroundOutput = (process: BackgroundProcess) => {
+    setSelectedBackgroundProcess(process)
+    setShowBackgroundOutput(true)
+  }
+
+  const closeBackgroundOutput = () => {
+    setShowBackgroundOutput(false)
+    setSelectedBackgroundProcess(null)
+  }
+
+  const stopBackgroundProcess = async (processId: string) => {
+    try {
+      await serverApi.stopBackgroundProcess(props.instance.id, processId)
+    } catch (error) {
+      log.warn("Failed to stop background process", error)
+    }
+  }
+
+  const terminateBackgroundProcess = async (processId: string) => {
+    try {
+      await serverApi.terminateBackgroundProcess(props.instance.id, processId)
+    } catch (error) {
+      log.warn("Failed to terminate background process", error)
+    }
   }
 
   const customCommands = createMemo(() => buildCustomCommandEntries(props.instance.id, getInstanceCommands(props.instance.id)))
@@ -853,18 +900,73 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       return <TodoListView state={todoState} emptyLabel="Nothing planned yet." showStatusLabel={false} />
     }
 
+    const renderBackgroundProcesses = () => {
+      const processes = backgroundProcessList()
+      if (processes.length === 0) {
+        return <p class="text-xs text-secondary">No background processes.</p>
+      }
+
+      return (
+        <div class="flex flex-col gap-2">
+          <For each={processes}>
+            {(process) => (
+              <div class="rounded-md border border-base bg-surface-secondary p-2 flex flex-col gap-2">
+                <div class="flex flex-col gap-1">
+                  <span class="text-xs font-semibold text-primary">{process.title}</span>
+                  <div class="flex flex-wrap gap-2 text-[11px] text-secondary">
+                    <span>Status: {process.status}</span>
+                    <Show when={typeof process.outputSizeBytes === "number"}>
+                      <span>Output: {Math.round((process.outputSizeBytes ?? 0) / 1024)}KB</span>
+                    </Show>
+                  </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
+                    onClick={() => openBackgroundOutput(process)}
+                    aria-label="Output"
+                    title="Output"
+                  >
+                    <TerminalSquare class="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
+                    disabled={process.status !== "running"}
+                    onClick={() => stopBackgroundProcess(process.id)}
+                    aria-label="Stop"
+                    title="Stop"
+                  >
+                    <XOctagon class="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
+                    onClick={() => terminateBackgroundProcess(process.id)}
+                    aria-label="Terminate"
+                    title="Terminate"
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      )
+    }
+
     const sections = [
       {
-        id: "lsp",
-        label: "LSP Servers",
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["lsp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
+        id: "plan",
+        label: "Plan",
+        render: renderPlanSectionContent,
+      },
+      {
+        id: "background-processes",
+        label: "Background Shells",
+        render: renderBackgroundProcesses,
       },
       {
         id: "mcp",
@@ -879,9 +981,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ),
       },
       {
-        id: "plan",
-        label: "Plan",
-        render: renderPlanSectionContent,
+        id: "lsp",
+        label: "LSP Servers",
+        render: () => (
+          <InstanceServiceStatus
+            initialInstance={props.instance}
+            sections={["lsp"]}
+            showSectionHeadings={false}
+            class="space-y-2"
+          />
+        ),
+      },
+      {
+        id: "plugins",
+        label: "Plugins",
+        render: () => (
+          <InstanceServiceStatus
+            initialInstance={props.instance}
+            sections={["plugins"]}
+            showSectionHeadings={false}
+            class="space-y-2"
+          />
+        ),
       },
     ]
 
@@ -1300,6 +1421,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}
+      />
+
+      <BackgroundProcessOutputDialog
+        open={showBackgroundOutput()}
+        instanceId={props.instance.id}
+        process={selectedBackgroundProcess()}
+        onClose={closeBackgroundOutput}
       />
     </>
   )

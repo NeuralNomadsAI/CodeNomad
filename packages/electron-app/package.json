@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "CodeNomad - AI coding assistant",
   "author": {
     "name": "Neural Nomads",
@@ -69,6 +69,10 @@
           "!icon.icns",
           "!icon.ico"
         ]
+      },
+      {
+        "from": "../server/dist/opencode-config",
+        "to": "opencode-config"
       }
     ],
     "mac": {

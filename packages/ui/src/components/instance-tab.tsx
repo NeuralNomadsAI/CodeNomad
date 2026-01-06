@@ -1,6 +1,7 @@
-import { Component } from "solid-js"
+import { Component, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
-import { FolderOpen, X } from "lucide-solid"
+import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
+import { FolderOpen, ShieldAlert, X } from "lucide-solid"
 
 interface InstanceTabProps {
   instance: Instance
@@ -26,6 +27,24 @@ function formatFolderName(path: string, instances: Instance[], currentInstance: 
 }
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
+  const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id))
+  const statusClassName = createMemo(() => {
+    const status = aggregatedStatus()
+    return status === "permission" ? "session-permission" : `session-${status}`
+  })
+  const statusTitle = createMemo(() => {
+    switch (aggregatedStatus()) {
+      case "permission":
+        return "Waiting on permission"
+      case "compacting":
+        return "Compacting"
+      case "working":
+        return "Working"
+      default:
+        return "Idle"
+    }
+  })
+
   return (
     <div class="group">
       <button
@@ -40,7 +59,18 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           {props.instance.folder.split("/").pop() || props.instance.folder}
         </span>
         <span
-          class="tab-close ml-auto"
+          class={`status-indicator session-status ml-auto ${statusClassName()}`}
+          title={statusTitle()}
+          aria-label={`Instance status: ${statusTitle()}`}
+        >
+          {aggregatedStatus() === "permission" ? (
+            <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+          ) : (
+            <span class="status-dot" />
+          )}
+        </span>
+        <span
+          class="tab-close"
           onClick={(e) => {
             e.stopPropagation()
             props.onClose()

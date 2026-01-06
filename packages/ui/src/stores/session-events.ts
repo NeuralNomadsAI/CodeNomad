@@ -6,36 +6,42 @@ import type {
   MessageUpdateEvent,
 } from "../types/message"
 import type {
-  EventPermissionReplied,
-  EventPermissionUpdated,
   EventSessionCompacted,
   EventSessionError,
   EventSessionIdle,
   EventSessionUpdated,
+  EventSessionStatus,
 } from "@opencode-ai/sdk"
 import type { MessageStatus } from "./message-v2/types"
 
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
+import { getPermissionId, getPermissionKind, getRequestIdFromPermissionReply } from "../types/permission"
+import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "../types/permission"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { instances, addPermissionToQueue, removePermissionFromQueue } from "./instances"
 import { showAlertDialog } from "./alerts"
-import { sessions, setSessions, withSession } from "./session-state"
+import { createClientSession, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 
-const log = getLogger("sse")
 import { loadMessages } from "./session-api"
-import { setSessionCompactionState } from "./session-compaction"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
   upsertMessageInfoV2,
   upsertPermissionV2,
+  removeMessagePartV2,
+  removeMessageV2,
   removePermissionV2,
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
+
+const log = getLogger("sse")
+const pendingSessionFetches = new Map<string, Promise<void>>()
 
 interface TuiToastEvent {
   type: "tui.toast.show"
@@ -49,7 +55,97 @@ interface TuiToastEvent {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
+function applySessionStatus(instanceId: string, sessionId: string, status: SessionStatus) {
+  withSession(instanceId, sessionId, (session) => {
+    const current = session.status ?? "idle"
+    if (current === status) return false
+
+    if (current === "compacting" && status !== "compacting") {
+      return false
+    }
+
+    session.status = status
+  })
+}
+
+async function fetchSessionInfo(instanceId: string, sessionId: string): Promise<Session | null> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return null
+
+  try {
+    const info = await requestData<any>(
+      instance.client.session.get({ sessionID: sessionId }),
+      "session.get",
+    )
+
+    let fetchedStatus: SessionStatus = "idle"
+    try {
+      const statuses = await requestData<Record<string, any>>(instance.client.session.status(), "session.status")
+      const rawStatus = (info as any)?.status ?? statuses?.[sessionId]
+      const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
+      fetchedStatus = hasType ? mapSdkSessionStatus(rawStatus) : "idle"
+    } catch (error) {
+      log.error("Failed to fetch session status", error)
+    }
+
+    const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
+
+    let updatedInstanceSessions: Map<string, Session> | undefined
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const existing = instanceSessions.get(sessionId)
+      const merged: Session = {
+        ...fetched,
+        agent: existing?.agent ?? fetched.agent,
+        model: existing?.model ?? fetched.model,
+        status: existing?.status === "compacting" ? "compacting" : fetched.status,
+        pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
+      }
+      instanceSessions.set(sessionId, merged)
+      next.set(instanceId, instanceSessions)
+      updatedInstanceSessions = instanceSessions
+      return next
+    })
+
+    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
+
+    return fetched
+  } catch (error) {
+    log.error("Failed to fetch session info", error)
+    return null
+  }
+}
+
+function ensureSessionStatus(instanceId: string, sessionId: string, status: SessionStatus) {
+  const instanceSessions = sessions().get(instanceId)
+  const existing = instanceSessions?.get(sessionId)
+  if (existing) {
+    if ((existing.status ?? "idle") === status) {
+      return
+    }
+    applySessionStatus(instanceId, sessionId, status)
+    return
+  }
+
+  const key = `${instanceId}:${sessionId}`
+  if (pendingSessionFetches.has(key)) {
+    return
+  }
+
+  const pending = (async () => {
+    const fetched = await fetchSessionInfo(instanceId, sessionId)
+    if (!fetched) return
+    applySessionStatus(instanceId, sessionId, status)
+  })()
+
+  pendingSessionFetches.set(key, pending)
+  void pending.finally(() => pendingSessionFetches.delete(key))
+}
+
 type MessageRole = "user" | "assistant"
+
 
 function resolveMessageRole(info?: MessageInfo | null): MessageRole {
   return info?.role === "user" ? "user" : "assistant"
@@ -72,7 +168,6 @@ function findPendingMessageId(
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
   const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
 
   if (event.type === "message.part.updated") {
     const rawPart = event.properties?.part
@@ -87,10 +182,10 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
- 
-    const session = instanceSessions.get(sessionId)
-    if (!session) return
- 
+    if (part.type === "compaction") {
+      ensureSessionStatus(instanceId, sessionId, "compacting")
+    }
+
     const store = messageStoreBus.getOrCreate(instanceId)
     const role: MessageRole = resolveMessageRole(messageInfo)
     const createdAt = typeof messageInfo?.time?.created === "number" ? messageInfo.time.created : Date.now()
@@ -133,10 +228,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
 
-    const session = instanceSessions.get(sessionId)
-    if (!session) return
+    withSession(instanceId, sessionId, (session) => {
+      session.time = { ...(session.time ?? {}), updated: Date.now() }
+    })
 
     const store = messageStoreBus.getOrCreate(instanceId)
+
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
     const hasError = Boolean((info as any).error)
     const status: MessageStatus = hasError ? "error" : "complete"
@@ -174,12 +271,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
   if (!info) return
 
-  const compactingFlag = info.time?.compacting
-  const isCompacting = typeof compactingFlag === "number" ? compactingFlag > 0 : Boolean(compactingFlag)
-  setSessionCompactionState(instanceId, info.id, isCompacting)
-
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return
+  const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
 
   const existingSession = instanceSessions.get(info.id)
 
@@ -194,6 +286,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
         providerId: "",
         modelId: "",
       },
+      status: "idle",
       version: info.version || "0",
       time: info.time
         ? { ...info.time }
@@ -201,15 +294,20 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
             created: Date.now(),
             updated: Date.now(),
           },
-    } as any
+    } as Session
+
+    let updatedInstanceSessions: Map<string, Session> | undefined
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const updated = new Map(prev.get(instanceId))
-      updated.set(newSession.id, newSession)
-      next.set(instanceId, updated)
+      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      instanceSessions.set(newSession.id, newSession)
+      next.set(instanceId, instanceSessions)
+      updatedInstanceSessions = instanceSessions
       return next
     })
+
+    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
@@ -218,13 +316,10 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       ...existingSession.time,
       ...(info.time ?? {}),
     }
-    if (!info.time?.updated) {
-      mergedTime.updated = Date.now()
-    }
-
     const updatedSession = {
       ...existingSession,
       title: info.title || existingSession.title,
+      status: existingSession.status ?? "idle",
       time: mergedTime,
       revert: info.revert
         ? {
@@ -236,22 +331,37 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
         : existingSession.revert,
     }
 
+    let updatedInstanceSessions: Map<string, Session> | undefined
+
     setSessions((prev) => {
       const next = new Map(prev)
-      const updated = new Map(prev.get(instanceId))
-      updated.set(existingSession.id, updatedSession)
-      next.set(instanceId, updated)
+      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      instanceSessions.set(existingSession.id, updatedSession)
+      next.set(instanceId, instanceSessions)
+      updatedInstanceSessions = instanceSessions
       return next
     })
+
+    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
   }
 }
 
-function handleSessionIdle(_instanceId: string, event: EventSessionIdle): void {
+function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
+  ensureSessionStatus(instanceId, sessionId, "idle")
   log.info(`[SSE] Session idle: ${sessionId}`)
+}
+
+function handleSessionStatus(instanceId: string, event: EventSessionStatus): void {
+  const sessionId = event.properties?.sessionID
+  if (!sessionId) return
+
+  const status = mapSdkSessionStatus(event.properties.status)
+  ensureSessionStatus(instanceId, sessionId, status)
+  log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
@@ -260,13 +370,14 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
 
-  setSessionCompactionState(instanceId, sessionID, false)
-
-  withSession(instanceId, sessionID, (session) => {
-    const time = { ...(session.time ?? {}) }
-    time.compacting = 0
-    session.time = time
-  })
+  const existing = sessions().get(instanceId)?.get(sessionID)
+  if (existing) {
+    withSession(instanceId, sessionID, (session) => {
+      session.status = "working"
+    })
+  } else {
+    ensureSessionStatus(instanceId, sessionID, "working")
+  }
 
   loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload session after compaction", error))
 
@@ -305,19 +416,21 @@ function handleSessionError(_instanceId: string, event: EventSessionError): void
 }
 
 function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
-  const sessionID = event.properties?.sessionID
-  if (!sessionID) return
+  const { sessionID, messageID } = event.properties
+  if (!sessionID || !messageID) return
 
-  log.info(`[SSE] Message removed from session ${sessionID}, reloading messages`)
-  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload messages after removal", error))
+  log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
+  removeMessageV2(instanceId, messageID)
+  updateSessionInfo(instanceId, sessionID)
 }
 
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
-  const sessionID = event.properties?.sessionID
-  if (!sessionID) return
+  const { sessionID, messageID, partID } = event.properties
+  if (!sessionID || !messageID || !partID) return
 
-  log.info(`[SSE] Message part removed from session ${sessionID}, reloading messages`)
-  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload messages after part removal", error))
+  log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
+  removeMessagePartV2(instanceId, messageID, partID)
+  updateSessionInfo(instanceId, sessionID)
 }
 
 function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
@@ -337,22 +450,23 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: EventPermissionUpdated): void {
-  const permission = event.properties
+function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {
+  const permission = event?.properties as PermissionRequestLike | undefined
   if (!permission) return
 
-  log.info(`[SSE] Permission updated: ${permission.id} (${permission.type})`)
+  log.info(`[SSE] Permission request: ${getPermissionId(permission)} (${getPermissionKind(permission)})`)
   addPermissionToQueue(instanceId, permission)
   upsertPermissionV2(instanceId, permission)
 }
 
-function handlePermissionReplied(instanceId: string, event: EventPermissionReplied): void {
-  const { permissionID } = event.properties
-  if (!permissionID) return
+function handlePermissionReplied(instanceId: string, event: { type: string; properties?: PermissionReplyEventPropertiesLike } | any): void {
+  const properties = event?.properties as PermissionReplyEventPropertiesLike | undefined
+  const requestId = getRequestIdFromPermissionReply(properties)
+  if (!requestId) return
 
-  log.info(`[SSE] Permission replied: ${permissionID}`)
-  removePermissionFromQueue(instanceId, permissionID)
-  removePermissionV2(instanceId, permissionID)
+  log.info(`[SSE] Permission replied: ${requestId}`)
+  removePermissionFromQueue(instanceId, requestId)
+  removePermissionV2(instanceId, requestId)
 }
 
 export {
@@ -364,6 +478,7 @@ export {
   handleSessionCompacted,
   handleSessionError,
   handleSessionIdle,
+  handleSessionStatus,
   handleSessionUpdate,
   handleTuiToast,
 }

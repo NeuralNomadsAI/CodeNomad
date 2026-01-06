@@ -15,6 +15,13 @@ export interface MarkdownRenderOptions {
   disableHighlight?: boolean
 }
 
+export interface AnsiRenderOptions {
+  content: string
+  size?: "default" | "large"
+  requireAnsi?: boolean
+  variant?: "running" | "final"
+}
+
 export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
@@ -34,6 +41,7 @@ export interface ToolRendererContext {
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
   renderMarkdown(options: MarkdownRenderOptions): JSXElement | null
+  renderAnsi(options: AnsiRenderOptions): JSXElement | null
   renderDiff(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null
   scrollHelpers?: ToolScrollHelpers
 }

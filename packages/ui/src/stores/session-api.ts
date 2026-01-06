@@ -1,9 +1,8 @@
-import type { Session } from "../types/session"
+import { mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
-import { setSessionCompactionState } from "./session-compaction"
 import {
   activeSessionId,
   agents,
@@ -23,14 +22,16 @@ import {
   loading,
   setLoading,
   cleanupBlankSessions,
+  syncInstanceSessionIndicator,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { seedSessionMessagesV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
+import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("api")
 
@@ -77,10 +78,30 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return
     }
 
+    let statusById: Record<string, any> = {}
+    try {
+      const statusResponse = await instance.client.session.status()
+      if (statusResponse.data && typeof statusResponse.data === "object") {
+        statusById = statusResponse.data as Record<string, any>
+      }
+    } catch (error) {
+      log.error("Failed to fetch session status:", error)
+    }
+
     const existingSessions = sessions().get(instanceId)
 
     for (const apiSession of response.data) {
       const existingSession = existingSessions?.get(apiSession.id)
+      const existingStatus = existingSession?.status
+
+      let status: SessionStatus
+      if (existingStatus === "compacting") {
+        status = "compacting"
+      } else {
+        const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
+        const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
+        status = hasType ? mapSdkSessionStatus(rawStatus) : existingStatus ?? "idle"
+      }
 
       sessionMap.set(apiSession.id, {
         id: apiSession.id,
@@ -89,6 +110,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         parentId: apiSession.parentID || null,
         agent: existingSession?.agent ?? "",
         model: existingSession?.model ?? { providerId: "", modelId: "" },
+        status,
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -112,6 +134,8 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return next
     })
 
+    syncInstanceSessionIndicator(instanceId, sessionMap)
+
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
       const loadedSet = next.get(instanceId)
@@ -127,11 +151,6 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return next
     })
 
-    for (const session of sessionMap.values()) {
-      const flag = (session.time as (Session["time"] & { compacting?: number | boolean }) | undefined)?.compacting
-      const active = typeof flag === "number" ? flag > 0 : Boolean(flag)
-      setSessionCompactionState(instanceId, session.id, active)
-    }
 
     pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
   } catch (error) {
@@ -183,6 +202,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       parentId: null,
       agent: selectedAgent,
       model: defaultModel,
+      status: "idle",
       version: response.data.version,
       time: {
         ...response.data.time,
@@ -204,6 +224,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       next.set(instanceId, instanceSessions)
       return next
     })
+
+    syncInstanceSessionIndicator(instanceId)
 
     const instanceProviders = providers().get(instanceId) || []
     const initialProvider = instanceProviders.find((p) => p.id === session.model.providerId)
@@ -261,25 +283,16 @@ async function forkSession(
     throw new Error("Instance not ready")
   }
 
-  const request: {
-    path: { id: string }
-    body?: { messageID: string }
-  } = {
-    path: { id: sourceSessionId },
-  }
-
-  if (options?.messageId) {
-    request.body = { messageID: options.messageId }
+  const request: { sessionID: string; messageID?: string } = {
+    sessionID: sourceSessionId,
+    messageID: options?.messageId,
   }
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
-  const response = await instance.client.session.fork(request)
-
-  if (!response.data) {
-    throw new Error("Failed to fork session: No data returned")
-  }
-
-  const info = response.data as SessionForkResponse
+  const info = await requestData<SessionForkResponse>(
+    instance.client.session.fork(request),
+    "session.fork",
+  )
   const forkedSession = {
     id: info.id,
     instanceId,
@@ -290,6 +303,7 @@ async function forkSession(
       providerId: info.model?.providerID || "",
       modelId: info.model?.modelID || "",
     },
+    status: "idle",
     version: "0",
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
@@ -309,6 +323,8 @@ async function forkSession(
     next.set(instanceId, instanceSessions)
     return next
   })
+
+  syncInstanceSessionIndicator(instanceId)
 
   const instanceProviders = providers().get(instanceId) || []
   const forkProvider = instanceProviders.find((p) => p.id === forkedSession.model.providerId)
@@ -356,18 +372,22 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await instance.client.session.delete({ path: { id: sessionId } })
+    await requestData(instance.client.session.delete({ sessionID: sessionId }), "session.delete")
 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = next.get(instanceId)
       if (instanceSessions) {
         instanceSessions.delete(sessionId)
+        if (instanceSessions.size === 0) {
+          next.delete(instanceId)
+        }
       }
       return next
     })
 
-    setSessionCompactionState(instanceId, sessionId, false)
+    syncInstanceSessionIndicator(instanceId)
+
     clearSessionDraftPrompt(instanceId, sessionId)
 
     // Drop normalized message state and caches for this session
@@ -519,14 +539,30 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const response = await instance.client.session["messages"]({ path: { id: sessionId } })
+    const apiMessages = await requestData<any[]>(
+      instance.client.session.messages({ sessionID: sessionId }),
+      "session.messages",
+    )
 
-    if (!response.data || !Array.isArray(response.data)) {
+    if (!Array.isArray(apiMessages)) {
+      return
+    }
+
+    // Treat empty sessions as loaded to avoid re-fetch loops.
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId) || new Set()
+      loadedSet.add(sessionId)
+      next.set(instanceId, loadedSet)
+      return next
+    })
+
+    if (apiMessages.length === 0) {
       return
     }
 
     const messagesInfo = new Map<string, any>()
-    const messages: Message[] = response.data.map((apiMessage: any) => {
+    const messages: Message[] = apiMessages.map((apiMessage: any) => {
       const info = apiMessage.info || apiMessage
       const role = info.role || "assistant"
       const messageId = info.id || String(Date.now())
@@ -552,8 +588,8 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     let providerID = ""
     let modelID = ""
 
-    for (let i = response.data.length - 1; i >= 0; i--) {
-      const apiMessage = response.data[i]
+    for (let i = apiMessages.length - 1; i >= 0; i--) {
+      const apiMessage = apiMessages[i]
       const info = apiMessage.info || apiMessage
 
       if (info.role === "assistant") {
@@ -574,19 +610,23 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     setSessions((prev) => {
       const next = new Map(prev)
       const nextInstanceSessions = next.get(instanceId)
-      if (nextInstanceSessions) {
-        const existingSession = nextInstanceSessions.get(sessionId)
-        if (existingSession) {
-          const updatedSession = {
-            ...existingSession,
-            agent: agentName || existingSession.agent,
-            model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-          }
-          const updatedInstanceSessions = new Map(nextInstanceSessions)
-          updatedInstanceSessions.set(sessionId, updatedSession)
-          next.set(instanceId, updatedInstanceSessions)
-        }
+      if (!nextInstanceSessions) {
+        return next
       }
+
+      const existingSession = nextInstanceSessions.get(sessionId)
+      if (!existingSession) {
+        return next
+      }
+
+      const updatedSession = {
+        ...existingSession,
+        agent: agentName || existingSession.agent,
+        model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+      }
+
+      nextInstanceSessions.set(sessionId, updatedSession)
+      next.set(instanceId, nextInstanceSessions)
       return next
     })
 
@@ -605,6 +645,11 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       revert: session?.revert,
     }
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
+
+    // Permissions can be hydrated before messages/tool parts exist in the store.
+    // After message hydration, try to attach any pending permissions to tool-call part ids.
+    reconcilePendingPermissionsV2(instanceId, sessionId)
+ 
 
   } catch (error) {
     log.error("Failed to load messages:", error)

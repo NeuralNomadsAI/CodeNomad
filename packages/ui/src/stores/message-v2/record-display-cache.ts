@@ -1,8 +1,10 @@
 import type { ClientPart } from "../../types/message"
 import type { MessageRecord } from "./types"
 
+type ClientPartWithRevision = ClientPart & { revision?: number }
+
 export interface RecordDisplayData {
-  orderedParts: ClientPart[]
+  orderedParts: ClientPartWithRevision[]
 }
 
 interface RecordDisplayCacheEntry {
@@ -23,12 +25,12 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
     return cached.data
   }
 
-  const orderedParts: ClientPart[] = []
+  const orderedParts: ClientPartWithRevision[] = []
 
   for (const partId of record.partIds) {
     const entry = record.parts[partId]
     if (!entry?.data) continue
-    orderedParts.push(entry.data)
+    orderedParts.push({ ...(entry.data as ClientPart), revision: entry.revision })
   }
 
   const data: RecordDisplayData = { orderedParts }

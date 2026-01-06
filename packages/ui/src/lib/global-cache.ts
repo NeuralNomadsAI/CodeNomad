@@ -5,10 +5,16 @@ export interface CacheEntryBaseParams {
 }
 
 export interface CacheEntryParams extends CacheEntryBaseParams {
-  key: string
+  cacheId: string
+  version: string
 }
 
-type CacheValueMap = Map<string, unknown>
+type VersionedCacheEntry = {
+  version: string
+  value: unknown
+}
+
+type CacheValueMap = Map<string, VersionedCacheEntry>
 type CacheScopeMap = Map<string, CacheValueMap>
 type CacheSessionMap = Map<string, CacheScopeMap>
 
@@ -83,18 +89,22 @@ export function setCacheEntry<T>(params: CacheEntryParams, value: T | undefined)
 
   if (value === undefined) {
     const existingMap = getScopeValueMap(params, false)
-    existingMap?.delete(params.key)
+    existingMap?.delete(params.cacheId)
     cleanupHierarchy(instanceKey, sessionKey, params.scope)
     return
   }
 
   const scopeEntries = getScopeValueMap(params, true)
-  scopeEntries?.set(params.key, value)
+  scopeEntries?.set(params.cacheId, { version: params.version, value })
 }
 
 export function getCacheEntry<T>(params: CacheEntryParams): T | undefined {
   const scopeEntries = getScopeValueMap(params, false)
-  return scopeEntries?.get(params.key) as T | undefined
+  const entry = scopeEntries?.get(params.cacheId)
+  if (!entry || entry.version !== params.version) {
+    return undefined
+  }
+  return entry.value as T
 }
 
 export function clearCacheScope(params: CacheEntryBaseParams): void {

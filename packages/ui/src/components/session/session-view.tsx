@@ -10,6 +10,7 @@ import { loadMessages, sendMessage, forkSession, isSessionMessagesLoading, setAc
 import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
+import { requestData } from "../../lib/opencode-api"
 
 const log = getLogger("session")
 
@@ -39,6 +40,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return getSessionBusyStatus(props.instanceId, currentSession.id)
   })
   let scrollToBottomHandle: (() => void) | undefined
+  let rootRef: HTMLDivElement | undefined
   function scheduleScrollToBottom() {
     if (!scrollToBottomHandle) return
     requestAnimationFrame(() => {
@@ -121,14 +123,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
-      await instance.client.session.revert({
-        path: { id: props.sessionId },
-        body: { messageID: messageId },
-      })
+      await requestData(
+        instance.client.session.revert({
+          sessionID: props.sessionId,
+          messageID: messageId,
+        }),
+        "session.revert",
+      )
 
       const restoredText = getUserMessageText(messageId)
       if (restoredText) {
-        const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+        const textarea = rootRef?.querySelector(".prompt-input") as HTMLTextAreaElement | undefined
         if (textarea) {
           textarea.value = restoredText
           textarea.dispatchEvent(new Event("input", { bubbles: true }))
@@ -164,7 +169,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
 
       if (restoredText) {
-        const textarea = document.querySelector(".prompt-input") as HTMLTextAreaElement
+        const textarea = rootRef?.querySelector(".prompt-input") as HTMLTextAreaElement | undefined
         if (textarea) {
           textarea.value = restoredText
           textarea.dispatchEvent(new Event("input", { bubbles: true }))
@@ -194,7 +199,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         const activeSession = sessionAccessor()
         if (!activeSession) return null
         return (
-          <div class="session-view">
+          <div ref={rootRef} class="session-view">
             <MessageSection
                instanceId={props.instanceId}
                sessionId={activeSession.id}

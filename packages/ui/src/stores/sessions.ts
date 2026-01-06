@@ -26,6 +26,7 @@ import {
   setActiveParentSession,
   setActiveSession,
   setSessionDraftPrompt,
+  setSessionStatus,
  } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -56,6 +57,7 @@ import {
   handleSessionCompacted,
   handleSessionError,
   handleSessionIdle,
+  handleSessionStatus,
   handleSessionUpdate,
   handleTuiToast,
 } from "./session-events"
@@ -68,6 +70,7 @@ sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
 sseManager.onSessionError = handleSessionError
 sseManager.onSessionIdle = handleSessionIdle
+sseManager.onSessionStatus = handleSessionStatus
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
@@ -109,6 +112,7 @@ export {
   setActiveParentSession,
   setActiveSession,
   setSessionDraftPrompt,
+  setSessionStatus,
   updateSessionAgent,
   updateSessionModel,
 }
