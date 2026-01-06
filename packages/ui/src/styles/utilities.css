@@ -133,3 +133,12 @@
 .kbd-separator {
   @apply opacity-50;
 }
+
+/* Prevent iOS Safari auto-zoom on text input focus */
+@media (pointer: coarse) {
+  input[type="text"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+}
