@@ -185,7 +185,7 @@ jobs:
         run: npm install @rollup/rollup-darwin-x64 --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli-darwin-x64 --no-save
+        run: npm install @tauri-apps/cli-darwin-x64@2.9.4 --no-save
 
       - name: Build macOS bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
@@ -243,7 +243,7 @@ jobs:
         run: npm install @rollup/rollup-darwin-arm64 --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli-darwin-arm64 --no-save
+        run: npm install @tauri-apps/cli-darwin-arm64@2.9.4 --no-save
 
       - name: Build macOS bundle (Tauri, arm64)
         run: npm run build --workspace @codenomad/tauri-app
@@ -302,7 +302,7 @@ jobs:
         run: npm install @rollup/rollup-win32-x64-msvc --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli-win32-x64-msvc --no-save
+        run: npm install @tauri-apps/cli-win32-x64-msvc@2.9.4 --no-save
 
       - name: Build Windows bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
@@ -375,7 +375,7 @@ jobs:
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli-linux-x64-gnu --no-save
+        run: npm install @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save
 
       - name: Build Linux bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
