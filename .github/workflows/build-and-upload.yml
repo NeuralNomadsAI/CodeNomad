@@ -29,9 +29,8 @@ on:
         default: true
         type: boolean
 
-permissions:
-  id-token: write
-  contents: write
+# Permissions are intentionally omitted here so callers can choose
+# least-privilege (e.g. dev CI uses read-only; releases grant write).
 
 env:
   NODE_VERSION: 20
