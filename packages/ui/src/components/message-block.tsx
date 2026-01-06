@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
+import { FoldVertical } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import MarkdownPreviewIcon from "./markdown-preview-icon"
@@ -194,7 +195,15 @@ type ReasoningDisplayItem = {
   defaultExpanded: boolean
 }
 
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | StepDisplayItem | ReasoningDisplayItem
+type CompactionDisplayItem = {
+  type: "compaction"
+  key: string
+  part: ClientPart
+  messageInfo?: MessageInfo
+  accentColor?: string
+}
+
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem
 
 interface MessageDisplayBlock {
   record: MessageRecord
@@ -330,6 +339,21 @@ export default function MessageBlock(props: MessageBlockProps) {
         items.push(toolItem)
         blockToolKeys.push(key)
         lastAccentColor = TOOL_BORDER_COLOR
+        return
+      }
+
+      if (part.type === "compaction") {
+        flushContent()
+        const key = `${current.id}:${part.id ?? partIndex}:compaction`
+        const isAuto = Boolean((part as any)?.auto)
+        items.push({
+          type: "compaction",
+          key,
+          part,
+          messageInfo: info,
+          accentColor: isAuto ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR,
+        })
+        lastAccentColor = isAuto ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR
         return
       }
 
@@ -481,6 +505,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     borderColor={(item as StepDisplayItem).accentColor}
                   />
                 </Match>
+                <Match when={item.type === "compaction"}>
+                  <CompactionCard part={(item as CompactionDisplayItem).part} messageInfo={(item as CompactionDisplayItem).messageInfo} borderColor={(item as CompactionDisplayItem).accentColor} />
+                </Match>
                 <Match when={item.type === "reasoning"}>
                   <ReasoningCard
                     part={(item as ReasoningDisplayItem).part}
@@ -507,6 +534,29 @@ interface StepCardProps {
   showAgentMeta?: boolean
   showUsage?: boolean
   borderColor?: string
+}
+
+function CompactionCard(props: { part: ClientPart; messageInfo?: MessageInfo; borderColor?: string }) {
+  const isAuto = () => Boolean((props.part as any)?.auto)
+  const label = () => (isAuto() ? "Session auto-compacted" : "Session compacted by you")
+  const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
+
+  const containerClass = () =>
+    `message-compaction-card ${isAuto() ? "message-compaction-card--auto" : "message-compaction-card--manual"}`
+
+  return (
+    <div
+      class={containerClass()}
+      style={{ "border-left": `4px solid ${borderColor()}` }}
+      role="status"
+      aria-label="Session compaction"
+    >
+      <div class="message-compaction-row">
+        <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
+        <span class="message-compaction-label">{label()}</span>
+      </div>
+    </div>
+  )
 }
 
 function StepCard(props: StepCardProps) {

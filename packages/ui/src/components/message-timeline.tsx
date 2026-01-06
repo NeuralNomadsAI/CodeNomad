@@ -5,9 +5,9 @@ import type { ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getToolIcon } from "./tool-call/utils"
-import { User as UserIcon, Bot as BotIcon } from "lucide-solid"
+import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 
-export type TimelineSegmentType = "user" | "assistant" | "tool"
+export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
 export interface TimelineSegment {
   id: string
@@ -16,6 +16,7 @@ export interface TimelineSegment {
   label: string
   tooltip: string
   shortLabel?: string
+  variant?: "auto" | "manual"
 }
 
 interface MessageTimelineProps {
@@ -31,6 +32,7 @@ const SEGMENT_LABELS: Record<TimelineSegmentType, string> = {
   user: "You",
   assistant: "Asst",
   tool: "Tool",
+  compaction: "Compaction",
 }
 
 const TOOL_FALLBACK_LABEL = "Tool Call"
@@ -215,6 +217,21 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
       continue
     }
  
+    if (part.type === "compaction") {
+      flushPending()
+      const isAuto = Boolean((part as any)?.auto)
+      result.push({
+        id: `${record.id}:${segmentIndex}`,
+        messageId: record.id,
+        type: "compaction",
+        label: SEGMENT_LABELS.compaction,
+        tooltip: isAuto ? "Auto Compaction" : "User Compaction",
+        variant: isAuto ? "auto" : "manual",
+      })
+      segmentIndex += 1
+      continue
+    }
+
     if (part.type === "step-start" || part.type === "step-finish") {
       continue
     }
@@ -343,20 +360,26 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           onCleanup(() => buttonRefs.delete(segment.id))
           const isActive = () => props.activeMessageId === segment.messageId
           const isHidden = () => segment.type === "tool" && !(showTools() || isActive())
-          const shortLabelContent = () => {
-            if (segment.type === "tool") {
-              return segment.shortLabel ?? getToolIcon("tool")
-            }
-            if (segment.type === "user") {
-              return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-            }
-            return <BotIcon class="message-timeline-icon" aria-hidden="true" />
-          }
+           const shortLabelContent = () => {
+             if (segment.type === "tool") {
+               return segment.shortLabel ?? getToolIcon("tool")
+             }
+             if (segment.type === "compaction") {
+               return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
+             }
+             if (segment.type === "user") {
+               return <UserIcon class="message-timeline-icon" aria-hidden="true" />
+             }
+             return <BotIcon class="message-timeline-icon" aria-hidden="true" />
+           }
+
           return (
-            <button
-              ref={(el) => registerButtonRef(segment.id, el)}
-              type="button"
-              class={`message-timeline-segment message-timeline-${segment.type} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+             <button
+               ref={(el) => registerButtonRef(segment.id, el)}
+               type="button"
+               data-variant={segment.variant}
+               class={`message-timeline-segment message-timeline-${segment.type} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+
               aria-current={isActive() ? "true" : undefined}
               aria-hidden={isHidden() ? "true" : undefined}
               onClick={() => props.onSegmentClick?.(segment)}

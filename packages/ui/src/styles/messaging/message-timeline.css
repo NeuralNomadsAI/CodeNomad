@@ -146,6 +146,16 @@
   background-color: var(--surface-secondary);
 }
 
+.message-timeline-compaction-auto {
+  border-color: var(--session-status-compacting-fg);
+  background-color: var(--surface-secondary);
+}
+
+.message-timeline-compaction-manual {
+  border-color: var(--message-user-border);
+  background-color: var(--message-user-bg);
+}
+
 .message-timeline-segment-active {
   background-color: #0f5b44 !important;
   border-color: transparent !important;

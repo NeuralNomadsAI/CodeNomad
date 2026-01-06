@@ -208,6 +208,35 @@
   border-radius: 0;
 }
 
+.message-compaction-card {
+  @apply flex flex-col gap-1 px-3 py-2 text-xs;
+  background-color: var(--message-assistant-bg);
+}
+
+.message-compaction-card--auto {
+  background-color: var(--session-status-compacting-bg);
+  color: var(--session-status-compacting-fg);
+}
+
+.message-compaction-card--manual {
+  background-color: var(--message-user-bg);
+  color: var(--text-primary);
+}
+
+.message-compaction-row {
+  @apply flex items-center gap-2;
+  justify-content: center;
+}
+
+.message-compaction-icon {
+  @apply inline-flex items-center;
+  color: inherit;
+}
+
+.message-compaction-label {
+  font-weight: var(--font-weight-medium);
+}
+
 .message-step-start {
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
