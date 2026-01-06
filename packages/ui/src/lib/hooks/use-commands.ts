@@ -11,7 +11,6 @@ import {
   getSessions,
   setActiveSession,
 } from "../../stores/sessions"
-import { setSessionCompactionState } from "../../stores/session-compaction"
 import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
@@ -241,7 +240,6 @@ export function useCommands(options: UseCommandsOptions) {
         if (!session) return
 
         try {
-          setSessionCompactionState(instance.id, sessionId, true)
           await requestData(
             instance.client.session.summarize({
               sessionID: sessionId,
@@ -251,7 +249,6 @@ export function useCommands(options: UseCommandsOptions) {
             "session.summarize",
           )
         } catch (error) {
-          setSessionCompactionState(instance.id, sessionId, false)
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : "Failed to compact session"
           showAlertDialog(`Compact failed: ${message}`, {

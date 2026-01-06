@@ -290,36 +290,6 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
   }
 }
 
-function setSessionCompactionState(instanceId: string, sessionId: string, isCompacting: boolean): void {
-  withSession(instanceId, sessionId, (session) => {
-    const time = { ...(session.time ?? {}) } as Session["time"] & { compacting?: number | boolean; updated?: number }
-    const compactingFlag = time.compacting
-    const wasCompacting = typeof compactingFlag === "number" ? compactingFlag > 0 : Boolean(compactingFlag)
-
-    const shouldAlreadyBeCompacting = isCompacting
-    const isAlreadyCorrect =
-      wasCompacting === isCompacting &&
-      (shouldAlreadyBeCompacting ? session.status === "compacting" : session.status !== "compacting")
-
-    if (isAlreadyCorrect) {
-      return false
-    }
-
-    if (wasCompacting !== isCompacting) {
-      time.compacting = isCompacting ? Date.now() : 0
-      time.updated = Date.now()
-    }
-
-    session.time = time
-
-    if (isCompacting) {
-      session.status = "compacting"
-    } else if (session.status === "compacting") {
-      session.status = "idle"
-    }
-  })
-}
-
 function setSessionPendingPermission(instanceId: string, sessionId: string, pending: boolean): void {
   withSession(instanceId, sessionId, (session) => {
     if (session.pendingPermission === pending) return false
@@ -547,7 +517,6 @@ export {
   clearInstanceDraftPrompts,
   pruneDraftPrompts,
   withSession,
-  setSessionCompactionState,
   setSessionPendingPermission,
   setSessionStatus,
   setActiveSession,

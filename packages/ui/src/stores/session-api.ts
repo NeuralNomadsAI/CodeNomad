@@ -1,9 +1,8 @@
-import type { Session } from "../types/session"
+import { mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
-import { setSessionCompactionState } from "./session-compaction"
 import {
   activeSessionId,
   agents,
@@ -19,7 +18,6 @@ import {
   setProviders,
   setSessionInfoByInstance,
   setSessions,
-  setSessionStatus,
   sessions,
   loading,
   setLoading,
@@ -30,7 +28,7 @@ import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./ses
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { deriveSessionStatusFromMessages } from "./session-status"
-import { seedSessionMessagesV2 } from "./message-v2/bridge"
+import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -81,14 +79,30 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return
     }
 
+    let statusById: Record<string, any> = {}
+    try {
+      const statusResponse = await instance.client.session.status()
+      if (statusResponse.data && typeof statusResponse.data === "object") {
+        statusById = statusResponse.data as Record<string, any>
+      }
+    } catch (error) {
+      log.error("Failed to fetch session status:", error)
+    }
+
     const existingSessions = sessions().get(instanceId)
 
     for (const apiSession of response.data) {
       const existingSession = existingSessions?.get(apiSession.id)
-
-      const compactingFlag = (apiSession.time as (Session["time"] & { compacting?: number | boolean }) | undefined)?.compacting
-      const isCompacting = typeof compactingFlag === "number" ? compactingFlag > 0 : Boolean(compactingFlag)
       const existingStatus = existingSession?.status
+
+      let status: SessionStatus
+      if (existingStatus === "compacting") {
+        status = "compacting"
+      } else {
+        const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
+        const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
+        status = hasType ? mapSdkSessionStatus(rawStatus) : existingStatus ?? "idle"
+      }
 
       sessionMap.set(apiSession.id, {
         id: apiSession.id,
@@ -97,7 +111,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         parentId: apiSession.parentID || null,
         agent: existingSession?.agent ?? "",
         model: existingSession?.model ?? { providerId: "", modelId: "" },
-        status: isCompacting ? "compacting" : (existingStatus ?? "idle"),
+        status,
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -138,11 +152,6 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return next
     })
 
-    for (const session of sessionMap.values()) {
-      const flag = (session.time as (Session["time"] & { compacting?: number | boolean }) | undefined)?.compacting
-      const active = typeof flag === "number" ? flag > 0 : Boolean(flag)
-      setSessionCompactionState(instanceId, session.id, active)
-    }
 
     pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
   } catch (error) {
@@ -380,7 +389,6 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
     syncInstanceSessionIndicator(instanceId)
 
-    setSessionCompactionState(instanceId, sessionId, false)
     clearSessionDraftPrompt(instanceId, sessionId)
 
     // Drop normalized message state and caches for this session
@@ -537,7 +545,20 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       "session.messages",
     )
 
-    if (!Array.isArray(apiMessages) || apiMessages.length === 0) {
+    if (!Array.isArray(apiMessages)) {
+      return
+    }
+
+    // Treat empty sessions as loaded to avoid re-fetch loops.
+    setMessagesLoaded((prev) => {
+      const next = new Map(prev)
+      const loadedSet = next.get(instanceId) || new Set()
+      loadedSet.add(sessionId)
+      next.set(instanceId, loadedSet)
+      return next
+    })
+
+    if (apiMessages.length === 0) {
       return
     }
 
@@ -630,6 +651,10 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       const nextStatus = deriveSessionStatusFromMessages(instanceId, sessionId)
       setSessionStatus(instanceId, sessionId, nextStatus)
     }
+
+    // Permissions can be hydrated before messages/tool parts exist in the store.
+    // After message hydration, try to attach any pending permissions to tool-call part ids.
+    reconcilePendingPermissionsV2(instanceId, sessionId)
 
   } catch (error) {
     log.error("Failed to load messages:", error)
