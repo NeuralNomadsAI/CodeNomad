@@ -57,7 +57,7 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-darwin-x64 --no-save
@@ -98,7 +98,7 @@ jobs:
         shell: bash
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-win32-x64-msvc --no-save
@@ -136,7 +136,7 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
@@ -179,13 +179,23 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-darwin-x64 --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Retrying Tauri CLI install (attempt $attempt)..."
+            fi
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save --no-audit --no-fund
+            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
+          done
+          echo "Tauri CLI failed to load after retries" >&2
+          exit 1
 
       - name: Build macOS bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
@@ -237,13 +247,23 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-darwin-arm64 --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Retrying Tauri CLI install (attempt $attempt)..."
+            fi
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save --no-audit --no-fund
+            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
+          done
+          echo "Tauri CLI failed to load after retries" >&2
+          exit 1
 
       - name: Build macOS bundle (Tauri, arm64)
         run: npm run build --workspace @codenomad/tauri-app
@@ -296,13 +316,24 @@ jobs:
         shell: bash
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-win32-x64-msvc --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-win32-x64-msvc@2.9.4 --no-save
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Retrying Tauri CLI install (attempt $attempt)..."
+            fi
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-win32-x64-msvc@2.9.4 --no-save --no-audit --no-fund
+            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
+          done
+          echo "Tauri CLI failed to load after retries" >&2
+          exit 1
 
       - name: Build Windows bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
@@ -369,13 +400,23 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Ensure tauri native binary
-        run: npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Retrying Tauri CLI install (attempt $attempt)..."
+            fi
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save --no-audit --no-fund
+            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
+          done
+          echo "Tauri CLI failed to load after retries" >&2
+          exit 1
 
       - name: Build Linux bundle (Tauri)
         run: npm run build --workspace @codenomad/tauri-app
@@ -471,7 +512,7 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-arm64-gnu --no-save
@@ -543,7 +584,7 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Install project dependencies
-        run: npm ci --workspaces
+        run: npm ci --workspaces --include=optional
 
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
