@@ -27,7 +27,6 @@ import {
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
-import { deriveSessionStatusFromMessages } from "./session-status"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
@@ -646,11 +645,6 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       revert: session?.revert,
     }
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
-
-    if (!alreadyLoaded) {
-      const nextStatus = deriveSessionStatusFromMessages(instanceId, sessionId)
-      setSessionStatus(instanceId, sessionId, nextStatus)
-    }
 
     // Permissions can be hydrated before messages/tool parts exist in the store.
     // After message hydration, try to attach any pending permissions to tool-call part ids.
