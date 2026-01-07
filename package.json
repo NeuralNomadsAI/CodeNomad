@@ -5,7 +5,10 @@
   "description": "CodeNomad monorepo workspace",
   "workspaces": {
     "packages": [
-      "packages/*"
+      "packages/server",
+      "packages/ui",
+      "packages/electron-app",
+      "packages/tauri-app"
     ]
   },
   "scripts": {
@@ -26,7 +29,6 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
-    "app-builder-bin": "^4.2.0",
-    "vite": "^7.3.0"
+    "baseline-browser-mapping": "^2.9.11"
   }
 }
