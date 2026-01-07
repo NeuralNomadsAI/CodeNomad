@@ -195,7 +195,7 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-universal@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
@@ -268,7 +268,7 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-universal@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
