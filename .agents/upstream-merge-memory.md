@@ -5,12 +5,12 @@ applyTo: '**'
 # Fork Metadata
 - Original Repo: https://github.com/NeuralNomadsAI/CodeNomad.git (trueupstream)
 - Fork Repo: https://github.com/bizzkoot/CodeNomad (origin)
-- Last Sync Date: 2026-01-05
-- Merge Branch: merge/trueupstream-dev-2026-01-05
-- Last Sync Commit: origin/dev (f3a51c3)
-- Upstream Commit: trueupstream/dev (1377bc6)
-- Upstream Commits Ahead: 8 commits
-- Origin Commits Ahead: 14 commits
+- Last Sync Date: 2026-01-07
+- Merge Branch: merge/upstream-7Jan2025
+- Last Sync Commit: origin/dev (ee8827c)
+- Upstream Commit: trueupstream/dev (c825ff0)
+- Upstream Commits Merged: 25 commits (v0.5.0 → v0.5.1)
+- Fork Version: 0.5.1-custom
 
 # Custom Modifications Registry
 
@@ -93,6 +93,60 @@ applyTo: '**'
    - Strategy: REQUIRES USER DECISION
 
 # Merge History
+
+## 2026-01-07 - Phase-by-Phase Merge SUCCESS ✅
+- Strategy: Phased merge (9 phases, 25 commits)
+- Upstream Status: 25 commits merged from trueupstream/dev (v0.5.0 → v0.5.1)
+- Fork Status: ALL custom features preserved
+- Merge Branch: merge/upstream-7Jan2025
+- Final Commits: 12 commits (11 cherrypicks + 1 version bump + 1 typecheck fix)
+
+### Merge Phases Executed
+1. **Phase 1**: CI/Build improvements (12 upstream commits) - Tauri retry logic, Windows fixes
+2. **Phase 2**: Package configuration (exclude opencode-config, dependencies)
+3. **Phase 3**: iOS auto-zoom bug fix (utilities.css)
+4. **Phase 4**: Version-aware global cache
+5. **Phase 5**: Session status indicators (instance-tab, shield icon)
+6. **Phase 6**: Session optimizations (status updates, hydration fixes)
+7. **Phase 7**: Compaction indicators (timeline, message stream)
+8. **Phase 8**: Version bump to 0.5.1-custom
+9. **Phase 9**: TypeScript error fixes (reconcilePendingPermissionsV2)
+
+### Conflicts Resolved
+1. **session-api.ts** - Merged status derivation removal with permission reconciliation
+2. **bridge.ts** - Added missing reconcilePendingPermissionsV2 function from upstream
+3. **CI workflows** - Resolved Tauri CLI installation conflicts (accepted upstream retry logic)
+
+### All Custom Features PRESERVED ✅
+- ✅ Command suggestions (command-suggestion-item.tsx, command-suggestions.tsx, command-filter.ts)
+- ✅ Folder tree browser (folder-tree-browser.tsx, folder-tree-node.tsx)
+- ✅ Markdown preview (markdown-preview-icon.tsx, markdown-preview-modal.tsx, use-markdown-preview.ts)
+- ✅ Permission notification banner (permission-notification-banner.tsx)
+- ✅ All custom utilities (file-path-validator.ts, markdown-file-detector.ts)
+- ✅ All custom styles (command-suggestions.css, markdown-preview.css, permission-notification.css, folder-tree-browser.css)
+
+### Upstream Features Integrated ✅
+- ✅ Session status indicators & optimizations
+- ✅ Compaction indicators in message stream and timeline
+- ✅ iOS input auto-zoom fix
+- ✅ Version-aware global cache
+- ✅ Shield icon for permission status
+- ✅ Tauri CLI retry logic for all platforms
+- ✅ Windows opencode-config isolation
+- ✅ Permission reconciliation after message hydration
+- ✅ Dev CI build-only workflow
+
+### Tests Status
+- TypeScript: ✅ PASSED (0 errors)
+- VSCode Errors: ✅ PASSED (0 errors)
+- Build: ⏳ PENDING (awaiting user testing)
+- Custom Features: ✅ ALL FILES VERIFIED PRESENT
+
+### Key Technical Changes
+1. **Status Handling**: Removed deriveSessionStatusFromMessages (status now from API)
+2. **Permission System**: Added reconcilePendingPermissionsV2 for proper hydration
+3. **CI/CD**: Upgraded to Tauri CLI 2.9.4 with retry logic
+4. **Package Management**: Excluded opencode-config from workspaces
 
 ## 2026-01-05 - Successful Merge & Build Complete ✅
 - Strategy: Hybrid (Auto-merge + Manual conflict resolution)
