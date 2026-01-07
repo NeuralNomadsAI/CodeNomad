@@ -10,7 +10,9 @@ const cliRoot = path.resolve(__dirname, "..")
 const sourceDir = path.resolve(cliRoot, "../opencode-config")
 const targetDir = path.resolve(cliRoot, "dist/opencode-config")
 const nodeModulesDir = path.resolve(sourceDir, "node_modules")
-const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
+const selfLinkDir = path.resolve(nodeModulesDir, "@codenomad", "opencode-config")
+const npmExecPath = process.env.npm_execpath
+const npmNodeExecPath = process.env.npm_node_execpath
 
 if (!existsSync(sourceDir)) {
   console.error(`[copy-opencode-config] Missing source directory at ${sourceDir}`)
@@ -19,26 +21,38 @@ if (!existsSync(sourceDir)) {
 
 if (!existsSync(nodeModulesDir)) {
   console.log(`[copy-opencode-config] Installing opencode-config dependencies in ${sourceDir}`)
-  const result = spawnSync(
-    npmCmd,
-    [
-      "install",
-      "--prefix",
-      sourceDir,
-      "--omit=dev",
-      "--ignore-scripts",
-      "--fund=false",
-      "--audit=false",
-      "--package-lock=false",
-      "--workspaces=false",
-    ],
-    { cwd: sourceDir, stdio: "inherit", env: { ...process.env, npm_config_workspaces: "false" } },
-  )
+
+  const npmArgs = [
+    "install",
+    "--prefix",
+    sourceDir,
+    "--omit=dev",
+    "--ignore-scripts",
+    "--fund=false",
+    "--audit=false",
+    "--package-lock=false",
+    "--workspaces=false",
+  ]
+
+  const env = { ...process.env, npm_config_workspaces: "false" }
+
+  const npmCli = npmExecPath && npmNodeExecPath ? [npmNodeExecPath, [npmExecPath, ...npmArgs]] : null
+  const result = npmCli
+    ? spawnSync(npmCli[0], npmCli[1], { cwd: sourceDir, stdio: "inherit", env })
+    : spawnSync("npm", npmArgs, { cwd: sourceDir, stdio: "inherit", env, shell: process.platform === "win32" })
+
   if (result.status !== 0) {
+    if (result.error) {
+      console.error("[copy-opencode-config] npm install failed to start", result.error)
+    }
     console.error("[copy-opencode-config] Failed to install opencode-config dependencies")
     process.exit(result.status ?? 1)
   }
 }
+
+// npm can create a self-referential link for scoped packages on Windows.
+// That link causes recursive copies (ELOOP) during bundling.
+rmSync(selfLinkDir, { recursive: true, force: true })
 
 rmSync(targetDir, { recursive: true, force: true })
 mkdirSync(path.dirname(targetDir), { recursive: true })

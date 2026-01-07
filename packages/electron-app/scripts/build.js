@@ -2,7 +2,7 @@
 
 import { spawn } from "child_process"
 import { existsSync } from "fs"
-import { join } from "path"
+import path, { join } from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
@@ -55,12 +55,22 @@ const platforms = {
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const env = { ...process.env, NODE_PATH: nodeModulesPath, ...(options.env || {}) }
+    const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH"
+
+    const binPaths = [
+      join(nodeModulesPath, ".bin"),
+      join(workspaceNodeModulesPath, ".bin"),
+    ]
+
+    env[pathKey] = `${binPaths.join(path.delimiter)}${path.delimiter}${env[pathKey] ?? ""}`
+
     const spawnOptions = {
       cwd: appDir,
       stdio: "inherit",
       shell: process.platform === "win32",
       ...options,
-      env: { ...process.env, NODE_PATH: nodeModulesPath, ...(options.env || {}) },
+      env,
     }
 
     const child = spawn(command, args, spawnOptions)
