@@ -146,6 +146,30 @@
   background-color: var(--surface-secondary);
 }
 
+.message-timeline-segment.message-timeline-segment-permission {
+  border-color: var(--session-status-permission-fg);
+  background-color: var(--session-status-permission-bg);
+  color: var(--session-status-permission-fg);
+}
+
+.message-timeline-segment.message-timeline-segment-permission:hover,
+.message-timeline-segment.message-timeline-segment-permission:focus-visible {
+  background-color: var(--session-status-permission-bg);
+  color: var(--session-status-permission-fg);
+  border-color: var(--session-status-permission-fg);
+  transform: translateY(-1px);
+}
+
+.message-timeline-segment-active.message-timeline-segment-permission,
+.message-timeline-segment-active.message-timeline-segment-permission:hover,
+.message-timeline-segment-active.message-timeline-segment-permission:focus-visible {
+  background-color: var(--session-status-permission-bg) !important;
+  border-color: var(--session-status-permission-fg) !important;
+  color: var(--session-status-permission-fg) !important;
+  transform: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
 .message-timeline-compaction-auto {
   border-color: var(--session-status-compacting-fg);
   background-color: var(--surface-secondary);

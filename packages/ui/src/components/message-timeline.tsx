@@ -5,7 +5,7 @@ import type { ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getToolIcon } from "./tool-call/utils"
-import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
+import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -17,6 +17,7 @@ export interface TimelineSegment {
   tooltip: string
   shortLabel?: string
   variant?: "auto" | "manual"
+  toolPartIds?: string[]
 }
 
 interface MessageTimelineProps {
@@ -47,6 +48,7 @@ interface PendingSegment {
   toolTitles: string[]
   toolTypeLabels: string[]
   toolIcons: string[]
+  toolPartIds: string[]
   hasPrimaryText: boolean
 }
 
@@ -179,6 +181,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
       label,
       tooltip,
       shortLabel,
+      toolPartIds: isToolSegment ? pending.toolPartIds : undefined,
     })
     segmentIndex += 1
     pending = null
@@ -187,7 +190,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
   const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
     if (!pending || pending.type !== type) {
       flushPending()
-      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], hasPrimaryText: type !== "assistant" }
+      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], toolPartIds: [], hasPrimaryText: type !== "assistant" }
     }
     return pending!
   }
@@ -204,6 +207,9 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
       target.toolTitles.push(getToolTitle(toolPart))
       target.toolTypeLabels.push(getToolTypeLabel(toolPart))
       target.toolIcons.push(getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"))
+      if (typeof toolPart.id === "string" && toolPart.id.length > 0) {
+        target.toolPartIds.push(toolPart.id)
+      }
       continue
     }
 
@@ -359,9 +365,25 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         {(segment) => {
           onCleanup(() => buttonRefs.delete(segment.id))
           const isActive = () => props.activeMessageId === segment.messageId
-          const isHidden = () => segment.type === "tool" && !(showTools() || isActive())
+
+          const hasActivePermission = () => {
+            if (segment.type !== "tool") return false
+            const partIds = segment.toolPartIds ?? []
+            if (partIds.length === 0) return false
+            for (const partId of partIds) {
+              const permissionState = store().getPermissionState(segment.messageId, partId)
+              if (permissionState?.active) return true
+            }
+            return false
+          }
+
+          const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission())
+
            const shortLabelContent = () => {
              if (segment.type === "tool") {
+               if (hasActivePermission()) {
+                 return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
+               }
                return segment.shortLabel ?? getToolIcon("tool")
              }
              if (segment.type === "compaction") {
@@ -378,7 +400,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                ref={(el) => registerButtonRef(segment.id, el)}
                type="button"
                data-variant={segment.variant}
-               class={`message-timeline-segment message-timeline-${segment.type} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+               class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
 
               aria-current={isActive() ? "true" : undefined}
               aria-hidden={isHidden() ? "true" : undefined}
