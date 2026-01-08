@@ -1,0 +1,237 @@
+/* Central permission UI (toolbar + modal).
+   Kept intentionally small; reuse existing tokens. */
+
+.permission-center-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--session-status-permission-fg);
+  background-color: var(--session-status-permission-bg);
+  color: var(--session-status-permission-fg);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.permission-center-trigger:hover,
+.permission-center-trigger:focus-visible {
+  outline: none;
+  background-color: color-mix(in srgb, var(--session-status-permission-bg) 70%, var(--surface-hover));
+  transform: translateY(-1px);
+}
+
+.permission-center-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.permission-center-count {
+  line-height: 1;
+}
+
+.permission-center-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--text-inverted) 55%, transparent);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: var(--space-lg);
+}
+
+.permission-center-modal {
+  width: min(900px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+  box-shadow: var(--panel-shadow, 0 12px 32px rgba(0, 0, 0, 0.25));
+  overflow: hidden;
+}
+
+.permission-center-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-base);
+}
+
+.permission-center-modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.permission-center-modal-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.permission-center-modal-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  background: var(--session-status-permission-bg);
+  color: var(--session-status-permission-fg);
+  border: 1px solid var(--session-status-permission-fg);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.permission-center-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-base);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.permission-center-modal-close:hover {
+  background: var(--surface-hover);
+}
+
+.permission-center-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-md);
+}
+
+.permission-center-empty {
+  color: var(--text-secondary);
+  padding: var(--space-lg);
+  text-align: center;
+}
+
+.permission-center-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.permission-center-item {
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  overflow: hidden;
+}
+
+.permission-center-item-active {
+  border-color: var(--session-status-permission-fg);
+}
+
+.permission-center-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-base);
+  background: var(--surface-base);
+}
+
+.permission-center-item-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.permission-center-item-kind {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.permission-center-item-chip {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  border: 1px solid var(--session-status-permission-fg);
+  background: var(--session-status-permission-bg);
+  color: var(--session-status-permission-fg);
+}
+
+.permission-center-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.permission-center-item-action {
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-base);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.permission-center-item-action:hover {
+  background: var(--surface-hover);
+}
+
+.permission-center-item-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.permission-center-fallback {
+  padding: var(--space-md);
+}
+
+.permission-center-fallback-title code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.permission-center-fallback-hint {
+  margin-top: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Remove border from tool-call when inside permission items to avoid double borders */
+.permission-center-item .tool-call {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .permission-center-modal-backdrop {
+    padding: 0;
+  }
+
+  .permission-center-modal {
+    width: 100vw;
+    height: 100vh;
+    max-height: none;
+    border-radius: 0;
+  }
+}

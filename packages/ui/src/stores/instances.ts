@@ -562,6 +562,14 @@ function clearPermissionQueue(instanceId: string): void {
 
 
 
+function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
+  setActivePermissionId((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, permissionId)
+    return next
+  })
+}
+
 async function sendPermissionResponse(
   instanceId: string,
   sessionId: string,
@@ -656,6 +664,7 @@ export {
   removePermissionFromQueue,
   clearPermissionQueue,
   sendPermissionResponse,
+  setActivePermissionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   fetchLspStatus,

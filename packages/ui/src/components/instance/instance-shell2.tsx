@@ -49,6 +49,8 @@ import InstanceServiceStatus from "../instance-service-status"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import CommandPalette from "../command-palette"
+import PermissionNotificationBanner from "../permission-notification-banner"
+import PermissionApprovalModal from "../permission-approval-modal"
 import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
@@ -140,6 +142,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   ])
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
+  const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -651,7 +654,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   type DrawerViewState = "pinned" | "floating-open" | "floating-closed"
- 
+
 
   const leftDrawerState = createMemo<DrawerViewState>(() => {
     if (leftPinned()) return "pinned"
@@ -692,7 +695,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
 
 
-   const pinLeftDrawer = () => {
+  const pinLeftDrawer = () => {
     blurIfInside(leftDrawerContentEl())
     batch(() => {
       setLeftPinned(true)
@@ -811,18 +814,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             </Show>
           </div>
         </div>
-          <div class="flex items-center gap-2">
-            <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={leftPinned() ? "Unpin left drawer" : "Pin left drawer"}
-                onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
-              >
-                {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
-          </div>
+        <div class="flex items-center gap-2">
+          <Show when={!isPhoneLayout()}>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={leftPinned() ? "Unpin left drawer" : "Pin left drawer"}
+              onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
+            >
+              {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+            </IconButton>
+          </Show>
+        </div>
 
       </div>
 
@@ -1219,6 +1222,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </IconButton>
 
                   <div class="flex flex-wrap items-center gap-1 justify-center">
+                    <PermissionNotificationBanner
+                      instanceId={props.instance.id}
+                      onClick={() => setPermissionModalOpen(true)}
+                    />
                     <button
                       type="button"
                       class="connection-status-button px-2 py-0.5 text-xs"
@@ -1237,6 +1244,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     >
                       <span class="status-dot" />
                     </span>
+
+
                   </div>
 
                   <IconButton
@@ -1265,46 +1274,52 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </div>
             }
           >
-             <div class="session-toolbar-left flex items-center gap-3 min-w-0">
-               <IconButton
-                 ref={setLeftToggleButtonEl}
-                 color="inherit"
-                 onClick={handleLeftAppBarButtonClick}
-                 aria-label={leftAppBarButtonLabel()}
-                 size="small"
-                 aria-expanded={leftDrawerState() !== "floating-closed"}
-                 disabled={leftDrawerState() === "pinned"}
-               >
-                 {leftAppBarButtonIcon()}
-               </IconButton>
+            <div class="session-toolbar-left flex items-center gap-3 min-w-0">
+              <IconButton
+                ref={setLeftToggleButtonEl}
+                color="inherit"
+                onClick={handleLeftAppBarButtonClick}
+                aria-label={leftAppBarButtonLabel()}
+                size="small"
+                aria-expanded={leftDrawerState() !== "floating-closed"}
+                disabled={leftDrawerState() === "pinned"}
+              >
+                {leftAppBarButtonIcon()}
+              </IconButton>
 
-               <Show when={!showingInfoView()}>
-                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
-                   <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-                 </div>
-                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                   <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
-                   <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                 </div>
-               </Show>
-             </div>
+              <Show when={!showingInfoView()}>
+                <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                  <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
+                  <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                </div>
+                <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                  <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
+                  <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
+                </div>
+              </Show>
+            </div>
 
 
-              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                <button
-                  type="button"
-                  class="connection-status-button px-2 py-0.5 text-xs"
-                  onClick={handleCommandPaletteClick}
-                  aria-label="Open command palette"
-                  style={{ flex: "0 0 auto", width: "auto" }}
-                >
-                  Command Palette
-                </button>
-                <span class="connection-status-shortcut-hint">
-                  <Kbd shortcut="cmd+shift+p" />
-                </span>
-              </div>
+            <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
+              <PermissionNotificationBanner
+                instanceId={props.instance.id}
+                onClick={() => setPermissionModalOpen(true)}
+              />
+              <button
+                type="button"
+                class="connection-status-button px-2 py-0.5 text-xs"
+                onClick={handleCommandPaletteClick}
+                aria-label="Open command palette"
+                style={{ flex: "0 0 auto", width: "auto" }}
+              >
+                Command Palette
+              </button>
+              <span class="connection-status-shortcut-hint">
+                <Kbd shortcut="cmd+shift+p" />
+              </span>
+
+
+            </div>
 
 
             <div class="session-toolbar-right flex items-center gap-3">
@@ -1425,6 +1440,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         instanceId={props.instance.id}
         process={selectedBackgroundProcess()}
         onClose={closeBackgroundOutput}
+      />
+
+      <PermissionApprovalModal
+        instanceId={props.instance.id}
+        isOpen={permissionModalOpen()}
+        onClose={() => setPermissionModalOpen(false)}
       />
     </>
   )

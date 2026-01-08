@@ -76,6 +76,29 @@ xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 
 After removing the quarantine attribute, launch the app normally. On Intel Macs you may also need to approve CodeNomad from **System Settings → Privacy & Security** the first time you run it.
 
+### Linux (Wayland + NVIDIA): Tauri AppImage closes immediately
+On some Wayland compositor + NVIDIA driver setups, WebKitGTK can fail to initialize its DMA-BUF/GBM path and the Tauri build may exit right away.
+
+Try running with one of these environment variables:
+
+```bash
+# Most reliable workaround (can reduce rendering performance)
+WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad
+
+# Alternative for some Wayland setups
+__NV_DISABLE_EXPLICIT_SYNC=1 codenomad
+```
+
+If you're running the Tauri AppImage and want the workaround applied every time, create a tiny wrapper script on your `PATH`:
+
+```bash
+#!/bin/bash
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+exec ~/.local/share/bauh/appimage/installed/codenomad/CodeNomad-Tauri-0.4.0-linux-x64.AppImage "$@"
+```
+
+Upstream tracking: https://github.com/tauri-apps/tauri/issues/10702
+
 ## Architecture & Development
 
 CodeNomad is a monorepo split into specialized packages. If you want to contribute or build from source, check out the individual package documentation:

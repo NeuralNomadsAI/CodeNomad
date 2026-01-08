@@ -7,6 +7,7 @@ import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { createFileAttachment, createTextAttachment, createAgentAttachment } from "../types/attachment"
 import type { Attachment } from "../types/attachment"
 import type { Agent } from "../types/session"
+import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraftPrompt, executeCustomCommand } from "../stores/sessions"
@@ -767,7 +768,7 @@ export default function PromptInput(props: PromptInputProps) {
           type: "file"
           file: { path: string; relativePath?: string; isGitFile: boolean; isDirectory?: boolean }
         }
-      | { type: "command"; command: { name: string; description?: string } },
+      | { type: "command"; command: SDKCommand },
   ) {
     if (item.type === "command") {
       const name = item.command.name
