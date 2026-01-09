@@ -1,24 +1,11 @@
 import { keyboardRegistry } from "../keyboard-registry"
 import { instances, activeInstanceId, setActiveInstanceId } from "../../stores/instances"
-import { getSessionFamily, activeSessionId, setActiveSession, activeParentSessionId } from "../../stores/sessions"
+import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
 
 export function registerNavigationShortcuts() {
   const isMac = () => navigator.platform.toLowerCase().includes("mac")
 
-  const buildNavigationOrder = (instanceId: string): string[] => {
-    const parentId = activeParentSessionId().get(instanceId)
-    if (!parentId) return []
 
-    const familySessions = getSessionFamily(instanceId, parentId)
-    if (familySessions.length === 0) return []
-
-    const [parentSession, ...childSessions] = familySessions
-    if (!parentSession) return []
-
-    const sortedChildren = childSessions.slice().sort((a, b) => b.time.updated - a.time.updated)
-
-    return [parentSession.id, "info", ...sortedChildren.map((session) => session.id)]
-  }
 
   keyboardRegistry.register({
     id: "instance-prev",
@@ -58,20 +45,23 @@ export function registerNavigationShortcuts() {
       const instanceId = activeInstanceId()
       if (!instanceId) return
 
-      const navigationIds = buildNavigationOrder(instanceId)
+      const navigationIds = getVisibleSessionIds(instanceId)
       if (navigationIds.length === 0) return
 
-      const currentActiveId = activeSessionId().get(instanceId)
-      let currentIndex = navigationIds.indexOf(currentActiveId || "")
+      const currentActiveId = activeSessionId().get(instanceId) ?? ""
+      const currentIndex = navigationIds.indexOf(currentActiveId)
 
-      if (currentIndex === -1) {
-        currentIndex = navigationIds.length - 1
-      }
+      const targetIndex =
+        currentIndex === -1
+          ? navigationIds.length - 1
+          : currentIndex <= 0
+            ? navigationIds.length - 1
+            : currentIndex - 1
 
-      const targetIndex = currentIndex <= 0 ? navigationIds.length - 1 : currentIndex - 1
       const targetSessionId = navigationIds[targetIndex]
-
-      setActiveSession(instanceId, targetSessionId)
+      if (targetSessionId) {
+        setActiveSessionFromList(instanceId, targetSessionId)
+      }
     },
     description: "previous session",
     context: "global",
@@ -85,20 +75,17 @@ export function registerNavigationShortcuts() {
       const instanceId = activeInstanceId()
       if (!instanceId) return
 
-      const navigationIds = buildNavigationOrder(instanceId)
+      const navigationIds = getVisibleSessionIds(instanceId)
       if (navigationIds.length === 0) return
 
-      const currentActiveId = activeSessionId().get(instanceId)
-      let currentIndex = navigationIds.indexOf(currentActiveId || "")
+      const currentActiveId = activeSessionId().get(instanceId) ?? ""
+      const currentIndex = navigationIds.indexOf(currentActiveId)
+      const targetIndex = (currentIndex + 1 + navigationIds.length) % navigationIds.length
 
-      if (currentIndex === -1) {
-        currentIndex = 0
-      }
-
-      const targetIndex = (currentIndex + 1) % navigationIds.length
       const targetSessionId = navigationIds[targetIndex]
-
-      setActiveSession(instanceId, targetSessionId)
+      if (targetSessionId) {
+        setActiveSessionFromList(instanceId, targetSessionId)
+      }
     },
     description: "next session",
     context: "global",

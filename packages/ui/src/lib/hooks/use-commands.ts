@@ -4,13 +4,7 @@ import type { Preferences, ExpansionPreference } from "../../stores/preferences"
 import { createCommandRegistry, type Command } from "../commands"
 import { instances, activeInstanceId, setActiveInstanceId } from "../../stores/instances"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import {
-  activeParentSessionId,
-  activeSessionId as activeSessionMap,
-  getSessionFamily,
-  getSessions,
-  setActiveSession,
-} from "../../stores/sessions"
+import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
 import { showAlertDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
@@ -186,15 +180,16 @@ export function useCommands(options: UseCommandsOptions) {
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
-        const parentId = activeParentSessionId().get(instanceId)
-        if (!parentId) return
-        const familySessions = getSessionFamily(instanceId, parentId)
-        const ids = familySessions.map((s) => s.id).concat(["info"])
+        const ids = getVisibleSessionIds(instanceId)
         if (ids.length <= 1) return
-        const current = ids.indexOf(activeSessionMap().get(instanceId) || "")
-        const next = (current + 1) % ids.length
-        if (ids[next]) {
-          setActiveSession(instanceId, ids[next])
+
+        const currentActiveId = activeSessionIdForInstance() ?? ""
+        const currentIndex = ids.indexOf(currentActiveId)
+        const targetIndex = (currentIndex + 1 + ids.length) % ids.length
+
+        const targetSessionId = ids[targetIndex]
+        if (targetSessionId) {
+          setActiveSessionFromList(instanceId, targetSessionId)
           emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
         }
       },
@@ -210,15 +205,17 @@ export function useCommands(options: UseCommandsOptions) {
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
-        const parentId = activeParentSessionId().get(instanceId)
-        if (!parentId) return
-        const familySessions = getSessionFamily(instanceId, parentId)
-        const ids = familySessions.map((s) => s.id).concat(["info"])
+        const ids = getVisibleSessionIds(instanceId)
         if (ids.length <= 1) return
-        const current = ids.indexOf(activeSessionMap().get(instanceId) || "")
-        const prev = current <= 0 ? ids.length - 1 : current - 1
-        if (ids[prev]) {
-          setActiveSession(instanceId, ids[prev])
+
+        const currentActiveId = activeSessionIdForInstance() ?? ""
+        const currentIndex = ids.indexOf(currentActiveId)
+        const targetIndex =
+          currentIndex === -1 ? ids.length - 1 : currentIndex <= 0 ? ids.length - 1 : currentIndex - 1
+
+        const targetSessionId = ids[targetIndex]
+        if (targetSessionId) {
+          setActiveSessionFromList(instanceId, targetSessionId)
           emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
         }
       },

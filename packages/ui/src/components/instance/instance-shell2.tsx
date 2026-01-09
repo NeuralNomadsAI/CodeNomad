@@ -869,12 +869,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           threads={sessionThreads()}
           activeSessionId={activeSessionIdForInstance()}
           onSelect={handleSessionSelect}
-          onClose={(id) => {
-            const result = props.onCloseSession(id)
-            if (result instanceof Promise) {
-              void result.catch((error) => log.error("Failed to close session:", error))
-            }
-          }}
           onNew={() => {
             const result = props.onNewSession()
             if (result instanceof Promise) {

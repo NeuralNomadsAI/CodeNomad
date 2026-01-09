@@ -1,15 +1,22 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, JSX } from "solid-js"
+import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getSessionStatus } from "../stores/session-status"
-import { Bot, User, Info, X, Copy, Trash2, Pencil, ShieldAlert, ChevronDown } from "lucide-solid"
+import { Bot, User, Info, Copy, Trash2, Pencil, ShieldAlert, ChevronDown } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import Kbd from "./kbd"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { formatShortcut } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
-import { deleteSession, loading, renameSession } from "../stores/sessions"
+import {
+  deleteSession,
+  ensureSessionParentExpanded,
+  isSessionParentExpanded,
+  loading,
+  renameSession,
+  toggleSessionParentExpanded,
+} from "../stores/sessions"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 const log = getLogger("session")
@@ -22,7 +29,6 @@ interface SessionListProps {
   threads: SessionThread[]
   activeSessionId: string | null
   onSelect: (sessionId: string) => void
-  onClose: (sessionId: string) => void
   onNew: () => void
   showHeader?: boolean
   showFooter?: boolean
@@ -41,24 +47,6 @@ function formatSessionStatus(status: SessionStatus): string {
   }
 }
 
-function arraysEqual(prev: readonly string[] | undefined, next: readonly string[]): boolean {
-  if (!prev) {
-    return false
-  }
-
-  if (prev.length !== next.length) {
-    return false
-  }
-
-  for (let i = 0; i < prev.length; i++) {
-    if (prev[i] !== next[i]) {
-      return false
-    }
-  }
-
-  return true
-}
-
 const SessionList: Component<SessionListProps> = (props) => {
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
@@ -69,35 +57,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     return deleting ? deleting.has(sessionId) : false
   }
  
-  const [expandedParents, setExpandedParents] = createSignal<Set<string>>(new Set())
-
-  const toggleParentExpanded = (parentId: string) => {
-    setExpandedParents((prev) => {
-      const next = new Set(prev)
-      if (next.has(parentId)) {
-        next.delete(parentId)
-      } else {
-        next.add(parentId)
-      }
-      return next
-    })
-  }
-
-  const ensureParentExpanded = (parentId: string) => {
-    setExpandedParents((prev) => {
-      if (prev.has(parentId)) return prev
-      const next = new Set(prev)
-      next.add(parentId)
-      return next
-    })
-  }
 
   const selectSession = (sessionId: string) => {
     if (sessionId !== "info") {
       const session = props.sessions.get(sessionId)
       const parentId = session?.parentId ?? session?.id
       if (parentId) {
-        ensureParentExpanded(parentId)
+        ensureSessionParentExpanded(props.instanceId, parentId)
       }
     }
 
@@ -162,7 +128,6 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const SessionRow: Component<{
     sessionId: string
-    canClose?: boolean
     isChild?: boolean
     isLastChild?: boolean
     hasChildren?: boolean
@@ -186,6 +151,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
         <button
           class={`session-item-base ${rowProps.isChild ? `session-item-child${rowProps.isLastChild ? " session-item-child-last" : ""} session-item-border-assistant session-item-kind-assistant` : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          data-session-id={rowProps.sessionId}
           onClick={() => selectSession(rowProps.sessionId)}
           title={title()}
           role="button"
@@ -201,20 +167,6 @@ const SessionList: Component<SessionListProps> = (props) => {
               )}
               <span class="session-item-title session-item-title--clamp">{title()}</span>
             </div>
-            <Show when={rowProps.canClose}>
-              <span
-                class="session-item-close opacity-80 hover:opacity-100 hover:bg-status-error hover:text-white rounded p-0.5 transition-all"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  props.onClose(rowProps.sessionId)
-                }}
-                role="button"
-                tabIndex={0}
-                aria-label="Close session"
-              >
-                <X class="w-3 h-3" />
-              </span>
-            </Show>
           </div>
           <div class="session-item-row session-item-meta">
             <div class="flex items-center gap-2 min-w-0">
@@ -315,9 +267,56 @@ const SessionList: Component<SessionListProps> = (props) => {
   createEffect(() => {
     const parentId = activeParentId()
     if (!parentId) return
-    ensureParentExpanded(parentId)
+    ensureSessionParentExpanded(props.instanceId, parentId)
   })
  
+  const listEl = createSignal<HTMLElement | null>(null)
+
+  const escapeCss = (value: string) => {
+    if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
+      return (CSS as any).escape(value)
+    }
+    return value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"")
+  }
+
+  const scrollActiveIntoView = (sessionId: string) => {
+    const root = listEl[0]()
+    if (!root) return
+
+    const selector = `[data-session-id="${escapeCss(sessionId)}"]`
+
+    const scrollNow = () => {
+      const target = root.querySelector(selector) as HTMLElement | null
+      if (!target) return
+      target.scrollIntoView({ block: "nearest", inline: "nearest" })
+    }
+
+    if (typeof requestAnimationFrame === "undefined") {
+      scrollNow()
+      return
+    }
+
+    // Wait a couple frames so expand/collapse DOM settles.
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        scrollNow()
+      })
+    })
+
+    onCleanup(() => {
+      if (raf1) cancelAnimationFrame(raf1)
+      if (raf2) cancelAnimationFrame(raf2)
+    })
+  }
+
+  createEffect(() => {
+    const activeId = props.activeSessionId
+    if (!activeId) return
+    scrollActiveIntoView(activeId)
+  })
+
   return (
     <div
       class="session-list-container bg-surface-secondary border-r border-base flex flex-col w-full"
@@ -335,7 +334,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         </div>
       </Show>
 
-      <div class="session-list flex-1 overflow-y-auto">
+      <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
           <div class="session-section">
             <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
               Instance
@@ -343,6 +342,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             <div class="session-list-item group">
               <button
                 class={`session-item-base ${props.activeSessionId === "info" ? "session-item-active" : "session-item-inactive"}`}
+                data-session-id="info"
                 onClick={() => selectSession("info")}
                 title="Instance Info"
                 role="button"
@@ -367,16 +367,16 @@ const SessionList: Component<SessionListProps> = (props) => {
             </div>
             <For each={props.threads}>
               {(thread) => {
-                const expanded = () => expandedParents().has(thread.parent.id)
+                const expanded = () => isSessionParentExpanded(props.instanceId, thread.parent.id)
                 return (
                   <>
-                    <SessionRow
-                      sessionId={thread.parent.id}
-                      canClose
-                      hasChildren={thread.children.length > 0}
-                      expanded={expanded()}
-                      onToggleExpand={() => toggleParentExpanded(thread.parent.id)}
-                    />
+                      <SessionRow
+                        sessionId={thread.parent.id}
+                        hasChildren={thread.children.length > 0}
+                        expanded={expanded()}
+                        onToggleExpand={() => toggleSessionParentExpanded(props.instanceId, thread.parent.id)}
+                      />
+
                     <Show when={expanded() && thread.children.length > 0}>
                       <For each={thread.children}>
                         {(child, index) => (
