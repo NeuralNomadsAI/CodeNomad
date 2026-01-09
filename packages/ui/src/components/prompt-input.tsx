@@ -1030,8 +1030,8 @@ export default function PromptInput(props: PromptInputProps) {
     return hasText || attachments().length > 0
   }
  
-  const shellHint = () => (mode() === "shell" ? { key: "Esc", text: "to exit shell mode" } : { key: "!", text: "for shell mode" })
-  const commandHint = () => ({ key: "/", text: "for commands" })
+  const shellHint = () => (mode() === "shell" ? { key: "Esc", text: "to exit shell mode" } : { key: "!", text: "Shell mode" })
+  const commandHint = () => ({ key: "/", text: "Commands" })
 
   const shouldShowOverlay = () => prompt().length === 0
 
@@ -1216,7 +1216,7 @@ export default function PromptInput(props: PromptInputProps) {
                   fallback={
                     <>
                       <span class="prompt-overlay-text">
-                        <Kbd>Enter</Kbd> for new line • <Kbd shortcut="cmd+enter" /> to send • <Kbd>@</Kbd> for files/agents • <Kbd>↑↓</Kbd> for history
+                        <Kbd>Enter</Kbd> New line • <Kbd shortcut="cmd+enter" /> Send • <Kbd>@</Kbd> Files/agents • <Kbd>↑↓</Kbd> History
                       </span>
                       <Show when={attachments().length > 0}>
                         <span class="prompt-overlay-text prompt-overlay-muted">• {attachments().length} file(s) attached</span>
