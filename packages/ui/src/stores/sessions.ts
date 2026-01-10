@@ -61,6 +61,8 @@ import {
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,
+  handleQuestionAnswered,
+  handleQuestionAsked,
   handleSessionCompacted,
   handleSessionError,
   handleSessionIdle,
@@ -81,6 +83,8 @@ sseManager.onSessionStatus = handleSessionStatus
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
+sseManager.onQuestionAsked = handleQuestionAsked
+sseManager.onQuestionAnswered = handleQuestionAnswered
 
 export {
   abortSession,

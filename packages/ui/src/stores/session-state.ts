@@ -58,8 +58,8 @@ type InstanceIndicatorCounts = {
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission) {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission || session.pendingQuestion) {
     return "permission"
   }
   const status = session.status ?? "idle"
@@ -126,7 +126,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let compacting = 0
 
   for (const session of instanceSessions.values()) {
-    if (session.pendingPermission) {
+    if (session.pendingPermission || session.pendingQuestion) {
       permission += 1
       continue
     }
@@ -302,6 +302,13 @@ function setSessionPendingPermission(instanceId: string, sessionId: string, pend
   withSession(instanceId, sessionId, (session) => {
     if (session.pendingPermission === pending) return false
     session.pendingPermission = pending
+  })
+}
+
+function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.pendingQuestion === pending) return false
+    session.pendingQuestion = pending
   })
 }
 
@@ -660,6 +667,7 @@ export {
   pruneDraftPrompts,
   withSession,
   setSessionPendingPermission,
+  setSessionPendingQuestion,
   setSessionStatus,
   setActiveSession,
  

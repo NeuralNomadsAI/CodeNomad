@@ -1,6 +1,6 @@
 import { Show, createMemo, type Component } from "solid-js"
 import { ShieldAlert } from "lucide-solid"
-import { getPermissionQueueLength } from "../stores/instances"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../stores/instances"
 
 interface PermissionNotificationBannerProps {
   instanceId: string
@@ -8,15 +8,21 @@ interface PermissionNotificationBannerProps {
 }
 
 const PermissionNotificationBanner: Component<PermissionNotificationBannerProps> = (props) => {
-  const queueLength = createMemo(() => getPermissionQueueLength(props.instanceId))
-  const hasPermissions = createMemo(() => queueLength() > 0)
+  const permissionCount = createMemo(() => getPermissionQueueLength(props.instanceId))
+  const questionCount = createMemo(() => getQuestionQueueLength(props.instanceId))
+  const queueLength = createMemo(() => permissionCount() + questionCount())
+  const hasRequests = createMemo(() => queueLength() > 0)
   const label = createMemo(() => {
-    const count = queueLength()
-    return `${count} permission${count === 1 ? "" : "s"} pending approval`
+    const total = queueLength()
+    const parts: string[] = []
+    if (permissionCount() > 0) parts.push(`${permissionCount()} permission${permissionCount() === 1 ? "" : "s"}`)
+    if (questionCount() > 0) parts.push(`${questionCount()} question${questionCount() === 1 ? "" : "s"}`)
+    const detail = parts.length ? ` (${parts.join(", ")})` : ""
+    return `${total} pending request${total === 1 ? "" : "s"}${detail}`
   })
 
   return (
-    <Show when={hasPermissions()}>
+    <Show when={hasRequests()}>
       <button
         type="button"
         class="permission-center-trigger"

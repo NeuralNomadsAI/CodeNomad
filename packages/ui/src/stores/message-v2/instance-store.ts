@@ -12,6 +12,7 @@ import type {
   PartUpdateInput,
   PendingPartEntry,
   PermissionEntry,
+  QuestionEntry,
   ReplaceMessageIdOptions,
   ScrollSnapshot,
   SessionRecord,
@@ -36,6 +37,11 @@ function createInitialState(instanceId: string): InstanceMessageState {
     pendingParts: {},
     sessionRevisions: {},
     permissions: {
+      queue: [],
+      active: null,
+      byMessage: {},
+    },
+    questions: {
       queue: [],
       active: null,
       byMessage: {},
@@ -193,6 +199,9 @@ export interface InstanceMessageStore {
   upsertPermission: (entry: PermissionEntry) => void
   removePermission: (permissionId: string) => void
   getPermissionState: (messageId?: string, partId?: string) => { entry: PermissionEntry; active: boolean } | null
+  upsertQuestion: (entry: QuestionEntry) => void
+  removeQuestion: (requestId: string) => void
+  getQuestionState: (messageId?: string, partId?: string) => { entry: QuestionEntry; active: boolean } | null
   setSessionRevert: (sessionId: string, revert?: SessionRecord["revert"] | null) => void
   getSessionRevert: (sessionId: string) => SessionRecord["revert"] | undefined | null
   rebuildUsage: (sessionId: string, infos: Iterable<MessageInfo>) => void
@@ -757,6 +766,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       })
     }
 
+    const questionMap = state.questions.byMessage[options.oldId]
+    if (questionMap) {
+      setState("questions", "byMessage", options.newId, questionMap)
+      setState("questions", (prev) => {
+        const next = { ...prev }
+        const nextByMessage = { ...next.byMessage }
+        delete nextByMessage[options.oldId]
+        next.byMessage = nextByMessage
+        return next
+      })
+    }
+
     const pending = state.pendingParts[options.oldId]
     if (pending) {
       setState("pendingParts", options.newId, pending)
@@ -832,6 +853,60 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
+  function upsertQuestion(entry: QuestionEntry) {
+    const messageKey = entry.messageId ?? "__global__"
+    const partKey = entry.partId ?? entry.request?.id ?? "__global__"
+
+    setState(
+      "questions",
+      produce((draft) => {
+        draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
+        draft.byMessage[messageKey][partKey] = entry
+        const existingIndex = draft.queue.findIndex((item) => item.request.id === entry.request.id)
+        if (existingIndex === -1) {
+          draft.queue.push(entry)
+        } else {
+          draft.queue[existingIndex] = entry
+        }
+        if (!draft.active || draft.active.request.id === entry.request.id) {
+          draft.active = entry
+        }
+      }),
+    )
+  }
+
+  function removeQuestion(requestId: string) {
+    setState(
+      "questions",
+      produce((draft) => {
+        draft.queue = draft.queue.filter((item) => item.request.id !== requestId)
+        if (draft.active?.request.id === requestId) {
+          draft.active = draft.queue[0] ?? null
+        }
+        Object.keys(draft.byMessage).forEach((messageKey) => {
+          const partEntries = draft.byMessage[messageKey]
+          Object.keys(partEntries).forEach((partKey) => {
+            if (partEntries[partKey].request.id === requestId) {
+              delete partEntries[partKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[messageKey]
+          }
+        })
+      }),
+    )
+  }
+
+  function getQuestionState(messageId?: string, partId?: string) {
+    const messageKey = messageId ?? "__global__"
+    const partKey = partId ?? "__global__"
+    const entry = state.questions.byMessage[messageKey]?.[partKey]
+    if (!entry) return null
+    const active = state.questions.active?.request.id === entry.request.id
+    return { entry, active }
+  }
+
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
     const session = state.sessions[sessionId]
     if (!session) return
@@ -866,6 +941,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     setState("permissions", "byMessage", (prev) => {
+      const next = { ...prev }
+      removedIds.forEach((id) => {
+        if (next[id]) delete next[id]
+      })
+      return next
+    })
+
+    setState("questions", "byMessage", (prev) => {
       const next = { ...prev }
       removedIds.forEach((id) => {
         if (next[id]) delete next[id]
@@ -948,6 +1031,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return next
       })
 
+      setState("questions", "byMessage", (prev) => {
+        const next = { ...prev }
+        messageIds.forEach((id) => {
+          if (next[id]) delete next[id]
+        })
+        return next
+      })
+
       setState("usage", (prev) => {
         const next = { ...prev }
         delete next[sessionId]
@@ -1012,9 +1103,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      replaceMessageId,
      setMessageInfo,
      getMessageInfo,
-     upsertPermission,
-     removePermission,
-     getPermissionState,
+      upsertPermission,
+      removePermission,
+      getPermissionState,
+      upsertQuestion,
+      removeQuestion,
+      getQuestionState,
+
      setSessionRevert,
      getSessionRevert,
      rebuildUsage,

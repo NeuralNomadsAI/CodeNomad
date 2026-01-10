@@ -175,9 +175,11 @@ const SessionList: Component<SessionListProps> = (props) => {
     const title = () => session()?.title || "Untitled"
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
     const statusLabel = () => formatSessionStatus(status())
-    const pendingPermission = () => Boolean(session()?.pendingPermission)
-    const statusClassName = () => (pendingPermission() ? "session-permission" : `session-${status()}`)
-    const statusText = () => (pendingPermission() ? "Needs Permission" : statusLabel())
+    const needsPermission = () => Boolean(session()?.pendingPermission)
+    const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
+    const needsInput = () => needsPermission() || needsQuestion()
+    const statusClassName = () => (needsInput() ? "session-permission" : `session-${status()}`)
+    const statusText = () => (needsPermission() ? "Needs Permission" : needsQuestion() ? "Needs Input" : statusLabel())
  
     return (
        <div class="session-list-item group">
@@ -224,7 +226,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 </span>
               </Show>
               <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-                {pendingPermission() ? (
+                {needsInput() ? (
                   <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
                 ) : (
                   <span class="status-dot" />

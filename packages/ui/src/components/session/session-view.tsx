@@ -39,6 +39,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!currentSession) return false
     return getSessionBusyStatus(props.instanceId, currentSession.id)
   })
+
+  const sessionNeedsInput = createMemo(() => {
+    const currentSession = session()
+    if (!currentSession) return false
+    return Boolean(currentSession.pendingPermission || (currentSession as any).pendingQuestion)
+  })
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   function scheduleScrollToBottom() {
@@ -224,17 +230,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
              />
 
 
-            <PromptInput
-              instanceId={props.instanceId}
-              instanceFolder={props.instanceFolder}
-              sessionId={activeSession.id}
-              onSend={handleSendMessage}
-              onRunShell={handleRunShell}
-              escapeInDebounce={props.escapeInDebounce}
-              isSessionBusy={sessionBusy()}
-              onAbortSession={handleAbortSession}
-              registerQuoteHandler={registerQuoteHandler}
-            />
+             <PromptInput
+               instanceId={props.instanceId}
+               instanceFolder={props.instanceFolder}
+               sessionId={activeSession.id}
+               onSend={handleSendMessage}
+               onRunShell={handleRunShell}
+               escapeInDebounce={props.escapeInDebounce}
+               isSessionBusy={sessionBusy()}
+               disabled={sessionNeedsInput()}
+               onAbortSession={handleAbortSession}
+               registerQuoteHandler={registerQuoteHandler}
+             />
           </div>
         )
       }}

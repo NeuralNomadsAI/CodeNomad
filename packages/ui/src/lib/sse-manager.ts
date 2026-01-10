@@ -63,6 +63,8 @@ type SSEEvent =
   | EventSessionIdle
   | { type: "permission.updated" | "permission.asked"; properties?: any }
   | { type: "permission.replied"; properties?: any }
+  | { type: "question.asked"; properties?: any }
+  | { type: "question.replied" | "question.rejected"; properties?: any }
   | EventLspUpdated
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
@@ -144,6 +146,13 @@ class SSEManager {
       case "permission.replied":
         this.onPermissionReplied?.(instanceId, event as any)
         break
+      case "question.asked":
+        this.onQuestionAsked?.(instanceId, event as any)
+        break
+      case "question.replied":
+      case "question.rejected":
+        this.onQuestionAnswered?.(instanceId, event as any)
+        break
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
         break
@@ -178,6 +187,8 @@ class SSEManager {
   onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
   onPermissionUpdated?: (instanceId: string, event: any) => void
   onPermissionReplied?: (instanceId: string, event: any) => void
+  onQuestionAsked?: (instanceId: string, event: any) => void
+  onQuestionAnswered?: (instanceId: string, event: any) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void

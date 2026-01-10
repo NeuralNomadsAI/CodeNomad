@@ -1,5 +1,6 @@
 import type { ClientPart } from "../../types/message"
 import type { PermissionRequestLike } from "../../types/permission"
+import type { QuestionRequest } from "../../types/question"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
 export type MessageRole = "user" | "assistant"
@@ -59,6 +60,19 @@ export interface InstancePermissionState {
   byMessage: Record<string, Record<string, PermissionEntry>>
 }
 
+export interface QuestionEntry {
+  request: QuestionRequest
+  messageId?: string
+  partId?: string
+  enqueuedAt: number
+}
+
+export interface InstanceQuestionState {
+  queue: QuestionEntry[]
+  active: QuestionEntry | null
+  byMessage: Record<string, Record<string, QuestionEntry>>
+}
+
 export interface ScrollSnapshot {
   scrollTop: number
   atBottom: boolean
@@ -103,6 +117,7 @@ export interface InstanceMessageState {
   pendingParts: Record<string, PendingPartEntry[]>
   sessionRevisions: Record<string, number>
   permissions: InstancePermissionState
+  questions: InstanceQuestionState
   usage: Record<string, SessionUsageState>
   scrollState: Record<string, ScrollSnapshot>
   latestTodos: Record<string, LatestTodoSnapshot | undefined>

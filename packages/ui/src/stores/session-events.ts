@@ -18,8 +18,17 @@ import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { getPermissionId, getPermissionKind, getRequestIdFromPermissionReply } from "../types/permission"
 import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "../types/permission"
+import { getQuestionId, getRequestIdFromQuestionReply } from "../types/question"
+import type { QuestionRequest } from "../types/question"
+import type { EventQuestionReplied, EventQuestionRejected } from "@opencode-ai/sdk/v2"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
-import { instances, addPermissionToQueue, removePermissionFromQueue } from "./instances"
+import {
+  instances,
+  addPermissionToQueue,
+  removePermissionFromQueue,
+  addQuestionToQueue,
+  removeQuestionFromQueue,
+} from "./instances"
 import { showAlertDialog } from "./alerts"
 import { createClientSession, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import { sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
@@ -32,9 +41,11 @@ import {
   replaceMessageIdV2,
   upsertMessageInfoV2,
   upsertPermissionV2,
+  upsertQuestionV2,
   removeMessagePartV2,
   removeMessageV2,
   removePermissionV2,
+  removeQuestionV2,
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
@@ -102,6 +113,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string): Promise<
         model: existing?.model ?? fetched.model,
         status: existing?.status === "compacting" ? "compacting" : fetched.status,
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
+        pendingQuestion: existing?.pendingQuestion ?? false,
       }
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
@@ -469,12 +481,36 @@ function handlePermissionReplied(instanceId: string, event: { type: string; prop
   removePermissionV2(instanceId, requestId)
 }
 
+function handleQuestionAsked(instanceId: string, event: { type: string; properties?: QuestionRequest } | any): void {
+  const request = event?.properties as QuestionRequest | undefined
+  if (!request) return
+
+  log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
+  addQuestionToQueue(instanceId, request)
+  upsertQuestionV2(instanceId, request)
+}
+
+function handleQuestionAnswered(
+  instanceId: string,
+  event: { type: string; properties?: EventQuestionReplied["properties"] | EventQuestionRejected["properties"] } | any,
+): void {
+  const properties = event?.properties as EventQuestionReplied["properties"] | EventQuestionRejected["properties"] | undefined
+  const requestId = getRequestIdFromQuestionReply(properties)
+  if (!requestId) return
+
+  log.info(`[SSE] Question answered: ${requestId}`)
+  removeQuestionFromQueue(instanceId, requestId)
+  removeQuestionV2(instanceId, requestId)
+}
+
 export {
   handleMessagePartRemoved,
   handleMessageRemoved,
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,
+  handleQuestionAsked,
+  handleQuestionAnswered,
   handleSessionCompacted,
   handleSessionError,
   handleSessionIdle,

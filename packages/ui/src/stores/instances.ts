@@ -3,6 +3,8 @@ import type { Instance, LogEntry } from "../types/instance"
 import type { LspStatus } from "@opencode-ai/sdk/v2"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
 import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permission"
+import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
@@ -18,10 +20,10 @@ import {
 } from "./sessions"
 import { fetchCommands, clearCommands } from "./commands"
 import { preferences } from "./preferences"
-import { setSessionPendingPermission } from "./session-state"
+import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { upsertPermissionV2, removePermissionV2 } from "./message-v2/bridge"
+import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -34,10 +36,29 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-// Permission queue management per instance
+// Interruption queues (permissions + questions) per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequestLike[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 const permissionSessionCounts = new Map<string, Map<string, number>>()
+
+const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
+const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
+const questionSessionCounts = new Map<string, Map<string, number>>()
+const questionEnqueuedAt = new Map<string, number>()
+
+function ensureQuestionEnqueuedAt(request: QuestionRequest): number {
+  const existing = questionEnqueuedAt.get(request.id)
+  if (existing) return existing
+  const now = Date.now()
+  questionEnqueuedAt.set(request.id, now)
+  return now
+}
+
+type InterruptionKind = "permission" | "question"
+
+type ActiveInterruption = { kind: InterruptionKind; id: string } | null
+
+const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
 
 function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
@@ -156,6 +177,38 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
   }
 }
 
+async function syncPendingQuestions(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+
+  try {
+    const remote = await requestData<QuestionRequest[]>(
+      instance.client.question.list(),
+      "question.list",
+    )
+
+    const remoteIds = new Set(remote.map((item) => item.id))
+    const local = getQuestionQueue(instanceId)
+
+    // Remove any stale local requests missing from server.
+    for (const entry of local) {
+      if (!remoteIds.has(entry.id)) {
+        removeQuestionFromQueue(instanceId, entry.id)
+        removeQuestionV2(instanceId, entry.id)
+      }
+    }
+
+    // Upsert all server-side pending questions.
+    for (const request of remote) {
+      ensureQuestionEnqueuedAt(request)
+      addQuestionToQueue(instanceId, request)
+      upsertQuestionV2(instanceId, request)
+    }
+  } catch (error) {
+    log.warn("Failed to sync pending questions", { instanceId, error })
+  }
+}
+
 async function hydrateInstanceData(instanceId: string) {
   try {
     await fetchSessions(instanceId)
@@ -166,6 +219,7 @@ async function hydrateInstanceData(instanceId: string) {
     if (!instance?.client) return
     await fetchCommands(instanceId, instance.client)
     await syncPendingPermissions(instanceId)
+    await syncPendingQuestions(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
   }
@@ -327,6 +381,7 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
+  clearQuestionQueue(id)
   clearInstanceMetadata(id)
 
   if (activeInstanceId() === id) {
@@ -429,6 +484,79 @@ function getPermissionQueueLength(instanceId: string): number {
   return getPermissionQueue(instanceId).length
 }
 
+function getQuestionQueue(instanceId: string): QuestionRequest[] {
+  const queue = questionQueues().get(instanceId)
+  if (!queue) {
+    return []
+  }
+  return queue
+}
+
+function getQuestionQueueLength(instanceId: string): number {
+  return getQuestionQueue(instanceId).length
+}
+
+function getQuestionEnqueuedAtForInstance(instanceId: string, requestId: string): number {
+  // Ensure we have a stable timestamp for sorting/ordering.
+  const queue = getQuestionQueue(instanceId)
+  const match = queue.find((q) => q.id === requestId)
+  if (match) {
+    return ensureQuestionEnqueuedAt(match)
+  }
+  return questionEnqueuedAt.get(requestId) ?? Date.now()
+}
+
+function computeActiveInterruption(instanceId: string): ActiveInterruption {
+  const permissions = getPermissionQueue(instanceId)
+  const questions = getQuestionQueue(instanceId)
+  const firstPermission = permissions[0]
+  const firstQuestion = questions[0]
+  if (!firstPermission && !firstQuestion) return null
+  if (firstPermission && !firstQuestion) return { kind: "permission", id: firstPermission.id }
+  if (firstQuestion && !firstPermission) return { kind: "question", id: firstQuestion.id }
+
+  const permTime = getPermissionCreatedAt(firstPermission)
+  const quesTime = firstQuestion ? ensureQuestionEnqueuedAt(firstQuestion) : Number.MAX_SAFE_INTEGER
+  if (permTime <= quesTime) return { kind: "permission", id: firstPermission.id }
+  return { kind: "question", id: firstQuestion!.id }
+}
+
+function setActiveInterruptionForInstance(instanceId: string, nextActive: ActiveInterruption): void {
+  setActiveInterruption((prev) => {
+    const next = new Map(prev)
+    if (!nextActive) {
+      next.set(instanceId, null)
+    } else {
+      next.set(instanceId, nextActive)
+    }
+    return next
+  })
+
+  setActivePermissionId((prev) => {
+    const next = new Map(prev)
+    if (nextActive?.kind === "permission") {
+      next.set(instanceId, nextActive.id)
+    } else {
+      next.set(instanceId, null)
+    }
+    return next
+  })
+
+  setActiveQuestionId((prev) => {
+    const next = new Map(prev)
+    if (nextActive?.kind === "question") {
+      next.set(instanceId, nextActive.id)
+    } else {
+      next.set(instanceId, null)
+    }
+    return next
+  })
+}
+
+function recomputeActiveInterruption(instanceId: string): void {
+  setActiveInterruptionForInstance(instanceId, computeActiveInterruption(instanceId))
+}
+
 function incrementSessionPendingCount(instanceId: string, sessionId: string): void {
   let sessionCounts = permissionSessionCounts.get(instanceId)
   if (!sessionCounts) {
@@ -464,6 +592,41 @@ function clearSessionPendingCounts(instanceId: string): void {
   permissionSessionCounts.delete(instanceId)
 }
 
+function incrementQuestionSessionPendingCount(instanceId: string, sessionId: string): void {
+  let sessionCounts = questionSessionCounts.get(instanceId)
+  if (!sessionCounts) {
+    sessionCounts = new Map()
+    questionSessionCounts.set(instanceId, sessionCounts)
+  }
+  const current = sessionCounts.get(sessionId) ?? 0
+  sessionCounts.set(sessionId, current + 1)
+}
+
+function decrementQuestionSessionPendingCount(instanceId: string, sessionId: string): number {
+  const sessionCounts = questionSessionCounts.get(instanceId)
+  if (!sessionCounts) return 0
+  const current = sessionCounts.get(sessionId) ?? 0
+  if (current <= 1) {
+    sessionCounts.delete(sessionId)
+    if (sessionCounts.size === 0) {
+      questionSessionCounts.delete(instanceId)
+    }
+    return 0
+  }
+  const nextValue = current - 1
+  sessionCounts.set(sessionId, nextValue)
+  return nextValue
+}
+
+function clearQuestionSessionPendingCounts(instanceId: string): void {
+  const sessionCounts = questionSessionCounts.get(instanceId)
+  if (!sessionCounts) return
+  for (const sessionId of sessionCounts.keys()) {
+    setSessionPendingQuestion(instanceId, sessionId, false)
+  }
+  questionSessionCounts.delete(instanceId)
+}
+
 function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
   let inserted = false
 
@@ -485,13 +648,7 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
     return
   }
 
-  setActivePermissionId((prev) => {
-    const next = new Map(prev)
-    if (!next.get(instanceId)) {
-      next.set(instanceId, permission.id)
-    }
-    return next
-  })
+  recomputeActiveInterruption(instanceId)
 
   const sessionId = getPermissionSessionId(permission)
   if (sessionId) {
@@ -526,15 +683,7 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 
   const updatedQueue = getPermissionQueue(instanceId)
 
-  setActivePermissionId((prev) => {
-    const next = new Map(prev)
-    const activeId = next.get(instanceId)
-    if (activeId === permissionId) {
-      const nextPermission = updatedQueue.length > 0 ? (updatedQueue[0] as PermissionRequestLike) : null
-      next.set(instanceId, nextPermission?.id ?? null)
-    }
-    return next
-  })
+  recomputeActiveInterruption(instanceId)
 
   const removed = removedPermission
   if (removed) {
@@ -558,16 +707,140 @@ function clearPermissionQueue(instanceId: string): void {
     return next
   })
   clearSessionPendingCounts(instanceId)
+  recomputeActiveInterruption(instanceId)
 }
 
+function addQuestionToQueue(instanceId: string, request: QuestionRequest): void {
+  let inserted = false
 
-
-function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
-  setActivePermissionId((prev) => {
+  setQuestionQueues((prev) => {
     const next = new Map(prev)
-    next.set(instanceId, permissionId)
+    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
+
+    if (queue.some((q) => q.id === request.id)) {
+      return next
+    }
+
+    ensureQuestionEnqueuedAt(request)
+    const updatedQueue = [...queue, request].sort((a, b) => {
+      return ensureQuestionEnqueuedAt(a) - ensureQuestionEnqueuedAt(b)
+    })
+    next.set(instanceId, updatedQueue)
+    inserted = true
     return next
   })
+
+  if (!inserted) {
+    return
+  }
+
+  recomputeActiveInterruption(instanceId)
+
+  const sessionId = getQuestionSessionId(request)
+  if (sessionId) {
+    incrementQuestionSessionPendingCount(instanceId, sessionId)
+    setSessionPendingQuestion(instanceId, sessionId, true)
+  }
+}
+
+function removeQuestionFromQueue(instanceId: string, requestId: string): void {
+  const removedSessionId = getQuestionSessionId(getQuestionQueue(instanceId).find((q) => q.id === requestId))
+
+  setQuestionQueues((prev) => {
+    const next = new Map(prev)
+    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
+    const filtered = queue.filter((item) => item.id !== requestId)
+
+    if (filtered.length > 0) {
+      next.set(instanceId, filtered)
+    } else {
+      next.delete(instanceId)
+    }
+    return next
+  })
+
+  questionEnqueuedAt.delete(requestId)
+  recomputeActiveInterruption(instanceId)
+
+  if (removedSessionId) {
+    const remaining = decrementQuestionSessionPendingCount(instanceId, removedSessionId)
+    setSessionPendingQuestion(instanceId, removedSessionId, remaining > 0)
+  }
+}
+
+function clearQuestionQueue(instanceId: string): void {
+  for (const request of getQuestionQueue(instanceId)) {
+    questionEnqueuedAt.delete(request.id)
+  }
+
+  setQuestionQueues((prev) => {
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setActiveQuestionId((prev) => {
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  clearQuestionSessionPendingCounts(instanceId)
+  recomputeActiveInterruption(instanceId)
+}
+
+function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
+  setActiveInterruptionForInstance(instanceId, { kind: "permission", id: permissionId })
+}
+
+function setActiveQuestionIdForInstance(instanceId: string, requestId: string): void {
+  setActiveInterruptionForInstance(instanceId, { kind: "question", id: requestId })
+}
+
+async function sendQuestionReply(
+  instanceId: string,
+  _sessionId: string,
+  requestId: string,
+  answers: string[][],
+): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) {
+    throw new Error("Instance not ready")
+  }
+
+  try {
+    await requestData(
+      instance.client.question.reply({
+        requestID: requestId,
+        answers,
+      }),
+      "question.reply",
+    )
+
+    removeQuestionFromQueue(instanceId, requestId)
+  } catch (error) {
+    log.error("Failed to send question reply", error)
+    throw error
+  }
+}
+
+async function sendQuestionReject(instanceId: string, _sessionId: string, requestId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) {
+    throw new Error("Instance not ready")
+  }
+
+  try {
+    await requestData(
+      instance.client.question.reject({
+        requestID: requestId,
+      }),
+      "question.reject",
+    )
+
+    removeQuestionFromQueue(instanceId, requestId)
+  } catch (error) {
+    log.error("Failed to send question reject", error)
+    throw error
+  }
 }
 
 async function sendPermissionResponse(
@@ -655,7 +928,7 @@ export {
   getInstanceLogs,
   isInstanceLogStreaming,
   setInstanceLogStreaming,
-  // Permission management
+  // Permission + question management
   permissionQueues,
   activePermissionId,
   getPermissionQueue,
@@ -665,6 +938,18 @@ export {
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
+  questionQueues,
+  activeQuestionId,
+  activeInterruption,
+  getQuestionQueue,
+  getQuestionQueueLength,
+  getQuestionEnqueuedAtForInstance,
+  addQuestionToQueue,
+  removeQuestionFromQueue,
+  clearQuestionQueue,
+  sendQuestionReply,
+  sendQuestionReject,
+  setActiveQuestionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   fetchLspStatus,

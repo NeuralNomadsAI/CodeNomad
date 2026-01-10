@@ -45,6 +45,8 @@ export function getToolIcon(tool: string): string {
     case "todowrite":
     case "todoread":
       return "📋"
+    case "question":
+      return "❓"
     case "list":
       return "📁"
     case "patch":

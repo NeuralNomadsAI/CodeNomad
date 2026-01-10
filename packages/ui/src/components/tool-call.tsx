@@ -6,8 +6,9 @@ import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
-import { sendPermissionResponse } from "../stores/instances"
+import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
 import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
+import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import type { TextPart, RenderCache } from "../types/message"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import type {
@@ -239,6 +240,7 @@ export default function ToolCall(props: ToolCallProps) {
   }))
 
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
+  const activeRequest = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
   const cacheVersion = createMemo(() => {
     if (typeof props.partVersion === "number") {
@@ -278,6 +280,16 @@ export default function ToolCall(props: ToolCallProps) {
     }
     return toolCallMemo()?.pendingPermission
   })
+
+  const questionState = createMemo(() => store().getQuestionState(props.messageId, toolCallIdentifier()))
+  const pendingQuestion = createMemo(() => {
+    const state = questionState()
+    if (state) {
+      return { request: state.entry.request as QuestionRequest, active: state.active }
+    }
+    return undefined
+  })
+
   const toolOutputDefaultExpanded = createMemo(() => (preferences().toolOutputExpansion || "expanded") === "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
 
@@ -292,27 +304,45 @@ export default function ToolCall(props: ToolCallProps) {
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
 
+  const isPermissionActive = createMemo(() => {
+    const pending = pendingPermission()
+    if (!pending?.permission) return false
+    const active = activeRequest()
+    return active?.kind === "permission" && active.id === pending.permission.id
+  })
+
+  const isQuestionActive = createMemo(() => {
+    const pending = pendingQuestion()
+    if (!pending?.request) return false
+    const active = activeRequest()
+    return active?.kind === "question" && active.id === pending.request.id
+  })
+
   const expanded = () => {
-    const permission = pendingPermission()
-    if (permission?.active) return true
+    if (isPermissionActive() || isQuestionActive()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
   }
 
   const permissionDetails = createMemo(() => pendingPermission()?.permission)
-  const isPermissionActive = createMemo(() => pendingPermission()?.active === true)
+  const questionDetails = createMemo(() => pendingQuestion()?.request)
+
   const activePermissionKey = createMemo(() => {
     const permission = permissionDetails()
     return permission && isPermissionActive() ? permission.id : ""
+  })
+
+  const activeQuestionKey = createMemo(() => {
+    const request = questionDetails()
+    return request && isQuestionActive() ? request.id : ""
   })
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    const permission = pendingPermission()
-    if (permission?.active) return true
+    if (isPermissionActive() || isQuestionActive()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -513,7 +543,7 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   createEffect(() => {
-    const activeKey = activePermissionKey()
+    const activeKey = activePermissionKey() || activeQuestionKey()
     if (!activeKey) return
     requestAnimationFrame(() => {
       toolCallRootRef?.scrollIntoView({ block: "center", behavior: "smooth" })
@@ -533,6 +563,81 @@ export default function ToolCall(props: ToolCallProps) {
       } else if (event.key === "d" || event.key === "D") {
         event.preventDefault()
         handlePermissionResponse("reject")
+      }
+    }
+    document.addEventListener("keydown", handler)
+    onCleanup(() => document.removeEventListener("keydown", handler))
+  })
+
+  const [questionSubmitting, setQuestionSubmitting] = createSignal(false)
+  const [questionError, setQuestionError] = createSignal<string | null>(null)
+
+  const [questionDraftAnswers, setQuestionDraftAnswers] = createSignal<Record<string, string[][]>>({})
+  const [questionCustomDraft, setQuestionCustomDraft] = createSignal<Record<string, string[]>>({})
+
+  function isTextInputFocused() {
+    const active = document.activeElement
+    return (
+      active?.tagName === "TEXTAREA" ||
+      active?.tagName === "INPUT" ||
+      (active?.hasAttribute("contenteditable") ?? false)
+    )
+  }
+
+  async function handleQuestionSubmit() {
+    const request = questionDetails()
+    if (!request || !isQuestionActive()) {
+      return
+    }
+    const answers = (questionDraftAnswers()[request.id] ?? []).map((x) => (Array.isArray(x) ? x : []))
+    const normalized = request.questions.map((_, index) => answers[index] ?? [])
+    if (normalized.some((item) => (item?.length ?? 0) === 0)) {
+      setQuestionError("Please answer all questions before submitting.")
+      return
+    }
+
+    setQuestionSubmitting(true)
+    setQuestionError(null)
+    try {
+      const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
+      await sendQuestionReply(props.instanceId, sessionId, request.id, normalized)
+    } catch (error) {
+      log.error("Failed to send question reply", error)
+      setQuestionError(error instanceof Error ? error.message : "Unable to reply")
+    } finally {
+      setQuestionSubmitting(false)
+    }
+  }
+
+  async function handleQuestionDismiss() {
+    const request = questionDetails()
+    if (!request || !isQuestionActive()) {
+      return
+    }
+    setQuestionSubmitting(true)
+    setQuestionError(null)
+    try {
+      const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
+      await sendQuestionReject(props.instanceId, sessionId, request.id)
+    } catch (error) {
+      log.error("Failed to reject question", error)
+      setQuestionError(error instanceof Error ? error.message : "Unable to dismiss")
+    } finally {
+      setQuestionSubmitting(false)
+    }
+  }
+
+  createEffect(() => {
+    const activeKey = activeQuestionKey()
+    if (!activeKey) return
+    const handler = (event: KeyboardEvent) => {
+      if (isTextInputFocused()) return
+      if (event.key === "Enter") {
+        event.preventDefault()
+        void handleQuestionSubmit()
+      } else if (event.key === "Escape") {
+        event.preventDefault()
+        void handleQuestionDismiss()
       }
     }
     document.addEventListener("keydown", handler)
@@ -563,7 +668,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   const combinedStatusClass = () => {
     const base = statusClass()
-    return pendingPermission() ? `${base} tool-call-awaiting-permission` : base
+    return pendingPermission() || pendingQuestion() ? `${base} tool-call-awaiting-permission` : base
   }
 
   function toggle() {
@@ -950,6 +1055,218 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
+  const renderQuestionBlock = () => {
+    const state = toolState()
+    const request = questionDetails()
+    const isQuestionTool = toolName() === "question"
+
+    if (!request && !isQuestionTool) return null
+
+    const questionsSource = request?.questions ?? ((state as any)?.input?.questions as any[] | undefined) ?? []
+    const questions = Array.isArray(questionsSource) ? questionsSource : []
+    if (questions.length === 0) return null
+
+    const requestId = request?.id ?? (state as any)?.input?.requestID ?? `question-${toolCallMemo()?.id ?? "unknown"}`
+    const active = Boolean(request && isQuestionActive())
+
+    const completedAnswers = Array.isArray((state as any)?.metadata?.answers) ? ((state as any).metadata.answers as string[][]) : undefined
+    const answers = completedAnswers ?? questionDraftAnswers()[requestId] ?? []
+    const customInputs = questionCustomDraft()[requestId] ?? []
+
+    const updateAnswer = (questionIndex: number, next: string[]) => {
+      if (!active) return
+      setQuestionDraftAnswers((prev) => {
+        const current = prev[requestId] ?? []
+        const updated = [...current]
+        updated[questionIndex] = next
+        return { ...prev, [requestId]: updated }
+      })
+    }
+
+    const updateCustom = (questionIndex: number, value: string) => {
+      if (!active) return
+      setQuestionCustomDraft((prev) => {
+        const current = prev[requestId] ?? []
+        const updated = [...current]
+        updated[questionIndex] = value
+        return { ...prev, [requestId]: updated }
+      })
+    }
+
+    const toggleOption = (questionIndex: number, label: string) => {
+      const info = questions[questionIndex]
+      const multi = info?.multiple === true
+      const existing = answers[questionIndex] ?? []
+      if (multi) {
+        const next = existing.includes(label) ? existing.filter((x) => x !== label) : [...existing, label]
+        updateAnswer(questionIndex, next)
+        return
+      }
+      updateAnswer(questionIndex, [label])
+    }
+
+    const submitDisabled = () => {
+      if (!active) return true
+      if (questionSubmitting()) return true
+      return questions.some((_, index) => (answers[index]?.length ?? 0) === 0)
+    }
+
+    const showButtons = () => active
+
+    return (
+      <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
+        <div class="tool-call-permission-header">
+          <span class="tool-call-permission-label">
+            {active ? "Question Required" : request ? "Question Queued" : "Questions"}
+          </span>
+          <span class="tool-call-permission-type">{questions.length === 1 ? "Question" : "Questions"}</span>
+        </div>
+
+        <div class="tool-call-permission-body">
+          <div class="flex flex-col gap-4">
+            <For each={questions}>
+              {(q, index) => {
+                const i = () => index()
+                const multi = () => q?.multiple === true
+                const selected = () => answers[i()] ?? []
+                const customValue = () => customInputs[i()] ?? ""
+                const inputType = () => (multi() ? "checkbox" : "radio")
+                const groupName = () => `question-${requestId}-${i()}`
+
+                return (
+                  <div class="rounded-md border border-base/60 bg-surface/30 p-3">
+                    <div class="flex items-baseline justify-between gap-2">
+                      <div class="text-xs">
+                        Q{i() + 1}: <span class="font-semibold">{q?.header}</span>
+                      </div>
+                      <Show when={multi()}>
+                        <div class="text-xs text-muted">Multiple</div>
+                      </Show>
+                    </div>
+
+                    <div class="mt-1 text-sm font-medium">{q?.question}</div>
+
+                      <div class="mt-3 flex flex-col gap-1">
+                        <For each={q?.options ?? []}>
+                          {(opt) => {
+                            const checked = () => selected().includes(opt.label)
+                            return (
+                              <label
+                                class={`flex items-start gap-2 py-1 ${active ? "cursor-pointer" : request ? "opacity-80" : ""}`}
+                                title={opt.description}
+                              >
+                                <input
+                                  type={inputType()}
+                                  name={groupName()}
+                                  checked={checked()}
+                                  disabled={!active || questionSubmitting()}
+                                  onChange={() => toggleOption(i(), opt.label)}
+                                />
+                                <div class="flex flex-col">
+                                  <div class="text-sm leading-tight">{opt.label}</div>
+                                  <div class="text-xs text-muted leading-tight">{opt.description}</div>
+                                </div>
+                              </label>
+                            )
+                          }}
+                        </For>
+
+                        <Show when={active}>
+                          <div class="mt-2 flex items-center gap-2">
+                            <input
+                              class="flex-1 rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
+                              type="text"
+                              placeholder="Type your own answer"
+                              value={customValue()}
+                              disabled={!active || questionSubmitting()}
+                              onInput={(e) => updateCustom(i(), e.currentTarget.value)}
+                            />
+                            <button
+                              type="button"
+                              class="tool-call-permission-button"
+                              disabled={!active || questionSubmitting() || !customValue().trim()}
+                              onClick={() => {
+                                const value = customValue().trim()
+                                if (!value) return
+                                updateCustom(i(), value)
+                                toggleOption(i(), value)
+                              }}
+                            >
+                              {multi() ? "Toggle" : "Select"}
+                            </button>
+                          </div>
+                        </Show>
+                      </div>
+
+                  </div>
+                )
+              }}
+            </For>
+
+            <Show when={showButtons()}>
+              <div class="tool-call-permission-actions">
+                <div class="tool-call-permission-buttons">
+                  <button
+                    type="button"
+                    class="tool-call-permission-button"
+                    disabled={submitDisabled()}
+                    onClick={() => handleQuestionSubmit()}
+                  >
+                    Submit
+                  </button>
+                  <button
+                    type="button"
+                    class="tool-call-permission-button"
+                    disabled={questionSubmitting()}
+                    onClick={() => handleQuestionDismiss()}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+
+                <div class="tool-call-permission-shortcuts">
+                  <kbd class="kbd">Enter</kbd>
+                  <span>Submit</span>
+                  <kbd class="kbd">Esc</kbd>
+                  <span>Dismiss</span>
+                </div>
+
+                <Show when={questionError()}>
+                  <div class="tool-call-permission-error">{questionError()}</div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={!active && request}>
+              <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
+            </Show>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  createEffect(() => {
+    const request = questionDetails()
+    if (!request) {
+      setQuestionSubmitting(false)
+      setQuestionError(null)
+      return
+    }
+    setQuestionError(null)
+    const requestId = request.id
+    setQuestionDraftAnswers((prev) => {
+      if (prev[requestId]) return prev
+      const initial = request.questions.map(() => [])
+      return { ...prev, [requestId]: initial }
+    })
+    setQuestionCustomDraft((prev) => {
+      if (prev[requestId]) return prev
+      const initial = request.questions.map(() => "")
+      return { ...prev, [requestId]: initial }
+    })
+  })
+
   const status = () => toolState()?.status || ""
 
   onCleanup(() => {
@@ -993,6 +1310,7 @@ export default function ToolCall(props: ToolCallProps) {
           {renderError()}
  
           {renderPermissionBlock()}
+          {renderQuestionBlock()}
  
           <Show when={status() === "pending" && !pendingPermission()}>
             <div class="tool-call-pending-message">

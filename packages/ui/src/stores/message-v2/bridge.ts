@@ -1,5 +1,7 @@
 import type { PermissionRequestLike } from "../../types/permission"
 import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
+import type { QuestionRequest } from "../../types/question"
+import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
@@ -190,6 +192,65 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
       partId: resolvedPartId,
     })
   }
+}
+
+function extractQuestionMessageId(request: QuestionRequest): string | undefined {
+  return getQuestionMessageId(request)
+}
+
+function extractQuestionCallId(request: QuestionRequest): string | undefined {
+  return getQuestionCallId(request)
+}
+
+export function upsertQuestionV2(instanceId: string, request: QuestionRequest): void {
+  if (!request) return
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const messageId = extractQuestionMessageId(request)
+  let partId: string | undefined = undefined
+  const callId = extractQuestionCallId(request)
+  if (callId) {
+    partId = resolvePartIdFromCallId(store, messageId, callId)
+  }
+  store.upsertQuestion({
+    request,
+    messageId,
+    partId,
+    enqueuedAt: (request as any).time?.created ?? Date.now(),
+  })
+}
+
+export function reconcilePendingQuestionsV2(instanceId: string, sessionId?: string): void {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const pending = store.state.questions.queue
+  if (!pending || pending.length === 0) return
+
+  for (const entry of pending) {
+    if (!entry || entry.partId) continue
+    const request = entry.request
+    if (!request) continue
+
+    const questionSessionId = request.sessionID
+    if (sessionId && questionSessionId && questionSessionId !== sessionId) {
+      continue
+    }
+
+    const messageId = entry.messageId ?? extractQuestionMessageId(request)
+    const callId = extractQuestionCallId(request)
+    const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
+    if (!resolvedPartId) continue
+
+    store.upsertQuestion({
+      ...entry,
+      messageId,
+      partId: resolvedPartId,
+    })
+  }
+}
+
+export function removeQuestionV2(instanceId: string, requestId: string): void {
+  if (!requestId) return
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.removeQuestion(requestId)
 }
 
 export function removePermissionV2(instanceId: string, permissionId: string): void {

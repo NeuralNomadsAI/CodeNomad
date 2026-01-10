@@ -37,6 +37,7 @@ export interface Session
   }
   version: string // Include version from SDK Session
   pendingPermission?: boolean // Indicates if session is waiting on user permission
+  pendingQuestion?: boolean // Indicates if session is waiting on user input
   status: SessionStatus // Single source of truth for session status
 }
 
