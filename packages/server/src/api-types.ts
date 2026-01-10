@@ -246,6 +246,76 @@ export interface BackgroundProcessOutputResponse {
   sizeBytes: number
 }
 
+// Git Source Control Types
+export type GitFileStatus = "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked" | "ignored"
+
+export interface GitFileChange {
+  /** Relative path to the file from workspace root */
+  path: string
+  /** Status of the file */
+  status: GitFileStatus
+  /** Whether the file is staged */
+  staged: boolean
+  /** Original path for renamed files */
+  originalPath?: string
+}
+
+export interface GitBranch {
+  /** Branch name */
+  name: string
+  /** Whether this is the current branch */
+  current: boolean
+  /** Whether this is a remote branch */
+  remote: boolean
+  /** Tracking branch for local branches */
+  upstream?: string
+}
+
+export interface GitStatus {
+  /** Current branch name */
+  branch: string
+  /** List of file changes */
+  changes: GitFileChange[]
+  /** Whether the repo has any commits */
+  hasCommits: boolean
+  /** Number of commits ahead of upstream */
+  ahead: number
+  /** Number of commits behind upstream */
+  behind: number
+}
+
+export interface GitBranchListResponse {
+  branches: GitBranch[]
+  current: string
+}
+
+export interface GitDiffResponse {
+  /** File path */
+  path: string
+  /** Unified diff content */
+  diff: string
+  /** Whether the file is binary */
+  isBinary: boolean
+}
+
+export interface GitCommitRequest {
+  message: string
+}
+
+export interface GitCommitResponse {
+  hash: string
+  message: string
+}
+
+export interface GitCheckoutRequest {
+  branch: string
+  create?: boolean
+}
+
+export interface GitStageRequest {
+  paths: string[]
+}
+
 export type {
   Preferences,
   ModelPreference,

@@ -20,6 +20,7 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
+import { registerGitRoutes } from "./routes/git"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -66,7 +67,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   }
 
   app.addHook("onRequest", (request, _reply, done) => {
-    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
+    ; (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
       start: process.hrtime.bigint(),
     }
     done()
@@ -121,6 +122,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
+  registerGitRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 

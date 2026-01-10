@@ -66,6 +66,7 @@ import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
+import SourceControlPanel from "../source-control/source-control-panel"
 import {
   SESSION_SIDEBAR_EVENT,
   type SessionSidebarRequestAction,
@@ -139,6 +140,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
+    "source-control",
     "plan",
     "background-processes",
     "mcp",
@@ -997,6 +999,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const sections = [
       {
+        id: "source-control",
+        label: "Source Control",
+        render: () => <SourceControlPanel workspaceId={props.instance.id} />,
+      },
+      {
         id: "plan",
         label: "Plan",
         render: renderPlanSectionContent,
@@ -1044,11 +1051,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       },
     ]
 
-    createEffect(() => {
-      const currentExpanded = new Set(rightPanelExpandedItems())
-      if (sections.every((section) => currentExpanded.has(section.id))) return
-      setRightPanelExpandedItems(sections.map((section) => section.id))
-    })
+    // Accordion state is managed by user interaction via handleAccordionChange
+    // No need to force all sections to be expanded
 
     const handleAccordionChange = (values: string[]) => {
       setRightPanelExpandedItems(values)

@@ -19,6 +19,10 @@ import type {
   WorkspaceLogEntry,
   WorkspaceEventPayload,
   WorkspaceEventType,
+  GitStatus,
+  GitBranchListResponse,
+  GitDiffResponse,
+  GitCommitResponse,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
 
@@ -267,6 +271,56 @@ export const serverApi = {
     return request<BackgroundProcessOutputResponse>(
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
     )
+  },
+
+  // Git Source Control APIs
+  fetchGitStatus(workspaceId: string): Promise<GitStatus> {
+    return request<GitStatus>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`)
+  },
+  fetchGitBranches(workspaceId: string): Promise<GitBranchListResponse> {
+    return request<GitBranchListResponse>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/branches`)
+  },
+  checkoutBranch(workspaceId: string, branch: string, create = false): Promise<{ success: boolean; branch: string }> {
+    return request<{ success: boolean; branch: string }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/git/checkout`,
+      {
+        method: "POST",
+        body: JSON.stringify({ branch, create }),
+      },
+    )
+  },
+  fetchGitDiff(workspaceId: string, filePath?: string, staged = false): Promise<GitDiffResponse> {
+    const params = new URLSearchParams()
+    if (filePath) params.set("path", filePath)
+    if (staged) params.set("staged", "true")
+    const query = params.toString()
+    return request<GitDiffResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/git/diff${query ? `?${query}` : ""}`,
+    )
+  },
+  stageFiles(workspaceId: string, paths: string[]): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/stage`, {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    })
+  },
+  unstageFiles(workspaceId: string, paths: string[]): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/unstage`, {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    })
+  },
+  discardChanges(workspaceId: string, paths: string[]): Promise<{ success: boolean }> {
+    return request<{ success: boolean }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/discard`, {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    })
+  },
+  commitChanges(workspaceId: string, message: string): Promise<GitCommitResponse> {
+    return request<GitCommitResponse>(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/commit`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    })
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
     sseLogger.info(`Connecting to ${EVENTS_URL}`)
