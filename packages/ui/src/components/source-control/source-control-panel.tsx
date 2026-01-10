@@ -193,7 +193,16 @@ const SourceControlPanel: Component<SourceControlPanelProps> = (props) => {
                 onClick={() => handleViewDiff(itemProps.file)}
                 title={`View diff: ${itemProps.file.path}`}
             >
-                {itemProps.file.path.split("/").pop()}
+                {(() => {
+                    const path = itemProps.file.path
+                    // Handle directories (trailing slash) - show dir name with indicator
+                    if (path.endsWith("/")) {
+                        const parts = path.slice(0, -1).split("/")
+                        return parts[parts.length - 1] + "/"
+                    }
+                    // Normal file - show filename
+                    return path.split("/").pop() || path
+                })()}
             </button>
             <div class="hidden group-hover:flex items-center gap-1">
                 <Show when={itemProps.showStage}>
@@ -239,7 +248,7 @@ const SourceControlPanel: Component<SourceControlPanelProps> = (props) => {
             <Show when={git.isGitRepo()}>
                 {/* Branch selector */}
                 <div class="flex items-center gap-2">
-                    <div class="relative flex-1">
+                    <div class="relative flex-1 min-w-0">
                         <button
                             type="button"
                             class="w-full flex items-center gap-2 px-2 py-1 text-xs bg-surface-tertiary rounded hover:bg-surface-secondary"
@@ -249,9 +258,9 @@ const SourceControlPanel: Component<SourceControlPanelProps> = (props) => {
                             }}
                             title="Switch branch"
                         >
-                            <GitBranch class="h-3 w-3" />
-                            <span class="flex-1 text-left truncate">{git.currentBranch() || "No branch"}</span>
-                            <ChevronDown class="h-3 w-3" />
+                            <GitBranch class="h-3 w-3 shrink-0" />
+                            <span class="flex-1 text-left truncate min-w-0">{git.currentBranch() || "No branch"}</span>
+                            <ChevronDown class="h-3 w-3 shrink-0" />
                         </button>
                         <Show when={showBranchPicker()}>
                             <div class="absolute top-full left-0 right-0 mt-1 bg-surface-secondary border border-base rounded shadow-lg z-10 max-h-48 overflow-y-auto">
