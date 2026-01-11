@@ -13,7 +13,7 @@
 }
 
 .prompt-input-actions {
-  @apply flex flex-col items-center justify-between;
+  @apply flex flex-col items-center;
   align-self: stretch;
   height: 100%;
   padding: 0.5rem 0.25rem;
@@ -27,6 +27,7 @@
   flex: 1 1 auto;
   height: 100%;
   min-width: 0;
+  transition: height 0.25s ease;
 }
 
 .prompt-input-field {
@@ -105,6 +106,68 @@
   cursor: not-allowed;
 }
 
+.prompt-expand-top {
+  position: absolute;
+  top: 0.3rem;
+  right: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.prompt-expand-button {
+  @apply w-9 h-9 flex items-center justify-center rounded-md;
+  color: var(--text-muted);
+  background-color: rgba(15, 23, 42, 0.04);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  padding: 0;
+  position: relative;
+}
+
+.prompt-expand-button:hover:not(:disabled) {
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.prompt-expand-button:active:not(:disabled) {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+  transform: scale(0.95);
+}
+
+.prompt-expand-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.prompt-expand-button::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+  color: var(--text-primary);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-base);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 1000;
+  backdrop-filter: blur(8px);
+}
+
+.prompt-expand-button:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .prompt-overlay-text {
   display: inline-flex;
   align-items: center;
@@ -176,6 +239,7 @@
   @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
+  margin-top: auto;
 }
 
 .send-button.shell-mode {

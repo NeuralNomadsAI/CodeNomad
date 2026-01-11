@@ -1,6 +1,7 @@
-import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack } from "solid-js"
+import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack, createMemo } from "solid-js"
 import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
 import UnifiedPicker from "./unified-picker"
+import ExpandButton from "./expand-button"
 import { addToHistory, getHistory } from "../stores/message-history"
 import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -46,9 +47,40 @@ export default function PromptInput(props: PromptInputProps) {
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
   const [mode, setMode] = createSignal<"normal" | "shell">("normal")
+  const [expandState, setExpandState] = createSignal<"normal" | "fifty" | "eighty">("normal")
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
   let containerRef: HTMLDivElement | undefined
+
+   const calculateExpandedHeight = () => {
+     if (!containerRef) {
+       return 0
+     }
+
+     const root = containerRef.closest(".session-view")
+     if (!root) {
+       return 0
+     }
+     const rootRect = root.getBoundingClientRect()
+
+     // Reserve minimum space for message section (200px minimum)
+     const MIN_MESSAGE_SPACE = 200
+     const availableForInput = rootRect.height - MIN_MESSAGE_SPACE
+
+     return availableForInput
+   }
+
+   const expandedHeight = createMemo(() => {
+     const state = expandState()
+     if (state === "normal") return "auto"
+
+     const availableHeight = calculateExpandedHeight()
+
+     if (state === "fifty") {
+       return `${availableHeight * 0.5}px`
+     }
+     return `${availableHeight * 0.8}px`
+   })
 
 
 
@@ -701,7 +733,13 @@ export default function PromptInput(props: PromptInputProps) {
     if (!props.onAbortSession || !props.isSessionBusy) return
     void props.onAbortSession()
   }
- 
+
+   function handleExpandToggle(nextState: "normal" | "fifty" | "eighty") {
+     setExpandState(nextState)
+     // Keep focus on textarea
+     textareaRef?.focus()
+   }
+  
   function handleInput(e: Event) {
 
     const target = e.target as HTMLTextAreaElement
@@ -1161,7 +1199,13 @@ export default function PromptInput(props: PromptInputProps) {
               </For>
             </div>
           </Show>
-          <div class="prompt-input-field-container">
+          <div 
+            class="prompt-input-field-container"
+            style={{
+              "height": expandedHeight(),
+              "transition": "height 0.25s ease",
+            }}
+          >
             <div class="prompt-input-field">
               <textarea
               ref={textareaRef}
@@ -1179,7 +1223,10 @@ export default function PromptInput(props: PromptInputProps) {
               onBlur={() => setIsFocused(false)}
               disabled={props.disabled}
               rows={4}
-              style={attachments().length > 0 ? { "padding-top": "8px" } : {}}
+               style={{
+                 "padding-top": attachments().length > 0 ? "8px" : "0",
+                 "overflow-y": expandState() !== "normal" ? "auto" : "visible",
+               }}
               spellcheck={false}
               autocorrect="off"
               autoCapitalize="off"
@@ -1209,6 +1256,12 @@ export default function PromptInput(props: PromptInputProps) {
                 </button>
               </div>
             </Show>
+            <div class="prompt-expand-top">
+              <ExpandButton
+                expandState={expandState}
+                onToggleExpand={handleExpandToggle}
+              />
+            </div>
             <Show when={shouldShowOverlay()}>
               <div class={`prompt-input-overlay ${mode() === "shell" ? "shell-mode" : ""}`}>
                 <Show
