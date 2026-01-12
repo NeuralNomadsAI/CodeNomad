@@ -1,9 +1,41 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "fs"
+import { execSync } from "child_process"
 import path from "path"
 import os from "os"
 import { Logger } from "../logger"
 
-const PID_REGISTRY_DIR = path.join(os.homedir(), ".config", "codenomad")
+/**
+ * Kill a process and all its children (process tree)
+ */
+function killProcessTree(pid: number, signal: NodeJS.Signals = "SIGTERM", logger?: Logger): void {
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /pid ${pid} /T /F`, { stdio: "ignore" })
+    } else {
+      // Kill children first
+      try {
+        const children = execSync(`pgrep -P ${pid}`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean)
+        for (const childPid of children) {
+          const childPidNum = parseInt(childPid, 10)
+          if (!isNaN(childPidNum)) {
+            try {
+              process.kill(childPidNum, signal)
+            } catch {
+              // Child may have already exited
+            }
+          }
+        }
+      } catch {
+        // No children or pgrep failed
+      }
+      process.kill(pid, signal)
+    }
+  } catch {
+    // Process may have already exited
+  }
+}
+
+const PID_REGISTRY_DIR = path.join(os.homedir(), ".config", "era-code")
 const PID_REGISTRY_PATH = path.join(PID_REGISTRY_DIR, "workspace-pids.json")
 
 interface WorkspacePidEntry {
@@ -84,24 +116,17 @@ export function cleanupOrphanedWorkspaces(logger?: Logger): void {
     if (processExists(entry.pid)) {
       logger?.info(
         { workspaceId, pid: entry.pid, folder: entry.folder, startedAt: entry.startedAt },
-        "Found orphaned workspace process, killing it"
+        "Found orphaned workspace process tree, killing it"
       )
-      try {
-        process.kill(entry.pid, "SIGTERM")
-        // Give it time to die gracefully
-        setTimeout(() => {
-          if (processExists(entry.pid)) {
-            logger?.warn({ workspaceId, pid: entry.pid }, "Orphan didn't respond to SIGTERM, sending SIGKILL")
-            try {
-              process.kill(entry.pid, "SIGKILL")
-            } catch {
-              // Process may have exited
-            }
-          }
-        }, 1000)
-      } catch (error) {
-        logger?.warn({ workspaceId, pid: entry.pid, error }, "Failed to kill orphaned workspace process")
-      }
+      // Kill the entire process tree (parent + children)
+      killProcessTree(entry.pid, "SIGTERM", logger)
+      // Give it time to die gracefully, then force kill if needed
+      setTimeout(() => {
+        if (processExists(entry.pid)) {
+          logger?.warn({ workspaceId, pid: entry.pid }, "Orphan process tree didn't respond to SIGTERM, sending SIGKILL")
+          killProcessTree(entry.pid, "SIGKILL", logger)
+        }
+      }, 1000)
     } else {
       logger?.debug({ workspaceId, pid: entry.pid }, "Orphaned workspace process no longer exists")
     }

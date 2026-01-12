@@ -235,6 +235,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                instanceId={props.instanceId}
                sessionId={activeSession.id}
                loading={messagesLoading()}
+               isSessionBusy={sessionBusy()}
                onRevert={handleRevert}
                onFork={handleFork}
                isActive={props.isActive}

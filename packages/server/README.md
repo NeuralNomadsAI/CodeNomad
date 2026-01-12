@@ -1,11 +1,11 @@
-# CodeNomad Server
+# Era Code Server
 
-**CodeNomad Server** is the high-performance engine behind the CodeNomad cockpit. It transforms your machine into a robust development host, managing the lifecycle of multiple OpenCode instances and providing the low-latency data streams that long-haul builders demand. It bridges your local filesystem with the UI, ensuring that whether you are on localhost or a remote tunnel, you have the speed, clarity, and control of a native workspace.
+**Era Code Server** is the high-performance engine behind the Era Code cockpit. It transforms your machine into a robust development host, managing the lifecycle of multiple OpenCode instances and providing the low-latency data streams that long-haul builders demand. It bridges your local filesystem with the UI, ensuring that whether you are on localhost or a remote tunnel, you have the speed, clarity, and control of a native workspace.
 
 ## Features & Capabilities
 
 ### 🌍 Deployment Freedom
-- **Remote Access**: Host CodeNomad on a powerful workstation and access it from your lightweight laptop.
+- **Remote Access**: Host Era Code on a powerful workstation and access it from your lightweight laptop.
 - **Code Anywhere**: Tunnel in via VPN or SSH to code securely from coffee shops or while traveling.
 - **Multi-Device**: The responsive web client works on tablets and iPads, turning any screen into a dev terminal.
 - **Always-On**: Run as a background service so your sessions are always ready when you connect.
@@ -25,7 +25,7 @@
 ## Usage
 
 ### Run via npx (Recommended)
-You can run CodeNomad directly without installing it:
+You can run Era Code directly without installing it:
 
 ```sh
 npx @neuralnomads/codenomad --launch
@@ -53,6 +53,6 @@ You can configure the server using flags or environment variables:
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
 
 ### Data Storage
-- **Config**: `~/.config/codenomad/config.json`
-- **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)
+- **Config**: `~/.config/era-code/config.json`
+- **Instance Data**: `~/.config/era-code/instances` (chat history, etc.)
 

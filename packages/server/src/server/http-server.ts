@@ -18,6 +18,7 @@ import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
+import { registerModelsProxyRoutes } from "./routes/models-proxy"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 
@@ -110,6 +111,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
+  registerModelsProxyRoutes(app)
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
 
@@ -172,7 +174,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       deps.serverMeta.port = actualPort
       deps.serverMeta.listeningMode = deps.host === "0.0.0.0" ? "all" : "local"
       deps.logger.info({ port: actualPort, host: deps.host }, "HTTP server listening")
-      console.log(`CodeNomad Server is ready at ${serverUrl}`)
+      console.log(`Era Code Server is ready at ${serverUrl}`)
 
       return { port: actualPort, url: serverUrl, displayHost }
     },

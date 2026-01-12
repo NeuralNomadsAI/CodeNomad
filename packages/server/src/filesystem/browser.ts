@@ -48,9 +48,10 @@ export class FileSystemBrowser {
     })
   }
 
-  browse(targetPath?: string, options: { includeFiles?: boolean } = {}): FileSystemListResponse {
+  browse(targetPath?: string, options: { includeFiles?: boolean; forceUnrestricted?: boolean } = {}): FileSystemListResponse {
     const includeFiles = options.includeFiles ?? true
-    if (this.unrestricted) {
+    const useUnrestricted = this.unrestricted || options.forceUnrestricted
+    if (useUnrestricted) {
       return this.listUnrestricted(targetPath, includeFiles)
     }
     return this.listRestrictedWithMetadata(targetPath, includeFiles)

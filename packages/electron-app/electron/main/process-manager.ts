@@ -10,7 +10,7 @@ import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./use
 const nodeRequire = createRequire(import.meta.url)
 
 // PID file for orphan process detection and cleanup
-const PID_FILE_DIR = path.join(os.homedir(), ".config", "codenomad")
+const PID_FILE_DIR = path.join(os.homedir(), ".config", "era-code")
 const PID_FILE_PATH = path.join(PID_FILE_DIR, "server.pid")
 
 function processExists(pid: number): boolean {
@@ -108,7 +108,7 @@ interface CliEntryResolution {
   runnerPath?: string
 }
 
-const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
+const DEFAULT_CONFIG_PATH = "~/.config/era-code/config.json"
 
 function resolveConfigPath(configPath?: string): string {
   const target = configPath && configPath.trim().length > 0 ? configPath : DEFAULT_CONFIG_PATH
@@ -170,7 +170,7 @@ export class CliProcessManager extends EventEmitter {
     const args = this.buildCliArgs(options, host)
 
     console.info(
-      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
+      `[cli] launching Era Code CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
     )
 
     const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
@@ -326,7 +326,7 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private extractPort(line: string): number | null {
-    const readyMatch = line.match(/CodeNomad Server is ready at http:\/\/[^:]+:(\d+)/i)
+    const readyMatch = line.match(/Era Code Server is ready at http:\/\/[^:]+:(\d+)/i)
     if (readyMatch) {
       return parseInt(readyMatch[1], 10)
     }
@@ -442,7 +442,7 @@ export class CliProcessManager extends EventEmitter {
     } catch {
       // fall through to error below
     }
-    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
+    throw new Error("Unable to locate Era Code CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
   }
 }
 

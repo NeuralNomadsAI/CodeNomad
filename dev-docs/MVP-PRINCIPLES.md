@@ -298,7 +298,7 @@ When the time comes:
 
 > **Make it work, then make it better, then make it fast.**
 
-For CodeNomad MVP:
+For Era Code MVP:
 
 - **Phase 1-7:** Make it work, make it better
 - **Phase 8+:** Make it fast

@@ -41,7 +41,7 @@ function ensureVisibilityEffect() {
     if (!activeToast || activeToastVersion !== release.version) {
       dismissActiveToast()
       activeToast = showToastNotification({
-        title: `CodeNomad ${release.version}`,
+        title: `Era Code ${release.version}`,
         message: release.channel === "dev" ? "Dev release build available." : "New stable build on GitHub.",
         variant: "info",
         duration: Number.POSITIVE_INFINITY,

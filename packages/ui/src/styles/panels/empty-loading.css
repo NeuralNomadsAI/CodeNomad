@@ -47,3 +47,497 @@
   border-top-color: var(--accent-primary);
   animation: spin 1s linear infinite;
 }
+
+/* Home screen - New Tab view */
+.home-screen {
+  @apply flex flex-col items-center gap-8 py-8 px-4;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.home-hero {
+  @apply flex flex-col items-center gap-4 text-center;
+}
+
+.home-title {
+  @apply text-3xl font-bold;
+  color: var(--text-primary);
+}
+
+.home-subtitle {
+  @apply text-base;
+  color: var(--text-secondary);
+}
+
+.home-search-container {
+  @apply w-full max-w-lg mt-4;
+}
+
+.home-search {
+  @apply relative flex items-center;
+}
+
+.home-search-icon {
+  @apply absolute left-3 w-5 h-5;
+  color: var(--text-muted);
+}
+
+.home-search-input {
+  @apply w-full pl-10 pr-10 py-3 text-base rounded-lg border;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.home-search-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb, 59, 130, 246), 0.15);
+}
+
+.home-search-clear {
+  @apply absolute right-3 p-1 rounded;
+  color: var(--text-muted);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.home-search-clear:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.home-search-error {
+  @apply mt-2 text-sm text-center;
+  color: var(--status-error);
+}
+
+/* Three cards grid */
+.home-cards {
+  @apply grid gap-4 w-full;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.home-card {
+  @apply flex flex-col rounded-lg border p-4;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  min-height: 200px;
+}
+
+.home-card-header {
+  @apply flex items-center gap-2 mb-2;
+}
+
+.home-card-icon {
+  @apply w-5 h-5;
+  color: var(--accent-primary);
+}
+
+.home-card-title {
+  @apply text-base font-semibold;
+  color: var(--text-primary);
+}
+
+.home-card-description {
+  @apply text-sm mb-4;
+  color: var(--text-secondary);
+}
+
+.home-card-body {
+  @apply flex-1 flex flex-col justify-center;
+}
+
+.home-card-empty {
+  @apply flex-1 flex flex-col items-center justify-center text-center py-4;
+  color: var(--text-muted);
+}
+
+/* Recent folders list */
+.home-recent-list {
+  @apply flex flex-col gap-1 -mx-2;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.home-recent-item {
+  @apply flex items-center justify-between px-2 py-2 rounded transition-colors text-left w-full cursor-pointer;
+}
+
+.home-recent-item:hover,
+.home-recent-item-selected {
+  background-color: var(--surface-hover);
+}
+
+.home-recent-item-disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.home-recent-item-content {
+  @apply flex items-start gap-2 min-w-0 flex-1;
+}
+
+.home-recent-item-icon {
+  @apply w-4 h-4 flex-shrink-0 mt-0.5;
+  color: var(--text-muted);
+}
+
+.home-recent-item-info {
+  @apply flex flex-col min-w-0;
+}
+
+.home-recent-item-name {
+  @apply text-sm font-medium truncate;
+  color: var(--text-primary);
+}
+
+.home-recent-item-path {
+  @apply text-xs font-mono truncate;
+  color: var(--text-muted);
+}
+
+.home-recent-item-time {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.home-recent-item-remove {
+  @apply opacity-0 group-hover:opacity-100 p-1 rounded transition-all;
+  color: var(--text-muted);
+}
+
+.home-recent-item-remove:hover {
+  @apply bg-red-100 dark:bg-red-900/30;
+  color: var(--status-error);
+}
+
+/* Action buttons */
+.home-action-button {
+  @apply w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors;
+  background-color: var(--accent-primary);
+  color: var(--accent-primary-text, white);
+}
+
+.home-action-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.home-action-button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.home-action-button-secondary {
+  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+/* GitHub placeholder */
+.home-github-placeholder {
+  @apply flex flex-col items-center justify-center gap-3 text-center py-4;
+  color: var(--text-muted);
+}
+
+.home-github-placeholder p {
+  @apply text-sm;
+}
+
+/* Keyboard shortcuts footer */
+.home-shortcuts {
+  @apply flex items-center justify-center gap-2 flex-wrap text-sm;
+  color: var(--text-muted);
+}
+
+.home-shortcuts-divider {
+  color: var(--border-base);
+}
+
+/* Settings Panel - slide-in from right */
+.settings-panel-overlay {
+  @apply fixed inset-0 z-40;
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
+.settings-panel {
+  @apply flex flex-col w-80 h-full;
+  background-color: var(--surface-base);
+  border-left: 1px solid var(--border-base);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+}
+
+.settings-panel-header {
+  @apply flex items-center justify-between px-4 py-3;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.settings-panel-title {
+  @apply text-base font-semibold;
+  color: var(--text-primary);
+}
+
+.settings-panel-close {
+  @apply p-1 rounded transition-colors;
+  color: var(--text-secondary);
+}
+
+.settings-panel-close:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings-panel-content {
+  @apply flex-1 overflow-y-auto p-4;
+}
+
+.settings-section {
+  @apply mb-6;
+}
+
+.settings-section:last-child {
+  @apply mb-0;
+}
+
+.settings-section-title {
+  @apply text-xs font-medium uppercase tracking-wide mb-2;
+  color: var(--text-muted);
+}
+
+.settings-section-toggle {
+  @apply flex items-center gap-2 w-full text-left text-sm py-2 px-2 -mx-2 rounded transition-colors;
+  color: var(--text-secondary);
+}
+
+.settings-section-toggle:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings-status {
+  @apply flex items-center gap-3 p-3 rounded-lg;
+  background-color: var(--surface-secondary);
+}
+
+.settings-status-dot {
+  @apply w-3 h-3 rounded-full;
+}
+
+.settings-status-label {
+  @apply text-sm font-medium;
+}
+
+.settings-actions {
+  @apply flex flex-col gap-2;
+}
+
+.settings-action-button {
+  @apply flex items-center gap-2 w-full text-left text-sm py-2 px-3 rounded transition-colors;
+  color: var(--text-secondary);
+  background-color: var(--surface-secondary);
+}
+
+.settings-action-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings-details {
+  @apply mt-2 p-3 rounded-lg;
+  background-color: var(--surface-secondary);
+}
+
+.settings-detail-row {
+  @apply flex justify-between items-center py-1.5;
+}
+
+.settings-detail-row:not(:last-child) {
+  border-bottom: 1px solid var(--border-base);
+}
+
+.settings-detail-label {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.settings-detail-value {
+  @apply text-xs;
+  color: var(--text-secondary);
+  max-width: 60%;
+}
+
+/* Settings Toggle Switches */
+.settings-section-title {
+  @apply flex items-center gap-1.5;
+}
+
+.settings-toggles {
+  @apply flex flex-col gap-3;
+}
+
+.settings-toggle-row {
+  @apply flex items-center justify-between gap-3 p-3 rounded-lg cursor-pointer transition-colors;
+  background-color: var(--surface-secondary);
+}
+
+.settings-toggle-row:hover {
+  background-color: var(--surface-hover);
+}
+
+.settings-toggle-label {
+  @apply flex flex-col gap-0.5 flex-1;
+}
+
+.settings-toggle-title {
+  @apply text-sm font-medium;
+  color: var(--text-primary);
+}
+
+.settings-toggle-description {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.settings-toggle-switch {
+  @apply relative flex-shrink-0 w-10 h-5 rounded-full transition-colors;
+  background-color: var(--surface-tertiary, var(--border-base));
+}
+
+.settings-toggle-switch.active {
+  background-color: var(--accent-primary);
+}
+
+.settings-toggle-switch-handle {
+  @apply absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform;
+  background-color: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.settings-toggle-switch.active .settings-toggle-switch-handle {
+  transform: translateX(20px);
+}
+
+/* Close Tab Modal */
+.close-modal-overlay {
+  @apply fixed inset-0 z-40;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.close-modal {
+  @apply w-full max-w-md rounded-lg;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.close-modal-header {
+  @apply flex items-start gap-3 p-4;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.close-modal-icon {
+  @apply flex-shrink-0 p-2 rounded-full;
+  background-color: rgba(234, 179, 8, 0.1);
+  color: var(--status-warning, #eab308);
+}
+
+.close-modal-title-group {
+  @apply flex-1 min-w-0;
+}
+
+.close-modal-title {
+  @apply text-base font-semibold;
+  color: var(--text-primary);
+}
+
+.close-modal-description {
+  @apply text-sm mt-1;
+  color: var(--text-secondary);
+}
+
+.close-modal-close {
+  @apply flex-shrink-0 p-1 rounded transition-colors;
+  color: var(--text-muted);
+}
+
+.close-modal-close:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.close-modal-body {
+  @apply p-4;
+}
+
+.close-modal-checkbox {
+  @apply flex items-center gap-2 text-sm cursor-pointer;
+  color: var(--text-secondary);
+}
+
+.close-modal-checkbox input[type="checkbox"] {
+  @apply w-4 h-4 rounded;
+  accent-color: var(--accent-primary);
+}
+
+.close-modal-footer {
+  @apply flex justify-end gap-2 p-4;
+  border-top: 1px solid var(--border-base);
+}
+
+.close-modal-button {
+  @apply px-4 py-2 text-sm font-medium rounded-md transition-colors;
+}
+
+.close-modal-button-secondary {
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.close-modal-button-secondary:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.close-modal-button-danger {
+  background-color: var(--status-error, #ef4444);
+  color: white;
+}
+
+.close-modal-button-danger:hover {
+  filter: brightness(1.1);
+}
+
+/* Home screen keyboard shortcuts footer */
+.home-shortcuts-footer {
+  @apply fixed bottom-0 left-0 right-0 py-3 px-4;
+  background: linear-gradient(to top, var(--surface-secondary) 60%, transparent);
+  pointer-events: none;
+}
+
+.home-shortcuts-list {
+  @apply flex items-center justify-center gap-4;
+  pointer-events: auto;
+}
+
+.home-shortcut-item {
+  @apply flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors;
+  color: var(--text-muted);
+  background-color: transparent;
+}
+
+.home-shortcut-item:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.home-shortcut-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.home-shortcut-item .kbd {
+  @apply text-xs;
+  opacity: 0.8;
+}

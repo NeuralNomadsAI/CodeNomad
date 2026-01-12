@@ -23,6 +23,7 @@ interface UseAppLifecycleOptions {
   setShowFolderSelection: (value: boolean) => void
   getActiveInstance: () => Instance | null
   getActiveSessionIdForInstance: () => string | null
+  openModelSelector?: () => void
 }
 
 export function useAppLifecycle(options: UseAppLifecycleOptions) {
@@ -56,9 +57,14 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
     registerAgentShortcuts(
       () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
+        // Use new model selector modal if available, otherwise fall back to sidebar
+        if (options.openModelSelector) {
+          options.openModelSelector()
+        } else {
+          const instance = options.getActiveInstance()
+          if (!instance) return
+          emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
+        }
       },
       () => {
         const instance = options.getActiveInstance()

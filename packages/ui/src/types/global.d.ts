@@ -39,11 +39,11 @@ declare global {
   }
 
   interface Window {
-     __CODENOMAD_API_BASE__?: string
-     __CODENOMAD_EVENTS_URL__?: string
+     __ERA_CODE_API_BASE__?: string
+     __ERA_CODE_EVENTS_URL__?: string
      electronAPI?: ElectronAPI
      __TAURI__?: TauriBridge
-     codenomadLogger?: LoggerControls
+     eraCodeLogger?: LoggerControls
    }
  }
 

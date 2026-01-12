@@ -9,6 +9,26 @@
   color: inherit;
 }
 
+/* Sub-agent task styling - visually distinct from regular tool calls */
+.tool-call-message.tool-call-subagent {
+  background-color: var(--message-tool-bg);
+  border-left-color: var(--accent-primary, #6366f1);
+}
+
+.tool-call-message.tool-call-subagent .tool-call-header-label {
+  color: var(--accent-primary, #6366f1);
+}
+
+.tool-call-message.tool-call-subagent .tool-call-header-button {
+  color: var(--accent-primary, #6366f1);
+  border-color: var(--accent-primary, #6366f1);
+}
+
+.tool-call-message.tool-call-subagent .tool-call-header-button:hover:not(:disabled) {
+  background-color: var(--accent-primary, #6366f1);
+  color: var(--text-on-primary, white);
+}
+
 .tool-call-header-label {
   @apply flex items-center justify-between gap-2 font-semibold text-sm;
   color: var(--message-tool-border);

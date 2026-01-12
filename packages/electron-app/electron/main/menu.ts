@@ -7,7 +7,7 @@ export function createApplicationMenu(mainWindow: BrowserWindow) {
     ...(isMac
       ? [
           {
-            label: "CodeNomad",
+            label: "Era Code",
             submenu: [
               { role: "about" as const },
               { type: "separator" as const },

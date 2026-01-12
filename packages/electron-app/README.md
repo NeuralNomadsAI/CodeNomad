@@ -1,10 +1,10 @@
-# CodeNomad App
+# Era Code App
 
-This package contains the native desktop application shell for CodeNomad, built with [Electron](https://www.electronjs.org/).
+This package contains the native desktop application shell for Era Code, built with [Electron](https://www.electronjs.org/).
 
 ## Overview
 
-The Electron app wraps the CodeNomad UI and Server into a standalone executable. It provides deeper system integration, such as:
+The Electron app wraps the Era Code UI and Server into a standalone executable. It provides deeper system integration, such as:
 - Native window management
 - Global keyboard shortcuts
 - Application menu integration

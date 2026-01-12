@@ -51,7 +51,7 @@ Users close sessions expecting to free resources, but processes keep running ind
 ## Issue 2: macOS Window Close Leaves Processes Running
 
 ### Problem
-On macOS, closing the window (red X) doesn't quit the app - this is standard macOS behavior. However, the CodeNomad server and all OpenCode processes continue running invisibly.
+On macOS, closing the window (red X) doesn't quit the app - this is standard macOS behavior. However, the Era Code server and all OpenCode processes continue running invisibly.
 
 ### Evidence
 ```typescript
@@ -147,7 +147,7 @@ If Electron crashes (or is force-killed), child processes become orphans:
 
 ### Evidence
 - `CliProcessManager` stores PID only in memory: `this.child`
-- No file at `~/.config/codenomad/server.pid`
+- No file at `~/.config/era-code/server.pid`
 - `app.whenReady()` immediately spawns new CLI without checking for existing
 
 ### Impact
@@ -175,12 +175,12 @@ if (fs.existsSync(PID_FILE)) {
 ```
 
 #### 4B. Process Name Detection (Complementary)
-- On startup, scan for processes named "opencode" or "codenomad"
+- On startup, scan for processes named "opencode" or "era-code"
 - Kill any that match and aren't the current process
 - More aggressive but catches edge cases
 
 #### 4C. Workspace PID Tracking (For OpenCode Processes)
-- Persist workspace PIDs to `~/.config/codenomad/workspaces.json`
+- Persist workspace PIDs to `~/.config/era-code/workspaces.json`
 - On server startup, kill any orphaned workspace processes
 - Structure: `{ "workspace-id": { "pid": 12345, "folder": "/path" } }`
 

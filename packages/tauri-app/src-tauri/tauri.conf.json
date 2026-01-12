@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CodeNomad",
+  "productName": "Era Code",
   "version": "0.1.0",
   "identifier": "ai.opencode.client",
   "build": {
@@ -16,7 +16,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CodeNomad",
+        "title": "Era Code",
         "url": "loading.html",
         "width": 1400,
         "height": 900,

@@ -12,7 +12,7 @@ const DEFAULT_INSTANCE_DATA: InstanceData = {
 export class InstanceStore {
   private readonly instancesDir: string
 
-  constructor(baseDir = path.join(os.homedir(), ".config", "codenomad", "instances")) {
+  constructor(baseDir = path.join(os.homedir(), ".config", "era-code", "instances")) {
     this.instancesDir = baseDir
     fs.mkdirSync(this.instancesDir, { recursive: true })
   }

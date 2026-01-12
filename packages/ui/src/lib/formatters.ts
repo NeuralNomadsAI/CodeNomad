@@ -10,3 +10,11 @@ export function formatTokenTotal(value: number): string {
   }
   return value.toLocaleString()
 }
+
+export function formatCost(value: number): string {
+  if (value === 0) return "$0.00"
+  if (value < 0.01) return "<$0.01"
+  if (value >= 100) return `$${value.toFixed(0)}`
+  if (value >= 10) return `$${value.toFixed(1)}`
+  return `$${value.toFixed(2)}`
+}

@@ -1,6 +1,7 @@
 import { Component } from "solid-js"
 import type { Instance } from "../types/instance"
 import { FolderOpen, X } from "lucide-solid"
+import { getInstanceAggregateStatus, type InstanceAggregateStatus } from "../stores/session-status"
 
 interface InstanceTabProps {
   instance: Instance
@@ -9,50 +10,43 @@ interface InstanceTabProps {
   onClose: () => void
 }
 
-function formatFolderName(path: string, instances: Instance[], currentInstance: Instance): string {
-  const name = path.split("/").pop() || path
+const InstanceTab: Component<InstanceTabProps> = (props) => {
+  const folderName = () => props.instance.folder.split("/").pop() || props.instance.folder
 
-  const duplicates = instances.filter((i) => {
-    const iName = i.folder.split("/").pop() || i.folder
-    return iName === name
-  })
-
-  if (duplicates.length > 1) {
-    const index = duplicates.findIndex((i) => i.id === currentInstance.id)
-    return `~/${name} (${index + 1})`
+  // Get status dot class based on aggregate session status
+  const getStatusDotClass = () => {
+    const status = getInstanceAggregateStatus(props.instance.id)
+    if (status === "error") return "project-status-dot project-status-dot-error"
+    if (status === "working") return "project-status-dot project-status-dot-working"
+    return "project-status-dot project-status-dot-idle"
   }
 
-  return `~/${name}`
-}
-
-const InstanceTab: Component<InstanceTabProps> = (props) => {
   return (
-    <div class="group">
-      <button
-        class={`tab-base ${props.active ? "tab-active" : "tab-inactive"}`}
-        onClick={props.onSelect}
-        title={props.instance.folder}
-        role="tab"
-        aria-selected={props.active}
+    <button
+      class={`project-tab ${props.active ? "project-tab-active" : "project-tab-inactive"} group`}
+      onClick={props.onSelect}
+      title={props.instance.folder}
+      role="tab"
+      aria-selected={props.active}
+    >
+      <span class="project-tab-icon-wrapper">
+        <FolderOpen class="w-4 h-4 flex-shrink-0 opacity-70" />
+        <span class={getStatusDotClass()} />
+      </span>
+      <span class="project-tab-label">{folderName()}</span>
+      <span
+        class="project-tab-close"
+        onClick={(e) => {
+          e.stopPropagation()
+          props.onClose()
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={`Close ${folderName()}`}
       >
-        <FolderOpen class="w-4 h-4 flex-shrink-0" />
-        <span class="tab-label">
-          {props.instance.folder.split("/").pop() || props.instance.folder}
-        </span>
-        <span
-          class="tab-close ml-auto"
-          onClick={(e) => {
-            e.stopPropagation()
-            props.onClose()
-          }}
-          role="button"
-          tabIndex={0}
-          aria-label="Close instance"
-        >
-          <X class="w-3 h-3" />
-        </span>
-      </button>
-    </div>
+        <X class="w-3 h-3" />
+      </span>
+    </button>
   )
 }
 

@@ -25,6 +25,7 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@rollup/rollup-darwin-arm64": "^4.53.3"
   }
 }

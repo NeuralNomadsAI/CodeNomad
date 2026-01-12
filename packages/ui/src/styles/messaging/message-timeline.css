@@ -67,9 +67,12 @@
   gap: 0.35rem;
   padding: 0.25rem;
   overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 8px;
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow, 0 6px 24px rgba(0, 0, 0, 0.2));
+  /* Prevent layout thrashing during scroll */
+  contain: layout style;
 }
 
 .message-timeline::-webkit-scrollbar {
@@ -84,6 +87,8 @@
 .message-timeline-segment {
   width: 100%;
   min-height: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
   border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
@@ -96,6 +101,8 @@
   text-transform: uppercase;
   color: var(--text-primary);
   transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  /* Prevent layout thrashing */
+  contain: layout style paint;
 }
 
 .message-timeline-segment.message-timeline-segment-hidden {

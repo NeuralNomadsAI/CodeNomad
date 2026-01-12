@@ -13,12 +13,13 @@ const SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const QUOTE_SELECTION_MAX_LENGTH = 2000
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+const codeNomadLogo = new URL("../images/EraCode-Icon.png", import.meta.url).href
 
 export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  isSessionBusy?: boolean
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   registerScrollToBottom?: (fn: () => void) => void
@@ -692,7 +693,32 @@ export default function MessageSection(props: MessageSectionProps) {
     const ids = messageIds()
     if (!container || ids.length === 0) return
     if (typeof document === "undefined") return
- 
+
+    // Debounce active message updates to prevent flickering during scroll
+    let pendingActiveMessage: string | null = null
+    let activeMessageFrame: number | null = null
+    const ACTIVE_MESSAGE_DEBOUNCE_MS = 100
+    let activeMessageDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const updateActiveMessage = (messageId: string) => {
+      pendingActiveMessage = messageId
+      if (activeMessageDebounceTimer !== null) {
+        clearTimeout(activeMessageDebounceTimer)
+      }
+      activeMessageDebounceTimer = setTimeout(() => {
+        if (pendingActiveMessage !== null) {
+          // Use requestAnimationFrame to batch with rendering
+          if (activeMessageFrame !== null) {
+            cancelAnimationFrame(activeMessageFrame)
+          }
+          activeMessageFrame = requestAnimationFrame(() => {
+            activeMessageFrame = null
+            setActiveMessageId((current) => (current === pendingActiveMessage ? current : pendingActiveMessage))
+          })
+        }
+      }, ACTIVE_MESSAGE_DEBOUNCE_MS)
+    }
+
     const observer = new IntersectionObserver(
       (entries) => {
         let best: IntersectionObserverEntry | null = null
@@ -705,20 +731,28 @@ export default function MessageSection(props: MessageSectionProps) {
         if (best) {
           const anchorId = (best.target as HTMLElement).id
           const messageId = anchorId.startsWith("message-anchor-") ? anchorId.slice("message-anchor-".length) : anchorId
-          setActiveMessageId((current) => (current === messageId ? current : messageId))
+          updateActiveMessage(messageId)
         }
       },
       { root: container, rootMargin: "-10% 0px -80% 0px", threshold: 0 },
     )
- 
+
     ids.forEach((messageId) => {
       const anchor = document.getElementById(getMessageAnchorId(messageId))
       if (anchor) {
         observer.observe(anchor)
       }
     })
- 
-    onCleanup(() => observer.disconnect())
+
+    onCleanup(() => {
+      observer.disconnect()
+      if (activeMessageDebounceTimer !== null) {
+        clearTimeout(activeMessageDebounceTimer)
+      }
+      if (activeMessageFrame !== null) {
+        cancelAnimationFrame(activeMessageFrame)
+      }
+    })
   })
  
   onCleanup(() => {
@@ -753,8 +787,8 @@ export default function MessageSection(props: MessageSectionProps) {
               <div class="empty-state">
                 <div class="empty-state-content">
                   <div class="flex flex-col items-center gap-3 mb-6">
-                    <img src={codeNomadLogo} alt="CodeNomad logo" class="h-48 w-auto" loading="lazy" />
-                    <h1 class="text-3xl font-semibold text-primary">CodeNomad</h1>
+                    <img src={codeNomadLogo} alt="Era Code logo" class="h-48 w-auto" loading="lazy" />
+                    <h1 class="text-3xl font-semibold text-primary">Era Code</h1>
                   </div>
                   <h3>Start a conversation</h3>
                   <p>Type a message below or open the Command Palette:</p>
@@ -790,6 +824,7 @@ export default function MessageSection(props: MessageSectionProps) {
               showUsageMetrics={showUsagePreference}
               scrollContainer={scrollElement}
               loading={props.loading}
+              isSessionBusy={props.isSessionBusy}
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}

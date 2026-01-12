@@ -65,8 +65,8 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
         result.push([id, session])
       }
     }
-    // Sort by creation time (most recent first)
-    result.sort((a, b) => (b[1].time.created ?? 0) - (a[1].time.created ?? 0))
+    // Sort by creation time (oldest first, so new tabs appear on the right like a browser)
+    result.sort((a, b) => (a[1].time.created ?? 0) - (b[1].time.created ?? 0))
     return result
   })
 
@@ -123,8 +123,15 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
   const [openDropdown, setOpenDropdown] = createSignal<string | null>(null)
 
   const toggleDropdown = (sessionId: string, e: MouseEvent) => {
+    e.preventDefault()
     e.stopPropagation()
-    setOpenDropdown(prev => prev === sessionId ? null : sessionId)
+    e.stopImmediatePropagation()
+    console.log('[SessionTabs] toggleDropdown called for:', sessionId, 'current:', openDropdown())
+    setOpenDropdown(prev => {
+      const next = prev === sessionId ? null : sessionId
+      console.log('[SessionTabs] openDropdown changing from', prev, 'to', next)
+      return next
+    })
   }
 
   return (
@@ -182,6 +189,14 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
                 return ""
               }
 
+              // Get status dot class for the session
+              const getStatusDotClass = () => {
+                const status = getThreadPriorityStatus(id)
+                if (status === "permission") return "session-status-dot session-status-dot-error"
+                if (status === "working" || status === "compacting") return "session-status-dot session-status-dot-working"
+                return "session-status-dot session-status-dot-idle"
+              }
+
               return (
                 <div class="session-tab-dropdown-container relative">
                   <button
@@ -191,21 +206,26 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
                     role="tab"
                     aria-selected={isActive()}
                   >
-                    <MessageSquare class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                    <span class="session-tab-icon-wrapper">
+                      <MessageSquare class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                      <span class={getStatusDotClass()} />
+                    </span>
                     <span class="session-tab-label">{getShortTitle(session.title)}</span>
 
-                    {/* Badge for sessions with children */}
+                    {/* Badge for sessions with children - use native button for reliable click handling */}
                     <Show when={badge()}>
                       {(badgeInfo) => (
-                        <span
+                        <button
+                          type="button"
                           class={`session-tab-badge session-tab-badge-${badgeInfo().status}`}
                           onClick={(e) => toggleDropdown(id, e)}
+                          onMouseDown={(e) => e.stopPropagation()}
                           title={`${badgeInfo().count} child session${badgeInfo().count > 1 ? 's' : ''}`}
                         >
                           <span class="session-tab-badge-indicator">{getStatusIndicator(badgeInfo().status)}</span>
                           <span class="session-tab-badge-count">{badgeInfo().count}</span>
                           <ChevronDown class={`w-3 h-3 transition-transform ${isDropdownOpen() ? 'rotate-180' : ''}`} />
-                        </span>
+                        </button>
                       )}
                     </Show>
 

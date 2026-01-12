@@ -1,6 +1,6 @@
 import type { Instance } from "../types/instance"
 import type { McpServerConfig } from "../stores/preferences"
-import { CODENOMAD_API_BASE } from "./api-client"
+import { ERA_CODE_API_BASE } from "./api-client"
 
 function normalizeProxyPath(proxyPath: string): string {
   const withLeading = proxyPath.startsWith("/") ? proxyPath : `/${proxyPath}`
@@ -9,7 +9,7 @@ function normalizeProxyPath(proxyPath: string): string {
 
 function buildInstanceBaseUrl(proxyPath: string): string {
   const normalized = normalizeProxyPath(proxyPath)
-  const base = CODENOMAD_API_BASE.replace(/\/+$/, "")
+  const base = ERA_CODE_API_BASE.replace(/\/+$/, "")
   return `${base}${normalized}`
 }
 

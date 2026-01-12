@@ -1,10 +1,46 @@
-import { ChildProcess, spawn } from "child_process"
+import { ChildProcess, spawn, execSync } from "child_process"
 import { existsSync, statSync } from "fs"
 import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
 import { registerWorkspacePid, unregisterWorkspacePid } from "./pid-registry"
+
+/**
+ * Kill a process and all its children (process tree)
+ * This ensures that child processes spawned by node wrappers are also killed
+ */
+function killProcessTree(pid: number, signal: NodeJS.Signals = "SIGTERM", logger?: Logger): void {
+  try {
+    if (process.platform === "win32") {
+      // Windows: use taskkill with /T flag to kill tree
+      execSync(`taskkill /pid ${pid} /T /F`, { stdio: "ignore" })
+    } else {
+      // Unix: First try to kill children, then parent
+      // Get child PIDs using pgrep
+      try {
+        const children = execSync(`pgrep -P ${pid}`, { encoding: "utf-8" }).trim().split("\n").filter(Boolean)
+        for (const childPid of children) {
+          const childPidNum = parseInt(childPid, 10)
+          if (!isNaN(childPidNum)) {
+            logger?.debug({ pid: childPidNum, parentPid: pid }, "Killing child process")
+            try {
+              process.kill(childPidNum, signal)
+            } catch {
+              // Child may have already exited
+            }
+          }
+        }
+      } catch {
+        // No children or pgrep failed - that's fine
+      }
+      // Kill the parent process
+      process.kill(pid, signal)
+    }
+  } catch (error) {
+    logger?.debug({ pid, error }, "Error during process tree kill (process may have already exited)")
+  }
+}
 
 interface LaunchOptions {
   workspaceId: string
@@ -46,6 +82,8 @@ export class WorkspaceRuntime {
         cwd: options.folder,
         env,
         stdio: ["ignore", "pipe", "pipe"],
+        // Ensure child processes are in the same process group for proper cleanup
+        detached: false,
       })
 
       const managed: ManagedProcess = { child, requestedStop: false }
@@ -185,12 +223,20 @@ export class WorkspaceRuntime {
         return
       }
 
-      this.logger.debug({ workspaceId }, "Sending SIGTERM to workspace process")
-      child.kill("SIGTERM")
+      const pid = child.pid
+      if (!pid) {
+        this.logger.warn({ workspaceId }, "No PID available for process, using child.kill()")
+        child.kill("SIGTERM")
+        return
+      }
+
+      this.logger.debug({ workspaceId, pid }, "Sending SIGTERM to workspace process tree")
+      killProcessTree(pid, "SIGTERM", this.logger)
+
       setTimeout(() => {
-        if (!child.killed) {
-          this.logger.warn({ workspaceId }, "Process did not stop after SIGTERM, force killing")
-          child.kill("SIGKILL")
+        if (child.exitCode === null && child.signalCode === null) {
+          this.logger.warn({ workspaceId, pid }, "Process tree did not stop after SIGTERM, force killing")
+          killProcessTree(pid, "SIGKILL", this.logger)
         } else {
           this.logger.debug({ workspaceId }, "Workspace process stopped gracefully before SIGKILL timeout")
         }

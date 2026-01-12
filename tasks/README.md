@@ -1,6 +1,6 @@
 # Task Management
 
-This directory contains the task breakdown for building CodeNomad.
+This directory contains the task breakdown for building Era Code.
 
 ## Structure
 

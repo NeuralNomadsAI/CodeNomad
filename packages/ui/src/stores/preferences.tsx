@@ -67,6 +67,10 @@ export interface Preferences {
   idleInstanceTimeoutMinutes: number
   listeningMode: ListeningMode
 
+  // Chat window settings
+  defaultToolCallsCollapsed: boolean
+  showVerboseOutput: boolean
+
   modelDefaultsByAgent: Record<string, ModelPreference>
 
   mcpRegistry: Record<string, McpServerConfig>
@@ -106,6 +110,10 @@ const defaultPreferences: Preferences = {
   stopInstanceOnLastSessionDelete: false,
   idleInstanceTimeoutMinutes: 0,
   listeningMode: "local",
+
+  // Chat window settings - default to collapsed tool calls, show verbose output
+  defaultToolCallsCollapsed: true,
+  showVerboseOutput: true,
 
   modelDefaultsByAgent: {},
 
@@ -157,6 +165,10 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     stopInstanceOnLastSessionDelete: sanitized.stopInstanceOnLastSessionDelete ?? defaultPreferences.stopInstanceOnLastSessionDelete,
     idleInstanceTimeoutMinutes: sanitized.idleInstanceTimeoutMinutes ?? defaultPreferences.idleInstanceTimeoutMinutes,
     listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
+
+    // Chat window settings
+    defaultToolCallsCollapsed: sanitized.defaultToolCallsCollapsed ?? defaultPreferences.defaultToolCallsCollapsed,
+    showVerboseOutput: sanitized.showVerboseOutput ?? defaultPreferences.showVerboseOutput,
 
     modelDefaultsByAgent,
 
@@ -390,6 +402,18 @@ function toggleStopInstanceOnLastSessionDelete(): void {
   updatePreferences({ stopInstanceOnLastSessionDelete: nextValue })
 }
 
+function toggleDefaultToolCallsCollapsed(): void {
+  const nextValue = !preferences().defaultToolCallsCollapsed
+  log.info("toggle default tool calls collapsed", { value: nextValue })
+  updatePreferences({ defaultToolCallsCollapsed: nextValue })
+}
+
+function toggleShowVerboseOutput(): void {
+  const nextValue = !preferences().showVerboseOutput
+  log.info("toggle show verbose output", { value: nextValue })
+  updatePreferences({ showVerboseOutput: nextValue })
+}
+
 function addRecentFolder(path: string): void {
   updateConfig((draft) => {
     draft.recentFolders = buildRecentFolderList(path, draft.recentFolders)
@@ -494,6 +518,8 @@ interface ConfigContextValue {
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
   toggleStopInstanceOnLastSessionDelete: typeof toggleStopInstanceOnLastSessionDelete
+  toggleDefaultToolCallsCollapsed: typeof toggleDefaultToolCallsCollapsed
+  toggleShowVerboseOutput: typeof toggleShowVerboseOutput
 
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
@@ -531,6 +557,8 @@ const configContextValue: ConfigContextValue = {
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
   toggleStopInstanceOnLastSessionDelete,
+  toggleDefaultToolCallsCollapsed,
+  toggleShowVerboseOutput,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
@@ -590,6 +618,8 @@ export {
   toggleShowTimelineTools,
   toggleAutoCleanupBlankSessions,
   toggleStopInstanceOnLastSessionDelete,
+  toggleDefaultToolCallsCollapsed,
+  toggleShowVerboseOutput,
   toggleUsageMetrics,
   recentFolders,
   addRecentFolder,

@@ -266,6 +266,49 @@
   @apply absolute bottom-1 right-1 w-2 h-2 rounded-full;
 }
 
+/* Project tab icon wrapper for status dot positioning */
+.project-tab-icon-wrapper {
+  @apply relative flex-shrink-0;
+  width: 16px;
+  height: 16px;
+}
+
+.project-tab-icon-wrapper svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Project status dots */
+.project-status-dot {
+  @apply absolute rounded-full;
+  width: 7px;
+  height: 7px;
+  bottom: -2px;
+  right: -2px;
+  box-shadow: 0 0 0 1.5px var(--surface-secondary);
+}
+
+.project-tab-active .project-status-dot {
+  box-shadow: 0 0 0 1.5px var(--surface-base);
+}
+
+/* Idle/ready status - green */
+.project-status-dot-idle {
+  background-color: #22c55e;
+}
+
+/* Working/in-progress status - blue with animation */
+.project-status-dot-working {
+  background-color: #3b82f6;
+  animation: status-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Error/permission status - red */
+.project-status-dot-error {
+  background-color: #ef4444;
+  animation: status-dot-pulse 1s ease-in-out infinite;
+}
+
 /* Session tab bar - nested horizontal tabs */
 .session-tab-bar {
   @apply flex items-center h-9 px-2;
@@ -397,6 +440,60 @@
   }
   50% {
     opacity: 0.7;
+  }
+}
+
+/* Session tab icon wrapper for status dot positioning */
+.session-tab-icon-wrapper {
+  @apply relative flex-shrink-0;
+  width: 14px;
+  height: 14px;
+}
+
+.session-tab-icon-wrapper svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Session status dots */
+.session-status-dot {
+  @apply absolute rounded-full;
+  width: 6px;
+  height: 6px;
+  bottom: -2px;
+  right: -2px;
+  box-shadow: 0 0 0 1.5px var(--surface-base);
+}
+
+.session-tab-active .session-status-dot {
+  box-shadow: 0 0 0 1.5px var(--accent-primary);
+}
+
+/* Idle/ready status - green */
+.session-status-dot-idle {
+  background-color: #22c55e;
+}
+
+/* Working/in-progress status - blue with animation */
+.session-status-dot-working {
+  background-color: #3b82f6;
+  animation: status-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Error/permission status - red */
+.session-status-dot-error {
+  background-color: #ef4444;
+  animation: status-dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.85);
   }
 }
 

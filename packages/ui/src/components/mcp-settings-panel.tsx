@@ -117,7 +117,7 @@ const McpSettingsPanel: Component = () => {
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">MCP Servers</h3>
-        <p class="panel-subtitle">Registry stored in CodeNomad and applied to all instances</p>
+        <p class="panel-subtitle">Registry stored in Era Code and applied to all instances</p>
       </div>
 
       <div class="panel-body" style={{ gap: "var(--space-md)" }}>

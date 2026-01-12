@@ -1,4 +1,4 @@
-# CodeNomad - Development Progress
+# Era Code - Development Progress
 
 ## Completed Tasks
 

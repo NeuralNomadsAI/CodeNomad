@@ -24,13 +24,13 @@ const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : u
 const IS_DEV = import.meta.env.DEV
 const DEFAULT_BASE =
   typeof window !== "undefined"
-    ? window.__CODENOMAD_API_BASE__ ?? (IS_DEV ? FALLBACK_API_BASE : RUNTIME_BASE ?? FALLBACK_API_BASE)
+    ? window.__ERA_CODE_API_BASE__ ?? (IS_DEV ? FALLBACK_API_BASE : RUNTIME_BASE ?? FALLBACK_API_BASE)
     : FALLBACK_API_BASE
-const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
+const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__ERA_CODE_EVENTS_URL__ ?? "/api/events" : "/api/events"
+const API_BASE = import.meta.env.VITE_ERA_CODE_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
-export const CODENOMAD_API_BASE = API_BASE
+export const ERA_CODE_API_BASE = API_BASE
 
 function buildEventsUrl(base: string | undefined, path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -167,13 +167,16 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
-  listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {
+  listFileSystem(path?: string, options?: { includeFiles?: boolean; allowFullNavigation?: boolean }): Promise<FileSystemListResponse> {
     const params = new URLSearchParams()
     if (path && path !== ".") {
       params.set("path", path)
     }
     if (options?.includeFiles !== undefined) {
       params.set("includeFiles", String(options.includeFiles))
+    }
+    if (options?.allowFullNavigation !== undefined) {
+      params.set("allowFullNavigation", String(options.allowFullNavigation))
     }
     const query = params.toString()
     return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")

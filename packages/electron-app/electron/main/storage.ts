@@ -3,7 +3,7 @@ import { join } from "path"
 import { readFile, writeFile, mkdir, unlink, stat } from "fs/promises"
 import { existsSync } from "fs"
 
-const CONFIG_DIR = join(app.getPath("home"), ".config", "codenomad")
+const CONFIG_DIR = join(app.getPath("home"), ".config", "era-code")
 const CONFIG_FILE = join(CONFIG_DIR, "config.json")
 const INSTANCES_DIR = join(CONFIG_DIR, "instances")
 

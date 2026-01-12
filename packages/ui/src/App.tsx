@@ -64,6 +64,7 @@ import {
 } from "./stores/sessions"
 import { setActiveSession } from "./stores/session-state"
 import { isSessionCompactionActive } from "./stores/session-compaction"
+import { isSessionBusy as checkSessionBusy } from "./stores/session-status"
 
 const log = getLogger("actions")
 
@@ -176,6 +177,13 @@ const App: Component = () => {
     const sessionId = activeParentSessionIdForInstance()
     if (!instance || !sessionId) return false
     return isSessionCompactionActive(instance.id, sessionId)
+  })
+
+  const isSessionBusy = createMemo(() => {
+    const instance = activeInstance()
+    const sessionId = activeParentSessionIdForInstance()
+    if (!instance || !sessionId) return false
+    return checkSessionBusy(instance.id, sessionId)
   })
 
   const activeSessionModel = createMemo(() => {

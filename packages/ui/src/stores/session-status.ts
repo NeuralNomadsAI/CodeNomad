@@ -166,3 +166,36 @@ export function isSessionBusy(instanceId: string, sessionId: string): boolean {
   const status = getSessionStatus(instanceId, sessionId)
   return status === "working" || status === "compacting"
 }
+
+export type InstanceAggregateStatus = "idle" | "working" | "error"
+
+/**
+ * Get aggregate status for an instance based on all its sessions
+ * Priority: error > working > idle
+ */
+export function getInstanceAggregateStatus(instanceId: string): InstanceAggregateStatus {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions || instanceSessions.size === 0) {
+    return "idle"
+  }
+
+  let hasWorking = false
+  let hasError = false
+
+  for (const [sessionId, session] of instanceSessions.entries()) {
+    // Check for pending permission (treated as error/attention needed)
+    if (session.pendingPermission) {
+      hasError = true
+      break // Error has highest priority
+    }
+
+    const status = getSessionStatus(instanceId, sessionId)
+    if (status === "working" || status === "compacting") {
+      hasWorking = true
+    }
+  }
+
+  if (hasError) return "error"
+  if (hasWorking) return "working"
+  return "idle"
+}

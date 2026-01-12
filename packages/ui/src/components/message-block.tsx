@@ -10,6 +10,7 @@ import { messageStoreBus, collapseGeneration } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
+import { preferences } from "../stores/preferences"
 
 const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
@@ -98,10 +99,13 @@ function findTaskSessionLocation(sessionId: string): TaskSessionLocation | null 
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
+  console.log('[message-block] navigateToTaskSession:', location)
   setActiveInstanceId(location.instanceId)
   const parentToActivate = location.parentId ?? location.sessionId
+  console.log('[message-block] Setting active parent session to:', parentToActivate)
   setActiveParentSession(location.instanceId, parentToActivate)
   if (location.parentId) {
+    console.log('[message-block] Setting active session to:', location.sessionId)
     setActiveSession(location.instanceId, location.sessionId)
   }
 }
@@ -218,7 +222,8 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
-  const [collapsed, setCollapsed] = createSignal(false)
+  // Initialize collapsed state based on user preference
+  const [collapsed, setCollapsed] = createSignal(preferences().defaultToolCallsCollapsed)
 
   // Auto-collapse when user submits a new message (collapseGeneration changes)
   createEffect(
@@ -463,20 +468,44 @@ export default function MessageBlock(props: MessageBlockProps) {
             Boolean(toolState) && (isToolStateRunning(toolState) || isToolStateCompleted(toolState) || isToolStateError(toolState))
           const taskSessionId = hasToolState ? extractTaskSessionId(toolState) : ""
           const taskLocation = taskSessionId ? findTaskSessionLocation(taskSessionId) : null
+
+          // Debug logging for Go to Session button
+          if (toolItem.toolPart.tool === "task") {
+            console.log('[message-block] Task tool state:', {
+              toolState,
+              hasToolState,
+              taskSessionId,
+              taskLocation,
+              metadata: (toolState as any)?.metadata
+            })
+          }
+
           const handleGoToTaskSession = (event: MouseEvent) => {
             event.preventDefault()
             event.stopPropagation()
-            if (!taskLocation) return
+            console.log('[message-block] handleGoToTaskSession clicked:', { taskLocation, taskSessionId })
+            if (!taskLocation) {
+              console.log('[message-block] No task location, returning early')
+              return
+            }
             navigateToTaskSession(taskLocation)
           }
 
+          // Determine if this is a sub-agent task vs a regular tool call
+          const toolName = toolItem.toolPart.tool || "unknown"
+          const isSubAgentTask = toolName === "task"
+          const headerLabel = isSubAgentTask ? "Sub-Agent" : "Tool Call"
+          const headerIcon = isSubAgentTask ? "🤖" : TOOL_ICON
+
           return (
-            <div class="tool-call-message" data-key={toolItem.key}>
+            <div class={`tool-call-message ${isSubAgentTask ? "tool-call-subagent" : ""}`} data-key={toolItem.key}>
               <div class="tool-call-header-label">
                 <div class="tool-call-header-meta">
-                  <span class="tool-call-icon">{TOOL_ICON}</span>
-                  <span>Tool Call</span>
-                  <span class="tool-name">{toolItem.toolPart.tool || "unknown"}</span>
+                  <span class="tool-call-icon">{headerIcon}</span>
+                  <span>{headerLabel}</span>
+                  <Show when={!isSubAgentTask}>
+                    <span class="tool-name">{toolName}</span>
+                  </Show>
                 </div>
                 <Show when={taskSessionId}>
                   <button

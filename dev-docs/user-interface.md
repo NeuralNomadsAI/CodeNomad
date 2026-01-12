@@ -2,7 +2,7 @@
 
 ## Overview
 
-The CodeNomad interface consists of a two-level tabbed layout with instance tabs at the top and session tabs below. Each session displays a message stream and prompt input.
+The Era Code interface consists of a two-level tabbed layout with instance tabs at the top and session tabs below. Each session displays a message stream and prompt input.
 
 ## Layout Structure
 

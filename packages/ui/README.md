@@ -1,10 +1,10 @@
-# CodeNomad UI
+# Era Code UI
 
-This package contains the frontend user interface for CodeNomad, built with [SolidJS](https://www.solidjs.com/) and [Tailwind CSS](https://tailwindcss.com/).
+This package contains the frontend user interface for Era Code, built with [SolidJS](https://www.solidjs.com/) and [Tailwind CSS](https://tailwindcss.com/).
 
 ## Overview
 
-The UI is designed to be a high-performance, low-latency cockpit for managing OpenCode sessions. It connects to the CodeNomad server (either running locally via CLI or embedded in the Electron app).
+The UI is designed to be a high-performance, low-latency cockpit for managing OpenCode sessions. It connects to the Era Code server (either running locally via CLI or embedded in the Electron app).
 
 ## Features
 
@@ -41,13 +41,13 @@ The UI now routes all logging through a lightweight wrapper around [`debug`](htt
 - `session` – Session/model state, prompt handling, tool calls
 - `actions` – User-driven interactions in UI components
 
-You can enable or disable namespaces from DevTools (in dev or production builds) via the global `window.codenomadLogger` helpers:
+You can enable or disable namespaces from DevTools (in dev or production builds) via the global `window.eraCodeLogger` helpers:
 
 ```js
-window.codenomadLogger?.listLoggerNamespaces() // => [{ name: "sse", enabled: false }, ...]
-window.codenomadLogger?.enableLogger("sse") // turn on SSE logs
-window.codenomadLogger?.disableLogger("sse") // turn them off again
-window.codenomadLogger?.enableAllLoggers() // optional helper
+window.eraCodeLogger?.listLoggerNamespaces() // => [{ name: "sse", enabled: false }, ...]
+window.eraCodeLogger?.enableLogger("sse") // turn on SSE logs
+window.eraCodeLogger?.disableLogger("sse") // turn them off again
+window.eraCodeLogger?.enableAllLoggers() // optional helper
 ```
 
 Enabled namespaces are persisted in `localStorage` under `opencode:logger:namespaces`, so your preference survives reloads.

@@ -42,12 +42,12 @@ interface CliOptions {
 
 const DEFAULT_PORT = 9898
 const DEFAULT_HOST = "127.0.0.1"
-const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
+const DEFAULT_CONFIG_PATH = "~/.config/era-code/config.json"
 
 function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
-    .name("codenomad")
-    .description("CodeNomad CLI server")
+    .name("era-code")
+    .description("Era Code CLI server")
     .version(packageJson.version, "-v, --version", "Show the CLI version")
     .addOption(new Option("--host <host>", "Host interface to bind").env("CLI_HOST").default(DEFAULT_HOST))
     .addOption(new Option("--port <number>", "Port for the HTTP server").env("CLI_PORT").default(DEFAULT_PORT).argParser(parsePort))
@@ -120,7 +120,7 @@ async function main() {
   const configLogger = logger.child({ component: "config" })
   const eventLogger = logger.child({ component: "events" })
 
-  logger.info({ options }, "Starting CodeNomad CLI server")
+  logger.info({ options }, "Starting Era Code CLI server")
 
   // Clean up any orphaned workspace processes from previous crashes
   cleanupOrphanedWorkspaces(workspaceLogger)
@@ -185,7 +185,7 @@ async function main() {
 
   const startInfo = await server.start()
   logger.info({ port: startInfo.port, host: options.host }, "HTTP server listening")
-  console.log(`CodeNomad Server is ready at ${startInfo.url}`)
+  console.log(`Era Code Server is ready at ${startInfo.url}`)
 
   if (options.launch) {
     await launchInBrowser(startInfo.url, logger.child({ component: "launcher" }))

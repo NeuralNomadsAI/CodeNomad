@@ -144,7 +144,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
         })
       }
 
-      const response = await serverApi.listFileSystem(targetPath, { includeFiles: false })
+      const response = await serverApi.listFileSystem(targetPath, { includeFiles: false, allowFullNavigation: true })
       const canonicalKey = normalizePathKey(response.metadata.currentPath)
       const directories = response.entries
         .filter((entry) => entry.type === "directory")

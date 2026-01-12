@@ -56,7 +56,7 @@ async function fetchLatestRelease(options: ReleaseMonitorOptions): Promise<Lates
   const response = await fetch(RELEASES_API_URL, {
     headers: {
       Accept: "application/vnd.github+json",
-      "User-Agent": "CodeNomad-CLI",
+      "User-Agent": "Era-Code-CLI",
     },
   })
 

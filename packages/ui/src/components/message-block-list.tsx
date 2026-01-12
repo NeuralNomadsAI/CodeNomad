@@ -1,7 +1,10 @@
-import { Index, type Accessor } from "solid-js"
+import { Index, Show, type Accessor } from "solid-js"
 import VirtualItem from "./virtual-item"
 import MessageBlock from "./message-block"
+import ThinkingCard from "./thinking-card"
+import ReadyCard from "./ready-card"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
+import { preferences } from "../stores/preferences"
 
 export function getMessageAnchorId(messageId: string) {
   return `message-anchor-${messageId}`
@@ -20,6 +23,7 @@ interface MessageBlockListProps {
   showUsageMetrics: () => boolean
   scrollContainer: Accessor<HTMLDivElement | undefined>
   loading?: boolean
+  isSessionBusy?: boolean
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
@@ -58,6 +62,14 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           </VirtualItem>
         )}
       </Index>
+      {/* Thinking card - shown when assistant is processing and verbose output is disabled */}
+      <Show when={props.isSessionBusy && !preferences().showVerboseOutput}>
+        <ThinkingCard isThinking={true} />
+      </Show>
+      {/* Ready card - shown when assistant has finished and waiting for user input */}
+      <Show when={!props.isSessionBusy && !props.loading && props.messageIds().length > 0}>
+        <ReadyCard isReady={true} />
+      </Show>
       <div ref={props.setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
     </>
   )

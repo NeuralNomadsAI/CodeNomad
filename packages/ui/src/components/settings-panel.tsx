@@ -1,7 +1,8 @@
 import { Component, Show, createSignal } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
-import { X, Server, ChevronDown, ChevronRight, Settings, Plug, Info, Zap } from "lucide-solid"
+import { X, Server, ChevronDown, ChevronRight, Settings, Plug, Info, Zap, MessageSquare } from "lucide-solid"
 import type { Instance } from "../types/instance"
+import { preferences, toggleDefaultToolCallsCollapsed, toggleShowVerboseOutput } from "../stores/preferences"
 
 interface SettingsPanelProps {
   open: boolean
@@ -89,6 +90,46 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                     <Settings class="w-4 h-4" />
                     <span>Advanced Settings</span>
                   </button>
+                </div>
+              </div>
+
+              {/* Chat Window Settings */}
+              <div class="settings-section">
+                <h3 class="settings-section-title">
+                  <MessageSquare class="w-4 h-4" />
+                  <span>Chat Window</span>
+                </h3>
+                <div class="settings-toggles">
+                  <label class="settings-toggle-row">
+                    <span class="settings-toggle-label">
+                      <span class="settings-toggle-title">Collapse tool calls by default</span>
+                      <span class="settings-toggle-description">Tool call sections start collapsed in messages</span>
+                    </span>
+                    <button
+                      type="button"
+                      class={`settings-toggle-switch ${preferences().defaultToolCallsCollapsed ? "active" : ""}`}
+                      onClick={toggleDefaultToolCallsCollapsed}
+                      role="switch"
+                      aria-checked={preferences().defaultToolCallsCollapsed}
+                    >
+                      <span class="settings-toggle-switch-handle" />
+                    </button>
+                  </label>
+                  <label class="settings-toggle-row">
+                    <span class="settings-toggle-label">
+                      <span class="settings-toggle-title">Show verbose output</span>
+                      <span class="settings-toggle-description">Display real-time streaming text while generating</span>
+                    </span>
+                    <button
+                      type="button"
+                      class={`settings-toggle-switch ${preferences().showVerboseOutput ? "active" : ""}`}
+                      onClick={toggleShowVerboseOutput}
+                      role="switch"
+                      aria-checked={preferences().showVerboseOutput}
+                    >
+                      <span class="settings-toggle-switch-handle" />
+                    </button>
+                  </label>
                 </div>
               </div>
 

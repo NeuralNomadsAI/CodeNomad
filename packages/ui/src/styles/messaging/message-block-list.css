@@ -3,6 +3,10 @@
   padding: 0.75rem 1rem;
   background-color: var(--surface-base);
   color: inherit;
+  /* Prevent layout thrashing during scroll and virtualization */
+  contain: style;
+  /* Use a single scrollbar and prevent doubled scrollbar effect */
+  overscroll-behavior: contain;
 }
 
 .message-stream-block {
@@ -59,6 +63,8 @@
 
 .virtual-item-wrapper {
   width: 100%;
+  /* Prevent content shifts from causing repaints in parent */
+  contain: layout style;
 }
 
 .virtual-item-placeholder,
@@ -67,6 +73,8 @@
   width: 100%;
   position: relative;
   background-color: transparent;
+  /* Smooth transitions when height changes */
+  transition: height 0.1s ease-out;
 }
 
 .virtual-item-content {
@@ -79,4 +87,6 @@
   inset: 0;
   visibility: hidden;
   pointer-events: none;
+  /* Prevent hidden content from affecting layout */
+  contain: strict;
 }
