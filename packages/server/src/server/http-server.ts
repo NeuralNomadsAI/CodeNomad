@@ -19,8 +19,10 @@ import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerModelsProxyRoutes } from "./routes/models-proxy"
+import { registerEraRoutes } from "./routes/era"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
+import { EraDetectionService } from "../era/detection"
 
 interface HttpServerDeps {
   host: string
@@ -32,6 +34,7 @@ interface HttpServerDeps {
   eventBus: EventBus
   serverMeta: ServerMeta
   instanceStore: InstanceStore
+  eraDetection?: EraDetectionService
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -113,6 +116,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerModelsProxyRoutes(app)
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
+
+  // Register Era routes if detection service is available
+  if (deps.eraDetection) {
+    registerEraRoutes(app, { eraDetection: deps.eraDetection, logger: deps.logger })
+  } else {
+    // Create a default era detection service if not provided
+    const eraDetection = new EraDetectionService(deps.logger)
+    registerEraRoutes(app, { eraDetection, logger: deps.logger })
+  }
 
 
   if (deps.uiDevServerUrl) {

@@ -1,3 +1,4 @@
+import { execSync } from "child_process"
 import {
   BinaryCreateRequest,
   BinaryRecord,
@@ -8,25 +9,105 @@ import { ConfigStore } from "./store"
 import { EventBus } from "../events/bus"
 import type { ConfigFile } from "./schema"
 import { Logger } from "../logger"
+import { EraDetectionService } from "../era/detection"
 
 export class BinaryRegistry {
+  private eraDetection: EraDetectionService | null = null
+
   constructor(
     private readonly configStore: ConfigStore,
     private readonly eventBus: EventBus | undefined,
     private readonly logger: Logger,
-  ) {}
+  ) {
+    // Initialize era detection lazily to avoid circular dependencies
+    this.eraDetection = new EraDetectionService(logger)
+  }
 
   list(): BinaryRecord[] {
     return this.mapRecords()
   }
 
-  resolveDefault(): BinaryRecord {
-    const binaries = this.mapRecords()
-    if (binaries.length === 0) {
-      this.logger.warn("No configured binaries found, falling back to opencode")
-      return this.buildFallbackRecord("opencode")
+  /**
+   * Detect available binaries on the system (era-code, opencode)
+   */
+  detectAvailableBinaries(): BinaryRecord[] {
+    const binaries: BinaryRecord[] = []
+
+    // 1. Check for era-code first (highest priority)
+    if (this.eraDetection) {
+      const eraInfo = this.eraDetection.detectBinary()
+      if (eraInfo.installed && eraInfo.path) {
+        binaries.push({
+          id: "era-code",
+          path: eraInfo.path,
+          label: `Era Code${eraInfo.version ? ` ${eraInfo.version}` : ""}`,
+          version: eraInfo.version ?? undefined,
+          isDefault: true,
+          source: "auto-detected",
+        })
+        this.logger.info(
+          { path: eraInfo.path, version: eraInfo.version },
+          "Era Code detected as default binary"
+        )
+      }
     }
-    return binaries.find((binary) => binary.isDefault) ?? binaries[0]
+
+    // 2. Check for opencode in PATH
+    const opencodePath = this.detectOpencodePath()
+    if (opencodePath) {
+      binaries.push({
+        id: "opencode",
+        path: opencodePath,
+        label: "OpenCode",
+        isDefault: binaries.length === 0, // Default only if era-code not found
+        source: "auto-detected",
+      })
+    }
+
+    return binaries
+  }
+
+  /**
+   * Detect opencode binary path
+   */
+  private detectOpencodePath(): string | null {
+    try {
+      const command = process.platform === "win32" ? "where opencode" : "which opencode"
+      const result = execSync(command, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] })
+      const binaryPath = result.trim().split("\n")[0]
+      return binaryPath || null
+    } catch {
+      return null
+    }
+  }
+
+  resolveDefault(): BinaryRecord {
+    const config = this.configStore.get()
+    const userPreferred = config.preferences.lastUsedBinary
+
+    // 1. If user has explicitly set a preference, use it
+    if (userPreferred) {
+      const configured = this.mapRecords().find((b) => b.path === userPreferred)
+      if (configured) {
+        return configured
+      }
+    }
+
+    // 2. Check for auto-detected binaries (era-code prioritized)
+    const autoDetected = this.detectAvailableBinaries()
+    if (autoDetected.length > 0) {
+      return autoDetected[0]
+    }
+
+    // 3. Check configured binaries
+    const binaries = this.mapRecords()
+    if (binaries.length > 0) {
+      return binaries.find((binary) => binary.isDefault) ?? binaries[0]
+    }
+
+    // 4. Fallback to opencode (may not exist)
+    this.logger.warn("No binaries found, falling back to opencode")
+    return this.buildFallbackRecord("opencode")
   }
 
   create(request: BinaryCreateRequest): BinaryRecord {

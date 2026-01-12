@@ -7,6 +7,7 @@
 @import "./panels/bottom-status-bar.css";
 @import "./panels/model-selector.css";
 @import "./panels/commands.css";
+@import "./panels/era-status.css";
 
 
 .tab-bar-instance {

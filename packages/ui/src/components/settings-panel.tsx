@@ -1,8 +1,16 @@
-import { Component, Show, createSignal } from "solid-js"
+import { Component, Show, createSignal, createEffect } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
-import { X, Server, ChevronDown, ChevronRight, Settings, Plug, Info, Zap, MessageSquare } from "lucide-solid"
+import { X, Server, ChevronDown, ChevronRight, Settings, Plug, Info, Zap, MessageSquare, Shield } from "lucide-solid"
 import type { Instance } from "../types/instance"
 import { preferences, toggleDefaultToolCallsCollapsed, toggleShowVerboseOutput } from "../stores/preferences"
+import EraStatusBadge from "./era-status-badge"
+import {
+  isEraInstalled,
+  eraVersion,
+  eraAssetCounts,
+  areEraAssetsAvailable,
+  initEraStatus,
+} from "../stores/era-status"
 
 interface SettingsPanelProps {
   open: boolean
@@ -130,6 +138,48 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                       <span class="settings-toggle-switch-handle" />
                     </button>
                   </label>
+                </div>
+              </div>
+
+              {/* Era Code Section */}
+              <div class="settings-section">
+                <h3 class="settings-section-title">
+                  <Shield class="w-4 h-4" />
+                  <span>Era Code</span>
+                </h3>
+                <div class="era-settings-section">
+                  <EraStatusBadge />
+                  <Show when={isEraInstalled()}>
+                    <div class="era-settings-row">
+                      <span class="era-settings-label">Version</span>
+                      <span class="era-settings-value">{eraVersion()}</span>
+                    </div>
+                    <Show when={areEraAssetsAvailable() && eraAssetCounts()}>
+                      <div class="era-settings-assets">
+                        <div class="era-asset-count">
+                          <span class="era-asset-count-label">Agents</span>
+                          <span class="era-asset-count-value">{eraAssetCounts()!.agents}</span>
+                        </div>
+                        <div class="era-asset-count">
+                          <span class="era-asset-count-label">Commands</span>
+                          <span class="era-asset-count-value">{eraAssetCounts()!.commands}</span>
+                        </div>
+                        <div class="era-asset-count">
+                          <span class="era-asset-count-label">Skills</span>
+                          <span class="era-asset-count-value">{eraAssetCounts()!.skills}</span>
+                        </div>
+                        <div class="era-asset-count">
+                          <span class="era-asset-count-label">Plugins</span>
+                          <span class="era-asset-count-value">{eraAssetCounts()!.plugins}</span>
+                        </div>
+                      </div>
+                    </Show>
+                  </Show>
+                  <Show when={!isEraInstalled()}>
+                    <p class="era-settings-hint">
+                      Install Era Code for governance enforcement, custom agents, and enhanced development workflows.
+                    </p>
+                  </Show>
                 </div>
               </div>
 

@@ -5,6 +5,7 @@ import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
 import { registerWorkspacePid, unregisterWorkspacePid } from "./pid-registry"
+import { EraConfigService, type EraLaunchConfig } from "../era"
 
 /**
  * Kill a process and all its children (process tree)
@@ -47,6 +48,7 @@ interface LaunchOptions {
   folder: string
   binaryPath: string
   environment?: Record<string, string>
+  eraConfig?: EraLaunchConfig
   onExit?: (info: ProcessExitInfo) => void
 }
 
@@ -64,18 +66,48 @@ interface ManagedProcess {
 
 export class WorkspaceRuntime {
   private processes = new Map<string, ManagedProcess>()
+  private eraConfigService: EraConfigService | null = null
 
   constructor(private readonly eventBus: EventBus, private readonly logger: Logger) {}
+
+  /**
+   * Set the Era config service for era-enabled launches
+   */
+  setEraConfigService(service: EraConfigService): void {
+    this.eraConfigService = service
+  }
 
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number }> {
     this.validateFolder(options.folder)
 
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
-    const env = { ...process.env, ...(options.environment ?? {}) }
+
+    // Build environment with optional era config
+    let env = { ...process.env, ...(options.environment ?? {}) }
+
+    // Apply era environment variables if era config is provided
+    if (options.eraConfig?.enabled && this.eraConfigService) {
+      const eraEnv = this.eraConfigService.getLaunchEnvironment(options.eraConfig)
+      env = { ...env, ...eraEnv }
+      this.logger.info(
+        {
+          workspaceId: options.workspaceId,
+          eraAssets: options.eraConfig.assetsPath,
+          agentCount: options.eraConfig.agents.length,
+          commandCount: options.eraConfig.commands.length,
+        },
+        "Launching with Era Code assets"
+      )
+    }
 
     return new Promise((resolve, reject) => {
       this.logger.info(
-        { workspaceId: options.workspaceId, folder: options.folder, binary: options.binaryPath },
+        {
+          workspaceId: options.workspaceId,
+          folder: options.folder,
+          binary: options.binaryPath,
+          eraEnabled: options.eraConfig?.enabled ?? false,
+        },
         "Launching OpenCode process",
       )
       const child = spawn(options.binaryPath, args, {

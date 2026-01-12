@@ -129,6 +129,9 @@ export interface BinaryRecord {
   isDefault: boolean
   lastValidatedAt?: string
   validationError?: string
+
+  /** Source of the binary: auto-detected, configured, or fallback */
+  source?: "auto-detected" | "configured" | "fallback"
 }
 
 export type AppConfig = ConfigFile
@@ -227,4 +230,49 @@ export type {
   AgentModelSelections,
   RecentFolder,
   OpenCodeBinary,
+}
+
+// ============================================================
+// Era Code Integration Types
+// ============================================================
+
+/**
+ * Era Code installation and project status
+ */
+export interface EraStatusResponse {
+  /** Whether era-code binary is installed */
+  installed: boolean
+  /** Version of era-code if installed */
+  version: string | null
+  /** Path to era-code binary */
+  binaryPath: string | null
+  /** Whether the project has Era initialized (.era directory) */
+  projectInitialized: boolean
+  /** Whether era assets are available */
+  assetsAvailable: boolean
+  /** Count of available assets by type */
+  assets?: {
+    agents: number
+    commands: number
+    skills: number
+    plugins: number
+  }
+  /** Project-specific era status */
+  project?: {
+    hasConstitution: boolean
+    hasDirectives: boolean
+  }
+}
+
+/**
+ * Era governance rule
+ */
+export interface EraGovernanceRule {
+  id: string
+  pattern: string
+  action: "allow" | "deny"
+  reason: string
+  suggestion?: string
+  overridable: boolean
+  source: "hardcoded" | "default" | "project" | "user"
 }
