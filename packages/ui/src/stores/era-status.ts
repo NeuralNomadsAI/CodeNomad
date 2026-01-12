@@ -1,6 +1,7 @@
 import { createSignal, createMemo } from "solid-js"
 import type { EraStatusResponse } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
+import { ERA_CODE_API_BASE } from "../lib/api-client"
 
 const log = getLogger("era-status")
 
@@ -37,7 +38,8 @@ async function fetchEraStatus(folder?: string): Promise<void> {
 
   try {
     const params = folder ? `?folder=${encodeURIComponent(folder)}` : ""
-    const response = await fetch(`/api/era/status${params}`)
+    const url = ERA_CODE_API_BASE ? `${ERA_CODE_API_BASE}/api/era/status${params}` : `/api/era/status${params}`
+    const response = await fetch(url)
 
     if (!response.ok) {
       throw new Error(`Failed to fetch era status: ${response.statusText}`)
