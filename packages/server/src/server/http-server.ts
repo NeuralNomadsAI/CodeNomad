@@ -23,6 +23,9 @@ import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
+import type { AuthManager } from "../auth/manager"
+import { registerAuthRoutes } from "./routes/auth"
+import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 
 interface HttpServerDeps {
   host: string
@@ -34,6 +37,7 @@ interface HttpServerDeps {
   eventBus: EventBus
   serverMeta: ServerMeta
   instanceStore: InstanceStore
+  authManager: AuthManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -88,8 +92,34 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
+
   app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+      if (!origin) {
+        cb(null, true)
+        return
+      }
+
+      let selfOrigin: string | null = null
+      try {
+        selfOrigin = new URL(deps.serverMeta.httpBaseUrl).origin
+      } catch {
+        selfOrigin = null
+      }
+
+      if (selfOrigin && origin === selfOrigin) {
+        cb(null, true)
+        return
+      }
+
+      if (allowedDevOrigins.has(origin)) {
+        cb(null, true)
+        return
+      }
+
+      cb(null, false)
+    },
     credentials: true,
   })
 
@@ -109,6 +139,76 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: deps.logger.child({ component: "background-processes" }),
   })
 
+  registerAuthRoutes(app, { authManager: deps.authManager })
+
+  app.addHook("preHandler", (request, reply, done) => {
+    const rawUrl = request.raw.url ?? request.url
+    const pathname = (rawUrl.split("?")[0] ?? "").trim()
+
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
+    const publicPagePaths = new Set(["/login"])
+    if (deps.authManager.isTokenBootstrapEnabled()) {
+      publicPagePaths.add("/auth/token")
+    }
+
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname)) {
+      done()
+      return
+    }
+
+    const session = deps.authManager.getSessionFromRequest(request)
+
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/")
+    if (requiresAuthForApi && !session) {
+      // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
+      const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
+      if (pluginMatch) {
+        const workspaceId = pluginMatch[1]
+        const expected = deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+        const provided = Array.isArray(request.headers.authorization)
+          ? request.headers.authorization[0]
+          : request.headers.authorization
+
+        if (expected && provided && provided === expected) {
+          done()
+          return
+        }
+      }
+
+      sendUnauthorized(request, reply)
+      return
+    }
+
+    if (!session && wantsHtml(request)) {
+      reply.redirect("/login")
+      return
+    }
+
+    done()
+  })
+
+  app.get("/", async (request, reply) => {
+    const session = deps.authManager.getSessionFromRequest(request)
+    if (!session) {
+      reply.redirect("/login")
+      return
+    }
+
+    if (deps.uiDevServerUrl) {
+      await proxyToDevServer(request, reply, deps.uiDevServerUrl)
+      return
+    }
+
+    const uiDir = deps.uiStaticDir
+    const indexPath = path.join(uiDir, "index.html")
+    if (uiDir && fs.existsSync(indexPath)) {
+      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      return
+    }
+
+    reply.code(404).send({ message: "UI bundle missing" })
+  })
+
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerConfigRoutes(app, { configStore: deps.configStore, binaryRegistry: deps.binaryRegistry })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
@@ -125,9 +225,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
 
   if (deps.uiDevServerUrl) {
-    setupDevProxy(app, deps.uiDevServerUrl)
+    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager)
   } else {
-    setupStaticUi(app, deps.uiStaticDir)
+    setupStaticUi(app, deps.uiStaticDir, deps.authManager)
   }
 
   return {
@@ -260,6 +360,7 @@ async function proxyWorkspaceRequest(args: {
   const queryIndex = (request.raw.url ?? "").indexOf("?")
   const search = queryIndex >= 0 ? (request.raw.url ?? "").slice(queryIndex) : ""
   const targetUrl = `http://${INSTANCE_PROXY_HOST}:${port}${normalizedSuffix}${search}`
+  const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
 
   logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
   if (logger.isLevelEnabled("trace")) {
@@ -267,6 +368,12 @@ async function proxyWorkspaceRequest(args: {
   }
 
   return reply.from(targetUrl, {
+    rewriteRequestHeaders: (_originalRequest, headers) => {
+      if (instanceAuthHeader) {
+        headers.authorization = instanceAuthHeader
+      }
+      return headers
+    },
     onError: (proxyReply, { error }) => {
       logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
       if (!proxyReply.sent) {
@@ -284,7 +391,7 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
-function setupStaticUi(app: FastifyInstance, uiDir: string) {
+function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
     return
@@ -310,6 +417,12 @@ function setupStaticUi(app: FastifyInstance, uiDir: string) {
       return
     }
 
+    const session = authManager.getSessionFromRequest(request)
+    if (!session && wantsHtml(request)) {
+      reply.redirect("/login")
+      return
+    }
+
     if (fs.existsSync(indexPath)) {
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
     } else {
@@ -318,7 +431,7 @@ function setupStaticUi(app: FastifyInstance, uiDir: string) {
   })
 }
 
-function setupDevProxy(app: FastifyInstance, upstreamBase: string) {
+function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: AuthManager) {
   app.log.info({ upstreamBase }, "Proxying UI requests to development server")
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -326,6 +439,13 @@ function setupDevProxy(app: FastifyInstance, upstreamBase: string) {
       reply.code(404).send({ message: "Not Found" })
       return
     }
+
+    const session = authManager.getSessionFromRequest(request)
+    if (!session && wantsHtml(request)) {
+      reply.redirect("/login")
+      return
+    }
+
     void proxyToDevServer(request, reply, upstreamBase)
   })
 }

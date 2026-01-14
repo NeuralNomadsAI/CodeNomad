@@ -1,5 +1,6 @@
 import path from "path"
 import { tool } from "@opencode-ai/plugin/tool"
+import { createCodeNomadRequester, type CodeNomadConfig } from "./request"
 
 type BackgroundProcess = {
   id: string
@@ -12,11 +13,6 @@ type BackgroundProcess = {
   outputSizeBytes?: number
 }
 
-type CodeNomadConfig = {
-  instanceId: string
-  baseUrl: string
-}
-
 type BackgroundProcessOptions = {
   baseDir: string
 }
@@ -27,30 +23,10 @@ type ParsedCommand = {
 }
 
 export function createBackgroundProcessTools(config: CodeNomadConfig, options: BackgroundProcessOptions) {
+  const requester = createCodeNomadRequester(config)
+
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-
-    const base = config.baseUrl.replace(/\/+$/, "")
-    const url = `${base}/workspaces/${config.instanceId}/plugin/background-processes${path}`
-    const headers = normalizeHeaders(init?.headers)
-    if (init?.body !== undefined) {
-      headers["Content-Type"] = "application/json"
-    }
-
-    const response = await fetch(url, {
-      ...init,
-      headers,
-    })
-
-    if (!response.ok) {
-      const message = await response.text()
-      throw new Error(message || `Request failed with ${response.status}`)
-    }
-
-    if (response.status === 204) {
-      return undefined as T
-    }
-
-    return (await response.json()) as T
+    return requester.requestJson<T>(`/background-processes${path}`, init)
   }
 
   return {
@@ -249,13 +225,7 @@ function tokenize(input: string): string[] {
 
     if (char === "|" || char === "&" || char === ";") {
       flush()
-      const next = input[index + 1]
-      if ((char === "|" || char === "&") && next === char) {
-        tokens.push(char + next)
-        index += 1
-      } else {
-        tokens.push(char)
-      }
+      tokens.push(char)
       continue
     }
 
@@ -266,44 +236,18 @@ function tokenize(input: string): string[] {
   return tokens
 }
 
-function isSeparator(token: string) {
-  return token === "|" || token === "||" || token === "&&" || token === ";" || token === "&"
+function isSeparator(token: string): boolean {
+  return token === "|" || token === "&" || token === ";"
 }
 
-function unquote(value: string) {
-  if (value.length >= 2) {
-    const first = value[0]
-    const last = value[value.length - 1]
-    if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
-      return value.slice(1, -1)
-    }
+function unquote(token: string): string {
+  if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+    return token.slice(1, -1)
   }
-  return value
+  return token
 }
 
-function isWithinBase(baseDir: string, target: string) {
-  const relative = path.relative(baseDir, target)
-  if (!relative) return true
-  return !relative.startsWith("..") && !path.isAbsolute(relative)
-}
-
-function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
-  const output: Record<string, string> = {}
-  if (!headers) return output
-
-  if (headers instanceof Headers) {
-    headers.forEach((value, key) => {
-      output[key] = value
-    })
-    return output
-  }
-
-  if (Array.isArray(headers)) {
-    for (const [key, value] of headers) {
-      output[key] = value
-    }
-    return output
-  }
-
-  return { ...headers }
+function isWithinBase(base: string, candidate: string): boolean {
+  const relative = path.relative(base, candidate)
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
 }

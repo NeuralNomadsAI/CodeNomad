@@ -166,6 +166,44 @@ function copyServerArtifacts() {
   }
 }
 
+function stripNodeModuleBins() {
+  const root = path.join(serverDest, "node_modules")
+  if (!fs.existsSync(root)) {
+    return
+  }
+
+  const stack = [root]
+  let removed = 0
+
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) break
+
+    let entries
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      if (entry.name === ".bin") {
+        fs.rmSync(full, { recursive: true, force: true })
+        removed += 1
+        continue
+      }
+      if (entry.isDirectory()) {
+        stack.push(full)
+      }
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`[prebuild] removed ${removed} node_modules/.bin directories`)
+  }
+}
+
 function copyUiLoadingAssets() {
   const loadingSource = path.join(uiDist, "loading.html")
   const assetsSource = path.join(uiDist, "assets")
@@ -192,4 +230,5 @@ ensureServerDependencies()
 ensureServerBuild()
 ensureUiBuild()
 copyServerArtifacts()
+stripNodeModuleBins()
 copyUiLoadingAssets()

@@ -7,14 +7,15 @@ use std::collections::VecDeque;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, Url};
+use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
@@ -31,9 +32,15 @@ fn workspace_root() -> Option<PathBuf> {
     })
 }
 
+const SESSION_COOKIE_NAME: &str = "codenomad_session";
+
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
-        log_line(&format!("navigating main to {url}"));
+        let mut display = url.to_string();
+        if let Some(hash_index) = display.find('#') {
+            display.replace_range(hash_index + 1.., "[REDACTED]");
+        }
+        log_line(&format!("navigating main to {display}"));
         if let Ok(parsed) = Url::parse(url) {
             let _ = win.navigate(parsed);
         } else {
@@ -42,6 +49,85 @@ fn navigate_main(app: &AppHandle, url: &str) {
     } else {
         log_line("main window not found for navigation");
     }
+}
+
+fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
+    let cookie_kv = set_cookie.split(';').next()?.trim();
+    if !cookie_kv.starts_with(&prefix) {
+        return None;
+    }
+    let value = cookie_kv.trim_start_matches(&prefix).trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Option<String>> {
+    let parsed = Url::parse(base_url)?;
+    let host = parsed.host_str().unwrap_or("127.0.0.1");
+    let port = parsed.port_or_known_default().unwrap_or(80);
+
+    // This is only used for local bootstrap; we assume plain HTTP.
+    let mut stream = TcpStream::connect((host, port))?;
+
+    let body = format!("{{\"token\":\"{}\"}}", token);
+    let request = format!(
+        "POST /api/auth/token HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+
+    stream.write_all(request.as_bytes())?;
+    stream.flush()?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+
+    let (raw_headers, _rest) = response
+        .split_once("\r\n\r\n")
+        .or_else(|| response.split_once("\n\n"))
+        .unwrap_or((response.as_str(), ""));
+
+    let mut lines = raw_headers.lines();
+    let status_line = lines.next().unwrap_or("");
+    if !status_line.contains(" 200 ") {
+        return Ok(None);
+    }
+
+    for line in lines {
+        // handle case-insensitive header name
+        if let Some(value) = line.strip_prefix("Set-Cookie:") {
+            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+                return Ok(Some(session_id));
+            }
+        } else if let Some(value) = line.strip_prefix("set-cookie:") {
+            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+                return Ok(Some(session_id));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn set_session_cookie(app: &AppHandle, base_url: &str, session_id: &str) -> anyhow::Result<()> {
+    let parsed = Url::parse(base_url)?;
+    let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
+
+    let cookie = Cookie::build((SESSION_COOKIE_NAME, session_id))
+        .domain(domain)
+        .path("/")
+        .http_only(true)
+        .same_site(tauri::webview::cookie::SameSite::Lax)
+        .build();
+
+    if let Some(win) = app.webview_windows().get("main") {
+        win.set_cookie(cookie)?;
+    }
+
+    Ok(())
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
@@ -139,6 +225,7 @@ pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
     ready: Arc<AtomicBool>,
+    bootstrap_token: Arc<Mutex<Option<String>>>,
 }
 
 impl CliProcessManager {
@@ -147,6 +234,7 @@ impl CliProcessManager {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
             ready: Arc::new(AtomicBool::new(false)),
+            bootstrap_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -154,6 +242,7 @@ impl CliProcessManager {
         log_line(&format!("start requested (dev={dev})"));
         self.stop()?;
         self.ready.store(false, Ordering::SeqCst);
+        *self.bootstrap_token.lock() = None;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -167,8 +256,9 @@ impl CliProcessManager {
         let status_arc = self.status.clone();
         let child_arc = self.child.clone();
         let ready_flag = self.ready.clone();
+        let token_arc = self.bootstrap_token.clone();
         thread::spawn(move || {
-            if let Err(err) = Self::spawn_cli(app.clone(), status_arc.clone(), child_arc, ready_flag, dev) {
+            if let Err(err) = Self::spawn_cli(app.clone(), status_arc.clone(), child_arc, ready_flag, token_arc, dev) {
                 log_line(&format!("cli spawn failed: {err}"));
                 let mut locked = status_arc.lock();
                 locked.state = CliState::Error;
@@ -237,6 +327,7 @@ impl CliProcessManager {
         status: Arc<Mutex<CliStatus>>,
         child_holder: Arc<Mutex<Option<Child>>>,
         ready: Arc<AtomicBool>,
+        bootstrap_token: Arc<Mutex<Option<String>>>,
         dev: bool,
     ) -> anyhow::Result<()> {
         log_line("resolving CLI entry");
@@ -318,8 +409,10 @@ impl CliProcessManager {
         let status_clone = status.clone();
         let app_clone = app.clone();
         let ready_clone = ready.clone();
+        let token_clone = bootstrap_token.clone();
 
         thread::spawn(move || {
+
             let stdout = child_clone
                 .lock()
                 .as_mut()
@@ -332,10 +425,10 @@ impl CliProcessManager {
                 .map(BufReader::new);
 
             if let Some(reader) = stdout {
-                Self::process_stream(reader, "stdout", &app_clone, &status_clone, &ready_clone);
+                Self::process_stream(reader, "stdout", &app_clone, &status_clone, &ready_clone, &token_clone);
             }
             if let Some(reader) = stderr {
-                Self::process_stream(reader, "stderr", &app_clone, &status_clone, &ready_clone);
+                Self::process_stream(reader, "stderr", &app_clone, &status_clone, &ready_clone, &token_clone);
             }
         });
 
@@ -407,10 +500,12 @@ impl CliProcessManager {
         app: &AppHandle,
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
+        bootstrap_token: &Arc<Mutex<Option<String>>>,
     ) {
         let mut buffer = String::new();
         let port_regex = Regex::new(r"CodeNomad Server is ready at http://[^:]+:(\d+)").ok();
         let http_regex = Regex::new(r":(\d{2,5})(?!.*:\d)").ok();
+        let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
             buffer.clear();
@@ -419,6 +514,17 @@ impl CliProcessManager {
                 Ok(_) => {
                     let line = buffer.trim_end();
                     if !line.is_empty() {
+                        if line.starts_with(token_prefix) {
+                            let token = line.trim_start_matches(token_prefix).trim();
+                            if !token.is_empty() {
+                                let mut guard = bootstrap_token.lock();
+                                if guard.is_none() {
+                                    *guard = Some(token.to_string());
+                                }
+                            }
+                            continue;
+                        }
+
                         log_line(&format!("[cli][{}] {}", stream, line));
 
                         if ready.load(Ordering::SeqCst) {
@@ -430,7 +536,7 @@ impl CliProcessManager {
                             .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
                             .and_then(|m| m.as_str().parse::<u16>().ok())
                         {
-                            Self::mark_ready(app, status, ready, port);
+                            Self::mark_ready(app, status, ready, bootstrap_token, port);
                             continue;
                         }
 
@@ -440,13 +546,13 @@ impl CliProcessManager {
                                 .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
                                 .and_then(|m| m.as_str().parse::<u16>().ok())
                             {
-                                Self::mark_ready(app, status, ready, port);
+                                Self::mark_ready(app, status, ready, bootstrap_token, port);
                                 continue;
                             }
 
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                                 if let Some(port) = value.get("port").and_then(|p| p.as_u64()) {
-                                    Self::mark_ready(app, status, ready, port as u16);
+                                    Self::mark_ready(app, status, ready, bootstrap_token, port as u16);
                                     continue;
                                 }
                             }
@@ -458,16 +564,46 @@ impl CliProcessManager {
         }
     }
 
-    fn mark_ready(app: &AppHandle, status: &Arc<Mutex<CliStatus>>, ready: &Arc<AtomicBool>, port: u16) {
+    fn mark_ready(
+        app: &AppHandle,
+        status: &Arc<Mutex<CliStatus>>,
+        ready: &Arc<AtomicBool>,
+        bootstrap_token: &Arc<Mutex<Option<String>>>,
+        port: u16,
+    ) {
         ready.store(true, Ordering::SeqCst);
+        let base_url = format!("http://127.0.0.1:{port}");
         let mut locked = status.lock();
-        let url = format!("http://127.0.0.1:{port}");
         locked.port = Some(port);
-        locked.url = Some(url.clone());
+        locked.url = Some(base_url.clone());
         locked.state = CliState::Ready;
         locked.error = None;
-        log_line(&format!("cli ready on {url}"));
-        navigate_main(app, &url);
+        log_line(&format!("cli ready on {base_url}"));
+
+        let token = bootstrap_token.lock().take();
+
+        if let Some(token) = token {
+            match exchange_bootstrap_token(&base_url, &token) {
+                Ok(Some(session_id)) => {
+                    if let Err(err) = set_session_cookie(app, &base_url, &session_id) {
+                        log_line(&format!("failed to set session cookie: {err}"));
+                        navigate_main(app, &format!("{base_url}/login"));
+                    } else {
+                        navigate_main(app, &base_url);
+                    }
+                }
+                Ok(None) => {
+                    log_line("bootstrap token exchange failed (invalid token)");
+                    navigate_main(app, &format!("{base_url}/login"));
+                }
+                Err(err) => {
+                    log_line(&format!("bootstrap token exchange failed: {err}"));
+                    navigate_main(app, &format!("{base_url}/login"));
+                }
+            }
+        } else {
+            navigate_main(app, &base_url);
+        }
         let _ = app.emit("cli:ready", locked.clone());
         Self::emit_status(app, &locked);
     }
@@ -551,6 +687,7 @@ impl CliEntry {
             host.to_string(),
             "--port".to_string(),
             "0".to_string(),
+            "--generate-token".to_string(),
         ];
         if dev {
             args.push("--ui-dev-server".to_string());

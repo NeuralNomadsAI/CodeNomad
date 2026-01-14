@@ -103,7 +103,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${path}`)
 
   try {
-    const response = await fetch(url, { ...init, headers })
+    const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const message = await response.text()
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -134,6 +134,15 @@ export const serverApi = {
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
+    return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
+  },
+  setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
+    return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    })
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
@@ -270,7 +279,7 @@ export const serverApi = {
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
     sseLogger.info(`Connecting to ${EVENTS_URL}`)
-    const source = new EventSource(EVENTS_URL)
+    const source = new EventSource(EVENTS_URL, { withCredentials: true } as any)
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEventPayload

@@ -96,8 +96,15 @@ export class InstanceEventBridge {
 
   private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
     const url = `http://${INSTANCE_HOST}:${port}/event`
+
+    const headers: Record<string, string> = { Accept: "text/event-stream" }
+    const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+    if (authHeader) {
+      headers["Authorization"] = authHeader
+    }
+
     const response = await fetch(url, {
-      headers: { Accept: "text/event-stream" },
+      headers,
       signal,
       dispatcher: STREAM_AGENT,
     })

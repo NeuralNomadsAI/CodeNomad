@@ -19,10 +19,16 @@ interface RemoteAccessOverlayProps {
 
 export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
   const [meta, setMeta] = createSignal<ServerMeta | null>(null)
+  const [authStatus, setAuthStatus] = createSignal<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean } | null>(null)
   const [loading, setLoading] = createSignal(false)
   const [qrCodes, setQrCodes] = createSignal<Record<string, string>>({})
   const [expandedUrl, setExpandedUrl] = createSignal<string | null>(null)
   const [error, setError] = createSignal<string | null>(null)
+  const [passwordFormOpen, setPasswordFormOpen] = createSignal(false)
+  const [passwordValue, setPasswordValue] = createSignal("")
+  const [passwordConfirm, setPasswordConfirm] = createSignal("")
+  const [passwordError, setPasswordError] = createSignal<string | null>(null)
+  const [savingPassword, setSavingPassword] = createSignal(false)
 
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
   const currentMode = createMemo(() => meta()?.listeningMode ?? preferences().listeningMode)
@@ -38,9 +44,11 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
   const refreshMeta = async () => {
     setLoading(true)
     setError(null)
+    setPasswordError(null)
     try {
-      const result = await serverApi.fetchServerMeta()
-      setMeta(result)
+      const [metaResult, authResult] = await Promise.all([serverApi.fetchServerMeta(), serverApi.fetchAuthStatus()])
+      setMeta(metaResult)
+      setAuthStatus(authResult)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -105,6 +113,36 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       window.open(url, "_blank", "noopener,noreferrer")
     } catch (err) {
       log.error("Failed to open URL", err)
+    }
+  }
+
+  const handleSubmitPassword = async () => {
+    setPasswordError(null)
+
+    const next = passwordValue()
+    const confirm = passwordConfirm()
+
+    if (next.trim().length < 8) {
+      setPasswordError("Password must be at least 8 characters.")
+      return
+    }
+
+    if (next !== confirm) {
+      setPasswordError("Passwords do not match.")
+      return
+    }
+
+    setSavingPassword(true)
+    try {
+      const result = await serverApi.setServerPassword(next)
+      setAuthStatus({ authenticated: true, username: result.username, passwordUserProvided: result.passwordUserProvided })
+      setPasswordValue("")
+      setPasswordConfirm("")
+      setPasswordFormOpen(false)
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingPassword(false)
     }
   }
 
@@ -175,6 +213,87 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
               </section>
 
               <section class="remote-section">
+                <div class="remote-section-heading">
+                  <div class="remote-section-title">
+                    <Shield class="remote-icon" />
+                    <div>
+                      <p class="remote-label">Server password</p>
+                      <p class="remote-help">Remote handovers require a password. Set a memorable one to enable logins from other devices.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <Show
+                  when={authStatus() && authStatus()!.authenticated}
+                  fallback={<div class="remote-card">Authentication status unavailable.</div>}
+                >
+                  <div class="remote-card">
+                    <p class="remote-help">Username: {authStatus()!.username ?? "codenomad"}</p>
+                    <p class="remote-help">
+                      {authStatus()!.passwordUserProvided
+                        ? "A password is set for remote access."
+                        : "No memorable password is set yet. Set one to allow remote handover logins."}
+                    </p>
+
+                    <div class="remote-actions" style={{ "justify-content": "flex-start", "margin-top": "12px" }}>
+                      <button
+                        class="remote-pill"
+                        type="button"
+                        onClick={() => {
+                          setPasswordFormOpen(!passwordFormOpen())
+                          setPasswordError(null)
+                        }}
+                      >
+                        {passwordFormOpen()
+                          ? "Cancel"
+                          : authStatus()!.passwordUserProvided
+                            ? "Change password"
+                            : "Set password"}
+                      </button>
+                    </div>
+
+                    <Show when={passwordFormOpen()}>
+                      <div class="selector-input-group" style={{ "margin-top": "12px" }}>
+                        <label class="text-sm font-medium text-secondary">New password</label>
+                        <input
+                          class="selector-input w-full"
+                          type="password"
+                          value={passwordValue()}
+                          onInput={(event) => setPasswordValue(event.currentTarget.value)}
+                          placeholder="At least 8 characters"
+                        />
+                      </div>
+                      <div class="selector-input-group" style={{ "margin-top": "10px" }}>
+                        <label class="text-sm font-medium text-secondary">Confirm password</label>
+                        <input
+                          class="selector-input w-full"
+                          type="password"
+                          value={passwordConfirm()}
+                          onInput={(event) => setPasswordConfirm(event.currentTarget.value)}
+                        />
+                      </div>
+
+                      <Show when={passwordError()}>
+                        {(message) => <div class="remote-error" style={{ "margin-top": "10px" }}>{message()}</div>}
+                      </Show>
+
+                      <div class="remote-actions" style={{ "justify-content": "flex-start", "margin-top": "12px" }}>
+                        <button
+                          class="remote-pill"
+                          type="button"
+                          disabled={savingPassword()}
+                          onClick={() => void handleSubmitPassword()}
+                        >
+                          {savingPassword() ? "Saving…" : "Save password"}
+                        </button>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+              </section>
+
+              <section class="remote-section">
+
                 <div class="remote-section-heading">
                   <div class="remote-section-title">
                     <Wifi class="remote-icon" />

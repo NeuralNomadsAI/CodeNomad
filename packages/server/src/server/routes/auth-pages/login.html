@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeNomad Login</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        background: #0b0b0f;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+      }
+      .card {
+        width: 420px;
+        max-width: calc(100vw - 32px);
+        background: #14141c;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      p {
+        margin: 0 0 18px;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        margin: 10px 0 6px;
+        color: rgba(255, 255, 255, 0.75);
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #0f0f16;
+        color: #fff;
+      }
+      button {
+        width: 100%;
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 0;
+        background: #4c6fff;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .error {
+        margin-top: 12px;
+        color: #ff6b6b;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Sign in</h1>
+      <p>This CodeNomad server is protected. Enter your credentials to continue.</p>
+
+      <label for="username">Username</label>
+      <input id="username" autocomplete="username" placeholder="{{DEFAULT_USERNAME}}" value="" />
+
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" value="" />
+
+      <button id="submit" type="button">Continue</button>
+      <div id="error" class="error" style="display: none"></div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const errorEl = $("error")
+      const showError = (msg) => {
+        errorEl.textContent = msg
+        errorEl.style.display = "block"
+      }
+      const hideError = () => {
+        errorEl.textContent = ""
+        errorEl.style.display = "none"
+      }
+
+      async function submit() {
+        hideError()
+        const username = $("username").value.trim()
+        const password = $("password").value
+        if (!username || !password) {
+          showError("Username and password are required.")
+          return
+        }
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+            credentials: "include",
+          })
+          if (!res.ok) {
+            let message = ""
+            try {
+              const json = await res.json()
+              message = json && json.error ? String(json.error) : ""
+            } catch {
+              message = ""
+            }
+            showError(message || `Login failed (${res.status})`)
+            return
+          }
+          window.location.href = "/"
+        } catch (e) {
+          showError(e && e.message ? e.message : String(e))
+        }
+      }
+
+      $("submit").addEventListener("click", submit)
+      $("password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submit()
+      })
+    </script>
+  </body>
+</html>

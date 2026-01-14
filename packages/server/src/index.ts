@@ -18,6 +18,7 @@ import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { startReleaseMonitor } from "./releases/release-monitor"
+import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -37,6 +38,9 @@ interface CliOptions {
   uiStaticDir: string
   uiDevServer?: string
   launch: boolean
+  authUsername: string
+  authPassword?: string
+  generateToken: boolean
 }
 
 const DEFAULT_PORT = 9898
@@ -63,6 +67,17 @@ function parseCliOptions(argv: string[]): CliOptions {
     )
     .addOption(new Option("--ui-dev-server <url>", "Proxy UI requests to a running dev server").env("CLI_UI_DEV_SERVER"))
     .addOption(new Option("--launch", "Launch the UI in a browser after start").env("CLI_LAUNCH").default(false))
+    .addOption(
+      new Option("--username <username>", "Username for server authentication")
+        .env("CODENOMAD_SERVER_USERNAME")
+        .default(DEFAULT_AUTH_USERNAME),
+    )
+    .addOption(new Option("--password <password>", "Password for server authentication").env("CODENOMAD_SERVER_PASSWORD"))
+    .addOption(
+      new Option("--generate-token", "Emit a one-time bootstrap token for desktop")
+        .env("CODENOMAD_GENERATE_TOKEN")
+        .default(false),
+    )
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -77,6 +92,9 @@ function parseCliOptions(argv: string[]): CliOptions {
     uiDir: string
     uiDevServer?: string
     launch?: boolean
+    username: string
+    password?: string
+    generateToken?: boolean
   }>()
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
@@ -94,6 +112,9 @@ function parseCliOptions(argv: string[]): CliOptions {
     uiStaticDir: parsed.uiDir,
     uiDevServer: parsed.uiDevServer,
     launch: Boolean(parsed.launch),
+    authUsername: parsed.username,
+    authPassword: parsed.password,
+    generateToken: Boolean(parsed.generateToken),
   }
 }
 
@@ -119,7 +140,12 @@ async function main() {
   const configLogger = logger.child({ component: "config" })
   const eventLogger = logger.child({ component: "events" })
 
-  logger.info({ options }, "Starting CodeNomad CLI server")
+  const logOptions = {
+    ...options,
+    authPassword: options.authPassword ? "[REDACTED]" : undefined,
+  }
+
+  logger.info({ options: logOptions }, "Starting CodeNomad CLI server")
 
   const eventBus = new EventBus(eventLogger)
 
@@ -132,6 +158,23 @@ async function main() {
     hostLabel: options.host,
     workspaceRoot: options.rootDir,
     addresses: [],
+  }
+
+  const authManager = new AuthManager(
+    {
+      configPath: options.configPath,
+      username: options.authUsername,
+      password: options.authPassword,
+      generateToken: options.generateToken,
+    },
+    logger.child({ component: "auth" }),
+  )
+
+  if (options.generateToken) {
+    const token = authManager.issueBootstrapToken()
+    if (token) {
+      console.log(`${BOOTSTRAP_TOKEN_STDOUT_PREFIX}${token}`)
+    }
   }
 
   const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
@@ -175,6 +218,7 @@ async function main() {
     eventBus,
     serverMeta,
     instanceStore,
+    authManager,
     uiStaticDir: options.uiStaticDir,
     uiDevServerUrl: options.uiDevServer,
     logger,

@@ -76,7 +76,7 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
         setLoading(false)
       })
 
-    eventSource = new EventSource(buildBackgroundProcessStreamUrl(props.instanceId, process.id))
+    eventSource = new EventSource(buildBackgroundProcessStreamUrl(props.instanceId, process.id), { withCredentials: true } as any)
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as { type?: string; content?: string }

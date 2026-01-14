@@ -11,6 +11,13 @@ import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import { getOpencodeConfigDir } from "../opencode-config.js"
+import {
+  buildOpencodeBasicAuthHeader,
+  DEFAULT_OPENCODE_USERNAME,
+  generateOpencodeServerPassword,
+  OPENCODE_SERVER_PASSWORD_ENV,
+  OPENCODE_SERVER_USERNAME_ENV,
+} from "./opencode-auth"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
@@ -29,6 +36,7 @@ export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
   private readonly runtime: WorkspaceRuntime
   private readonly opencodeConfigDir: string
+  private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
@@ -45,6 +53,10 @@ export class WorkspaceManager {
 
   getInstancePort(id: string): number | undefined {
     return this.workspaces.get(id)?.port
+  }
+
+  getInstanceAuthorizationHeader(id: string): string | undefined {
+    return this.opencodeAuth.get(id)?.authorization
   }
 
   listFiles(workspaceId: string, relativePath = "."): FileSystemEntry[] {
@@ -106,11 +118,22 @@ export class WorkspaceManager {
 
     const preferences = this.options.configStore.get().preferences ?? {}
     const userEnvironment = preferences.environmentVariables ?? {}
+
+    const opencodeUsername = DEFAULT_OPENCODE_USERNAME
+    const opencodePassword = generateOpencodeServerPassword()
+    const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
+    if (!authorization) {
+      throw new Error("Failed to build OpenCode auth header")
+    }
+    this.opencodeAuth.set(id, { username: opencodeUsername, password: opencodePassword, authorization })
+
     const environment = {
       ...userEnvironment,
       OPENCODE_CONFIG_DIR: this.opencodeConfigDir,
       CODENOMAD_INSTANCE_ID: id,
       CODENOMAD_BASE_URL: this.options.getServerBaseUrl(),
+      [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
+      [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
     try {
@@ -154,6 +177,7 @@ export class WorkspaceManager {
     }
 
     this.workspaces.delete(id)
+    this.opencodeAuth.delete(id)
     clearWorkspaceSearchCache(workspace.path)
     if (!wasRunning) {
       this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: id })
@@ -174,6 +198,7 @@ export class WorkspaceManager {
       }
     }
     this.workspaces.clear()
+    this.opencodeAuth.clear()
     this.options.logger.info("All workspaces cleared")
   }
 
@@ -317,7 +342,13 @@ export class WorkspaceManager {
     const url = `http://127.0.0.1:${port}/project/current`
 
     try {
-      const response = await fetch(url)
+      const headers: Record<string, string> = {}
+      const authHeader = this.opencodeAuth.get(workspaceId)?.authorization
+      if (authHeader) {
+        headers["Authorization"] = authHeader
+      }
+
+      const response = await fetch(url, { headers })
       if (!response.ok) {
         const reason = `health probe returned HTTP ${response.status}`
         this.options.logger.debug({ workspaceId, status: response.status }, "Health probe returned server error")
@@ -407,6 +438,8 @@ export class WorkspaceManager {
   private handleProcessExit(workspaceId: string, info: { code: number | null; requested: boolean }) {
     const workspace = this.workspaces.get(workspaceId)
     if (!workspace) return
+
+    this.opencodeAuth.delete(workspaceId)
 
     this.options.logger.info({ workspaceId, ...info }, "Workspace process exited")
 

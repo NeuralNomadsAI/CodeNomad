@@ -5,6 +5,20 @@ import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
 
+const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
+
+function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const redacted: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      redacted[key] = value
+      continue
+    }
+    redacted[key] = SENSITIVE_ENV_KEY.test(key) ? "[REDACTED]" : value
+  }
+  return redacted
+}
+
 interface LaunchOptions {
   workspaceId: string
   folder: string
@@ -67,7 +81,7 @@ export class WorkspaceRuntime {
           binary: options.binaryPath,
           args,
           commandLine,
-          env,
+          env: redactEnvironment(env),
         },
         "Launching OpenCode process",
       )
