@@ -58,7 +58,7 @@ interface ToolCallProps {
   instanceId: string
   sessionId: string
   onContentRendered?: () => void
- }
+}
 
 
 
@@ -1067,14 +1067,14 @@ export default function ToolCall(props: ToolCallProps) {
     if (questions.length === 0) return null
 
     const requestId = request?.id ?? (state as any)?.input?.requestID ?? `question-${toolCallMemo()?.id ?? "unknown"}`
-    const active = Boolean(request && isQuestionActive())
+    const active = () => Boolean(request && isQuestionActive())
 
     const completedAnswers = Array.isArray((state as any)?.metadata?.answers) ? ((state as any).metadata.answers as string[][]) : undefined
     const answers = completedAnswers ?? questionDraftAnswers()[requestId] ?? []
     const customInputs = questionCustomDraft()[requestId] ?? []
 
     const updateAnswer = (questionIndex: number, next: string[]) => {
-      if (!active) return
+      if (!active()) return
       setQuestionDraftAnswers((prev) => {
         const current = prev[requestId] ?? []
         const updated = [...current]
@@ -1084,7 +1084,7 @@ export default function ToolCall(props: ToolCallProps) {
     }
 
     const updateCustom = (questionIndex: number, value: string) => {
-      if (!active) return
+      if (!active()) return
       setQuestionCustomDraft((prev) => {
         const current = prev[requestId] ?? []
         const updated = [...current]
@@ -1106,18 +1106,18 @@ export default function ToolCall(props: ToolCallProps) {
     }
 
     const submitDisabled = () => {
-      if (!active) return true
+      if (!active()) return true
       if (questionSubmitting()) return true
       return questions.some((_, index) => (answers[index]?.length ?? 0) === 0)
     }
 
-    const showButtons = () => active
+    const showButtons = () => active()
 
     return (
-      <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
+      <div class={`tool-call-permission ${active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
         <div class="tool-call-permission-header">
           <span class="tool-call-permission-label">
-            {active ? "Question Required" : request ? "Question Queued" : "Questions"}
+            {active() ? "Question Required" : request ? "Question Queued" : "Questions"}
           </span>
           <span class="tool-call-permission-type">{questions.length === 1 ? "Question" : "Questions"}</span>
         </div>
@@ -1146,57 +1146,57 @@ export default function ToolCall(props: ToolCallProps) {
 
                     <div class="mt-1 text-sm font-medium">{q?.question}</div>
 
-                      <div class="mt-3 flex flex-col gap-1">
-                        <For each={q?.options ?? []}>
-                          {(opt) => {
-                            const checked = () => selected().includes(opt.label)
-                            return (
-                              <label
-                                class={`flex items-start gap-2 py-1 ${active ? "cursor-pointer" : request ? "opacity-80" : ""}`}
-                                title={opt.description}
-                              >
-                                <input
-                                  type={inputType()}
-                                  name={groupName()}
-                                  checked={checked()}
-                                  disabled={!active || questionSubmitting()}
-                                  onChange={() => toggleOption(i(), opt.label)}
-                                />
-                                <div class="flex flex-col">
-                                  <div class="text-sm leading-tight">{opt.label}</div>
-                                  <div class="text-xs text-muted leading-tight">{opt.description}</div>
-                                </div>
-                              </label>
-                            )
-                          }}
-                        </For>
-
-                        <Show when={active}>
-                          <div class="mt-2 flex items-center gap-2">
-                            <input
-                              class="flex-1 rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
-                              type="text"
-                              placeholder="Type your own answer"
-                              value={customValue()}
-                              disabled={!active || questionSubmitting()}
-                              onInput={(e) => updateCustom(i(), e.currentTarget.value)}
-                            />
-                            <button
-                              type="button"
-                              class="tool-call-permission-button"
-                              disabled={!active || questionSubmitting() || !customValue().trim()}
-                              onClick={() => {
-                                const value = customValue().trim()
-                                if (!value) return
-                                updateCustom(i(), value)
-                                toggleOption(i(), value)
-                              }}
+                    <div class="mt-3 flex flex-col gap-1">
+                      <For each={q?.options ?? []}>
+                        {(opt) => {
+                          const checked = () => selected().includes(opt.label)
+                          return (
+                            <label
+                              class={`flex items-start gap-2 py-1 ${active() ? "cursor-pointer" : request ? "opacity-80" : ""}`}
+                              title={opt.description}
                             >
-                              {multi() ? "Toggle" : "Select"}
-                            </button>
-                          </div>
-                        </Show>
-                      </div>
+                              <input
+                                type={inputType()}
+                                name={groupName()}
+                                checked={checked()}
+                                disabled={!active() || questionSubmitting()}
+                                onChange={() => toggleOption(i(), opt.label)}
+                              />
+                              <div class="flex flex-col">
+                                <div class="text-sm leading-tight">{opt.label}</div>
+                                <div class="text-xs text-muted leading-tight">{opt.description}</div>
+                              </div>
+                            </label>
+                          )
+                        }}
+                      </For>
+
+                      <Show when={active()}>
+                        <div class="mt-2 flex items-center gap-2">
+                          <input
+                            class="flex-1 rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
+                            type="text"
+                            placeholder="Type your own answer"
+                            value={customValue()}
+                            disabled={!active() || questionSubmitting()}
+                            onInput={(e) => updateCustom(i(), e.currentTarget.value)}
+                          />
+                          <button
+                            type="button"
+                            class="tool-call-permission-button"
+                            disabled={!active() || questionSubmitting() || !customValue().trim()}
+                            onClick={() => {
+                              const value = customValue().trim()
+                              if (!value) return
+                              updateCustom(i(), value)
+                              toggleOption(i(), value)
+                            }}
+                          >
+                            {multi() ? "Toggle" : "Select"}
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
 
                   </div>
                 )
@@ -1237,7 +1237,7 @@ export default function ToolCall(props: ToolCallProps) {
               </div>
             </Show>
 
-            <Show when={!active && request}>
+            <Show when={!active() && request}>
               <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
             </Show>
           </div>
@@ -1306,12 +1306,12 @@ export default function ToolCall(props: ToolCallProps) {
       {expanded() && (
         <div class="tool-call-details">
           {renderToolBody()}
- 
+
           {renderError()}
- 
+
           {renderPermissionBlock()}
           {renderQuestionBlock()}
- 
+
           <Show when={status() === "pending" && !pendingPermission()}>
             <div class="tool-call-pending-message">
               <span class="spinner-small"></span>
@@ -1320,7 +1320,7 @@ export default function ToolCall(props: ToolCallProps) {
           </Show>
         </div>
       )}
- 
+
       <Show when={diagnosticsEntries().length}>
 
         {renderDiagnosticsSection(

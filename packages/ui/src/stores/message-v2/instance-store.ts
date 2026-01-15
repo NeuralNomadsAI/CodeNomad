@@ -281,9 +281,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState("usage", sessionId, (current) => {
       const draft = current
         ? {
-            ...current,
-            entries: { ...current.entries },
-          }
+          ...current,
+          entries: { ...current.entries },
+        }
         : createEmptyUsageState()
       updater(draft)
       return draft
@@ -557,10 +557,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
       return
     }
-  
+
     const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
     const cloned = clonePart(input.part)
-  
+
     setState(
       "messages",
       input.messageId,
@@ -591,7 +591,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         timestamp: Date.now(),
       })
     }
-  
+
     // Any part update can change the rendered height of the message
     // list, so we treat it as a session revision for scroll purposes.
     bumpSessionRevision(message.sessionId)
@@ -901,10 +901,43 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function getQuestionState(messageId?: string, partId?: string) {
     const messageKey = messageId ?? "__global__"
     const partKey = partId ?? "__global__"
+
+    // First try direct lookup
     const entry = state.questions.byMessage[messageKey]?.[partKey]
-    if (!entry) return null
-    const active = state.questions.active?.request.id === entry.request.id
-    return { entry, active }
+    if (entry) {
+      const active = state.questions.active?.request.id === entry.request.id
+      return { entry, active }
+    }
+
+    // If direct lookup fails and we have a messageId, search the queue for matching entries
+    // This handles the case where question was stored with request.id as key before partId was resolved
+    if (messageId && partId) {
+      const messageEntries = state.questions.byMessage[messageKey]
+      if (messageEntries) {
+        // Search through all entries for this message
+        for (const key of Object.keys(messageEntries)) {
+          const qEntry = messageEntries[key]
+          // Check if this question's tool association matches our partId
+          if (qEntry && qEntry.request?.tool?.callID) {
+            // Get the message record to match callID to partId
+            const msgRecord = state.messages[messageId]
+            if (msgRecord?.parts[partId]) {
+              const toolPart = msgRecord.parts[partId].data
+              if (toolPart?.type === "tool") {
+                const toolCallId = (toolPart as any).callID ?? (toolPart as any).callId ??
+                  (toolPart as any).toolCallID ?? (toolPart as any).toolCallId
+                if (toolCallId === qEntry.request.tool.callID) {
+                  const active = state.questions.active?.request.id === qEntry.request.id
+                  return { entry: qEntry, active }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null
   }
 
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
@@ -990,16 +1023,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-   function clearSession(sessionId: string) {
-     if (!sessionId) return
+  function clearSession(sessionId: string) {
+    if (!sessionId) return
 
     const messageIds = Object.values(state.messages)
       .filter((record) => record.sessionId === sessionId)
       .map((record) => record.id)
- 
+
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
- 
+
     batch(() => {
       setState("messages", (prev) => {
         const next = { ...prev }
@@ -1077,52 +1110,52 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     clearLatestTodoSnapshot(sessionId)
- 
+
     hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
- 
-   function clearInstance() {
-     messageInfoCache.clear()
-     setState(reconcile(createInitialState(instanceId)))
-   }
- 
-   return {
 
-     instanceId,
-     state,
-     setState,
-     addOrUpdateSession,
-     hydrateMessages,
-     upsertMessage,
-      applyPartUpdate,
-      removeMessage,
-      removeMessagePart,
-      bufferPendingPart,
-     flushPendingParts,
-     replaceMessageId,
-     setMessageInfo,
-     getMessageInfo,
-      upsertPermission,
-      removePermission,
-      getPermissionState,
-      upsertQuestion,
-      removeQuestion,
-      getQuestionState,
-
-     setSessionRevert,
-     getSessionRevert,
-     rebuildUsage,
-     getSessionUsage,
-     setScrollSnapshot,
-     getScrollSnapshot,
-     getSessionRevision: getSessionRevisionValue,
-      getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
-      getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
-      clearSession,
-      clearInstance,
-    }
+  function clearInstance() {
+    messageInfoCache.clear()
+    setState(reconcile(createInitialState(instanceId)))
   }
+
+  return {
+
+    instanceId,
+    state,
+    setState,
+    addOrUpdateSession,
+    hydrateMessages,
+    upsertMessage,
+    applyPartUpdate,
+    removeMessage,
+    removeMessagePart,
+    bufferPendingPart,
+    flushPendingParts,
+    replaceMessageId,
+    setMessageInfo,
+    getMessageInfo,
+    upsertPermission,
+    removePermission,
+    getPermissionState,
+    upsertQuestion,
+    removeQuestion,
+    getQuestionState,
+
+    setSessionRevert,
+    getSessionRevert,
+    rebuildUsage,
+    getSessionUsage,
+    setScrollSnapshot,
+    getScrollSnapshot,
+    getSessionRevision: getSessionRevisionValue,
+    getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
+    getMessage: (messageId: string) => state.messages[messageId],
+    getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+    clearSession,
+    clearInstance,
+  }
+}
 
 
