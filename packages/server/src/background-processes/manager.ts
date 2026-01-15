@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process"
+import { spawn, spawnSync, type ChildProcess } from "child_process"
 import { createWriteStream, existsSync, promises as fs } from "fs"
 import path from "path"
 import { randomBytes } from "crypto"
@@ -60,10 +60,13 @@ export class BackgroundProcessManager {
 
     const outputStream = createWriteStream(outputPath, { flags: "a" })
 
-    const child = spawn("bash", ["-c", command], {
+    const { shellCommand, shellArgs, spawnOptions } = this.buildShellSpawn(command)
+
+    const child = spawn(shellCommand, shellArgs, {
       cwd: workspace.path,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      ...spawnOptions,
     })
 
     child.on("exit", () => {
@@ -274,7 +277,15 @@ export class BackgroundProcessManager {
     const pid = child.pid
     if (!pid) return
 
-    if (process.platform !== "win32") {
+    if (process.platform === "win32") {
+      const args = this.buildWindowsTaskkillArgs(pid, signal)
+      try {
+        spawnSync("taskkill", args, { stdio: "ignore" })
+        return
+      } catch {
+        // Fall back to killing the direct child.
+      }
+    } else {
       try {
         process.kill(-pid, signal)
         return
@@ -320,6 +331,30 @@ export class BackgroundProcessManager {
     }
   }
 
+
+  private buildShellSpawn(command: string): { shellCommand: string; shellArgs: string[]; spawnOptions?: Record<string, unknown> } {
+    if (process.platform === "win32") {
+      const comspec = process.env.ComSpec || "cmd.exe"
+      return {
+        shellCommand: comspec,
+        shellArgs: ["/d", "/s", "/c", command],
+        spawnOptions: { windowsVerbatimArguments: true },
+      }
+    }
+
+    // Keep bash for macOS/Linux.
+    return { shellCommand: "bash", shellArgs: ["-c", command] }
+  }
+
+  private buildWindowsTaskkillArgs(pid: number, signal: NodeJS.Signals): string[] {
+    // Default to graceful termination (no /F), then force kill when we escalate.
+    const force = signal === "SIGKILL"
+    const args = ["/PID", String(pid), "/T"]
+    if (force) {
+      args.push("/F")
+    }
+    return args
+  }
 
   private statusFromExit(code: number | null): BackgroundProcessStatus {
     if (code === null) return "stopped"
