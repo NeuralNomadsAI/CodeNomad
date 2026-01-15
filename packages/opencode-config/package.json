@@ -3,6 +3,6 @@
   "version": "0.5.0",
   "private": true,
   "dependencies": {
-    "@opencode-ai/plugin": "1.1.12"
+    "@opencode-ai/plugin": "1.1.16"
   }
 }
