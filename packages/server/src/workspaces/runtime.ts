@@ -5,6 +5,41 @@ import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
 
+const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
+const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
+
+function buildSpawnSpec(binaryPath: string, args: string[]) {
+  if (process.platform !== "win32") {
+    return { command: binaryPath, args, options: {} as const }
+  }
+
+  const extension = path.extname(binaryPath).toLowerCase()
+
+  if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
+    const comspec = process.env.ComSpec || "cmd.exe"
+    // cmd.exe requires the full command as a single string.
+    // Using the ""<script> <args>"" pattern ensures paths with spaces are handled.
+    const commandLine = `""${binaryPath}" ${args.join(" ")}"`
+
+    return {
+      command: comspec,
+      args: ["/d", "/s", "/c", commandLine],
+      options: { windowsVerbatimArguments: true } as const,
+    }
+  }
+
+  if (WINDOWS_POWERSHELL_EXTENSIONS.has(extension)) {
+    // powershell.exe ships with Windows. (pwsh may not.)
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", binaryPath, ...args],
+      options: {} as const,
+    }
+  }
+
+  return { command: binaryPath, args, options: {} as const }
+}
+
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
 
 function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
@@ -73,22 +108,25 @@ export class WorkspaceRuntime {
     }
 
     return new Promise((resolve, reject) => {
-      const commandLine = [options.binaryPath, ...args].join(" ")
+      const spec = buildSpawnSpec(options.binaryPath, args)
+      const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
         {
           workspaceId: options.workspaceId,
           folder: options.folder,
           binary: options.binaryPath,
-          args,
+          spawnCommand: spec.command,
+          spawnArgs: spec.args,
           commandLine,
           env: redactEnvironment(env),
         },
         "Launching OpenCode process",
       )
-      const child = spawn(options.binaryPath, args, {
+      const child = spawn(spec.command, spec.args, {
         cwd: options.folder,
         env,
         stdio: ["ignore", "pipe", "pipe"],
+        ...spec.options,
       })
 
       const managed: ManagedProcess = { child, requestedStop: false }
