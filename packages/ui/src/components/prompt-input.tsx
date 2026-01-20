@@ -604,6 +604,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
 
+    setExpandState("normal")
     clearPrompt()
 
     // Ignore attachments for slash commands, but keep them for next prompt.
@@ -843,7 +844,10 @@ export default function PromptInput(props: PromptInputProps) {
         const currentPrompt = prompt()
         const pos = atPosition()
         const cursorPos = textareaRef?.selectionStart || 0
-        const folderMention = relativePath === "." || relativePath === "" ? "/" : displayPath
+        const folderMention =
+          relativePath === "." || relativePath === ""
+            ? "/"
+            : relativePath.replace(/\/+$/, "") + "/"
 
         if (pos !== null) {
           const before = currentPrompt.substring(0, pos + 1)
@@ -887,7 +891,7 @@ export default function PromptInput(props: PromptInputProps) {
       if (pos !== null) {
         const before = currentPrompt.substring(0, pos)
         const after = currentPrompt.substring(cursorPos)
-        const attachmentText = `@${filename}`
+        const attachmentText = `@${normalizedPath}`
         const newPrompt = before + attachmentText + " " + after
         setPrompt(newPrompt)
 
