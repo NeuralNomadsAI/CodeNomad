@@ -92,6 +92,19 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instanc
   }
 }
 
+function ensureActiveInstanceSelected(): void {
+  const current = activeInstanceId()
+  const instanceMap = instances()
+  if (current && instanceMap.has(current)) return
+
+  for (const [id, instance] of instanceMap.entries()) {
+    if (instance.status === "ready") {
+      setActiveInstanceId(id)
+      return
+    }
+  }
+}
+
 function upsertWorkspace(descriptor: WorkspaceDescriptor) {
   const mapped = workspaceDescriptorToInstance(descriptor)
   if (instances().has(descriptor.id)) {
@@ -102,6 +115,9 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor) {
 
   if (descriptor.status === "ready") {
     attachClient(descriptor)
+    // If no tab is currently selected (common after UI refresh),
+    // auto-select the first ready instance.
+    ensureActiveInstanceSelected()
   }
 }
 
@@ -225,14 +241,17 @@ async function hydrateInstanceData(instanceId: string) {
   }
 }
 
-void (async function initializeWorkspaces() {
+  void (async function initializeWorkspaces() {
   try {
     const workspaces = await serverApi.fetchWorkspaces()
     workspaces.forEach((workspace) => upsertWorkspace(workspace))
+    // After a UI refresh, we may have instances but no active selection.
+    ensureActiveInstanceSelected()
   } catch (error) {
     log.error("Failed to load workspaces", error)
   }
 })()
+
 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 

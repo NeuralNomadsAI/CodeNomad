@@ -39,6 +39,7 @@ import { loadMessages } from "./session-api"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
+  reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
   upsertPermissionV2,
   upsertQuestionV2,
@@ -230,6 +231,10 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
  
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
 
+    if (part.type === "tool" && part.tool === "question") {
+      // Questions can arrive before their tool part exists; re-link now.
+      reconcilePendingQuestionsV2(instanceId, sessionId)
+    }
 
     updateSessionInfo(instanceId, sessionId)
   } else if (event.type === "message.updated") {
