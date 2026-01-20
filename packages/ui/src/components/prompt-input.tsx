@@ -604,6 +604,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
 
+    setExpandState("normal")
     clearPrompt()
 
     // Ignore attachments for slash commands, but keep them for next prompt.
