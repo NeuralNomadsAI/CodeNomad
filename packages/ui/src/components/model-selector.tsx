@@ -116,11 +116,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   createEffect(() => {
     if (isOpen()) {
-      // Auto-expand the current model's provider
-      const current = currentModelValue()
-      if (current) {
-        setExpandedProvider(current.providerId)
-      }
+      // Start collapsed, focus search
+      setExpandedProvider(null)
       setTimeout(() => {
         searchInputRef?.focus()
       }, 100)
