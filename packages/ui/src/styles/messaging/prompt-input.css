@@ -13,7 +13,7 @@
 }
 
 .prompt-input-actions {
-  @apply flex flex-col items-center justify-between;
+  @apply flex flex-col items-center;
   align-self: stretch;
   height: 100%;
   padding: 0.5rem 0.25rem;
@@ -30,10 +30,23 @@
 }
 
 .prompt-input-field {
-  position: absolute;
-  inset: 0;
+  position: relative;
   width: 100%;
   height: 100%;
+}
+
+.prompt-input-field-container.is-expanded {
+  height: auto;
+}
+
+.prompt-input-field.is-expanded {
+  height: auto;
+}
+
+.prompt-input.is-expanded {
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
  .prompt-input {
@@ -69,37 +82,42 @@
   color: var(--text-primary);
 }
 
-.prompt-history-top,
-.prompt-history-bottom {
+/* Navigation buttons container (expand, prev, next) */
+.prompt-nav-buttons {
   position: absolute;
-  right: 0.35rem;
+  top: 0.25rem;
+  right: 0.25rem;
+  bottom: 0.25rem;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.125rem;
   z-index: 2;
 }
 
-.prompt-history-top {
-  top: 0.3rem;
-}
-
-.prompt-history-bottom {
-  bottom: 0.6rem;
-}
-
+.prompt-expand-button,
 .prompt-history-button {
-  @apply w-9 h-9 flex items-center justify-center rounded-md;
+  @apply w-7 h-7 flex items-center justify-center rounded-md;
   color: var(--text-muted);
   background-color: rgba(15, 23, 42, 0.04);
   transition: background-color 0.15s ease, color 0.15s ease;
   padding: 0;
+  flex-shrink: 0;
 }
 
+.prompt-expand-button:hover:not(:disabled),
 .prompt-history-button:hover:not(:disabled) {
   background-color: var(--surface-secondary);
   color: var(--text-primary);
 }
 
+.prompt-expand-button:active:not(:disabled) {
+  background-color: var(--accent-primary);
+  color: var(--text-inverted);
+  transform: scale(0.95);
+}
+
+.prompt-expand-button:disabled,
 .prompt-history-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -178,6 +196,7 @@
   background-color: var(--accent-primary);
   color: var(--text-inverted);
   border: 1px solid var(--accent-primary);
+  margin-top: auto;
 }
 
 .send-button.shell-mode {
