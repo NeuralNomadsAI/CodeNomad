@@ -84,7 +84,8 @@ const ModelDefaultsPanel: Component = () => {
     setSelectedModel(null)
   }
 
-  const customFilter = (option: FlatModel, inputValue: string) => {
+  const customFilter = (option: FlatModel | undefined, inputValue: string) => {
+    if (!option?.searchText) return false
     return option.searchText.toLowerCase().includes(inputValue.toLowerCase())
   }
 
@@ -140,21 +141,24 @@ const ModelDefaultsPanel: Component = () => {
               placeholder="Search models..."
               defaultFilter={customFilter}
               allowsEmptyCollection
-              itemComponent={(itemProps) => (
-                <Combobox.Item item={itemProps.item} class="selector-option">
-                  <div class="selector-option-content">
-                    <Combobox.ItemLabel class="selector-option-label">{itemProps.item.rawValue.name}</Combobox.ItemLabel>
-                    <Combobox.ItemDescription class="selector-option-description">
-                      {itemProps.item.rawValue.providerName} • {itemProps.item.rawValue.providerId}/{itemProps.item.rawValue.id}
-                    </Combobox.ItemDescription>
-                  </div>
-                  <Combobox.ItemIndicator class="selector-option-indicator">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </Combobox.ItemIndicator>
-                </Combobox.Item>
-              )}
+              itemComponent={(itemProps) => {
+                const model = itemProps.item.rawValue as FlatModel | undefined
+                return (
+                  <Combobox.Item item={itemProps.item} class="selector-option">
+                    <div class="selector-option-content">
+                      <Combobox.ItemLabel class="selector-option-label">{model?.name ?? "Unknown"}</Combobox.ItemLabel>
+                      <Combobox.ItemDescription class="selector-option-description">
+                        {model?.providerName ?? "?"} • {model?.providerId ?? "?"}/{model?.id ?? "?"}
+                      </Combobox.ItemDescription>
+                    </div>
+                    <Combobox.ItemIndicator class="selector-option-indicator">
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </Combobox.ItemIndicator>
+                  </Combobox.Item>
+                )
+              }}
             >
               <Combobox.Control class="relative w-full">
                 <Combobox.Input class="modal-input" />

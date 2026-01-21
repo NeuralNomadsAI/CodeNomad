@@ -40,31 +40,35 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   const allModels = createMemo<FlatModel[]>(() =>
     instanceProviders().flatMap((p) =>
-      p.models.map((m) => ({
+      (p.models || []).filter(Boolean).map((m) => ({
         ...m,
-        providerName: p.name,
-        key: `${m.providerId}/${m.id}`,
-        searchText: `${m.name} ${p.name} ${m.providerId} ${m.id} ${m.providerId}/${m.id}`,
+        providerName: p.name ?? "Unknown",
+        key: `${m.providerId ?? "?"}/${m.id ?? "?"}`,
+        searchText: `${m.name ?? ""} ${p.name ?? ""} ${m.providerId ?? ""} ${m.id ?? ""} ${m.providerId ?? ""}/${m.id ?? ""}`,
       })),
     ),
   )
 
   // Group models by provider for display
   const groupedModels = createMemo<ProviderGroup[]>(() => {
+    const models = allModels()
+    if (!models || models.length === 0) return []
+
     const groups = new Map<string, ProviderGroup>()
-    for (const model of allModels()) {
+    for (const model of models) {
+      if (!model || !model.providerId) continue
       const existing = groups.get(model.providerId)
       if (existing) {
         existing.options.push(model)
       } else {
         groups.set(model.providerId, {
           provider: model.providerId,
-          providerName: model.providerName,
+          providerName: model.providerName ?? "Unknown",
           options: [model],
         })
       }
     }
-    return Array.from(groups.values())
+    return Array.from(groups.values()).filter(g => g && g.options && g.options.length > 0)
   })
 
   const currentModelValue = createMemo(() =>
@@ -76,7 +80,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
   }
 
-  const customFilter = (option: FlatModel, inputValue: string) => {
+  const customFilter = (option: FlatModel | undefined, inputValue: string) => {
+    if (!option?.searchText) return false
     return option.searchText.toLowerCase().includes(inputValue.toLowerCase())
   }
 
@@ -88,6 +93,18 @@ export default function ModelSelector(props: ModelSelectorProps) {
     }
   })
 
+  // Guard against rendering before data is loaded
+  if (allModels().length === 0) {
+    return (
+      <div class="sidebar-selector">
+        <label class="selector-label">Model</label>
+        <div class="selector-trigger">
+          <span class="selector-trigger-primary">Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div class="sidebar-selector">
       <label class="selector-label">Model</label>
@@ -95,21 +112,22 @@ export default function ModelSelector(props: ModelSelectorProps) {
         value={currentModelValue()}
         onChange={handleChange}
         onOpenChange={setIsOpen}
-        options={groupedModels()}
-        optionValue={(option: FlatModel) => option?.key ?? ""}
-        optionTextValue={(option: FlatModel) => option?.searchText ?? ""}
-        optionLabel={(option: FlatModel) => option?.name ?? "Unknown"}
-        optionGroupChildren="options"
+        options={allModels()}
+        optionValue={(option: FlatModel | null | undefined) => {
+          if (!option || typeof option !== 'object') return ""
+          return option.key ?? ""
+        }}
+        optionTextValue={(option: FlatModel | null | undefined) => {
+          if (!option || typeof option !== 'object') return ""
+          return option.searchText ?? ""
+        }}
+        optionLabel={(option: FlatModel | null | undefined) => {
+          if (!option || typeof option !== 'object') return "Unknown"
+          return option.name ?? "Unknown"
+        }}
         placeholder="Search models..."
         defaultFilter={customFilter}
         allowsEmptyCollection
-        sectionComponent={(sectionProps) => (
-          <Combobox.Section class="selector-section">
-            <Combobox.SectionLabel class="selector-section-label">
-              {(sectionProps.section.rawValue as ProviderGroup)?.providerName ?? "Unknown Provider"}
-            </Combobox.SectionLabel>
-          </Combobox.Section>
-        )}
         itemComponent={(itemProps) => {
           const model = itemProps.item.rawValue as FlatModel | undefined
           return (
@@ -122,7 +140,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   {model?.name ?? "Unknown Model"}
                 </Combobox.ItemLabel>
                 <Combobox.ItemDescription class="selector-option-description">
-                  {model?.providerId ?? "?"}/{model?.id ?? "?"}
+                  {model?.providerName ?? "?"} • {model?.providerId ?? "?"}/{model?.id ?? "?"}
                 </Combobox.ItemDescription>
               </div>
               <Combobox.ItemIndicator class="selector-option-indicator">

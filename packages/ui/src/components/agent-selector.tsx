@@ -72,29 +72,32 @@ export default function AgentSelector(props: AgentSelectorProps) {
         value={availableAgents().find((a) => a.name === props.currentAgent)}
         onChange={handleChange}
         options={availableAgents()}
-        optionValue="name"
-        optionTextValue="name"
+        optionValue={(option: Agent | null | undefined) => option?.name ?? ""}
+        optionTextValue={(option: Agent | null | undefined) => option?.name ?? ""}
         placeholder="Select agent..."
-        itemComponent={(itemProps) => (
-          <Select.Item
-            item={itemProps.item}
-            class="selector-option"
-          >
-            <div class="flex flex-col flex-1 min-w-0">
-              <Select.ItemLabel class="selector-option-label flex items-center gap-2">
-                <span>{capitalize(itemProps.item.rawValue.name)}</span>
-                <Show when={itemProps.item.rawValue.mode === "subagent"}>
-                  <span class="neutral-badge">subagent</span>
+        itemComponent={(itemProps) => {
+          const agent = itemProps.item.rawValue as Agent | undefined
+          return (
+            <Select.Item
+              item={itemProps.item}
+              class="selector-option"
+            >
+              <div class="flex flex-col flex-1 min-w-0">
+                <Select.ItemLabel class="selector-option-label flex items-center gap-2">
+                  <span>{capitalize(agent?.name ?? "Unknown")}</span>
+                  <Show when={agent?.mode === "subagent"}>
+                    <span class="neutral-badge">subagent</span>
+                  </Show>
+                </Select.ItemLabel>
+                <Show when={agent?.description}>
+                  <Select.ItemDescription class="selector-option-description">
+                    {agent?.description}
+                  </Select.ItemDescription>
                 </Show>
-              </Select.ItemLabel>
-              <Show when={itemProps.item.rawValue.description}>
-                <Select.ItemDescription class="selector-option-description">
-                  {itemProps.item.rawValue.description}
-                </Select.ItemDescription>
-              </Show>
-            </div>
-          </Select.Item>
-        )}
+              </div>
+            </Select.Item>
+          )
+        }}
       >
         <Select.Trigger
           data-agent-selector
