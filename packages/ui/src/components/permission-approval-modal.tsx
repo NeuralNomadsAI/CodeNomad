@@ -7,6 +7,7 @@ import {
   getPermissionQueue,
   getQuestionQueue,
   getQuestionEnqueuedAtForInstance,
+  sendPermissionResponse,
 } from "../stores/instances"
 import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -130,6 +131,45 @@ function resolveToolCallFromQuestion(instanceId: string, request: QuestionReques
 
 const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props) => {
   const [loadingSession, setLoadingSession] = createSignal<string | null>(null)
+  const [permissionSubmitting, setPermissionSubmitting] = createSignal<Set<string>>(new Set())
+  const [permissionError, setPermissionError] = createSignal<Map<string, string>>(new Map())
+
+  const setPermissionBusy = (permissionId: string, busy: boolean) => {
+    setPermissionSubmitting((prev) => {
+      const next = new Set(prev)
+      if (busy) next.add(permissionId)
+      else next.delete(permissionId)
+      return next
+    })
+  }
+
+  const setPermissionItemError = (permissionId: string, message: string | null) => {
+    setPermissionError((prev) => {
+      const next = new Map(prev)
+      if (!message) next.delete(permissionId)
+      else next.set(permissionId, message)
+      return next
+    })
+  }
+
+  async function handlePermissionDecision(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+    const permissionId = permission?.id
+    if (!permissionId) return
+
+    if (permissionSubmitting().has(permissionId)) return
+
+    setPermissionBusy(permissionId, true)
+    setPermissionItemError(permissionId, null)
+
+    try {
+      const sessionId = getPermissionSessionId(permission) || ""
+      await sendPermissionResponse(props.instanceId, sessionId, permissionId, response)
+    } catch (error) {
+      setPermissionItemError(permissionId, error instanceof Error ? error.message : "Unable to update permission")
+    } finally {
+      setPermissionBusy(permissionId, false)
+    }
+  }
 
   const permissionQueue = createMemo(() => getPermissionQueue(props.instanceId))
   const questionQueue = createMemo(() => getQuestionQueue(props.instanceId))
@@ -304,17 +344,52 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                           </div>
                         </div>
 
-                        <Show
-                          when={resolved()}
-                          fallback={
-                            <div class="permission-center-fallback">
-                              <div class="permission-center-fallback-title">
-                                <code>{primaryTitle()}</code>
+                          <Show
+                            when={resolved()}
+                            fallback={
+                              <div class="permission-center-fallback">
+                                <div class="permission-center-fallback-title">
+                                  <code>{primaryTitle()}</code>
+                                </div>
+                                <Show when={item.kind === "permission"}>
+                                  <div class="tool-call-permission-actions">
+                                    <div class="tool-call-permission-buttons">
+                                      <button
+                                        type="button"
+                                        class="tool-call-permission-button"
+                                        disabled={permissionSubmitting().has(item.id)}
+                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "once")}
+                                      >
+                                        Allow Once
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="tool-call-permission-button"
+                                        disabled={permissionSubmitting().has(item.id)}
+                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "always")}
+                                      >
+                                        Always Allow
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="tool-call-permission-button"
+                                        disabled={permissionSubmitting().has(item.id)}
+                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "reject")}
+                                      >
+                                        Deny
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <Show when={permissionError().get(item.id)}>
+                                    {(err) => <div class="tool-call-permission-error">{err()}</div>}
+                                  </Show>
+                                </Show>
+                                <Show when={item.kind !== "permission"}>
+                                  <div class="permission-center-fallback-hint">Load session for more information.</div>
+                                </Show>
                               </div>
-                              <div class="permission-center-fallback-hint">Load session for more information.</div>
-                            </div>
-                          }
-                        >
+                            }
+                          >
                           {(data) => (
                             <ToolCall
                               toolCall={data().toolPart}
