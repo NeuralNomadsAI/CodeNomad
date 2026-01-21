@@ -7,6 +7,7 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
 import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import type { TextPart, RenderCache } from "../types/message"
@@ -859,15 +860,17 @@ export default function ToolCall(props: ToolCallProps) {
     const activeKey = activePermissionKey()
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
+      const permission = permissionDetails()
+      if (!permission || !isPermissionActive()) return
       if (event.key === "Enter") {
         event.preventDefault()
-        handlePermissionResponse("once")
+        void handlePermissionResponse(permission, "once")
       } else if (event.key === "a" || event.key === "A") {
         event.preventDefault()
-        handlePermissionResponse("always")
+        void handlePermissionResponse(permission, "always")
       } else if (event.key === "d" || event.key === "D") {
         event.preventDefault()
-        handlePermissionResponse("reject")
+        void handlePermissionResponse(permission, "reject")
       }
     }
     document.addEventListener("keydown", handler)
@@ -1240,11 +1243,8 @@ export default function ToolCall(props: ToolCallProps) {
     return renderer().renderBody(rendererContext)
   }
 
-  async function handlePermissionResponse(response: "once" | "always" | "reject") {
-    const permission = permissionDetails()
-    if (!permission || !isPermissionActive()) {
-      return
-    }
+  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+    if (!permission) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
@@ -1310,37 +1310,37 @@ export default function ToolCall(props: ToolCallProps) {
               </div>
             )}
           </Show>
-          <Show
-            when={active}
-            fallback={<p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>}
-          >
-            <div class="tool-call-permission-actions">
-              <div class="tool-call-permission-buttons">
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("once")}
-                >
-                  Allow Once
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("always")}
-                >
-                  Always Allow
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("reject")}
-                >
-                  Deny
-                </button>
-              </div>
+          <Show when={!active}>
+            <p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>
+          </Show>
+          <div class="tool-call-permission-actions">
+            <div class="tool-call-permission-buttons">
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "once")}
+              >
+                Allow Once
+              </button>
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "always")}
+              >
+                Always Allow
+              </button>
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "reject")}
+              >
+                Deny
+              </button>
+            </div>
+            <Show when={active}>
               <div class="tool-call-permission-shortcuts">
                 <kbd class="kbd">Enter</kbd>
                 <span>Allow once</span>
@@ -1349,10 +1349,10 @@ export default function ToolCall(props: ToolCallProps) {
                 <kbd class="kbd">D</kbd>
                 <span>Deny</span>
               </div>
-            </div>
-            <Show when={permissionError()}>
-              <div class="tool-call-permission-error">{permissionError()}</div>
             </Show>
+          </div>
+          <Show when={permissionError()}>
+            <div class="tool-call-permission-error">{permissionError()}</div>
           </Show>
         </div>
       </div>

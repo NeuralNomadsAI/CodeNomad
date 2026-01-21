@@ -7,8 +7,6 @@ import {
   getPermissionQueue,
   getQuestionQueue,
   getQuestionEnqueuedAtForInstance,
-  setActivePermissionIdForInstance,
-  setActiveQuestionIdForInstance,
 } from "../stores/instances"
 import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -265,19 +263,10 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                       return count === 1 ? "1 question" : `${count} questions`
                     }
 
-                    const handleActivate = () => {
-                      if (item.kind === "permission") {
-                        setActivePermissionIdForInstance(props.instanceId, item.id)
-                      } else {
-                        setActiveQuestionIdForInstance(props.instanceId, item.id)
-                      }
-                    }
-
                     return (
                       <div
                         class={`permission-center-item${isActive() ? " permission-center-item-active" : ""}`}
                         role="listitem"
-                        onClick={handleActivate}
                       >
                         <div class="permission-center-item-header">
                           <div class="permission-center-item-heading">
