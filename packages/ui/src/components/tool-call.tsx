@@ -1,4 +1,4 @@
-import { createSignal, Show, For, createEffect, createMemo, onCleanup } from "solid-js"
+import { createSignal, Show, For, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { Markdown } from "./markdown"
 import { ToolCallDiffViewer } from "./diff-viewer"
@@ -31,6 +31,29 @@ const log = getLogger("session")
 type ToolState = import("@opencode-ai/sdk").ToolState
 
 type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
+
+type QuestionOption = { label: string; description: string }
+
+type QuestionPrompt = {
+  header: string
+  question: string
+  options: QuestionOption[]
+  multiple?: boolean
+}
+
+type QuestionToolBlockProps = {
+  toolName: Accessor<string>
+  toolState: Accessor<ToolState | undefined>
+  toolCallId: Accessor<string>
+  request: Accessor<QuestionRequest | undefined>
+  active: Accessor<boolean>
+  submitting: Accessor<boolean>
+  error: Accessor<string | null>
+  draftAnswers: Accessor<Record<string, string[][]>>
+  setDraftAnswers: (updater: (prev: Record<string, string[][]>) => Record<string, string[][]>) => void
+  onSubmit: () => void | Promise<void>
+  onDismiss: () => void | Promise<void>
+}
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48
@@ -105,6 +128,288 @@ function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
   if (tone === "error") return { label: "ERR", icon: "!", rank: 0 }
   if (tone === "warning") return { label: "WARN", icon: "!", rank: 1 }
   return { label: "INFO", icon: "i", rank: 2 }
+}
+
+function QuestionToolBlock(props: QuestionToolBlockProps) {
+  const requestId = createMemo(() => {
+    const state = props.toolState()
+    const request = props.request()
+    return request?.id ?? (state as any)?.input?.requestID ?? `question-${props.toolCallId()}`
+  })
+
+  const questions = createMemo(() => {
+    const state = props.toolState()
+    const request = props.request()
+    const isQuestionTool = props.toolName() === "question"
+    if (!request && !isQuestionTool) return [] as QuestionPrompt[]
+
+    const questionsSource = request?.questions ?? ((state as any)?.input?.questions as any[] | undefined) ?? []
+    const list = Array.isArray(questionsSource) ? questionsSource : []
+    return list as QuestionPrompt[]
+  })
+
+  const isVisible = createMemo(() => {
+    const request = props.request()
+    const isQuestionTool = props.toolName() === "question"
+    return Boolean(request) || isQuestionTool
+  })
+
+  const answers = createMemo(() => {
+    const state = props.toolState()
+
+    const completedAnswers =
+      (state as any)?.status === "completed" && Array.isArray((state as any)?.metadata?.answers)
+        ? ((state as any).metadata.answers as string[][])
+        : undefined
+
+    if (completedAnswers) return completedAnswers
+
+    const request = props.request()
+    const requestAnswers = request?.questions?.map((q) => (q as any)?.answer) // defensive (if server ever inlines)
+
+    if (Array.isArray(requestAnswers) && requestAnswers.some((row) => Array.isArray(row) && row.length > 0)) {
+      return requestAnswers as string[][]
+    }
+
+    const draft = props.draftAnswers()[requestId()] ?? []
+    return Array.isArray(draft) ? draft : []
+  })
+
+  const updateAnswer = (questionIndex: number, next: string[]) => {
+    if (!props.active()) return
+    props.setDraftAnswers((prev) => {
+      const current = prev[requestId()] ?? []
+      const updated = [...current]
+      updated[questionIndex] = next
+      return { ...prev, [requestId()]: updated }
+    })
+  }
+
+  const toggleOption = (questionIndex: number, label: string) => {
+    const info = questions()[questionIndex]
+    const multi = info?.multiple === true
+    const existing = answers()[questionIndex] ?? []
+    if (multi) {
+      const next = existing.includes(label) ? existing.filter((x) => x !== label) : [...existing, label]
+      updateAnswer(questionIndex, next)
+      return
+    }
+    updateAnswer(questionIndex, [label])
+  }
+
+  const submitDisabled = () => {
+    if (!props.active()) return true
+    if (props.submitting()) return true
+    return questions().some((_, index) => (answers()[index]?.length ?? 0) === 0)
+  }
+
+  const toggleFromCustomInput = (questionIndex: number, input: HTMLInputElement | null) => {
+    if (!props.active()) return
+    const value = input?.value?.trim() ?? ""
+    if (!value) return
+
+    const info = questions()[questionIndex]
+    const multi = info?.multiple === true
+    if (!multi) {
+      // When switching a radio to custom, clear existing selection first.
+      updateAnswer(questionIndex, [])
+    }
+
+    toggleOption(questionIndex, value)
+  }
+
+  const clearCustomAnswer = (questionIndex: number, valuesToRemove: string[]) => {
+    if (!props.active()) return
+    if (valuesToRemove.length === 0) return
+    const existing = answers()[questionIndex] ?? []
+    const next = existing.filter((value) => !valuesToRemove.includes(value))
+    updateAnswer(questionIndex, next)
+  }
+
+  const handleCustomTyping = (questionIndex: number, input: HTMLInputElement) => {
+    if (!props.active()) return
+
+    const value = input.value.trim()
+    const info = questions()[questionIndex]
+    const multi = info?.multiple === true
+
+    if (!multi) {
+      updateAnswer(questionIndex, value ? [value] : [])
+      return
+    }
+
+    const optionLabels = new Set((info?.options ?? []).map((opt) => opt.label))
+    const existing = answers()[questionIndex] ?? []
+    const last = input.dataset.lastValue ?? ""
+
+    let next = existing.filter((item) => item !== last)
+
+    if (value) {
+      if (!optionLabels.has(value) && !next.includes(value)) {
+        next = [...next, value]
+      } else if (optionLabels.has(value)) {
+        // If they typed an existing option label, don't treat it as custom.
+      } else if (!next.includes(value)) {
+        next = [...next, value]
+      }
+      input.dataset.lastValue = value
+    } else {
+      delete input.dataset.lastValue
+    }
+
+    updateAnswer(questionIndex, next)
+  }
+
+  return (
+    <Show when={isVisible() && questions().length > 0}>
+      <div class={`tool-call-permission ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
+        <div class="tool-call-permission-header">
+          <span class="tool-call-permission-label">
+            {props.active() ? "Question Required" : props.request() ? "Question Queued" : "Questions"}
+          </span>
+          <span class="tool-call-permission-type">{questions().length === 1 ? "Question" : "Questions"}</span>
+        </div>
+
+        <div class="tool-call-permission-body">
+          <div class="flex flex-col gap-4">
+            <For each={questions()}>
+              {(q, index) => {
+                const i = () => index()
+                const multi = () => q?.multiple === true
+                const selected = () => answers()[i()] ?? []
+                const inputType = () => (multi() ? "checkbox" : "radio")
+                const groupName = () => `question-${requestId()}-${i()}`
+                const optionLabels = () => new Set((q?.options ?? []).map((opt) => opt.label))
+                const customSelected = () => selected().filter((value) => !optionLabels().has(value))
+                const customValue = () => customSelected()[0] ?? ""
+                const customChecked = () => customValue().length > 0
+
+                return (
+                  <div class="rounded-md border border-base/60 bg-surface/30 p-3">
+                    <div class="flex items-baseline justify-between gap-2">
+                      <div class="text-xs">
+                        Q{i() + 1}: <span class="font-semibold">{q?.header}</span>
+                      </div>
+                      <Show when={multi()}>
+                        <div class="text-xs text-muted">Multiple</div>
+                      </Show>
+                    </div>
+
+                    <div class="mt-1 text-sm font-medium">{q?.question}</div>
+
+                    <div class="mt-3 flex flex-col gap-1">
+                      <For each={q?.options ?? []}>
+                        {(opt) => {
+                          const checked = () => selected().includes(opt.label)
+                          return (
+                            <label
+                              class={`flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
+                              title={opt.description}
+                            >
+                              <input
+                                type={inputType()}
+                                name={groupName()}
+                                checked={checked()}
+                                disabled={!props.active() || props.submitting()}
+                                onChange={() => toggleOption(i(), opt.label)}
+                              />
+                              <div class="flex flex-col">
+                                <div class="text-sm leading-tight">{opt.label}</div>
+                                <div class="text-xs text-muted leading-tight">{opt.description}</div>
+                              </div>
+                            </label>
+                          )
+                        }}
+                      </For>
+
+                      <label
+                        class={`mt-2 flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
+                        title="Type a custom answer"
+                      >
+                        <input
+                          type={inputType()}
+                          name={groupName()}
+                          checked={customChecked()}
+                          disabled={!props.active() || props.submitting()}
+                          onChange={(e) => {
+                            const container = e.currentTarget.closest("label")
+                            const input = container?.querySelector("input[type='text']") as HTMLInputElement | null
+                            if (!props.active()) return
+                            if (customChecked()) {
+                              clearCustomAnswer(i(), customSelected())
+                              if (input) {
+                                delete input.dataset.lastValue
+                              }
+                              return
+                            }
+                            toggleFromCustomInput(i(), input)
+                          }}
+                        />
+                        <div class="flex flex-1 flex-col gap-2">
+                          <div class="text-sm leading-tight">Custom answer</div>
+                          <input
+                            class="w-full rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
+                            type="text"
+                            placeholder="Type your own answer"
+                            disabled={!props.active() || props.submitting()}
+                            value={customValue()}
+                            onFocus={(e) => {
+                              if (!props.active()) return
+                              // Keep the radio/checkbox selected while editing.
+                              toggleFromCustomInput(i(), e.currentTarget)
+                            }}
+                            onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
+                          />
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+
+            <Show when={props.active()}>
+              <div class="tool-call-permission-actions">
+                <div class="tool-call-permission-buttons">
+                  <button
+                    type="button"
+                    class="tool-call-permission-button"
+                    disabled={submitDisabled()}
+                    onClick={() => props.onSubmit()}
+                  >
+                    Submit
+                  </button>
+                  <button
+                    type="button"
+                    class="tool-call-permission-button"
+                    disabled={props.submitting()}
+                    onClick={() => props.onDismiss()}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+
+                <div class="tool-call-permission-shortcuts">
+                  <kbd class="kbd">Enter</kbd>
+                  <span>Submit</span>
+                  <kbd class="kbd">Esc</kbd>
+                  <span>Dismiss</span>
+                </div>
+
+                <Show when={props.error()}>
+                  <div class="tool-call-permission-error">{props.error()}</div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={!props.active() && props.request()}>
+              <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
+            </Show>
+          </div>
+        </div>
+      </div>
+    </Show>
+  )
 }
 
 function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {
@@ -573,7 +878,6 @@ export default function ToolCall(props: ToolCallProps) {
   const [questionError, setQuestionError] = createSignal<string | null>(null)
 
   const [questionDraftAnswers, setQuestionDraftAnswers] = createSignal<Record<string, string[][]>>({})
-  const [questionCustomDraft, setQuestionCustomDraft] = createSignal<Record<string, string[]>>({})
 
   function isTextInputFocused() {
     const active = document.activeElement
@@ -1055,196 +1359,21 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
-  const renderQuestionBlock = () => {
-    const state = toolState()
-    const request = questionDetails()
-    const isQuestionTool = toolName() === "question"
-
-    if (!request && !isQuestionTool) return null
-
-    const questionsSource = request?.questions ?? ((state as any)?.input?.questions as any[] | undefined) ?? []
-    const questions = Array.isArray(questionsSource) ? questionsSource : []
-    if (questions.length === 0) return null
-
-    const requestId = request?.id ?? (state as any)?.input?.requestID ?? `question-${toolCallMemo()?.id ?? "unknown"}`
-    const active = Boolean(request && isQuestionActive())
-
-    const completedAnswers = Array.isArray((state as any)?.metadata?.answers) ? ((state as any).metadata.answers as string[][]) : undefined
-    const answers = completedAnswers ?? questionDraftAnswers()[requestId] ?? []
-    const customInputs = questionCustomDraft()[requestId] ?? []
-
-    const updateAnswer = (questionIndex: number, next: string[]) => {
-      if (!active) return
-      setQuestionDraftAnswers((prev) => {
-        const current = prev[requestId] ?? []
-        const updated = [...current]
-        updated[questionIndex] = next
-        return { ...prev, [requestId]: updated }
-      })
-    }
-
-    const updateCustom = (questionIndex: number, value: string) => {
-      if (!active) return
-      setQuestionCustomDraft((prev) => {
-        const current = prev[requestId] ?? []
-        const updated = [...current]
-        updated[questionIndex] = value
-        return { ...prev, [requestId]: updated }
-      })
-    }
-
-    const toggleOption = (questionIndex: number, label: string) => {
-      const info = questions[questionIndex]
-      const multi = info?.multiple === true
-      const existing = answers[questionIndex] ?? []
-      if (multi) {
-        const next = existing.includes(label) ? existing.filter((x) => x !== label) : [...existing, label]
-        updateAnswer(questionIndex, next)
-        return
-      }
-      updateAnswer(questionIndex, [label])
-    }
-
-    const submitDisabled = () => {
-      if (!active) return true
-      if (questionSubmitting()) return true
-      return questions.some((_, index) => (answers[index]?.length ?? 0) === 0)
-    }
-
-    const showButtons = () => active
-
-    return (
-      <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
-        <div class="tool-call-permission-header">
-          <span class="tool-call-permission-label">
-            {active ? "Question Required" : request ? "Question Queued" : "Questions"}
-          </span>
-          <span class="tool-call-permission-type">{questions.length === 1 ? "Question" : "Questions"}</span>
-        </div>
-
-        <div class="tool-call-permission-body">
-          <div class="flex flex-col gap-4">
-            <For each={questions}>
-              {(q, index) => {
-                const i = () => index()
-                const multi = () => q?.multiple === true
-                const selected = () => answers[i()] ?? []
-                const customValue = () => customInputs[i()] ?? ""
-                const inputType = () => (multi() ? "checkbox" : "radio")
-                const groupName = () => `question-${requestId}-${i()}`
-
-                return (
-                  <div class="rounded-md border border-base/60 bg-surface/30 p-3">
-                    <div class="flex items-baseline justify-between gap-2">
-                      <div class="text-xs">
-                        Q{i() + 1}: <span class="font-semibold">{q?.header}</span>
-                      </div>
-                      <Show when={multi()}>
-                        <div class="text-xs text-muted">Multiple</div>
-                      </Show>
-                    </div>
-
-                    <div class="mt-1 text-sm font-medium">{q?.question}</div>
-
-                      <div class="mt-3 flex flex-col gap-1">
-                        <For each={q?.options ?? []}>
-                          {(opt) => {
-                            const checked = () => selected().includes(opt.label)
-                            return (
-                              <label
-                                class={`flex items-start gap-2 py-1 ${active ? "cursor-pointer" : request ? "opacity-80" : ""}`}
-                                title={opt.description}
-                              >
-                                <input
-                                  type={inputType()}
-                                  name={groupName()}
-                                  checked={checked()}
-                                  disabled={!active || questionSubmitting()}
-                                  onChange={() => toggleOption(i(), opt.label)}
-                                />
-                                <div class="flex flex-col">
-                                  <div class="text-sm leading-tight">{opt.label}</div>
-                                  <div class="text-xs text-muted leading-tight">{opt.description}</div>
-                                </div>
-                              </label>
-                            )
-                          }}
-                        </For>
-
-                        <Show when={active}>
-                          <div class="mt-2 flex items-center gap-2">
-                            <input
-                              class="flex-1 rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
-                              type="text"
-                              placeholder="Type your own answer"
-                              value={customValue()}
-                              disabled={!active || questionSubmitting()}
-                              onInput={(e) => updateCustom(i(), e.currentTarget.value)}
-                            />
-                            <button
-                              type="button"
-                              class="tool-call-permission-button"
-                              disabled={!active || questionSubmitting() || !customValue().trim()}
-                              onClick={() => {
-                                const value = customValue().trim()
-                                if (!value) return
-                                updateCustom(i(), value)
-                                toggleOption(i(), value)
-                              }}
-                            >
-                              {multi() ? "Toggle" : "Select"}
-                            </button>
-                          </div>
-                        </Show>
-                      </div>
-
-                  </div>
-                )
-              }}
-            </For>
-
-            <Show when={showButtons()}>
-              <div class="tool-call-permission-actions">
-                <div class="tool-call-permission-buttons">
-                  <button
-                    type="button"
-                    class="tool-call-permission-button"
-                    disabled={submitDisabled()}
-                    onClick={() => handleQuestionSubmit()}
-                  >
-                    Submit
-                  </button>
-                  <button
-                    type="button"
-                    class="tool-call-permission-button"
-                    disabled={questionSubmitting()}
-                    onClick={() => handleQuestionDismiss()}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-
-                <div class="tool-call-permission-shortcuts">
-                  <kbd class="kbd">Enter</kbd>
-                  <span>Submit</span>
-                  <kbd class="kbd">Esc</kbd>
-                  <span>Dismiss</span>
-                </div>
-
-                <Show when={questionError()}>
-                  <div class="tool-call-permission-error">{questionError()}</div>
-                </Show>
-              </div>
-            </Show>
-
-            <Show when={!active && request}>
-              <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
-            </Show>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const renderQuestionBlock = () => (
+    <QuestionToolBlock
+      toolName={toolName}
+      toolState={toolState}
+      toolCallId={toolCallIdentifier}
+      request={questionDetails}
+      active={isQuestionActive}
+      submitting={questionSubmitting}
+      error={questionError}
+      draftAnswers={questionDraftAnswers}
+      setDraftAnswers={setQuestionDraftAnswers}
+      onSubmit={() => void handleQuestionSubmit()}
+      onDismiss={() => void handleQuestionDismiss()}
+    />
+  )
 
   createEffect(() => {
     const request = questionDetails()
@@ -1260,11 +1389,7 @@ export default function ToolCall(props: ToolCallProps) {
       const initial = request.questions.map(() => [])
       return { ...prev, [requestId]: initial }
     })
-    setQuestionCustomDraft((prev) => {
-      if (prev[requestId]) return prev
-      const initial = request.questions.map(() => "")
-      return { ...prev, [requestId]: initial }
-    })
+
   })
 
   const status = () => toolState()?.status || ""
