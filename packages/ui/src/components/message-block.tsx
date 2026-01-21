@@ -442,6 +442,39 @@ export default function MessageBlock(props: MessageBlockProps) {
 
   const hasCollapsibleContent = createMemo(() => collapsibleItems().length > 0)
 
+  // Compute collapse label based on content types (agents vs tools)
+  const collapseLabel = createMemo(() => {
+    const items = collapsibleItems()
+    let agentCount = 0
+    let toolCount = 0
+
+    for (const item of items) {
+      if (item.type === "tool") {
+        const toolItem = item as ToolDisplayItem
+        if (toolItem.toolPart.tool === "task") {
+          agentCount++
+        } else {
+          toolCount++
+        }
+      } else {
+        // Other collapsible items (steps, etc.) count as misc
+        toolCount++
+      }
+    }
+
+    // Generate appropriate label
+    if (agentCount > 0 && toolCount === 0) {
+      return agentCount === 1 ? "Agent" : "Agents"
+    } else if (agentCount === 0 && toolCount > 0) {
+      return toolCount === 1 ? "Tool" : "Tools"
+    } else if (agentCount > 0 && toolCount > 0) {
+      // Mixed: show both
+      const agentLabel = agentCount === 1 ? "Agent" : "Agents"
+      return `${agentLabel} + ${toolCount}`
+    }
+    return "Tools" // fallback
+  })
+
   const toggleCollapsed = () => setCollapsed((prev) => !prev)
 
   const renderItem = (item: MessageBlockItem) => (
@@ -572,11 +605,11 @@ export default function MessageBlock(props: MessageBlockProps) {
               class="message-block-collapse-toggle"
               onClick={toggleCollapsed}
               aria-expanded={!collapsed()}
-              aria-label={collapsed() ? "Expand tool calls" : "Collapse tool calls"}
+              aria-label={collapsed() ? `Expand ${collapseLabel().toLowerCase()}` : `Collapse ${collapseLabel().toLowerCase()}`}
             >
               <span class="message-block-collapse-icon">▸</span>
               <span class="message-block-collapse-label">
-                {collapsed() ? "Tools" : "Hide tools"}
+                {collapsed() ? collapseLabel() : `Hide ${collapseLabel().toLowerCase()}`}
               </span>
               <span class="message-block-collapse-count">{collapsibleItems().length}</span>
             </button>

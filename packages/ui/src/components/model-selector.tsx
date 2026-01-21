@@ -1,5 +1,5 @@
 import { Combobox } from "@kobalte/core/combobox"
-import { createEffect, createMemo, createSignal } from "solid-js"
+import { createEffect, createMemo, createSignal, For } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Model } from "../types/session"
@@ -18,6 +18,12 @@ interface FlatModel extends Model {
   providerName: string
   key: string
   searchText: string
+}
+
+interface ProviderGroup {
+  provider: string
+  providerName: string
+  options: FlatModel[]
 }
 
 export default function ModelSelector(props: ModelSelectorProps) {
@@ -42,6 +48,24 @@ export default function ModelSelector(props: ModelSelectorProps) {
       })),
     ),
   )
+
+  // Group models by provider for display
+  const groupedModels = createMemo<ProviderGroup[]>(() => {
+    const groups = new Map<string, ProviderGroup>()
+    for (const model of allModels()) {
+      const existing = groups.get(model.providerId)
+      if (existing) {
+        existing.options.push(model)
+      } else {
+        groups.set(model.providerId, {
+          provider: model.providerId,
+          providerName: model.providerName,
+          options: [model],
+        })
+      }
+    }
+    return Array.from(groups.values())
+  })
 
   const currentModelValue = createMemo(() =>
     allModels().find((m) => m.providerId === props.currentModel.providerId && m.id === props.currentModel.modelId),
@@ -71,34 +95,44 @@ export default function ModelSelector(props: ModelSelectorProps) {
         value={currentModelValue()}
         onChange={handleChange}
         onOpenChange={setIsOpen}
-        options={allModels()}
-        optionValue="key"
-        optionTextValue="searchText"
-        optionLabel="name"
+        options={groupedModels()}
+        optionValue={(option: FlatModel) => option?.key ?? ""}
+        optionTextValue={(option: FlatModel) => option?.searchText ?? ""}
+        optionLabel={(option: FlatModel) => option?.name ?? "Unknown"}
+        optionGroupChildren="options"
         placeholder="Search models..."
         defaultFilter={customFilter}
         allowsEmptyCollection
-        itemComponent={(itemProps) => (
-          <Combobox.Item
-            item={itemProps.item}
-            class="selector-option"
-          >
-            <div class="selector-option-content">
-              <Combobox.ItemLabel class="selector-option-label">
-                {itemProps.item.rawValue.name}
-              </Combobox.ItemLabel>
-              <Combobox.ItemDescription class="selector-option-description">
-                {itemProps.item.rawValue.providerName} • {itemProps.item.rawValue.providerId}/
-                {itemProps.item.rawValue.id}
-              </Combobox.ItemDescription>
-            </div>
-            <Combobox.ItemIndicator class="selector-option-indicator">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-            </Combobox.ItemIndicator>
-          </Combobox.Item>
+        sectionComponent={(sectionProps) => (
+          <Combobox.Section class="selector-section">
+            <Combobox.SectionLabel class="selector-section-label">
+              {(sectionProps.section.rawValue as ProviderGroup)?.providerName ?? "Unknown Provider"}
+            </Combobox.SectionLabel>
+          </Combobox.Section>
         )}
+        itemComponent={(itemProps) => {
+          const model = itemProps.item.rawValue as FlatModel | undefined
+          return (
+            <Combobox.Item
+              item={itemProps.item}
+              class="selector-option"
+            >
+              <div class="selector-option-content">
+                <Combobox.ItemLabel class="selector-option-label">
+                  {model?.name ?? "Unknown Model"}
+                </Combobox.ItemLabel>
+                <Combobox.ItemDescription class="selector-option-description">
+                  {model?.providerId ?? "?"}/{model?.id ?? "?"}
+                </Combobox.ItemDescription>
+              </div>
+              <Combobox.ItemIndicator class="selector-option-indicator">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </Combobox.ItemIndicator>
+            </Combobox.Item>
+          )
+        }}
       >
         <Combobox.Control class="relative w-full" data-model-selector-control>
           <Combobox.Input class="sr-only" data-model-selector />
