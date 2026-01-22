@@ -1,17 +1,20 @@
-import { createSignal, Show, For, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
+import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { Markdown } from "./markdown"
-import { ToolCallDiffViewer } from "./diff-viewer"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import type { DiffViewMode } from "../stores/preferences"
 import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
 import type { PermissionRequestLike } from "../types/permission"
-import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
+import { getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
-import type { TextPart, RenderCache } from "../types/message"
 import { resolveToolRenderer } from "./tool-call/renderers"
+import { QuestionToolBlock } from "./tool-call/question-block"
+import { PermissionToolBlock } from "./tool-call/permission-block"
+import { createAnsiContentRenderer } from "./tool-call/ansi-render"
+import { createDiffContentRenderer } from "./tool-call/diff-render"
+import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
+import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
+import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
   DiffRenderOptions,
@@ -24,37 +27,10 @@ import type {
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
-import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
-import { escapeHtml } from "../lib/markdown"
 
 const log = getLogger("session")
 
 type ToolState = import("@opencode-ai/sdk").ToolState
-
-type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
-
-type QuestionOption = { label: string; description: string }
-
-type QuestionPrompt = {
-  header: string
-  question: string
-  options: QuestionOption[]
-  multiple?: boolean
-}
-
-type QuestionToolBlockProps = {
-  toolName: Accessor<string>
-  toolState: Accessor<ToolState | undefined>
-  toolCallId: Accessor<string>
-  request: Accessor<QuestionRequest | undefined>
-  active: Accessor<boolean>
-  submitting: Accessor<boolean>
-  error: Accessor<string | null>
-  draftAnswers: Accessor<Record<string, string[][]>>
-  setDraftAnswers: (updater: (prev: Record<string, string[][]>) => Record<string, string[][]>) => void
-  onSubmit: () => void | Promise<void>
-  onDismiss: () => void | Promise<void>
-}
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48
@@ -86,447 +62,7 @@ interface ToolCallProps {
 
 
 
-interface LspRangePosition {
-  line?: number
-  character?: number
-}
 
-interface LspRange {
-  start?: LspRangePosition
-}
-
-interface LspDiagnostic {
-  message?: string
-  severity?: number
-  range?: LspRange
-}
-
-interface DiagnosticEntry {
-  id: string
-  severity: number
-  tone: "error" | "warning" | "info"
-  label: string
-  icon: string
-  message: string
-  filePath: string
-  displayPath: string
-  line: number
-  column: number
-}
-
-
-function normalizeDiagnosticPath(path: string) {
-  return path.replace(/\\/g, "/")
-}
-
-function determineSeverityTone(severity?: number): DiagnosticEntry["tone"] {
-  if (severity === 1) return "error"
-  if (severity === 2) return "warning"
-  return "info"
-}
-
-function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
-  if (tone === "error") return { label: "ERR", icon: "!", rank: 0 }
-  if (tone === "warning") return { label: "WARN", icon: "!", rank: 1 }
-  return { label: "INFO", icon: "i", rank: 2 }
-}
-
-function QuestionToolBlock(props: QuestionToolBlockProps) {
-  const requestId = createMemo(() => {
-    const state = props.toolState()
-    const request = props.request()
-    return request?.id ?? (state as any)?.input?.requestID ?? `question-${props.toolCallId()}`
-  })
-
-  const questions = createMemo(() => {
-    const state = props.toolState()
-    const request = props.request()
-    const isQuestionTool = props.toolName() === "question"
-    if (!request && !isQuestionTool) return [] as QuestionPrompt[]
-
-    const questionsSource = request?.questions ?? ((state as any)?.input?.questions as any[] | undefined) ?? []
-    const list = Array.isArray(questionsSource) ? questionsSource : []
-    return list as QuestionPrompt[]
-  })
-
-  const isVisible = createMemo(() => {
-    const request = props.request()
-    const isQuestionTool = props.toolName() === "question"
-    return Boolean(request) || isQuestionTool
-  })
-
-  const answers = createMemo(() => {
-    const state = props.toolState()
-
-    const completedAnswers =
-      (state as any)?.status === "completed" && Array.isArray((state as any)?.metadata?.answers)
-        ? ((state as any).metadata.answers as string[][])
-        : undefined
-
-    if (completedAnswers) return completedAnswers
-
-    const request = props.request()
-    const requestAnswers = request?.questions?.map((q) => (q as any)?.answer) // defensive (if server ever inlines)
-
-    if (Array.isArray(requestAnswers) && requestAnswers.some((row) => Array.isArray(row) && row.length > 0)) {
-      return requestAnswers as string[][]
-    }
-
-    const draft = props.draftAnswers()[requestId()] ?? []
-    return Array.isArray(draft) ? draft : []
-  })
-
-  const updateAnswer = (questionIndex: number, next: string[]) => {
-    if (!props.active()) return
-    props.setDraftAnswers((prev) => {
-      const current = prev[requestId()] ?? []
-      const updated = [...current]
-      updated[questionIndex] = next
-      return { ...prev, [requestId()]: updated }
-    })
-  }
-
-  const toggleOption = (questionIndex: number, label: string) => {
-    const info = questions()[questionIndex]
-    const multi = info?.multiple === true
-    const existing = answers()[questionIndex] ?? []
-    if (multi) {
-      const next = existing.includes(label) ? existing.filter((x) => x !== label) : [...existing, label]
-      updateAnswer(questionIndex, next)
-      return
-    }
-    updateAnswer(questionIndex, [label])
-  }
-
-  const submitDisabled = () => {
-    if (!props.active()) return true
-    if (props.submitting()) return true
-    return questions().some((_, index) => (answers()[index]?.length ?? 0) === 0)
-  }
-
-  const toggleFromCustomInput = (questionIndex: number, input: HTMLInputElement | null) => {
-    if (!props.active()) return
-    const rawValue = input?.value ?? ""
-    const value = rawValue
-    if (value.trim().length === 0) return
-
-    const info = questions()[questionIndex]
-    const multi = info?.multiple === true
-    if (!multi) {
-      // When switching a radio to custom, clear existing selection first.
-      updateAnswer(questionIndex, [])
-    }
-
-    toggleOption(questionIndex, value)
-  }
-
-  const clearCustomAnswer = (questionIndex: number, valuesToRemove: string[]) => {
-    if (!props.active()) return
-    if (valuesToRemove.length === 0) return
-    const existing = answers()[questionIndex] ?? []
-    const next = existing.filter((value) => !valuesToRemove.includes(value))
-    updateAnswer(questionIndex, next)
-  }
-
-  const handleCustomTyping = (questionIndex: number, input: HTMLInputElement) => {
-    if (!props.active()) return
-
-    const value = input.value
-    const trimmed = value.trim()
-    const info = questions()[questionIndex]
-    const multi = info?.multiple === true
-
-    if (!multi) {
-      updateAnswer(questionIndex, trimmed.length > 0 ? [value] : [])
-      return
-    }
-
-    const optionLabels = new Set((info?.options ?? []).map((opt) => opt.label))
-    const existing = answers()[questionIndex] ?? []
-    const last = input.dataset.lastValue ?? ""
-
-    let next = existing.filter((item) => item !== last)
-
-    if (trimmed.length > 0) {
-      // Only treat it as custom if it doesn't match an existing option label.
-      if (!optionLabels.has(trimmed) && !next.includes(value)) {
-        next = [...next, value]
-      } else if (optionLabels.has(trimmed)) {
-        // If they typed an existing option label, don't treat it as custom.
-      } else if (!next.includes(value)) {
-        next = [...next, value]
-      }
-      input.dataset.lastValue = value
-    } else {
-      delete input.dataset.lastValue
-    }
-
-    updateAnswer(questionIndex, next)
-  }
-
-  return (
-    <Show when={isVisible() && questions().length > 0}>
-      <div class={`tool-call-permission ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
-        <div class="tool-call-permission-header">
-          <span class="tool-call-permission-label">
-            {props.active() ? "Question Required" : props.request() ? "Question Queued" : "Questions"}
-          </span>
-          <span class="tool-call-permission-type">{questions().length === 1 ? "Question" : "Questions"}</span>
-        </div>
-
-        <div class="tool-call-permission-body">
-          <div class="flex flex-col gap-4">
-            <For each={questions()}>
-              {(q, index) => {
-                const i = () => index()
-                const multi = () => q?.multiple === true
-                const selected = () => answers()[i()] ?? []
-                const inputType = () => (multi() ? "checkbox" : "radio")
-                const groupName = () => `question-${requestId()}-${i()}`
-                const optionLabels = () => new Set((q?.options ?? []).map((opt) => opt.label))
-                const customSelected = () => selected().filter((value) => !optionLabels().has(value))
-                const customValue = () => customSelected()[0] ?? ""
-                const customChecked = () => customValue().length > 0
-
-                return (
-                  <div class="rounded-md border border-base/60 bg-surface/30 p-3">
-                    <div class="flex items-baseline justify-between gap-2">
-                      <div class="text-xs">
-                        Q{i() + 1}: <span class="font-semibold">{q?.header}</span>
-                      </div>
-                      <Show when={multi()}>
-                        <div class="text-xs text-muted">Multiple</div>
-                      </Show>
-                    </div>
-
-                    <div class="mt-1 text-sm font-medium">{q?.question}</div>
-
-                    <div class="mt-3 flex flex-col gap-1">
-                      <For each={q?.options ?? []}>
-                        {(opt) => {
-                          const checked = () => selected().includes(opt.label)
-                          return (
-                            <label
-                              class={`flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
-                              title={opt.description}
-                            >
-                              <input
-                                type={inputType()}
-                                name={groupName()}
-                                checked={checked()}
-                                disabled={!props.active() || props.submitting()}
-                                onChange={() => toggleOption(i(), opt.label)}
-                              />
-                              <div class="flex flex-col">
-                                <div class="text-sm leading-tight">{opt.label}</div>
-                                <div class="text-xs text-muted leading-tight">{opt.description}</div>
-                              </div>
-                            </label>
-                          )
-                        }}
-                      </For>
-
-                      <label
-                        class={`mt-2 flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
-                        title="Type a custom answer"
-                      >
-                        <input
-                          type={inputType()}
-                          name={groupName()}
-                          checked={customChecked()}
-                          disabled={!props.active() || props.submitting()}
-                          onChange={(e) => {
-                            const container = e.currentTarget.closest("label")
-                            const input = container?.querySelector("input[type='text']") as HTMLInputElement | null
-                            if (!props.active()) return
-                            if (customChecked()) {
-                              clearCustomAnswer(i(), customSelected())
-                              if (input) {
-                                delete input.dataset.lastValue
-                              }
-                              return
-                            }
-                            toggleFromCustomInput(i(), input)
-                          }}
-                        />
-                        <div class="flex flex-1 flex-col gap-2">
-                          <div class="text-sm leading-tight">Custom answer</div>
-                          <input
-                            class="w-full rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
-                            type="text"
-                            placeholder="Type your own answer"
-                            disabled={!props.active() || props.submitting()}
-                            value={customValue()}
-                            onFocus={(e) => {
-                              if (!props.active()) return
-                              // Keep the radio/checkbox selected while editing.
-                              toggleFromCustomInput(i(), e.currentTarget)
-                            }}
-                            onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
-                          />
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-                )
-              }}
-            </For>
-
-            <Show when={props.active()}>
-              <div class="tool-call-permission-actions">
-                <div class="tool-call-permission-buttons">
-                  <button
-                    type="button"
-                    class="tool-call-permission-button"
-                    disabled={submitDisabled()}
-                    onClick={() => props.onSubmit()}
-                  >
-                    Submit
-                  </button>
-                  <button
-                    type="button"
-                    class="tool-call-permission-button"
-                    disabled={props.submitting()}
-                    onClick={() => props.onDismiss()}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-
-                <div class="tool-call-permission-shortcuts">
-                  <kbd class="kbd">Enter</kbd>
-                  <span>Submit</span>
-                  <kbd class="kbd">Esc</kbd>
-                  <span>Dismiss</span>
-                </div>
-
-                <Show when={props.error()}>
-                  <div class="tool-call-permission-error">{props.error()}</div>
-                </Show>
-              </div>
-            </Show>
-
-            <Show when={!props.active() && props.request()}>
-              <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
-            </Show>
-          </div>
-        </div>
-      </div>
-    </Show>
-  )
-}
-
-function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {
-  if (!state) return []
-  const supportsMetadata = isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state)
-  if (!supportsMetadata) return []
-
-  const metadata = (state.metadata || {}) as Record<string, unknown>
-  const input = (state.input || {}) as Record<string, unknown>
-  const diagnosticsMap = metadata?.diagnostics as Record<string, LspDiagnostic[] | undefined> | undefined
-  if (!diagnosticsMap) return []
-
-  const preferredPath = [
-    input.filePath,
-    metadata.filePath,
-    metadata.filepath,
-    input.path,
-  ].find((value) => typeof value === "string" && value.length > 0) as string | undefined
-
-  const normalizedPreferred = preferredPath ? normalizeDiagnosticPath(preferredPath) : undefined
-  if (!normalizedPreferred) return []
-  const candidateEntries = Object.entries(diagnosticsMap).filter(([, items]) => Array.isArray(items) && items.length > 0)
-  if (candidateEntries.length === 0) return []
-
-  const prioritizedEntries = candidateEntries.filter(([path]) => {
-    const normalized = normalizeDiagnosticPath(path)
-    return normalized === normalizedPreferred
-  })
-
-  if (prioritizedEntries.length === 0) return []
-
-  const entries: DiagnosticEntry[] = []
-  for (const [pathKey, list] of prioritizedEntries) {
-    if (!Array.isArray(list)) continue
-    const normalizedPath = normalizeDiagnosticPath(pathKey)
-    for (let index = 0; index < list.length; index++) {
-      const diagnostic = list[index]
-      if (!diagnostic || typeof diagnostic.message !== "string") continue
-      const tone = determineSeverityTone(typeof diagnostic.severity === "number" ? diagnostic.severity : undefined)
-      const severityMeta = getSeverityMeta(tone)
-      const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
-      const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
-      entries.push({
-        id: `${normalizedPath}-${index}-${diagnostic.message}`,
-        severity: severityMeta.rank,
-        tone,
-        label: severityMeta.label,
-        icon: severityMeta.icon,
-        message: diagnostic.message,
-        filePath: normalizedPath,
-        displayPath: getRelativePath(normalizedPath),
-        line,
-        column,
-      })
-    }
-  }
-
-  return entries.sort((a, b) => a.severity - b.severity)
-}
-
-function diagnosticFileName(entries: DiagnosticEntry[]) {
-  const first = entries[0]
-  return first ? first.displayPath : ""
-}
-
-function renderDiagnosticsSection(
-  entries: DiagnosticEntry[],
-  expanded: boolean,
-  toggle: () => void,
-  fileLabel: string,
-) {
-  if (entries.length === 0) return null
-  return (
-    <div class="tool-call-diagnostics-wrapper">
-      <button
-        type="button"
-        class="tool-call-diagnostics-heading"
-        aria-expanded={expanded}
-        onClick={toggle}
-      >
-        <span class="tool-call-icon" aria-hidden="true">
-          {expanded ? "▼" : "▶"}
-        </span>
-        <span class="tool-call-emoji" aria-hidden="true">🛠</span>
-        <span class="tool-call-summary">Diagnostics</span>
-        <span class="tool-call-diagnostics-file" title={fileLabel}>{fileLabel}</span>
-      </button>
-      <Show when={expanded}>
-        <div class="tool-call-diagnostics" role="region" aria-label="Diagnostics">
-          <div class="tool-call-diagnostics-body" role="list">
-            <For each={entries}>
-              {(entry) => (
-                <div class="tool-call-diagnostic-row" role="listitem">
-                  <span class={`tool-call-diagnostic-chip tool-call-diagnostic-${entry.tone}`}>
-                    <span class="tool-call-diagnostic-chip-icon">{entry.icon}</span>
-                    <span>{entry.label}</span>
-                  </span>
-                  <span class="tool-call-diagnostic-path" title={entry.filePath}>
-                    {entry.displayPath}
-                    <span class="tool-call-diagnostic-coords">
-                      :L{entry.line || "-"}:C{entry.column || "-"}
-                    </span>
-                  </span>
-                  <span class="tool-call-diagnostic-message">{entry.message}</span>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
-  )
-}
 
 export default function ToolCall(props: ToolCallProps) {
   const { preferences, setDiffViewMode } = useConfig()
@@ -561,6 +97,9 @@ export default function ToolCall(props: ToolCallProps) {
     return "noversion"
   })
 
+  const messageVersionAccessor = createMemo(() => props.messageVersion)
+  const partVersionAccessor = createMemo(() => props.partVersion)
+
   const createVariantCache = (variant: string | (() => string), version?: () => string) =>
     useGlobalCache({
       instanceId: () => props.instanceId,
@@ -578,8 +117,6 @@ export default function ToolCall(props: ToolCallProps) {
   const permissionDiffCache = createVariantCache("permission-diff")
   const ansiRunningCache = createVariantCache("ansi-running", () => "running")
   const ansiFinalCache = createVariantCache("ansi-final")
-  const runningAnsiRenderer = createAnsiStreamRenderer()
-  let runningAnsiSource = ""
 
   const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallIdentifier()))
   const pendingPermission = createMemo(() => {
@@ -997,191 +534,35 @@ export default function ToolCall(props: ToolCallProps) {
 
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
-  function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions) {
-    const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
-    const toolbarLabel = options?.label || (relativePath ? `Diff · ${relativePath}` : "Diff")
-    const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
-    const cacheHandle = selectedVariant === "permission-diff" ? permissionDiffCache : diffCache
-    const diffMode = () => (preferences().diffViewMode || "split") as DiffViewMode
-    const themeKey = isDark() ? "dark" : "light"
+  const { renderAnsiContent } = createAnsiContentRenderer({
+    ansiRunningCache,
+    ansiFinalCache,
+    scrollHelpers,
+    partVersion: partVersionAccessor,
+  })
 
-    let cachedHtml: string | undefined
-    const cached = cacheHandle.get<RenderCache>()
-    const currentMode = diffMode()
-    if (cached && cached.text === payload.diffText && cached.theme === themeKey && cached.mode === currentMode) {
-      cachedHtml = cached.html
-    }
+  const { renderDiffContent } = createDiffContentRenderer({
+    preferences,
+    setDiffViewMode,
+    isDark,
+    diffCache,
+    permissionDiffCache,
+    scrollHelpers,
+    handleScrollRendered,
+    onContentRendered: props.onContentRendered,
+  })
 
-    const handleModeChange = (mode: DiffViewMode) => {
-      setDiffViewMode(mode)
-    }
-
-    const handleDiffRendered = () => {
-      if (!options?.disableScrollTracking) {
-        handleScrollRendered()
-      }
-      props.onContentRendered?.()
-    }
-
-    return (
-      <div
-        class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
-        ref={(element) => scrollHelpers.registerContainer(element, { disableTracking: options?.disableScrollTracking })}
-        onScroll={options?.disableScrollTracking ? undefined : scrollHelpers.handleScroll}
-      >
-        <div class="tool-call-diff-toolbar" role="group" aria-label="Diff view mode">
-          <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
-          <div class="tool-call-diff-toggle">
-            <button
-              type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "split" ? " active" : ""}`}
-              aria-pressed={diffMode() === "split"}
-              onClick={() => handleModeChange("split")}
-            >
-              Split
-            </button>
-            <button
-              type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "unified" ? " active" : ""}`}
-              aria-pressed={diffMode() === "unified"}
-              onClick={() => handleModeChange("unified")}
-            >
-              Unified
-            </button>
-          </div>
-        </div>
-        <ToolCallDiffViewer
-          diffText={payload.diffText}
-          filePath={payload.filePath}
-          theme={themeKey}
-          mode={diffMode()}
-          cachedHtml={cachedHtml}
-          cacheEntryParams={cacheHandle.params()}
-          onRendered={handleDiffRendered}
-        />
-        {scrollHelpers.renderSentinel({ disableTracking: options?.disableScrollTracking })}
-      </div>
-    )
-  }
-
-  function renderAnsiContent(options: AnsiRenderOptions) {
-    if (!options.content) {
-      return null
-    }
-
-    const size = options.size || "default"
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
-    const cacheHandle = options.variant === "running" ? ansiRunningCache : ansiFinalCache
-    const cached = cacheHandle.get<AnsiRenderCache>()
-    const mode = typeof props.partVersion === "number" ? String(props.partVersion) : undefined
-    const isRunningVariant = options.variant === "running"
-
-    let nextCache: AnsiRenderCache
-
-    if (isRunningVariant) {
-      const content = options.content
-      const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
-
-      if (resetStreaming) {
-        const detectedAnsi = hasAnsi(content)
-        if (detectedAnsi) {
-          runningAnsiRenderer.reset()
-          const html = runningAnsiRenderer.render(content)
-          nextCache = { text: content, html, mode, hasAnsi: true }
-        } else {
-          runningAnsiRenderer.reset()
-          nextCache = { text: content, html: escapeHtml(content), mode, hasAnsi: false }
-        }
-      } else {
-        const delta = content.slice(cached.text.length)
-        if (delta.length === 0) {
-          nextCache = { ...cached, mode }
-        } else if (!cached.hasAnsi && hasAnsi(delta)) {
-          runningAnsiRenderer.reset()
-          const html = runningAnsiRenderer.render(content)
-          nextCache = { text: content, html, mode, hasAnsi: true }
-        } else if (cached.hasAnsi) {
-          const htmlChunk = runningAnsiRenderer.render(delta)
-          nextCache = { text: content, html: `${cached.html}${htmlChunk}`, mode, hasAnsi: true }
-        } else {
-          nextCache = { text: content, html: `${cached.html}${escapeHtml(delta)}`, mode, hasAnsi: false }
-        }
-      }
-
-      runningAnsiSource = nextCache.text
-      cacheHandle.set(nextCache)
-    } else {
-      if (cached && cached.text === options.content) {
-        nextCache = { ...cached, mode }
-      } else {
-        const detectedAnsi = hasAnsi(options.content)
-        const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
-        nextCache = { text: options.content, html, mode, hasAnsi: detectedAnsi }
-        cacheHandle.set(nextCache)
-      }
-    }
-
-    if (options.requireAnsi && !nextCache.hasAnsi) {
-      return null
-    }
-
-    return (
-      <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
-        {scrollHelpers.renderSentinel()}
-      </div>
-    )
-  }
-
-  function renderMarkdownContent(options: MarkdownRenderOptions) {
-    if (!options.content) {
-      return null
-    }
-
-    const size = options.size || "default"
-    const disableHighlight = options.disableHighlight || false
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
-
-    const state = toolState()
-    const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
-    if (shouldDeferMarkdown) {
-      return (
-        <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-          <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
-          {scrollHelpers.renderSentinel()}
-        </div>
-      )
-    }
-
-    const partId = toolCallMemo()?.id
-    if (!partId) {
-      throw new Error("Tool call markdown requires a part id")
-    }
-    const markdownPart: TextPart = { id: partId, type: "text", text: options.content, version: props.partVersion }
-
-    const handleMarkdownRendered = () => {
-      handleScrollRendered()
-      props.onContentRendered?.()
-    }
-
-    return (
-      <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-        <Markdown
-          part={markdownPart}
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-          isDark={isDark()}
-          disableHighlight={disableHighlight}
-          onRendered={handleMarkdownRendered}
-        />
-        {scrollHelpers.renderSentinel()}
-      </div>
-    )
-  }
-
-
-  const messageVersionAccessor = createMemo(() => props.messageVersion)
-  const partVersionAccessor = createMemo(() => props.partVersion)
+  const { renderMarkdownContent } = createMarkdownContentRenderer({
+    toolState,
+    partId: toolCallIdentifier,
+    partVersion: partVersionAccessor,
+    instanceId: props.instanceId,
+    sessionId: props.sessionId,
+    isDark,
+    scrollHelpers,
+    handleScrollRendered,
+    onContentRendered: props.onContentRendered,
+  })
 
   const rendererContext: ToolRendererContext = {
     toolCall: toolCallMemo,
@@ -1278,92 +659,17 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
 
-  const renderPermissionBlock = () => {
-    const permission = permissionDetails()
-    if (!permission) return null
-    const active = isPermissionActive()
-    const metadata = (permission.metadata ?? {}) as Record<string, unknown>
-    const diffValue = typeof metadata.diff === "string" ? (metadata.diff as string) : null
-    const diffPathRaw = (() => {
-      if (typeof metadata.filePath === "string") {
-        return metadata.filePath as string
-      }
-      if (typeof metadata.path === "string") {
-        return metadata.path as string
-      }
-      return undefined
-    })()
-    const diffPayload = diffValue && diffValue.trim().length > 0 ? { diffText: diffValue, filePath: diffPathRaw } : null
-
-    return (
-      <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
-        <div class="tool-call-permission-header">
-          <span class="tool-call-permission-label">{active ? "Permission Required" : "Permission Queued"}</span>
-          <span class="tool-call-permission-type">{getPermissionKind(permission)}</span>
-        </div>
-        <div class="tool-call-permission-body">
-          <div class="tool-call-permission-title">
-            <code>{getPermissionDisplayTitle(permission)}</code>
-          </div>
-          <Show when={diffPayload}>
-            {(payload) => (
-              <div class="tool-call-permission-diff">
-                {renderDiffContent(payload(), {
-                  variant: "permission-diff",
-                  disableScrollTracking: true,
-                  label: payload().filePath ? `Requested diff · ${getRelativePath(payload().filePath || "")}` : "Requested diff",
-                })}
-              </div>
-            )}
-          </Show>
-          <Show when={!active}>
-            <p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>
-          </Show>
-          <div class="tool-call-permission-actions">
-            <div class="tool-call-permission-buttons">
-              <button
-                type="button"
-                class="tool-call-permission-button"
-                disabled={permissionSubmitting()}
-                onClick={() => void handlePermissionResponse(permission, "once")}
-              >
-                Allow Once
-              </button>
-              <button
-                type="button"
-                class="tool-call-permission-button"
-                disabled={permissionSubmitting()}
-                onClick={() => void handlePermissionResponse(permission, "always")}
-              >
-                Always Allow
-              </button>
-              <button
-                type="button"
-                class="tool-call-permission-button"
-                disabled={permissionSubmitting()}
-                onClick={() => void handlePermissionResponse(permission, "reject")}
-              >
-                Deny
-              </button>
-            </div>
-            <Show when={active}>
-              <div class="tool-call-permission-shortcuts">
-                <kbd class="kbd">Enter</kbd>
-                <span>Allow once</span>
-                <kbd class="kbd">A</kbd>
-                <span>Always allow</span>
-                <kbd class="kbd">D</kbd>
-                <span>Deny</span>
-              </div>
-            </Show>
-          </div>
-          <Show when={permissionError()}>
-            <div class="tool-call-permission-error">{permissionError()}</div>
-          </Show>
-        </div>
-      </div>
-    )
-  }
+  const renderPermissionBlock = () => (
+    <PermissionToolBlock
+      permission={permissionDetails}
+      active={isPermissionActive}
+      submitting={permissionSubmitting}
+      error={permissionError}
+      renderDiff={renderDiffContent}
+      fallbackSessionId={() => props.sessionId}
+      onRespond={(permission, sessionId, response) => void handlePermissionResponse(permission, response)}
+    />
+  )
 
   const renderQuestionBlock = () => (
     <QuestionToolBlock

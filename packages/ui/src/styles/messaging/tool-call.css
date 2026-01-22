@@ -217,6 +217,16 @@
   @apply flex items-center justify-between gap-3 px-3 py-2;
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--border-base);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* Diff shell already provides the scroll container.
+   Avoid nested scroll areas inside the diff viewer. */
+.tool-call-diff-shell .tool-call-diff-viewer {
+  max-height: none;
+  overflow: visible;
 }
 
 .tool-call-diff-toolbar-label {
@@ -421,6 +431,19 @@
   border-radius: 4px;
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+/* apply_patch multi-file layout */
+.tool-call-apply-patch {
+  @apply flex flex-col;
+}
+
+.tool-call-apply-patch-file {
+  margin-top: 0.75rem;
+}
+
+.tool-call-apply-patch-file:first-child {
+  margin-top: 0;
 }
 
 .tool-call-section h4 {

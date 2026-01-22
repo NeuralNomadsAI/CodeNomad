@@ -2,6 +2,7 @@ import type { ToolRenderer } from "../types"
 import { bashRenderer } from "./bash"
 import { defaultRenderer } from "./default"
 import { editRenderer } from "./edit"
+import { applyPatchRenderer } from "./apply-patch"
 import { patchRenderer } from "./patch"
 import { readRenderer } from "./read"
 import { taskRenderer } from "./task"
@@ -16,6 +17,7 @@ const TOOL_RENDERERS: ToolRenderer[] = [
   readRenderer,
   writeRenderer,
   editRenderer,
+  applyPatchRenderer,
   patchRenderer,
   webfetchRenderer,
   todoRenderer,

@@ -26,6 +26,11 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  /**
+   * Optional cache key suffix to avoid collisions when rendering multiple diffs
+   * within the same tool call (e.g. apply_patch).
+   */
+  cacheKey?: string
 }
 
 export interface ToolScrollHelpers {

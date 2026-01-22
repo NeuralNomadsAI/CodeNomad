@@ -6,6 +6,7 @@ import { bashRenderer } from "./renderers/bash"
 import { readRenderer } from "./renderers/read"
 import { writeRenderer } from "./renderers/write"
 import { editRenderer } from "./renderers/edit"
+import { applyPatchRenderer } from "./renderers/apply-patch"
 import { patchRenderer } from "./renderers/patch"
 import { webfetchRenderer } from "./renderers/webfetch"
 import { todoRenderer } from "./renderers/todo"
@@ -16,6 +17,7 @@ const TITLE_RENDERERS: Record<string, ToolRenderer> = {
   read: readRenderer,
   write: writeRenderer,
   edit: editRenderer,
+  apply_patch: applyPatchRenderer,
   patch: patchRenderer,
   webfetch: webfetchRenderer,
   todowrite: todoRenderer,

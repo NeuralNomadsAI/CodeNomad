@@ -73,23 +73,13 @@ export async function resolveUi(options: RemoteUiOptions): Promise<UiResolution>
   const previousDir = path.join(uiRoot, "previous")
 
   if (!options.autoUpdate) {
-    const local = await resolveStaticUiDir(currentDir)
-    if (local) {
-      return {
-        uiStaticDir: local,
-        source: "downloaded",
-        uiVersion: await readUiVersion(local),
-        supported: true,
-      }
-    }
-
-    const bundled = await resolveStaticUiDir(options.bundledUiDir)
-    return {
-      uiStaticDir: bundled ?? options.bundledUiDir,
-      source: bundled ? "bundled" : "missing",
-      uiVersion: bundled ? await readUiVersion(bundled) : undefined,
+    return await resolveFromCacheOrBundled({
+      logger: options.logger,
+      bundledUiDir: options.bundledUiDir,
+      currentDir,
+      previousDir,
       supported: true,
-    }
+    })
   }
 
   let manifest: RemoteUiManifest | null = null
@@ -125,20 +115,28 @@ export async function resolveUi(options: RemoteUiOptions): Promise<UiResolution>
     })
   }
 
-  const currentVersion = await readUiVersion(currentDir)
-  if (currentVersion && currentVersion === manifest.latestUIVersion) {
-    const currentResolved = await resolveStaticUiDir(currentDir)
-    if (currentResolved) {
-      return {
-        uiStaticDir: currentResolved,
-        source: "downloaded",
-        uiVersion: currentVersion,
-        supported: true,
-        latestServerVersion: manifest.latestServerVersion,
-        latestServerUrl: manifest.latestServerUrl,
-        minServerVersion: manifest.minServerVersion,
-      }
-    }
+  const bestLocal = await pickBestLocalUi({
+    logger: options.logger,
+    bundledUiDir: options.bundledUiDir,
+    currentDir,
+    previousDir,
+  })
+
+  const remoteIsNewer =
+    !bestLocal ||
+    compareSemverMaybe(manifest.latestUIVersion, bestLocal.uiVersion) > 0
+
+  if (!remoteIsNewer) {
+    return await resolveFromCacheOrBundled({
+      logger: options.logger,
+      bundledUiDir: options.bundledUiDir,
+      currentDir,
+      previousDir,
+      supported: true,
+      latestServerVersion: manifest.latestServerVersion,
+      latestServerUrl: manifest.latestServerUrl,
+      minServerVersion: manifest.minServerVersion,
+    })
   }
 
   try {
@@ -206,40 +204,18 @@ async function resolveFromCacheOrBundled(args: {
   latestServerUrl?: string
   minServerVersion?: string
 }): Promise<UiResolution> {
-  const currentResolved = await resolveStaticUiDir(args.currentDir)
-  if (currentResolved) {
-    return {
-      uiStaticDir: currentResolved,
-      source: "downloaded",
-      uiVersion: await readUiVersion(currentResolved),
-      supported: args.supported,
-      message: args.message,
-      latestServerVersion: args.latestServerVersion,
-      latestServerUrl: args.latestServerUrl,
-      minServerVersion: args.minServerVersion,
-    }
-  }
+  const bestLocal = await pickBestLocalUi({
+    logger: args.logger,
+    bundledUiDir: args.bundledUiDir,
+    currentDir: args.currentDir,
+    previousDir: args.previousDir,
+  })
 
-  const previousResolved = await resolveStaticUiDir(args.previousDir)
-  if (previousResolved) {
+  if (bestLocal) {
     return {
-      uiStaticDir: previousResolved,
-      source: "previous",
-      uiVersion: await readUiVersion(previousResolved),
-      supported: args.supported,
-      message: args.message,
-      latestServerVersion: args.latestServerVersion,
-      latestServerUrl: args.latestServerUrl,
-      minServerVersion: args.minServerVersion,
-    }
-  }
-
-  const bundledResolved = await resolveStaticUiDir(args.bundledUiDir)
-  if (bundledResolved) {
-    return {
-      uiStaticDir: bundledResolved,
-      source: "bundled",
-      uiVersion: await readUiVersion(bundledResolved),
+      uiStaticDir: bestLocal.uiStaticDir,
+      source: bestLocal.source,
+      uiVersion: bestLocal.uiVersion,
       supported: args.supported,
       message: args.message,
       latestServerVersion: args.latestServerVersion,
@@ -258,6 +234,66 @@ async function resolveFromCacheOrBundled(args: {
     latestServerUrl: args.latestServerUrl,
     minServerVersion: args.minServerVersion,
   }
+}
+
+async function pickBestLocalUi(args: {
+  logger: Logger
+  bundledUiDir: string
+  currentDir: string
+  previousDir: string
+}): Promise<{ uiStaticDir: string; source: UiSource; uiVersion?: string } | null> {
+  const candidates: Array<{ uiStaticDir: string; source: UiSource; uiVersion?: string; priority: number }> = []
+
+  const currentResolved = await resolveStaticUiDir(args.currentDir)
+  if (currentResolved) {
+    candidates.push({
+      uiStaticDir: currentResolved,
+      source: "downloaded",
+      uiVersion: await readUiVersion(currentResolved),
+      priority: 2,
+    })
+  }
+
+  const bundledResolved = await resolveStaticUiDir(args.bundledUiDir)
+  if (bundledResolved) {
+    candidates.push({
+      uiStaticDir: bundledResolved,
+      source: "bundled",
+      uiVersion: await readUiVersion(bundledResolved),
+      priority: 1,
+    })
+  }
+
+  const previousResolved = await resolveStaticUiDir(args.previousDir)
+  if (previousResolved) {
+    candidates.push({
+      uiStaticDir: previousResolved,
+      source: "previous",
+      uiVersion: await readUiVersion(previousResolved),
+      priority: 0,
+    })
+  }
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  candidates.sort((a, b) => {
+    const versionCmp = compareSemverMaybe(a.uiVersion, b.uiVersion)
+    if (versionCmp !== 0) return -versionCmp
+    return b.priority - a.priority
+  })
+
+  const best = candidates[0]
+  if (!best) return null
+  return { uiStaticDir: best.uiStaticDir, source: best.source, uiVersion: best.uiVersion }
+}
+
+function compareSemverMaybe(a: string | undefined, b: string | undefined): number {
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  return compareSemverCore(a, b)
 }
 
 async function resolveStaticUiDir(uiDir: string): Promise<string | null> {
