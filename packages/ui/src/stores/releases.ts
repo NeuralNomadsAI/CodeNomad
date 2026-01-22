@@ -1,25 +1,24 @@
 import { createEffect, createSignal } from "solid-js"
-import type { LatestReleaseInfo, WorkspaceEventPayload } from "../../../server/src/api-types"
+import type { SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
-import { serverEvents } from "../lib/server-events"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 import { hasInstances, showFolderSelection } from "./ui"
 
 const log = getLogger("actions")
 
-const [availableRelease, setAvailableRelease] = createSignal<LatestReleaseInfo | null>(null)
+const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
 
 let initialized = false
 let visibilityEffectInitialized = false
 let activeToast: ToastHandle | null = null
-let activeToastVersion: string | null = null
+let activeToastKey: string | null = null
 
 function dismissActiveToast() {
   if (activeToast) {
     activeToast.dismiss()
     activeToast = null
-    activeToastVersion = null
+    activeToastKey = null
   }
 }
 
@@ -30,28 +29,34 @@ function ensureVisibilityEffect() {
   visibilityEffectInitialized = true
 
   createEffect(() => {
-    const release = availableRelease()
-    const shouldShow = Boolean(release) && (!hasInstances() || showFolderSelection())
+    const support = supportInfo()
+    const shouldShow = Boolean(support && support.supported === false) && (!hasInstances() || showFolderSelection())
 
-    if (!shouldShow || !release) {
+    if (!shouldShow || !support || support.supported !== false) {
       dismissActiveToast()
       return
     }
 
-    if (!activeToast || activeToastVersion !== release.version) {
+    const key = `${support.minServerVersion ?? "unknown"}:${support.latestServerVersion ?? "unknown"}`
+
+    if (!activeToast || activeToastKey !== key) {
       dismissActiveToast()
       activeToast = showToastNotification({
-        title: `CodeNomad ${release.version}`,
-        message: release.channel === "dev" ? "Dev release build available." : "New stable build on GitHub.",
+        title: support.message ?? "Upgrade required",
+        message: support.latestServerVersion
+          ? `Update to CodeNomad ${support.latestServerVersion} to use the latest UI.`
+          : "Update CodeNomad to use the latest UI.",
         variant: "info",
         duration: Number.POSITIVE_INFINITY,
         position: "bottom-right",
-        action: {
-          label: "View release",
-          href: release.url,
-        },
+        action: support.latestServerUrl
+          ? {
+              label: "Get update",
+              href: support.latestServerUrl,
+            }
+          : undefined,
       })
-      activeToastVersion = release.version
+      activeToastKey = key
     }
   })
 }
@@ -64,32 +69,17 @@ export function initReleaseNotifications() {
 
   ensureVisibilityEffect()
   void refreshFromMeta()
-
-  serverEvents.on("app.releaseAvailable", (event) => {
-    const typedEvent = event as Extract<WorkspaceEventPayload, { type: "app.releaseAvailable" }>
-    applyRelease(typedEvent.release)
-  })
 }
 
 async function refreshFromMeta() {
   try {
     const meta = await getServerMeta(true)
-    if (meta.latestRelease) {
-      applyRelease(meta.latestRelease)
-    }
+    setSupportInfo(meta.support ?? null)
   } catch (error) {
-    log.warn("Unable to load server metadata for release info", error)
+    log.warn("Unable to load server metadata for support info", error)
   }
 }
 
-function applyRelease(release: LatestReleaseInfo | null | undefined) {
-  if (!release) {
-    setAvailableRelease(null)
-    return
-  }
-  setAvailableRelease(release)
-}
-
-export function useAvailableRelease() {
-  return availableRelease
+export function useSupportInfo() {
+  return supportInfo
 }

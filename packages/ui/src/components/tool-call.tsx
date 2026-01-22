@@ -7,6 +7,7 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import type { DiffViewMode } from "../stores/preferences"
 import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind, getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import type { TextPart, RenderCache } from "../types/message"
@@ -205,8 +206,9 @@ function QuestionToolBlock(props: QuestionToolBlockProps) {
 
   const toggleFromCustomInput = (questionIndex: number, input: HTMLInputElement | null) => {
     if (!props.active()) return
-    const value = input?.value?.trim() ?? ""
-    if (!value) return
+    const rawValue = input?.value ?? ""
+    const value = rawValue
+    if (value.trim().length === 0) return
 
     const info = questions()[questionIndex]
     const multi = info?.multiple === true
@@ -229,12 +231,13 @@ function QuestionToolBlock(props: QuestionToolBlockProps) {
   const handleCustomTyping = (questionIndex: number, input: HTMLInputElement) => {
     if (!props.active()) return
 
-    const value = input.value.trim()
+    const value = input.value
+    const trimmed = value.trim()
     const info = questions()[questionIndex]
     const multi = info?.multiple === true
 
     if (!multi) {
-      updateAnswer(questionIndex, value ? [value] : [])
+      updateAnswer(questionIndex, trimmed.length > 0 ? [value] : [])
       return
     }
 
@@ -244,10 +247,11 @@ function QuestionToolBlock(props: QuestionToolBlockProps) {
 
     let next = existing.filter((item) => item !== last)
 
-    if (value) {
-      if (!optionLabels.has(value) && !next.includes(value)) {
+    if (trimmed.length > 0) {
+      // Only treat it as custom if it doesn't match an existing option label.
+      if (!optionLabels.has(trimmed) && !next.includes(value)) {
         next = [...next, value]
-      } else if (optionLabels.has(value)) {
+      } else if (optionLabels.has(trimmed)) {
         // If they typed an existing option label, don't treat it as custom.
       } else if (!next.includes(value)) {
         next = [...next, value]
@@ -859,15 +863,17 @@ export default function ToolCall(props: ToolCallProps) {
     const activeKey = activePermissionKey()
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
+      const permission = permissionDetails()
+      if (!permission || !isPermissionActive()) return
       if (event.key === "Enter") {
         event.preventDefault()
-        handlePermissionResponse("once")
+        void handlePermissionResponse(permission, "once")
       } else if (event.key === "a" || event.key === "A") {
         event.preventDefault()
-        handlePermissionResponse("always")
+        void handlePermissionResponse(permission, "always")
       } else if (event.key === "d" || event.key === "D") {
         event.preventDefault()
-        handlePermissionResponse("reject")
+        void handlePermissionResponse(permission, "reject")
       }
     }
     document.addEventListener("keydown", handler)
@@ -894,7 +900,10 @@ export default function ToolCall(props: ToolCallProps) {
       return
     }
     const answers = (questionDraftAnswers()[request.id] ?? []).map((x) => (Array.isArray(x) ? x : []))
-    const normalized = request.questions.map((_, index) => answers[index] ?? [])
+    const normalized = request.questions.map((_, index) => {
+      const row = answers[index] ?? []
+      return row.map((value) => value.trim()).filter((value) => value.length > 0)
+    })
     if (normalized.some((item) => (item?.length ?? 0) === 0)) {
       setQuestionError("Please answer all questions before submitting.")
       return
@@ -1240,11 +1249,8 @@ export default function ToolCall(props: ToolCallProps) {
     return renderer().renderBody(rendererContext)
   }
 
-  async function handlePermissionResponse(response: "once" | "always" | "reject") {
-    const permission = permissionDetails()
-    if (!permission || !isPermissionActive()) {
-      return
-    }
+  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+    if (!permission) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
@@ -1310,37 +1316,37 @@ export default function ToolCall(props: ToolCallProps) {
               </div>
             )}
           </Show>
-          <Show
-            when={active}
-            fallback={<p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>}
-          >
-            <div class="tool-call-permission-actions">
-              <div class="tool-call-permission-buttons">
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("once")}
-                >
-                  Allow Once
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("always")}
-                >
-                  Always Allow
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={permissionSubmitting()}
-                  onClick={() => handlePermissionResponse("reject")}
-                >
-                  Deny
-                </button>
-              </div>
+          <Show when={!active}>
+            <p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>
+          </Show>
+          <div class="tool-call-permission-actions">
+            <div class="tool-call-permission-buttons">
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "once")}
+              >
+                Allow Once
+              </button>
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "always")}
+              >
+                Always Allow
+              </button>
+              <button
+                type="button"
+                class="tool-call-permission-button"
+                disabled={permissionSubmitting()}
+                onClick={() => void handlePermissionResponse(permission, "reject")}
+              >
+                Deny
+              </button>
+            </div>
+            <Show when={active}>
               <div class="tool-call-permission-shortcuts">
                 <kbd class="kbd">Enter</kbd>
                 <span>Allow once</span>
@@ -1349,10 +1355,10 @@ export default function ToolCall(props: ToolCallProps) {
                 <kbd class="kbd">D</kbd>
                 <span>Deny</span>
               </div>
-            </div>
-            <Show when={permissionError()}>
-              <div class="tool-call-permission-error">{permissionError()}</div>
             </Show>
+          </div>
+          <Show when={permissionError()}>
+            <div class="tool-call-permission-error">{permissionError()}</div>
           </Show>
         </div>
       </div>

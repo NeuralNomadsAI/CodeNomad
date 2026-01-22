@@ -5,6 +5,7 @@ import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import VersionPill from "./version-pill"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -248,6 +249,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
           <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
           <p class="text-base text-secondary">Select a folder to start coding with AI</p>
+          <div class="mt-2 flex justify-center">
+            <VersionPill />
+          </div>
         </div>
 
  

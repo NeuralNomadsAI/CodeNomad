@@ -1,0 +1,38 @@
+import { Show, createEffect, createSignal } from "solid-js"
+import type { ServerMeta } from "../../../server/src/api-types"
+import { getServerMeta } from "../lib/server-meta"
+
+export default function VersionPill() {
+  const [meta, setMeta] = createSignal<ServerMeta | null>(null)
+
+  createEffect(() => {
+    void getServerMeta()
+      .then((result) => setMeta(result))
+      .catch(() => setMeta(null))
+  })
+
+  const serverVersion = () => meta()?.serverVersion
+  const uiVersion = () => meta()?.ui?.version
+  const uiSource = () => meta()?.ui?.source
+
+  return (
+    <Show when={serverVersion() || uiVersion() || uiSource()}>
+      <div class="text-[11px] text-muted whitespace-nowrap">
+        <Show when={serverVersion()}>
+          {(v) => <span>App {v()}</span>}
+        </Show>
+        <Show when={uiVersion() || uiSource()}>
+          <>
+            <Show when={serverVersion()}>
+              <span class="mx-2">·</span>
+            </Show>
+            <span>
+              UI{uiVersion() ? ` ${uiVersion()}` : ""}
+              <Show when={uiSource()}>{(s) => <span class="opacity-70"> ({s()})</span>}</Show>
+            </span>
+          </>
+        </Show>
+      </div>
+    </Show>
+  )
+}

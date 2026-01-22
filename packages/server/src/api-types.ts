@@ -167,7 +167,6 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
-  | "app.releaseAvailable"
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -180,7 +179,6 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
-  | { type: "app.releaseAvailable"; release: LatestReleaseInfo }
 
 export interface NetworkAddress {
   ip: string
@@ -196,6 +194,19 @@ export interface LatestReleaseInfo {
   channel: "stable" | "dev"
   publishedAt?: string
   notes?: string
+}
+
+export interface UiMeta {
+  version?: string
+  source: "bundled" | "downloaded" | "previous" | "override" | "dev-proxy" | "missing"
+}
+
+export interface SupportMeta {
+  supported: boolean
+  message?: string
+  minServerVersion?: string
+  latestServerVersion?: string
+  latestServerUrl?: string
 }
 
 export interface ServerMeta {
@@ -215,8 +226,9 @@ export interface ServerMeta {
   workspaceRoot: string
   /** Reachable addresses for this server, external first. */
   addresses: NetworkAddress[]
-  /** Optional metadata about the most recent public release. */
-  latestRelease?: LatestReleaseInfo
+  serverVersion?: string
+  ui?: UiMeta
+  support?: SupportMeta
 }
 
 export type BackgroundProcessStatus = "running" | "stopped" | "error"

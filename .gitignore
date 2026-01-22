@@ -8,3 +8,8 @@ release/
 out/
 .dir-locals.el
 .opencode/bashOutputs/
+
+# Local runtime artifacts
+.codenomad/
+.tmp/
+packages/cloudflare/.wrangler/

@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "CodeNomad Server",
   "author": {
     "name": "Neural Nomads",
@@ -32,9 +32,11 @@
     "fuzzysort": "^2.0.4",
     "pino": "^9.4.0",
     "undici": "^6.19.8",
+    "yauzl": "^2.10.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/yauzl": "^2.10.0",
     "cross-env": "^7.0.3",
     "ts-node": "^10.9.2",
     "tsx": "^4.20.6",

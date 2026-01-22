@@ -1,0 +1,43 @@
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 20
+
+jobs:
+  release-ui:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --workspaces --include=optional
+
+      - name: Install Cloudflare worker deps
+        run: npm ci
+        working-directory: packages/cloudflare
+
+      - name: Build UI
+        run: npm run build --workspace @codenomad/ui
+
+      - name: Publish UI zip + update manifest
+        working-directory: packages/cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CODENOMAD_R2_BUCKET: ${{ vars.CODENOMAD_R2_BUCKET }}
+        run: npm run release:ui

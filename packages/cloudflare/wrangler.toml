@@ -1,0 +1,15 @@
+name = "codenomad-ui-host"
+main = "src/index.ts"
+compatibility_date = "2026-01-22"
+
+# Custom domain for the manifest host.
+# Note: Custom domains apply to all paths on the hostname.
+[[routes]]
+pattern = "ui.codenomad.neuralnomads.ai"
+custom_domain = true
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "404-page"
+run_worker_first = ["/version.json"]

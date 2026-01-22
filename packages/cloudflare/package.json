@@ -1,0 +1,14 @@
+{
+  "name": "@codenomad/ui-host-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:manifest": "node ./scripts/build-manifest.mjs",
+    "release:ui": "node ./scripts/release-ui.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

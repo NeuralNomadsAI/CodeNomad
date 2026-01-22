@@ -17,7 +17,7 @@ import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
-import { startReleaseMonitor } from "./releases/release-monitor"
+import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 
 const require = createRequire(import.meta.url)
@@ -37,6 +37,9 @@ interface CliOptions {
   logDestination?: string
   uiStaticDir: string
   uiDevServer?: string
+  uiAutoUpdate: boolean
+  uiNoUpdate: boolean
+  uiManifestUrl?: string
   launch: boolean
   authUsername: string
   authPassword?: string
@@ -66,6 +69,9 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--ui-dir <path>", "Directory containing the built UI bundle").env("CLI_UI_DIR").default(DEFAULT_UI_STATIC_DIR),
     )
     .addOption(new Option("--ui-dev-server <url>", "Proxy UI requests to a running dev server").env("CLI_UI_DEV_SERVER"))
+    .addOption(new Option("--ui-no-update", "Disable remote UI updates").env("CLI_UI_NO_UPDATE").default(false))
+    .addOption(new Option("--ui-auto-update <enabled>", "Enable remote UI updates (true|false)").env("CLI_UI_AUTO_UPDATE").default("true"))
+    .addOption(new Option("--ui-manifest-url <url>", "Remote UI manifest URL").env("CLI_UI_MANIFEST_URL"))
     .addOption(new Option("--launch", "Launch the UI in a browser after start").env("CLI_LAUNCH").default(false))
     .addOption(
       new Option("--username <username>", "Username for server authentication")
@@ -91,6 +97,9 @@ function parseCliOptions(argv: string[]): CliOptions {
     logDestination?: string
     uiDir: string
     uiDevServer?: string
+    uiNoUpdate?: boolean
+    uiAutoUpdate?: string
+    uiManifestUrl?: string
     launch?: boolean
     username: string
     password?: string
@@ -100,6 +109,9 @@ function parseCliOptions(argv: string[]): CliOptions {
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
 
   const normalizedHost = resolveHost(parsed.host)
+
+  const autoUpdateString = (parsed.uiAutoUpdate ?? "true").trim().toLowerCase()
+  const uiAutoUpdate = autoUpdateString === "1" || autoUpdateString === "true" || autoUpdateString === "yes"
 
   return {
     port: parsed.port,
@@ -111,6 +123,9 @@ function parseCliOptions(argv: string[]): CliOptions {
     logDestination: parsed.logDestination,
     uiStaticDir: parsed.uiDir,
     uiDevServer: parsed.uiDevServer,
+    uiAutoUpdate,
+    uiNoUpdate: Boolean(parsed.uiNoUpdate),
+    uiManifestUrl: parsed.uiManifestUrl,
     launch: Boolean(parsed.launch),
     authUsername: parsed.username,
     authPassword: parsed.password,
@@ -139,6 +154,10 @@ function resolveHost(input: string | undefined): string {
   }
 
   return trimmed
+}
+
+function programHasArg(argv: string[], flag: string): boolean {
+  return argv.includes(flag)
 }
 
 async function main() {
@@ -205,18 +224,35 @@ async function main() {
     logger: logger.child({ component: "instance-events" }),
   })
 
-  const releaseMonitor = startReleaseMonitor({
-    currentVersion: packageJson.version,
-    logger: logger.child({ component: "release-monitor" }),
-    onUpdate: (release) => {
-      if (release) {
-        serverMeta.latestRelease = release
-        eventBus.publish({ type: "app.releaseAvailable", release })
-      } else {
-        delete serverMeta.latestRelease
-      }
-    },
+  const uiDirEnvOverride = Boolean(process.env.CLI_UI_DIR)
+  const uiDirCliOverride = programHasArg(process.argv.slice(2), "--ui-dir")
+  const uiOverrideIsExplicit = uiDirEnvOverride || uiDirCliOverride
+  const uiDirOverride = uiOverrideIsExplicit ? options.uiStaticDir : undefined
+
+  const autoUpdateEnabled = options.uiAutoUpdate && !options.uiNoUpdate
+
+  const uiResolution = await resolveUi({
+    serverVersion: packageJson.version,
+    bundledUiDir: DEFAULT_UI_STATIC_DIR,
+    autoUpdate: autoUpdateEnabled,
+    overrideUiDir: uiDirOverride,
+    uiDevServerUrl: options.uiDevServer,
+    manifestUrl: options.uiManifestUrl,
+    logger: logger.child({ component: "ui" }),
   })
+
+  serverMeta.serverVersion = packageJson.version
+  serverMeta.ui = {
+    version: uiResolution.uiVersion,
+    source: uiResolution.source,
+  }
+  serverMeta.support = {
+    supported: uiResolution.supported,
+    message: uiResolution.message,
+    latestServerVersion: uiResolution.latestServerVersion,
+    latestServerUrl: uiResolution.latestServerUrl,
+    minServerVersion: uiResolution.minServerVersion,
+  }
 
   const server = createHttpServer({
     host: options.host,
@@ -229,8 +265,8 @@ async function main() {
     serverMeta,
     instanceStore,
     authManager,
-    uiStaticDir: options.uiStaticDir,
-    uiDevServerUrl: options.uiDevServer,
+    uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
+    uiDevServerUrl: uiResolution.uiDevServerUrl,
     logger,
   })
 
@@ -266,7 +302,7 @@ async function main() {
       logger.error({ err: error }, "Workspace manager shutdown failed")
     }
 
-    releaseMonitor.stop()
+    // no-op: remote UI manifest replaces GitHub release monitor
 
     logger.info("Exiting process")
     process.exit(0)
