@@ -72,4 +72,12 @@ const manifest = {
 fs.mkdirSync(distDir, { recursive: true })
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf-8")
 
+const headersPath = path.join(distDir, "_headers")
+fs.writeFileSync(
+  headersPath,
+  "/version.json\n  Cache-Control: no-cache\n  Content-Type: application/json; charset=utf-8\n",
+  "utf-8",
+)
+
 console.log(`Wrote ${manifestPath}`)
+console.log(`Wrote ${headersPath}`)

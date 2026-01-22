@@ -69,6 +69,13 @@ jobs:
       release_name: ${{ needs.prepare-release.outputs.release_name }}
     secrets: inherit
 
+  release-ui:
+    needs: prepare-release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-ui.yml
+    secrets: inherit
+
   publish-server:
     needs:
       - prepare-release

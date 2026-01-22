@@ -1,7 +1,7 @@
+name: Release UI
+
 on:
-  push:
-    branches:
-      - main
+  workflow_call: {}
   workflow_dispatch: {}
 
 permissions:
@@ -12,7 +12,8 @@ env:
 
 jobs:
   release-ui:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # Automated via reusable call (main releases); manual runs allowed on dev.
+    if: ${{ github.event_name == 'workflow_call' || github.ref == 'refs/heads/dev' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -26,6 +27,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
+
+      - name: Ensure rollup native binary
+        run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Install Cloudflare worker deps
         run: npm ci
