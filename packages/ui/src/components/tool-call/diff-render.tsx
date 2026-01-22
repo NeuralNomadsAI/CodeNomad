@@ -4,6 +4,7 @@ import type { DiffViewMode } from "../../stores/preferences"
 import { ToolCallDiffViewer } from "../diff-viewer"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
 import { getRelativePath } from "./utils"
+import { getCacheEntry } from "../../lib/global-cache"
 
 type CacheHandle = {
   get<T>(): T | undefined
@@ -32,8 +33,18 @@ export function createDiffContentRenderer(params: {
     const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
     const themeKey = params.isDark() ? "dark" : "light"
 
+    const baseEntryParams = cacheHandle.params() as any
+    const cacheEntryParams = (() => {
+      const suffix = typeof options?.cacheKey === "string" ? options.cacheKey.trim() : ""
+      if (!suffix) return baseEntryParams
+      return {
+        ...baseEntryParams,
+        cacheId: `${baseEntryParams.cacheId}:${suffix}`,
+      }
+    })()
+
     let cachedHtml: string | undefined
-    const cached = cacheHandle.get<RenderCache>()
+    const cached = getCacheEntry<RenderCache>(cacheEntryParams)
     const currentMode = diffMode()
     if (cached && cached.text === payload.diffText && cached.theme === themeKey && cached.mode === currentMode) {
       cachedHtml = cached.html
@@ -83,7 +94,7 @@ export function createDiffContentRenderer(params: {
           theme={themeKey}
           mode={diffMode()}
           cachedHtml={cachedHtml}
-          cacheEntryParams={cacheHandle.params() as any}
+          cacheEntryParams={cacheEntryParams as any}
           onRendered={handleDiffRendered}
         />
         {params.scrollHelpers.renderSentinel({ disableTracking: options?.disableScrollTracking })}
