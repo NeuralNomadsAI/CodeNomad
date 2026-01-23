@@ -61,13 +61,20 @@ function dismiss(confirmed: boolean, payload?: AlertDialogState | null, promptVa
 
 const AlertDialog: Component = () => {
   let primaryButtonRef: HTMLButtonElement | undefined
+  let promptInputRef: HTMLInputElement | undefined
 
   createEffect(() => {
-    if (alertDialogState()) {
-      queueMicrotask(() => {
-        primaryButtonRef?.focus()
-      })
-    }
+    const state = alertDialogState()
+    if (!state) return
+
+    queueMicrotask(() => {
+      if (state.type === "prompt") {
+        promptInputRef?.focus()
+        promptInputRef?.select()
+        return
+      }
+      primaryButtonRef?.focus()
+    })
   })
 
   return (
@@ -118,25 +125,29 @@ const AlertDialog: Component = () => {
                     </div>
                   </div>
 
-                   <Show when={isPrompt}>
-                     <div class="mt-4">
-                       <label class="text-xs font-medium text-muted uppercase tracking-wide">
-                         {payload.inputLabel || "Arguments"}
-                       </label>
-                       <input
-                         class="modal-search-input mt-2"
-                         value={inputValue()}
-                         placeholder={payload.inputPlaceholder || ""}
-                         onInput={(e) => setInputValue(e.currentTarget.value)}
-                         onKeyDown={(e) => {
-                           if (e.key === "Enter") {
-                             e.preventDefault()
-                             dismiss(true, payload, inputValue())
-                           }
-                         }}
-                       />
-                     </div>
-                   </Show>
+                    <Show when={isPrompt}>
+                      <div class="mt-4">
+                        <label class="text-sm font-medium text-secondary">{payload.inputLabel || "Input"}</label>
+                        <input
+                          ref={(el) => {
+                            promptInputRef = el
+                          }}
+                          class="form-input mt-2"
+                          value={inputValue()}
+                          placeholder={payload.inputPlaceholder || ""}
+                          autocapitalize="off"
+                          autocorrect="off"
+                          spellcheck={false}
+                          onInput={(e) => setInputValue(e.currentTarget.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault()
+                              dismiss(true, payload, inputValue())
+                            }
+                          }}
+                        />
+                      </div>
+                    </Show>
 
                    <div class="mt-6 flex justify-end gap-3">
                      {(isConfirm || isPrompt) && (

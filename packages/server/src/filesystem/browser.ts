@@ -2,6 +2,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import {
+  FileSystemCreateFolderResponse,
   FileSystemEntry,
   FileSystemListResponse,
   FileSystemListingMetadata,
@@ -54,6 +55,30 @@ export class FileSystemBrowser {
       return this.listUnrestricted(targetPath, includeFiles)
     }
     return this.listRestrictedWithMetadata(targetPath, includeFiles)
+  }
+
+  createFolder(parentPath: string | undefined, folderName: string): FileSystemCreateFolderResponse {
+    const name = this.normalizeFolderName(folderName)
+
+    if (this.unrestricted) {
+      const resolvedParent = this.resolveUnrestrictedPath(parentPath)
+      if (this.isWindows && resolvedParent === WINDOWS_DRIVES_ROOT) {
+        throw new Error("Cannot create folders at drive root")
+      }
+      this.assertDirectoryExists(resolvedParent)
+      const absolutePath = this.resolveAbsoluteChild(resolvedParent, name)
+      fs.mkdirSync(absolutePath)
+      return { path: absolutePath, absolutePath }
+    }
+
+    const normalizedParent = this.normalizeRelativePath(parentPath)
+    const parentAbsolute = this.toRestrictedAbsolute(normalizedParent)
+    this.assertDirectoryExists(parentAbsolute)
+
+    const relativePath = this.buildRelativePath(normalizedParent, name)
+    const absolutePath = this.toRestrictedAbsolute(relativePath)
+    fs.mkdirSync(absolutePath)
+    return { path: relativePath, absolutePath }
   }
 
   readFile(relativePath: string): string {
@@ -155,6 +180,41 @@ export class FileSystemBrowser {
     }
 
     return { entries, metadata }
+  }
+
+  private normalizeFolderName(input: string): string {
+    const name = input.trim()
+    if (!name) {
+      throw new Error("Folder name is required")
+    }
+
+    if (name === "." || name === "..") {
+      throw new Error("Invalid folder name")
+    }
+
+    if (name.startsWith("~")) {
+      throw new Error("Invalid folder name")
+    }
+
+    if (name.includes("/") || name.includes("\\")) {
+      throw new Error("Folder name must not include path separators")
+    }
+
+    if (name.includes("\u0000")) {
+      throw new Error("Invalid folder name")
+    }
+
+    return name
+  }
+
+  private assertDirectoryExists(directory: string) {
+    if (!fs.existsSync(directory)) {
+      throw new Error(`Directory does not exist: ${directory}`)
+    }
+    const stats = fs.statSync(directory)
+    if (!stats.isDirectory()) {
+      throw new Error(`Path is not a directory: ${directory}`)
+    }
   }
 
   private readDirectoryEntries(directory: string, options: DirectoryReadOptions): FileSystemEntry[] {

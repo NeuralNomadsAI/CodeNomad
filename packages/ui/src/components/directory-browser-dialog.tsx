@@ -1,8 +1,9 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowUpLeft, Folder as FolderIcon, Loader2, X } from "lucide-solid"
+import { ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 
 function normalizePathKey(input?: string | null) {
   if (!input || input === "." || input === "./") {
@@ -64,6 +65,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [rootPath, setRootPath] = createSignal("")
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
+  const [creatingFolder, setCreatingFolder] = createSignal(false)
   const [directoryChildren, setDirectoryChildren] = createSignal<Map<string, FileSystemEntry[]>>(new Map())
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
   const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
@@ -256,6 +258,52 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     props.onSelect(absolutePath)
   }
 
+  async function handleCreateFolder() {
+    if (creatingFolder()) return
+    const metadata = currentMetadata()
+    if (!metadata || metadata.pathKind === "drives") {
+      return
+    }
+
+    const name =
+      (await showPromptDialog("Create a new folder in the current directory.", {
+        title: "New Folder",
+        inputLabel: "Folder name",
+        inputPlaceholder: "e.g. my-new-project",
+        confirmLabel: "Create",
+        cancelLabel: "Cancel",
+      }))?.trim() ?? ""
+    if (!name) return
+
+    if (name === "." || name === ".." || name.startsWith("~") || name.includes("/") || name.includes("\\")) {
+      showAlertDialog("Please enter a single folder name.", {
+        variant: "warning",
+        detail: "Folder names cannot include slashes, '..', or '~'.",
+      })
+      return
+    }
+
+    setCreatingFolder(true)
+    try {
+      const parentKey = normalizePathKey(metadata.currentPath)
+      metadataCache.delete(parentKey)
+      inFlightRequests.delete(parentKey)
+      setDirectoryChildren((prev) => {
+        const next = new Map(prev)
+        next.delete(parentKey)
+        return next
+      })
+
+      const created = await serverApi.createFileSystemFolder(metadata.currentPath, name)
+      await navigateTo(created.path)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to create folder"
+      showAlertDialog(message, { variant: "error", title: "Unable to create folder" })
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
+
   function isPathLoading(path: string) {
     return loadingPaths().has(normalizePathKey(path))
   }
@@ -290,19 +338,32 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     <span class="directory-browser-current-label">Current folder</span>
                     <span class="directory-browser-current-path">{currentAbsolutePath()}</span>
                   </div>
-                  <button
-                    type="button"
-                    class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                    disabled={!canSelectCurrent()}
-                    onClick={() => {
-                      const absolute = currentAbsolutePath()
-                      if (absolute) {
-                        props.onSelect(absolute)
-                      }
-                    }}
-                  >
-                    Select Current
-                  </button>
+                  <div class="directory-browser-current-actions">
+                    <button
+                      type="button"
+                      class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
+                      disabled={!canSelectCurrent() || creatingFolder()}
+                      onClick={() => {
+                        const absolute = currentAbsolutePath()
+                        if (absolute) {
+                          props.onSelect(absolute)
+                        }
+                      }}
+                    >
+                      Select Current
+                    </button>
+                    <button
+                      type="button"
+                      class="selector-button selector-button-secondary directory-browser-select"
+                      disabled={!canSelectCurrent() || creatingFolder()}
+                      onClick={() => void handleCreateFolder()}
+                    >
+                      <span class="inline-flex items-center gap-2">
+                        <FolderPlus class="w-4 h-4" />
+                        {creatingFolder() ? "Creating…" : "New Folder"}
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </Show>
               <Show

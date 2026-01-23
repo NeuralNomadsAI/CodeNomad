@@ -95,6 +95,26 @@ export interface FileSystemListResponse {
   metadata: FileSystemListingMetadata
 }
 
+export interface FileSystemCreateFolderRequest {
+  /**
+   * Path identifier for the currently browsed directory.
+   * Matches the `path` parameter used for `/api/filesystem`.
+   */
+  parentPath?: string
+  /** Single folder name (no separators). */
+  name: string
+}
+
+export interface FileSystemCreateFolderResponse {
+  /**
+   * Path identifier that can be passed back to `/api/filesystem` to browse the new folder.
+   * Relative for restricted listings, absolute for unrestricted.
+   */
+  path: string
+  /** Absolute folder path on the server host. */
+  absolutePath: string
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
