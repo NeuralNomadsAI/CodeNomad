@@ -64,16 +64,14 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
     }
   })
 
-  onMount(() => {
-    const folder = effectiveFolder()
-    if (folder) {
-      fetchDirectives(folder)
-    }
-  })
+  // Track previously fetched folder to avoid duplicate fetches
+  let lastFetchedFolder: string | null = null
 
+  // Single effect for fetching directives when folder changes
   createEffect(() => {
     const folder = effectiveFolder()
-    if (folder) {
+    if (folder && folder !== lastFetchedFolder) {
+      lastFetchedFolder = folder
       fetchDirectives(folder)
       setLocalContent(null)
       setHasChanges(false)

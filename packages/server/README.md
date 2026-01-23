@@ -56,3 +56,60 @@ You can configure the server using flags or environment variables:
 - **Config**: `~/.config/era-code/config.json`
 - **Instance Data**: `~/.config/era-code/instances` (chat history, etc.)
 
+## Concurrent Modification Protection
+
+Era Code Server includes built-in safeguards to prevent data loss when multiple sessions attempt to modify the same files simultaneously. This is particularly important for shared project configuration files like directives, governance settings, and MCP configurations.
+
+### How It Works
+
+1. **Mutex-Based Locking**: Each file operation acquires a lock before writing, serializing concurrent writes to the same file path.
+
+2. **Content Hash Tracking**: The server tracks SHA-256 content hashes for each file. When a client reads a file, it receives the current hash along with the content.
+
+3. **Optimistic Locking**: Clients include the `expectedHash` from their last read when writing. If the hash doesn't match (another session modified the file), the write is rejected with a 409 Conflict response.
+
+### API Changes
+
+All read endpoints now return a `hash` field:
+```json
+{
+  "success": true,
+  "content": "...",
+  "hash": "a1b2c3d4e5f6g7h8"
+}
+```
+
+All write endpoints accept optional `sessionId` and `expectedHash` parameters:
+```json
+{
+  "folder": "/path/to/project",
+  "content": "...",
+  "sessionId": "ui-12345-abc",
+  "expectedHash": "a1b2c3d4e5f6g7h8"
+}
+```
+
+### Conflict Response
+
+When a conflict is detected, the server returns HTTP 409 with conflict details:
+```json
+{
+  "success": false,
+  "error": "File was modified by another session",
+  "conflictInfo": {
+    "currentHash": "new-hash-value",
+    "lastModifiedBy": "session-2",
+    "lastModifiedAt": 1705867200000
+  }
+}
+```
+
+### Protected Files
+
+The following files are protected by the safe file writer:
+- `.era/memory/directives.md` - Project directives
+- `.era/memory/constitution.md` - Project constitution
+- `.era/governance.yaml` - Governance rules
+- `.era/governance.local.yaml` - Local governance overrides
+- `.era/mcp.json` - MCP server configuration
+

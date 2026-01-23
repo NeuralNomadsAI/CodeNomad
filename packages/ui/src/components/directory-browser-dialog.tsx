@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowUpLeft, Folder as FolderIcon, Loader2, X } from "lucide-solid"
+import { ArrowUpLeft, Eye, EyeOff, Folder as FolderIcon, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -68,6 +68,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
   const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
   const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
+  const [showHidden, setShowHidden] = createSignal(false)
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
@@ -123,17 +124,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   }
 
   async function loadDirectory(targetPath?: string): Promise<FileSystemListingMetadata> {
+    const includeHidden = showHidden()
     const key = targetPath ? normalizePathKey(targetPath) : undefined
-    if (key) {
-      const cached = metadataCache.get(key)
-      if (cached) {
-        return cached
-      }
-      const pending = inFlightRequests.get(key)
-      if (pending) {
-        return pending
-      }
-    }
 
     const request = (async () => {
       if (key) {
@@ -144,7 +136,11 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
         })
       }
 
-      const response = await serverApi.listFileSystem(targetPath, { includeFiles: false, allowFullNavigation: true })
+      const response = await serverApi.listFileSystem(targetPath, {
+        includeFiles: false,
+        includeHidden,
+        allowFullNavigation: true,
+      })
       const canonicalKey = normalizePathKey(response.metadata.currentPath)
       const directories = response.entries
         .filter((entry) => entry.type === "directory")
@@ -201,6 +197,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       const message = err instanceof Error ? err.message : "Unable to load filesystem"
       setError(message)
     }
+  }
+
+  function handleToggleHidden() {
+    setShowHidden((prev) => !prev)
+    // Clear cache and reload current directory with new hidden setting
+    metadataCache.clear()
+    inFlightRequests.clear()
+    setDirectoryChildren(new Map())
+    const currentPath = currentMetadata()?.currentPath
+    void navigateTo(currentPath)
   }
 
   const folderRows = createMemo<FolderRow[]>(() => {
@@ -278,9 +284,22 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                   {props.description || "Browse folders under the configured workspace root."}
                 </p>
               </div>
-              <button type="button" class="directory-browser-close" aria-label="Close" onClick={props.onClose}>
-                <X class="w-5 h-5" />
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="selector-button selector-button-secondary flex items-center gap-1.5 text-xs"
+                  onClick={handleToggleHidden}
+                  title={showHidden() ? "Hide hidden folders" : "Show hidden folders"}
+                >
+                  <Show when={showHidden()} fallback={<Eye class="w-3.5 h-3.5" />}>
+                    <EyeOff class="w-3.5 h-3.5" />
+                  </Show>
+                  <span>{showHidden() ? "Hide ." : "Show ."}</span>
+                </button>
+                <button type="button" class="directory-browser-close" aria-label="Close" onClick={props.onClose}>
+                  <X class="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div class="panel-body directory-browser-body">

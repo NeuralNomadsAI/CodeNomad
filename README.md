@@ -58,6 +58,7 @@ This command starts the server and opens the web client in your default browser.
 - **Long-Session Native**: Scroll through massive transcripts without hitches.
 - **Command Palette**: A single global palette to jump tabs, launch tools, and control everything.
 - **Deep Task Awareness**: Monitor background tasks and child sessions without losing flow.
+- **Concurrent Modification Protection**: Safe file operations with mutex-based locking and content hash tracking prevent data loss when multiple sessions edit the same files.
 
 ## Requirements
 

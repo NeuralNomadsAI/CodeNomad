@@ -26,7 +26,10 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/reply-from": "^9.8.0",
     "@fastify/static": "^7.0.4",
+    "async-mutex": "^0.5.0",
+    "chokidar": "^3.6.0",
     "commander": "^12.1.0",
+    "diff-match-patch": "^1.0.5",
     "fastify": "^4.28.1",
     "fuzzysort": "^2.0.4",
     "pino": "^9.4.0",
@@ -34,6 +37,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "cross-env": "^7.0.3",
     "ts-node": "^10.9.2",
     "tsx": "^4.20.6",

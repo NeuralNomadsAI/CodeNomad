@@ -23,6 +23,26 @@ export interface DirectivesFile {
   content: string
   path: string
   exists: boolean
+  hash: string // Content hash for conflict detection
+}
+
+/**
+ * Conflict information returned when a concurrent modification is detected
+ */
+export interface ConflictInfo {
+  currentHash: string
+  lastModifiedBy: string | null
+  lastModifiedAt: number | null
+}
+
+/**
+ * Result of a save operation
+ */
+export interface SaveResult {
+  success: boolean
+  error?: string
+  hash?: string
+  conflictInfo?: ConflictInfo
 }
 
 /**
@@ -31,28 +51,85 @@ export interface DirectivesFile {
 interface DirectivesState {
   loading: boolean
   error: string | null
-  project: DirectivesFile | null
   global: DirectivesFile | null
   constitution: DirectivesFile | null
   lastFetched: number | null
+  // Per-folder project directives cache
+  projectByFolder: Map<string, DirectivesFile>
+  // Currently selected folder for project directives
+  currentProjectFolder: string | null
 }
 
 const initialState: DirectivesState = {
   loading: false,
   error: null,
-  project: null,
   global: null,
   constitution: null,
   lastFetched: null,
+  projectByFolder: new Map(),
+  currentProjectFolder: null,
 }
 
 const [directivesState, setDirectivesState] = createSignal<DirectivesState>(initialState)
 
+// Debounce/dedup tracking to prevent ERR_INSUFFICIENT_RESOURCES
+let pendingFetch: { folder: string | undefined; promise: Promise<void> } | null = null
+let lastFetchTime = 0
+const FETCH_DEBOUNCE_MS = 500 // Don't re-fetch same folder within this window
+
 /**
  * Fetch directives from the server
+ * Caches project directives per-folder to avoid data loss when switching projects
+ * Includes debouncing to prevent ERR_INSUFFICIENT_RESOURCES from duplicate calls
  */
 export async function fetchDirectives(folder?: string): Promise<void> {
-  setDirectivesState((prev) => ({ ...prev, loading: true, error: null }))
+  const now = Date.now()
+
+  // If there's already a pending fetch for the same folder, return that promise
+  if (pendingFetch && pendingFetch.folder === folder) {
+    return pendingFetch.promise
+  }
+
+  // Debounce: if we just fetched this folder recently, skip
+  const state = directivesState()
+  if (
+    state.currentProjectFolder === folder &&
+    state.lastFetched &&
+    now - state.lastFetched < FETCH_DEBOUNCE_MS
+  ) {
+    log.info("Skipping duplicate fetch (debounce)", { folder, timeSinceLastFetch: now - state.lastFetched })
+    return
+  }
+
+  // Check if we have cached data for this folder
+  const cachedProject = folder ? state.projectByFolder.get(folder) ?? null : null
+
+  // Set loading state, but preserve cached project data if available
+  setDirectivesState((prev) => ({
+    ...prev,
+    loading: true,
+    error: null,
+    currentProjectFolder: folder || null,
+  }))
+
+  // Create the fetch promise and track it
+  const fetchPromise = doFetchDirectives(folder, cachedProject)
+  pendingFetch = { folder, promise: fetchPromise }
+
+  try {
+    await fetchPromise
+  } finally {
+    // Clear pending fetch when done
+    if (pendingFetch?.folder === folder) {
+      pendingFetch = null
+    }
+  }
+}
+
+/**
+ * Internal function that actually performs the fetch
+ */
+async function doFetchDirectives(folder: string | undefined, cachedProject: DirectivesFile | null): Promise<void> {
 
   try {
     const params = folder ? `?folder=${encodeURIComponent(folder)}` : ""
@@ -64,7 +141,7 @@ export async function fetchDirectives(folder?: string): Promise<void> {
       folder ? fetch(apiUrl(`/api/era/constitution${params}`)) : Promise.resolve(null),
     ])
 
-    let project: DirectivesFile | null = null
+    let project: DirectivesFile | null = cachedProject ?? null // Start with cached value
     let global: DirectivesFile | null = null
     let constitution: DirectivesFile | null = null
 
@@ -75,6 +152,7 @@ export async function fetchDirectives(folder?: string): Promise<void> {
           content: data.content,
           path: data.path,
           exists: data.exists,
+          hash: data.hash || "",
         }
       }
     }
@@ -86,6 +164,7 @@ export async function fetchDirectives(folder?: string): Promise<void> {
           content: data.content,
           path: data.path,
           exists: data.exists,
+          hash: data.hash || "",
         }
       }
     }
@@ -97,27 +176,38 @@ export async function fetchDirectives(folder?: string): Promise<void> {
           content: data.content,
           path: data.path,
           exists: data.exists,
+          hash: data.hash || "",
         }
       }
     }
 
-    setDirectivesState({
-      loading: false,
-      error: null,
-      project,
-      global,
-      constitution,
-      lastFetched: Date.now(),
+    // Update the cache with the new project data
+    setDirectivesState((prev) => {
+      const newProjectByFolder = new Map(prev.projectByFolder)
+      if (folder && project) {
+        newProjectByFolder.set(folder, project)
+      }
+
+      return {
+        loading: false,
+        error: null,
+        global,
+        constitution,
+        lastFetched: Date.now(),
+        projectByFolder: newProjectByFolder,
+        currentProjectFolder: folder || null,
+      }
     })
 
     log.info("Directives fetched", {
+      folder,
       hasProject: project?.exists,
       hasGlobal: global?.exists,
       hasConstitution: constitution?.exists,
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    log.warn("Failed to fetch directives", { error: errorMessage })
+    log.warn("Failed to fetch directives", { error: errorMessage, folder })
 
     setDirectivesState((prev) => ({
       ...prev,
@@ -128,36 +218,97 @@ export async function fetchDirectives(folder?: string): Promise<void> {
 }
 
 /**
- * Save directives content
+ * Generate a unique session ID for this browser tab
+ */
+const sessionId = `ui-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
+/**
+ * Save directives content with optimistic locking
+ * @param folder - The project folder (empty for global)
+ * @param type - "project" or "global"
+ * @param content - The new content to save
+ * @param expectedHash - Optional hash from last read for conflict detection
  */
 export async function saveDirectives(
   folder: string,
   type: "project" | "global",
-  content: string
-): Promise<{ success: boolean; error?: string }> {
+  content: string,
+  expectedHash?: string
+): Promise<SaveResult> {
+  // Get the current hash if not provided
+  const currentFile = type === "project"
+    ? (folder ? directivesState().projectByFolder.get(folder) : null)
+    : directivesState().global
+
+  const hashToUse = expectedHash ?? currentFile?.hash
+
   try {
     const response = await fetch(apiUrl("/api/era/directives"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folder, type, content }),
+      body: JSON.stringify({
+        folder,
+        type,
+        content,
+        sessionId,
+        expectedHash: hashToUse,
+      }),
     })
 
     const data = await response.json()
 
-    if (data.success) {
-      // Update local state
-      setDirectivesState((prev) => ({
-        ...prev,
-        [type]: {
-          content,
-          path: data.path,
-          exists: true,
-        },
-      }))
-      log.info("Directives saved", { type, path: data.path })
+    // Handle conflict (409 status)
+    if (response.status === 409 && data.conflictInfo) {
+      log.warn("Save conflict detected", {
+        type,
+        folder,
+        expectedHash: hashToUse,
+        currentHash: data.conflictInfo.currentHash,
+      })
+      return {
+        success: false,
+        error: data.error || "File was modified by another session",
+        conflictInfo: data.conflictInfo,
+      }
     }
 
-    return data
+    if (data.success) {
+      // Update local state with new hash
+      setDirectivesState((prev) => {
+        if (type === "project" && folder) {
+          // Update the per-folder cache for project directives
+          const newProjectByFolder = new Map(prev.projectByFolder)
+          newProjectByFolder.set(folder, {
+            content,
+            path: data.path,
+            exists: true,
+            hash: data.hash || "",
+          })
+          return {
+            ...prev,
+            projectByFolder: newProjectByFolder,
+          }
+        } else {
+          // Global directives
+          return {
+            ...prev,
+            global: {
+              content,
+              path: data.path,
+              exists: true,
+              hash: data.hash || "",
+            },
+          }
+        }
+      })
+      log.info("Directives saved", { type, folder, path: data.path, hash: data.hash })
+    }
+
+    return {
+      success: data.success,
+      error: data.error,
+      hash: data.hash,
+    }
   } catch (error) {
     log.warn("Failed to save directives", { error })
     return { success: false, error: "Failed to save directives" }
@@ -179,9 +330,20 @@ export function useDirectivesState() {
 }
 
 /**
- * Derived: Project directives
+ * Derived: Project directives for the currently selected folder
  */
-export const projectDirectives = createMemo(() => directivesState().project)
+export const projectDirectives = createMemo(() => {
+  const state = directivesState()
+  if (!state.currentProjectFolder) return null
+  return state.projectByFolder.get(state.currentProjectFolder) ?? null
+})
+
+/**
+ * Get project directives for a specific folder (from cache)
+ */
+export function getProjectDirectivesForFolder(folder: string): DirectivesFile | null {
+  return directivesState().projectByFolder.get(folder) ?? null
+}
 
 /**
  * Derived: Global directives
@@ -204,10 +366,10 @@ export const isDirectivesLoading = createMemo(() => directivesState().loading)
 export const directivesError = createMemo(() => directivesState().error)
 
 /**
- * Derived: Has project directives configured
+ * Derived: Has project directives configured (for current folder)
  */
 export const hasProjectDirectives = createMemo(() => {
-  const project = directivesState().project
+  const project = projectDirectives()
   return project?.exists && project.content.trim().length > 0
 })
 
@@ -215,7 +377,7 @@ export const hasProjectDirectives = createMemo(() => {
  * Derived: Project directives preview (first ~200 chars)
  */
 export const projectDirectivesPreview = createMemo(() => {
-  const project = directivesState().project
+  const project = projectDirectives()
   if (!project?.exists || !project.content) return null
   const content = project.content.trim()
   if (content.length <= 200) return content
@@ -236,10 +398,10 @@ export const parsedGlobalDirectives = createMemo((): DirectiveSection[] => {
 })
 
 /**
- * Derived: Parsed project directives as sections
+ * Derived: Parsed project directives as sections (for current folder)
  */
 export const parsedProjectDirectives = createMemo((): DirectiveSection[] => {
-  const project = directivesState().project
+  const project = projectDirectives()
   if (!project?.content) return []
   return parseDirectivesMarkdown(project.content)
 })
@@ -343,4 +505,37 @@ export async function deleteDirectiveFromProject(
   const newSections = removeDirectiveFromSections(currentSections, id)
   const newContent = directivesToMarkdown(newSections)
   return saveDirectives(folder, "project", newContent)
+}
+
+// ============================================
+// Hash Management
+// ============================================
+
+/**
+ * Get the current hash for project directives
+ */
+export function getProjectDirectivesHash(folder: string): string | null {
+  const file = directivesState().projectByFolder.get(folder)
+  return file?.hash ?? null
+}
+
+/**
+ * Get the current hash for global directives
+ */
+export function getGlobalDirectivesHash(): string | null {
+  return directivesState().global?.hash ?? null
+}
+
+/**
+ * Get the current hash for constitution
+ */
+export function getConstitutionHash(): string | null {
+  return directivesState().constitution?.hash ?? null
+}
+
+/**
+ * Export the session ID for use in other stores
+ */
+export function getSessionId(): string {
+  return sessionId
 }

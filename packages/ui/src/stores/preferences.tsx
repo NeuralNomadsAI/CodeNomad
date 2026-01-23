@@ -521,6 +521,11 @@ async function getAgentModelPreference(instanceId: string, agent: string): Promi
   return selections[agent]
 }
 
+function setDefaultModels(models: Record<string, ModelPreference>): void {
+  log.info("Setting default models by agent", { models })
+  updatePreferences({ modelDefaultsByAgent: models })
+}
+
 void ensureConfigLoaded().catch((error: unknown) => {
   log.error("Failed to initialize config", error)
 })
@@ -561,6 +566,7 @@ interface ConfigContextValue {
   addRecentModelPreference: typeof addRecentModelPreference
   setAgentModelPreference: typeof setAgentModelPreference
   getAgentModelPreference: typeof getAgentModelPreference
+  setDefaultModels: typeof setDefaultModels
 }
 
 const ConfigContext = createContext<ConfigContextValue>()
@@ -600,6 +606,7 @@ const configContextValue: ConfigContextValue = {
   addRecentModelPreference,
   setAgentModelPreference,
   getAgentModelPreference,
+  setDefaultModels,
 }
 
 const ConfigProvider: ParentComponent = (props) => {
@@ -666,6 +673,7 @@ export {
   themePreference,
   setThemePreference,
   recordWorkspaceLaunch,
+  setDefaultModels,
  }
  
 

@@ -52,6 +52,55 @@
   @apply flex gap-2 mb-4;
 }
 
+/* Search/Filter */
+.governance-search {
+  @apply mb-4;
+}
+
+.governance-search-input-wrapper {
+  @apply relative flex items-center;
+}
+
+.governance-search-icon {
+  @apply absolute left-3 w-4 h-4;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.governance-search-input {
+  @apply w-full pl-9 pr-9 py-2 rounded-md text-sm;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  color: var(--text-primary);
+  transition: border-color 0.15s;
+}
+
+.governance-search-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.governance-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.governance-search-clear {
+  @apply absolute right-2 p-1 rounded transition-colors;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.governance-search-clear:hover {
+  color: var(--text-primary);
+}
+
+.governance-search-results {
+  @apply mt-2 text-xs text-center;
+  color: var(--text-muted);
+}
+
 .governance-quick-action {
   @apply flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors;
   background-color: var(--surface-secondary);
@@ -631,6 +680,164 @@
   @apply leading-relaxed;
 }
 
+/* Directives Toolbar */
+.directives-toolbar {
+  @apply flex items-center gap-1 mb-4 p-1 rounded-lg;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.directives-toolbar-group {
+  @apply flex items-center gap-1;
+}
+
+.directives-toolbar-btn {
+  @apply flex items-center justify-center w-8 h-8 rounded transition-colors;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+}
+
+.directives-toolbar-btn:hover:not(:disabled) {
+  background-color: var(--surface-tertiary);
+  color: var(--text-primary);
+}
+
+.directives-toolbar-btn.active {
+  background-color: var(--accent-primary);
+  color: var(--accent-primary-text, white);
+}
+
+.directives-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.directives-toolbar-divider {
+  @apply w-px h-6 mx-1;
+  background-color: var(--border-base);
+}
+
+/* Directives Templates */
+.directives-templates {
+  @apply mb-4 p-3 rounded-lg;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.directives-templates-header {
+  @apply flex items-center justify-between mb-3 text-sm font-medium;
+  color: var(--text-primary);
+}
+
+.directives-templates-close {
+  @apply p-1 rounded transition-colors;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.directives-templates-close:hover {
+  color: var(--text-primary);
+}
+
+.directives-templates-grid {
+  @apply grid grid-cols-2 gap-2;
+}
+
+.directives-template-card {
+  @apply p-3 rounded-md text-left transition-colors;
+  background-color: var(--surface-tertiary);
+  border: 1px solid var(--border-base);
+  cursor: pointer;
+}
+
+.directives-template-card:hover {
+  border-color: var(--accent-primary);
+}
+
+.directives-template-name {
+  @apply text-sm font-medium mb-1;
+  color: var(--text-primary);
+}
+
+.directives-template-description {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+/* Directives Preview */
+.directives-preview {
+  @apply mb-4;
+}
+
+.directives-preview-content {
+  @apply p-4 rounded-lg overflow-auto;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  max-height: 400px;
+}
+
+.directives-preview-empty {
+  @apply flex items-center justify-center py-12 text-sm;
+  color: var(--text-muted);
+}
+
+/* Directives Diff */
+.directives-diff {
+  @apply mb-4;
+}
+
+.directives-diff-content {
+  @apply rounded-lg overflow-auto font-mono text-sm;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  max-height: 400px;
+}
+
+.directives-diff-line {
+  @apply flex;
+  padding: 0 8px;
+  line-height: 1.6;
+}
+
+.directives-diff-line--unchanged {
+  color: var(--text-secondary);
+}
+
+.directives-diff-line--added {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: var(--status-success, #22c55e);
+}
+
+.directives-diff-line--removed {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--status-error, #ef4444);
+  text-decoration: line-through;
+}
+
+.directives-diff-prefix {
+  @apply w-5 flex-shrink-0 select-none;
+  color: inherit;
+}
+
+.directives-diff-text {
+  @apply flex-1 whitespace-pre-wrap break-all;
+}
+
+.directives-diff-empty {
+  @apply flex items-center justify-center py-12 text-sm;
+  color: var(--text-muted);
+}
+
+/* Changes Indicator */
+.directives-editor-changes-indicator {
+  @apply text-xs mr-auto;
+  color: var(--status-warning, #eab308);
+}
+
 /* ============================================ */
 /* Constitution Viewer Panel                    */
 /* ============================================ */
@@ -767,6 +974,63 @@
 .governance-directive-preview pre {
   @apply whitespace-pre-wrap;
   margin: 0;
+}
+
+.governance-directive-full {
+  @apply mb-3 p-3 rounded text-sm overflow-auto;
+  background-color: var(--surface-tertiary);
+  max-height: 400px;
+}
+
+.governance-directive-full .markdown-content {
+  color: var(--text-primary);
+}
+
+.governance-directive-full .markdown-content h1,
+.governance-directive-full .markdown-content h2,
+.governance-directive-full .markdown-content h3,
+.governance-directive-full .markdown-content h4 {
+  @apply font-semibold mt-4 mb-2;
+  color: var(--text-primary);
+}
+
+.governance-directive-full .markdown-content h1 {
+  @apply text-lg;
+}
+
+.governance-directive-full .markdown-content h2 {
+  @apply text-base;
+}
+
+.governance-directive-full .markdown-content h3,
+.governance-directive-full .markdown-content h4 {
+  @apply text-sm;
+}
+
+.governance-directive-full .markdown-content p {
+  @apply mb-2 text-sm leading-relaxed;
+  color: var(--text-secondary);
+}
+
+.governance-directive-full .markdown-content ul,
+.governance-directive-full .markdown-content ol {
+  @apply mb-2 pl-4 text-sm;
+  color: var(--text-secondary);
+}
+
+.governance-directive-full .markdown-content li {
+  @apply mb-1;
+}
+
+.governance-directive-full .markdown-content code {
+  @apply px-1 py-0.5 rounded text-xs font-mono;
+  background-color: var(--surface-secondary);
+  color: var(--accent-primary);
+}
+
+.governance-directive-full .markdown-content pre {
+  @apply p-2 rounded mb-2 overflow-auto text-xs;
+  background-color: var(--surface-secondary);
 }
 
 .governance-directive-edit-btn,

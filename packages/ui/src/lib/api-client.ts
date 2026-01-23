@@ -167,13 +167,16 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
-  listFileSystem(path?: string, options?: { includeFiles?: boolean; allowFullNavigation?: boolean }): Promise<FileSystemListResponse> {
+  listFileSystem(path?: string, options?: { includeFiles?: boolean; includeHidden?: boolean; allowFullNavigation?: boolean }): Promise<FileSystemListResponse> {
     const params = new URLSearchParams()
     if (path && path !== ".") {
       params.set("path", path)
     }
     if (options?.includeFiles !== undefined) {
       params.set("includeFiles", String(options.includeFiles))
+    }
+    if (options?.includeHidden !== undefined) {
+      params.set("includeHidden", String(options.includeHidden))
     }
     if (options?.allowFullNavigation !== undefined) {
       params.set("allowFullNavigation", String(options.allowFullNavigation))
@@ -184,6 +187,16 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
+  /**
+   * Opens a native OS folder picker dialog via the server.
+   * Only works when the server is running locally (listeningMode === "local").
+   */
+  pickFolder(options?: { title?: string; defaultPath?: string }): Promise<{ path: string | null; error?: string }> {
+    return request<{ path: string | null; error?: string }>("/api/filesystem/pick-folder", {
+      method: "POST",
+      body: JSON.stringify(options ?? {}),
+    })
+  },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -192,6 +205,19 @@ export const serverApi = {
   },
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  fetchGitStatus(path: string): Promise<{
+    available: boolean
+    branch?: string
+    ahead?: number
+    behind?: number
+    staged?: string[]
+    modified?: string[]
+    untracked?: string[]
+    error?: string
+  }> {
+    const params = new URLSearchParams({ path })
+    return request(`/api/git/status?${params.toString()}`)
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
     sseLogger.info(`Connecting to ${EVENTS_URL}`)

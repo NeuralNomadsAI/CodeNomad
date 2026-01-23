@@ -1,4 +1,5 @@
 import toast from "solid-toast"
+import { X } from "lucide-solid"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
 

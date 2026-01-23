@@ -125,3 +125,134 @@ button.bottom-status-item:hover {
   min-width: 50px;
   text-align: right;
 }
+
+/* Governance section */
+.bottom-status-governance {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-governance-overrides {
+  color: var(--status-success);
+  font-weight: 500;
+}
+
+/* Directives section */
+.bottom-status-directives {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-directives .bottom-status-text {
+  color: var(--text-muted);
+}
+
+.bottom-status-directives.has-directives .bottom-status-icon {
+  color: var(--accent-primary);
+}
+
+.bottom-status-directives.has-directives .bottom-status-text {
+  color: var(--text-secondary);
+}
+
+/* MCP section */
+.bottom-status-mcp {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-mcp .bottom-status-icon {
+  color: var(--text-muted);
+}
+
+.bottom-status-mcp.has-servers .bottom-status-icon {
+  color: var(--status-success);
+}
+
+.bottom-status-count {
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+.bottom-status-mcp.has-servers .bottom-status-count {
+  color: var(--status-success);
+}
+
+/* LSP section */
+.bottom-status-lsp {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-lsp .bottom-status-icon {
+  color: var(--text-muted);
+}
+
+.bottom-status-lsp.has-servers .bottom-status-icon {
+  color: var(--status-success);
+}
+
+.bottom-status-lsp.has-servers .bottom-status-count {
+  color: var(--status-success);
+}
+
+/* Instance section */
+.bottom-status-instance {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-instance .bottom-status-icon {
+  color: var(--status-success);
+}
+
+.bottom-status-instance .bottom-status-text {
+  font-family: var(--font-family-mono);
+}
+
+/* Git section */
+.bottom-status-git {
+  @apply flex-shrink-0;
+}
+
+.bottom-status-git .bottom-status-icon {
+  color: var(--accent-primary);
+}
+
+.bottom-status-git .bottom-status-text {
+  max-width: 100px;
+  font-family: var(--font-family-mono);
+}
+
+.bottom-status-git-sync {
+  @apply flex items-center gap-1 ml-1;
+}
+
+.bottom-status-git-ahead {
+  color: var(--status-success, #22c55e);
+  font-weight: 500;
+}
+
+.bottom-status-git-behind {
+  color: var(--status-warning, #eab308);
+  font-weight: 500;
+}
+
+/* Spacer to push settings to the right */
+.bottom-status-spacer {
+  flex: 1;
+}
+
+/* Settings section with status dot */
+.bottom-status-settings {
+  @apply flex-shrink-0 gap-1;
+}
+
+.bottom-status-settings .bottom-status-icon {
+  color: var(--text-muted);
+}
+
+.bottom-status-settings:hover .bottom-status-icon {
+  color: var(--text-primary);
+}
+
+.bottom-status-status-dot {
+  @apply w-2 h-2 rounded-full;
+  background-color: var(--status-success, #22c55e);
+}

@@ -1,9 +1,17 @@
 import type { FastifyInstance } from "fastify"
 import { fetch } from "undici"
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 
 const MODELS_API_URL = "https://models.dev/api.json"
 const LOGO_BASE_URL = "https://models.dev/logos"
 const CACHE_DURATION_MS = 30 * 60 * 1000 // 30 minutes
+
+// Path to bundled logos (relative to server root)
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const BUNDLED_LOGOS_PATH = path.join(__dirname, "../../../public/logos")
 
 interface CacheEntry<T> {
   data: T
@@ -59,13 +67,26 @@ export function registerModelsProxyRoutes(app: FastifyInstance) {
     }
   })
 
-  // Proxy provider logos with caching
+  // Proxy provider logos with caching - tries bundled logos first
   app.get<{ Params: { provider: string } }>("/api/models/logo/:provider", async (request, reply) => {
     const { provider } = request.params
     const cacheKey = provider
 
     try {
-      // Check cache
+      // 1. Check for bundled local logo first
+      const bundledLogoPath = path.join(BUNDLED_LOGOS_PATH, `${provider}.svg`)
+      try {
+        const localLogo = await fs.promises.readFile(bundledLogoPath)
+        return reply
+          .header("Content-Type", "image/svg+xml")
+          .header("X-Cache", "BUNDLED")
+          .header("Cache-Control", "public, max-age=86400") // 24 hour cache for bundled
+          .send(localLogo)
+      } catch {
+        // Bundled logo not found, continue to remote fetch
+      }
+
+      // 2. Check memory cache
       const cached = logoCache.get(cacheKey)
       if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
         return reply
@@ -75,7 +96,7 @@ export function registerModelsProxyRoutes(app: FastifyInstance) {
           .send(cached.data)
       }
 
-      // Fetch logo from models.dev
+      // 3. Fetch logo from models.dev
       const logoUrl = `${LOGO_BASE_URL}/${encodeURIComponent(provider)}.svg`
       const response = await fetch(logoUrl, {
         headers: {
@@ -141,12 +162,64 @@ export function registerModelsProxyRoutes(app: FastifyInstance) {
             cached: true,
             age: Date.now() - modelsCache.timestamp,
             maxAge: CACHE_DURATION_MS,
+            lastUpdated: modelsCache.timestamp,
           }
-        : { cached: false },
+        : { cached: false, lastUpdated: null },
       logoCache: {
         size: logoCache.size,
         providers: Array.from(logoCache.keys()),
       },
     })
+  })
+
+  // Force sync endpoint - clears cache and refetches
+  app.post("/api/models/sync", async (_request, reply) => {
+    try {
+      // Clear caches
+      modelsCache = null
+      logoCache.clear()
+
+      // Fetch fresh data
+      const response = await fetch(MODELS_API_URL, {
+        headers: {
+          "User-Agent": "EraCode/1.0",
+          Accept: "application/json",
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`models.dev returned ${response.status}`)
+      }
+
+      const data = await response.json()
+      const timestamp = Date.now()
+
+      // Update cache
+      modelsCache = {
+        data,
+        timestamp,
+      }
+
+      const providerCount = Object.keys(data as object).length
+      let modelCount = 0
+      for (const provider of Object.values(data as object)) {
+        if (provider && typeof provider === "object" && "models" in provider) {
+          modelCount += Object.keys((provider as { models: object }).models || {}).length
+        }
+      }
+
+      return reply.send({
+        success: true,
+        lastUpdated: timestamp,
+        providerCount,
+        modelCount,
+      })
+    } catch (error) {
+      reply.code(502).send({
+        success: false,
+        error: "Failed to sync models data",
+        message: error instanceof Error ? error.message : "Unknown error",
+      })
+    }
   })
 }

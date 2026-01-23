@@ -30,6 +30,9 @@ export class EventBus extends EventEmitter {
     this.on("instance.event", handler)
     this.on("instance.eventStatus", handler)
     this.on("app.releaseAvailable", handler)
+    this.on("file.changed", handler)
+    this.on("file.conflict", handler)
+    this.on("file.conflict.resolved", handler)
     return () => {
       this.off("workspace.created", handler)
       this.off("workspace.started", handler)
@@ -42,6 +45,9 @@ export class EventBus extends EventEmitter {
       this.off("instance.event", handler)
       this.off("instance.eventStatus", handler)
       this.off("app.releaseAvailable", handler)
+      this.off("file.changed", handler)
+      this.off("file.conflict", handler)
+      this.off("file.conflict.resolved", handler)
     }
   }
 }

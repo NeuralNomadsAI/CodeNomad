@@ -20,8 +20,22 @@ import {
   PanelRightClose,
   Pin,
   PinOff,
-  Settings,
   HelpCircle,
+  FileText,
+  Clock,
+  FolderGit,
+  GitBranch,
+  Eye,
+  Edit3,
+  PenLine,
+  Plus,
+  Trash2,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  ListChecks,
+  Plug,
+  Server,
 } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
@@ -52,7 +66,6 @@ import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import InstanceServiceStatus from "../instance-service-status"
 import InstanceMcpControl from "../instance-mcp-control"
-import AdvancedSettingsModal from "../advanced-settings-modal"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import PermissionToggle from "../permission-toggle"
@@ -62,6 +75,15 @@ import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextProgressBar from "../context-progress-bar"
 import SessionView from "../session/session-view"
+import {
+  getFilesTouched,
+  getRecentActions,
+  getGitStatus,
+  updateGitStatus,
+  type FileOperationType,
+  type RecentAction,
+} from "../../stores/workspace-state"
+import { serverApi } from "../../lib/api-client"
 import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
@@ -71,6 +93,7 @@ import {
   type SessionSidebarRequestDetail,
 } from "../../lib/session-sidebar-events"
 import { useConfig } from "../../stores/preferences"
+import { getActiveMcpServerCount } from "../../stores/project-mcp"
 
 const log = getLogger("session")
 
@@ -138,8 +161,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["lsp", "mcp"])
-  const [advancedSettingsOpen, setAdvancedSettingsOpen] = createSignal(false)
+  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["actions", "files", "tasks"])
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = createSignal(false)
 
   const { preferences, updateLastUsedBinary } = useConfig()
@@ -267,6 +289,29 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   createEffect(() => {
     props.tabBarOffset
     requestAnimationFrame(() => measureDrawerHost())
+  })
+
+  // Fetch git status when instance is ready
+  createEffect(() => {
+    if (props.instance.status !== "ready") return
+    const folder = props.instance.folder
+    if (!folder) return
+
+    // Fetch git status
+    serverApi.fetchGitStatus(folder).then((result) => {
+      if (result.available) {
+        updateGitStatus(props.instance.id, {
+          branch: result.branch ?? "unknown",
+          ahead: result.ahead ?? 0,
+          behind: result.behind ?? 0,
+          staged: result.staged ?? [],
+          modified: result.modified ?? [],
+          untracked: result.untracked ?? [],
+        })
+      }
+    }).catch((err) => {
+      log.warn("Failed to fetch git status", err)
+    })
   })
 
   const activeSessions = createMemo(() => {
@@ -840,6 +885,74 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   )
 
   const RightDrawerContent = () => {
+    // Workspace data
+    const filesTouched = createMemo(() => getFilesTouched(props.instance.id))
+    const recentActions = createMemo(() => getRecentActions(props.instance.id))
+    const gitStatus = createMemo(() => getGitStatus(props.instance.id))
+
+    // Helper functions for workspace rendering
+    const getOperationIcon = (op: FileOperationType) => {
+      switch (op) {
+        case "read": return <Eye class="w-3 h-3" />
+        case "edit": return <Edit3 class="w-3 h-3" />
+        case "write": return <PenLine class="w-3 h-3" />
+        case "create": return <Plus class="w-3 h-3" />
+        case "delete": return <Trash2 class="w-3 h-3" />
+        default: return <FileText class="w-3 h-3" />
+      }
+    }
+
+    const getOperationClass = (op: FileOperationType) => {
+      switch (op) {
+        case "read": return "workspace-op-read"
+        case "edit": return "workspace-op-edit"
+        case "write": return "workspace-op-write"
+        case "create": return "workspace-op-create"
+        case "delete": return "workspace-op-delete"
+        default: return ""
+      }
+    }
+
+    const getStatusIcon = (status: RecentAction["status"]) => {
+      switch (status) {
+        case "running": return <Loader2 class="w-3 h-3 animate-spin" />
+        case "complete": return <CheckCircle class="w-3 h-3" />
+        case "error": return <XCircle class="w-3 h-3" />
+      }
+    }
+
+    const getStatusClass = (status: RecentAction["status"]) => {
+      switch (status) {
+        case "running": return "workspace-action-running"
+        case "complete": return "workspace-action-complete"
+        case "error": return "workspace-action-error"
+      }
+    }
+
+    const formatRelativeTime = (timestamp: number) => {
+      const seconds = Math.floor((Date.now() - timestamp) / 1000)
+      if (seconds < 60) return "just now"
+      const minutes = Math.floor(seconds / 60)
+      if (minutes < 60) return `${minutes}m ago`
+      const hours = Math.floor(minutes / 60)
+      if (hours < 24) return `${hours}h ago`
+      return `${Math.floor(hours / 24)}d ago`
+    }
+
+    const getFileName = (path: string) => {
+      const parts = path.replace(/\\/g, "/").split("/")
+      return parts[parts.length - 1] || path
+    }
+
+    const getRelativePath = (fullPath: string) => {
+      const folder = props.instance.folder?.replace(/\\/g, "/") || ""
+      const path = fullPath.replace(/\\/g, "/")
+      if (folder && path.startsWith(folder)) {
+        return path.slice(folder.length).replace(/^\//, "")
+      }
+      return path
+    }
+
     const renderPlanSectionContent = () => {
       const sessionId = activeSessionIdForInstance()
       if (!sessionId || sessionId === "info") {
@@ -852,10 +965,144 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       return <TodoListView state={todoState} emptyLabel="Nothing planned yet." showStatusLabel={false} />
     }
 
+    // Files Touched section content
+    const renderFilesTouchedContent = () => (
+      <Show
+        when={filesTouched().length > 0}
+        fallback={<p class="workspace-empty-message">No files touched yet</p>}
+      >
+        <ul class="workspace-file-list">
+          <For each={filesTouched().slice(0, 20)}>
+            {(file) => (
+              <li class="workspace-file-item">
+                <button type="button" class="workspace-file-button" title={file.path}>
+                  <span class={`workspace-op-badge ${getOperationClass(file.operation)}`}>
+                    {getOperationIcon(file.operation)}
+                  </span>
+                  <span class="workspace-file-name">{getFileName(file.path)}</span>
+                  <span class="workspace-file-path" title={file.path}>{getRelativePath(file.path)}</span>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+        <Show when={filesTouched().length > 20}>
+          <p class="workspace-more-indicator">+{filesTouched().length - 20} more files</p>
+        </Show>
+      </Show>
+    )
+
+    // Recent Actions section content
+    const renderRecentActionsContent = () => (
+      <Show
+        when={recentActions().length > 0}
+        fallback={<p class="workspace-empty-message">No recent actions</p>}
+      >
+        <ul class="workspace-action-list">
+          <For each={recentActions().slice(0, 15)}>
+            {(action) => (
+              <li class={`workspace-action-item ${getStatusClass(action.status)}`}>
+                <span class="workspace-action-status">{getStatusIcon(action.status)}</span>
+                <span class="workspace-action-summary" title={action.summary}>{action.summary}</span>
+                <span class="workspace-action-time">{formatRelativeTime(action.timestamp)}</span>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    )
+
+    // Git Status section content
+    const renderGitStatusContent = () => (
+      <Show
+        when={gitStatus()}
+        fallback={<p class="workspace-empty-message">Git status not available</p>}
+      >
+        {(status) => (
+          <div class="workspace-git-status">
+            <div class="workspace-git-branch">
+              <GitBranch class="w-4 h-4" />
+              <span class="workspace-git-branch-name">{status().branch}</span>
+              <Show when={status().ahead > 0 || status().behind > 0}>
+                <span class="workspace-git-sync">
+                  <Show when={status().ahead > 0}>
+                    <span class="workspace-git-ahead">+{status().ahead}</span>
+                  </Show>
+                  <Show when={status().behind > 0}>
+                    <span class="workspace-git-behind">-{status().behind}</span>
+                  </Show>
+                </span>
+              </Show>
+            </div>
+            <Show when={status().staged.length > 0}>
+              <div class="workspace-git-section">
+                <span class="workspace-git-label workspace-git-staged">Staged ({status().staged.length})</span>
+                <ul class="workspace-git-files">
+                  <For each={status().staged.slice(0, 5)}>
+                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                  </For>
+                  <Show when={status().staged.length > 5}>
+                    <li class="workspace-git-more">+{status().staged.length - 5} more</li>
+                  </Show>
+                </ul>
+              </div>
+            </Show>
+            <Show when={status().modified.length > 0}>
+              <div class="workspace-git-section">
+                <span class="workspace-git-label workspace-git-modified">Modified ({status().modified.length})</span>
+                <ul class="workspace-git-files">
+                  <For each={status().modified.slice(0, 5)}>
+                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                  </For>
+                  <Show when={status().modified.length > 5}>
+                    <li class="workspace-git-more">+{status().modified.length - 5} more</li>
+                  </Show>
+                </ul>
+              </div>
+            </Show>
+            <Show when={status().untracked.length > 0}>
+              <div class="workspace-git-section">
+                <span class="workspace-git-label workspace-git-untracked">Untracked ({status().untracked.length})</span>
+                <ul class="workspace-git-files">
+                  <For each={status().untracked.slice(0, 5)}>
+                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                  </For>
+                  <Show when={status().untracked.length > 5}>
+                    <li class="workspace-git-more">+{status().untracked.length - 5} more</li>
+                  </Show>
+                </ul>
+              </div>
+            </Show>
+            <Show when={status().staged.length === 0 && status().modified.length === 0 && status().untracked.length === 0}>
+              <p class="workspace-git-clean">Working tree clean</p>
+            </Show>
+          </div>
+        )}
+      </Show>
+    )
+
+    // 6 peer sections - flattened from nested workspace
+    // Order: Recent Actions, Files Touched, LSP, MCP, Git Status, Tasks
     const sections = [
+      {
+        id: "actions",
+        label: "Recent Actions",
+        icon: () => <Clock class="w-4 h-4" />,
+        count: () => recentActions().length,
+        render: renderRecentActionsContent,
+      },
+      {
+        id: "files",
+        label: "Files Touched",
+        icon: () => <FileText class="w-4 h-4" />,
+        count: () => filesTouched().length,
+        render: renderFilesTouchedContent,
+      },
       {
         id: "lsp",
         label: "LSP Servers",
+        icon: () => <Server class="w-4 h-4" />,
+        count: () => props.instance.metadata?.lspStatus?.length ?? 0,
         render: () => (
           <InstanceServiceStatus
             initialInstance={props.instance}
@@ -865,29 +1112,42 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           />
         ),
       },
-       {
-         id: "mcp",
-         label: "MCP Servers",
-         render: () => (
-           <InstanceMcpControl
-             instance={props.instance}
-             class="space-y-2"
-             onManage={() => setAdvancedSettingsOpen(true)}
-           />
-         ),
-       },
       {
-        id: "plan",
-        label: "Plan",
+        id: "mcp",
+        label: "MCP Servers",
+        icon: () => <Plug class="w-4 h-4" />,
+        count: () => getActiveMcpServerCount(props.instance.id, props.instance.folder),
+        render: () => (
+          <InstanceMcpControl
+            instance={props.instance}
+            class="space-y-2"
+          />
+        ),
+      },
+      {
+        id: "git",
+        label: "Git Status",
+        icon: () => <FolderGit class="w-4 h-4" />,
+        count: () => {
+          const status = gitStatus()
+          if (!status) return null
+          return `${status.branch}${status.ahead > 0 ? ` ↑${status.ahead}` : ""}${status.behind > 0 ? ` ↓${status.behind}` : ""}`
+        },
+        render: renderGitStatusContent,
+      },
+      {
+        id: "tasks",
+        label: "Tasks",
+        icon: () => <ListChecks class="w-4 h-4" />,
+        count: () => {
+          const todoState = latestTodoState()
+          if (!todoState?.todos?.length) return null
+          const pending = todoState.todos.filter(t => t.status !== "completed").length
+          return pending > 0 ? pending : null
+        },
         render: renderPlanSectionContent,
       },
     ]
-
-    createEffect(() => {
-      const currentExpanded = new Set(rightPanelExpandedItems())
-      if (sections.every((section) => currentExpanded.has(section.id))) return
-      setRightPanelExpandedItems(sections.map((section) => section.id))
-    })
 
     const handleAccordionChange = (values: string[]) => {
       setRightPanelExpandedItems(values)
@@ -897,31 +1157,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     return (
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
-          <div class="control-panel-header">
-            <Typography variant="subtitle2" class="control-panel-title">
-              Status Panel
-            </Typography>
-            <div class="control-panel-actions">
-              <button
-                type="button"
-                class="icon-button icon-button--md icon-button--ghost"
-                aria-label="Open advanced settings"
-                onClick={() => setAdvancedSettingsOpen(true)}
-              >
-                <Settings class="w-4 h-4" />
-              </button>
-              <Show when={!isPhoneLayout()}>
-                <button
-                  type="button"
-                  class="icon-button icon-button--md icon-button--ghost"
-                  aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
-                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
-                >
-                  {rightPinned() ? <Pin class="w-4 h-4" /> : <PinOff class="w-4 h-4" />}
-                </button>
-              </Show>
-            </div>
+        {/* Pin button row - no header */}
+        <Show when={!isPhoneLayout()}>
+          <div class="flex justify-end px-3 py-2 border-b border-base">
+            <button
+              type="button"
+              class="icon-button icon-button--sm icon-button--ghost"
+              aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
+              onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+            >
+              {rightPinned() ? <Pin class="w-4 h-4" /> : <PinOff class="w-4 h-4" />}
+            </button>
           </div>
+        </Show>
         <div class="flex-1 overflow-y-auto">
           <Accordion.Root
             class="flex flex-col"
@@ -938,10 +1186,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 >
                   <Accordion.Header>
                     <Accordion.Trigger class="control-panel-trigger">
-                      <span>{section.label}</span>
-                      <ChevronDown
-                        class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
-                      />
+                      <span class="flex items-center gap-2">
+                        {section.icon()}
+                        {section.label}
+                      </span>
+                      <span class="flex items-center gap-2">
+                        <Show when={section.count() !== null}>
+                          <span class="text-xs font-normal text-muted">{section.count()}</span>
+                        </Show>
+                        <ChevronDown
+                          class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
+                        />
+                      </span>
                     </Accordion.Trigger>
                   </Accordion.Header>
                   <Accordion.Content class="control-panel-content text-sm text-primary">
@@ -1092,16 +1348,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         measureDrawerHost()
       }}
     >
-      <AdvancedSettingsModal
-        open={advancedSettingsOpen()}
-        onClose={() => setAdvancedSettingsOpen(false)}
-        selectedBinary={selectedBinary()}
-        onBinaryChange={(binary) => {
-          setSelectedBinary(binary)
-          updateLastUsedBinary(binary)
-        }}
-      />
-
       <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
         <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
           <Show

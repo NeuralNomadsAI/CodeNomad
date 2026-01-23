@@ -11,7 +11,20 @@ interface InstanceTabProps {
 }
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
-  const folderName = () => props.instance.folder.split("/").pop() || props.instance.folder
+  const folderName = () => {
+    const folder = props.instance.folder
+    // Handle various path formats:
+    // - POSIX: /Users/alex/project
+    // - macOS alias: alias Macintosh HD:Users:alex/project/
+    // - Windows: C:\Users\alex\project
+
+    // Remove trailing slashes/colons
+    const cleaned = folder.replace(/[/:\\]+$/, "")
+
+    // Split by common separators and get the last non-empty part
+    const parts = cleaned.split(/[/:\\]/).filter(Boolean)
+    return parts[parts.length - 1] || folder
+  }
 
   // Get status dot class based on aggregate session status
   const getStatusDotClass = () => {

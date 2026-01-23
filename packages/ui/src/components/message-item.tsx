@@ -167,7 +167,7 @@ export default function MessageItem(props: MessageItemProps) {
 
   const containerClass = () =>
     isUser()
-      ? "message-item-base message-user-bubble bg-[var(--message-user-bg)] border-r-[3px] border-[var(--message-user-border)]"
+      ? "message-item-base message-user-bubble bg-[var(--message-user-bg)] border-r-[3px] border-r-[#2196f3] border-solid"
       : "message-item-base assistant-message bg-[var(--message-assistant-bg)] border-l-[3px] border-[var(--message-assistant-border)]"
 
   const speakerLabel = () => (isUser() ? "You" : "Assistant")
@@ -205,7 +205,7 @@ export default function MessageItem(props: MessageItemProps) {
 
 
   return (
-    <div class={containerClass()}>
+    <div class={containerClass()} style={isUser() ? { "border-right": "3px solid #2196f3" } : {}}>
       <header class="message-item-header">
         <div class="message-speaker">
           <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>

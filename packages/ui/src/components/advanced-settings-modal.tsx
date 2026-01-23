@@ -1,6 +1,6 @@
 import { Component } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
-import { Terminal, Settings2, Plug, Variable } from "lucide-solid"
+import { Terminal, Settings2, Plug, Variable, Settings, ExternalLink } from "lucide-solid"
 import OpenCodeBinarySelector from "./opencode-binary-selector"
 import EnvironmentVariablesEditor from "./environment-variables-editor"
 import ModelDefaultsPanel from "./model-defaults-panel"
@@ -13,6 +13,7 @@ interface AdvancedSettingsModalProps {
   selectedBinary: string
   onBinaryChange: (binary: string) => void
   isLoading?: boolean
+  onOpenFullSettings?: () => void
 }
 
 const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => {
@@ -63,7 +64,18 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
               </div>
             </div>
 
-            <div class="modal-footer">
+            <div class="modal-footer justify-between">
+              <button
+                type="button"
+                class="modal-button modal-button--secondary flex items-center gap-2"
+                onClick={() => {
+                  props.onClose()
+                  props.onOpenFullSettings?.()
+                }}
+              >
+                <Settings class="w-4 h-4" />
+                All Settings
+              </button>
               <button
                 type="button"
                 class="modal-button modal-button--ghost"

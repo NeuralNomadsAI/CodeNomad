@@ -36,6 +36,16 @@ const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 const [providers, setProviders] = createSignal<Map<string, Provider[]>>(new Map())
 const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, string>>(new Map())
 
+// Archiving state for subagents
+// Key: `${instanceId}:${sessionId}`, Value: { completedAt, parentMessageCountAtComplete, archived }
+interface SubagentArchiveState {
+  completedAt: number
+  parentMessageCountAtComplete: number
+  archived: boolean
+}
+const [subagentArchiveState, setSubagentArchiveState] = createSignal<Map<string, SubagentArchiveState>>(new Map())
+const ARCHIVE_AFTER_MESSAGES = 2
+
 const [loading, setLoading] = createSignal({
   fetchingSessions: new Map<string, boolean>(),
   creatingSession: new Map<string, boolean>(),
@@ -301,6 +311,94 @@ function isSessionMessagesLoading(instanceId: string, sessionId: string): boolea
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
 }
 
+// Archive helper functions
+function getArchiveKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}:${sessionId}`
+}
+
+function isSubagentArchived(instanceId: string, sessionId: string): boolean {
+  const key = getArchiveKey(instanceId, sessionId)
+  return subagentArchiveState().get(key)?.archived ?? false
+}
+
+function markSubagentComplete(instanceId: string, sessionId: string, parentMessageCount: number): void {
+  const key = getArchiveKey(instanceId, sessionId)
+  const existing = subagentArchiveState().get(key)
+
+  // Don't overwrite if already marked complete
+  if (existing?.completedAt) return
+
+  setSubagentArchiveState((prev) => {
+    const next = new Map(prev)
+    next.set(key, {
+      completedAt: Date.now(),
+      parentMessageCountAtComplete: parentMessageCount,
+      archived: false,
+    })
+    return next
+  })
+}
+
+function checkAndArchiveSubagents(instanceId: string, currentParentMessageCount: number): void {
+  setSubagentArchiveState((prev) => {
+    let changed = false
+    const next = new Map(prev)
+
+    for (const [key, state] of prev.entries()) {
+      if (!key.startsWith(`${instanceId}:`)) continue
+      if (state.archived) continue
+      if (!state.completedAt) continue
+
+      const messagesSinceComplete = currentParentMessageCount - state.parentMessageCountAtComplete
+      if (messagesSinceComplete >= ARCHIVE_AFTER_MESSAGES) {
+        next.set(key, { ...state, archived: true })
+        changed = true
+      }
+    }
+
+    return changed ? next : prev
+  })
+}
+
+function toggleSubagentArchive(instanceId: string, sessionId: string): void {
+  const key = getArchiveKey(instanceId, sessionId)
+  setSubagentArchiveState((prev) => {
+    const existing = prev.get(key)
+    if (!existing) return prev
+
+    const next = new Map(prev)
+    next.set(key, { ...existing, archived: !existing.archived })
+    return next
+  })
+}
+
+function getArchivedSubagents(instanceId: string): string[] {
+  const result: string[] = []
+  const prefix = `${instanceId}:`
+
+  for (const [key, state] of subagentArchiveState().entries()) {
+    if (key.startsWith(prefix) && state.archived) {
+      result.push(key.slice(prefix.length))
+    }
+  }
+
+  return result
+}
+
+function getActiveSubagents(instanceId: string): Session[] {
+  const allSessions = getSessions(instanceId)
+  const archived = new Set(getArchivedSubagents(instanceId))
+
+  return allSessions.filter((s) => s.parentId !== null && !archived.has(s.id))
+}
+
+function getArchivedSubagentSessions(instanceId: string): Session[] {
+  const allSessions = getSessions(instanceId)
+  const archived = new Set(getArchivedSubagents(instanceId))
+
+  return allSessions.filter((s) => s.parentId !== null && archived.has(s.id))
+}
+
 function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | undefined {
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
@@ -448,4 +546,13 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  // Archive exports
+  isSubagentArchived,
+  markSubagentComplete,
+  checkAndArchiveSubagents,
+  toggleSubagentArchive,
+  getArchivedSubagents,
+  getActiveSubagents,
+  getArchivedSubagentSessions,
+  ARCHIVE_AFTER_MESSAGES,
 }

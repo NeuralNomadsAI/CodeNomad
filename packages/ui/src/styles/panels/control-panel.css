@@ -57,3 +57,13 @@
   background-color: var(--surface-hover);
   color: var(--text-primary);
 }
+
+/* Count badge in section triggers */
+.control-panel-trigger .text-muted {
+  color: var(--text-muted);
+}
+
+/* Collapsed state - start sections collapsed by default */
+.control-panel-section[data-state="closed"] .control-panel-content {
+  display: none;
+}

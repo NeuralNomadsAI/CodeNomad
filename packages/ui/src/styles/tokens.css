@@ -27,12 +27,20 @@
   --context-progress-moderate: #3b82f6;
   --context-progress-warning: #f59e0b;
   --context-progress-critical: #ef4444;
-  
+
   /* Status tokens */
   --status-success: #4caf50;
   --status-error: #f44336;
   --status-warning: #ff9800;
-  
+
+  /* Subagent status tokens */
+  --status-running: #22c55e;
+  --status-running-bg: rgba(34, 197, 94, 0.15);
+  --status-complete: #3b82f6;
+  --status-complete-bg: rgba(59, 130, 246, 0.15);
+  --status-idle: #6b7280;
+  --status-idle-bg: rgba(107, 114, 128, 0.15);
+
   /* Message-specific tokens */
   --message-user-bg: var(--surface-secondary);
   --message-user-border: #2196f3;
@@ -43,12 +51,19 @@
   --message-tool-border: #6c757d;
 
   /* Semantic component colors */
-  --session-status-working-fg: #b45309;
-  --session-status-working-bg: rgba(245, 158, 11, 0.16);
+  /* Running (working) = Green */
+  --session-status-working-fg: #15803d;
+  --session-status-working-bg: rgba(34, 197, 94, 0.16);
+  /* Compacting = Purple (keep as is for system status) */
   --session-status-compacting-fg: #6d28d9;
   --session-status-compacting-bg: rgba(109, 40, 217, 0.18);
-  --session-status-idle-fg: #15803d;
-  --session-status-idle-bg: rgba(22, 163, 74, 0.16);
+  /* Idle = Gray */
+  --session-status-idle-fg: #6b7280;
+  --session-status-idle-bg: rgba(107, 114, 128, 0.16);
+  /* Complete = Blue (for subagents that finished) */
+  --session-status-complete-fg: #1d4ed8;
+  --session-status-complete-bg: rgba(59, 130, 246, 0.16);
+  /* Permission = Orange/Amber (needs attention) */
   --session-status-permission-fg: #c2410c;
   --session-status-permission-bg: rgba(251, 191, 36, 0.25);
   --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
@@ -181,7 +196,15 @@
     --status-success: #4caf50;
     --status-error: #f44336;
     --status-warning: #ff9800;
-    
+
+    /* Subagent status tokens */
+    --status-running: #22c55e;
+    --status-running-bg: rgba(34, 197, 94, 0.2);
+    --status-complete: #3b82f6;
+    --status-complete-bg: rgba(59, 130, 246, 0.2);
+    --status-idle: #9ca3af;
+    --status-idle-bg: rgba(156, 163, 175, 0.2);
+
     /* Message-specific tokens */
     --message-user-bg: #202734;
     --message-user-border: #42a5f5;
@@ -192,12 +215,19 @@
     --message-tool-border: #adb5bd;
 
     /* Semantic component colors */
-    --session-status-working-fg: #facc15;
-    --session-status-working-bg: rgba(250, 204, 21, 0.25);
+    /* Running (working) = Green */
+    --session-status-working-fg: #22c55e;
+    --session-status-working-bg: rgba(34, 197, 94, 0.25);
+    /* Compacting = Purple */
     --session-status-compacting-fg: #c084fc;
     --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
-    --session-status-idle-fg: #4ade80;
-    --session-status-idle-bg: rgba(74, 222, 128, 0.22);
+    /* Idle = Gray */
+    --session-status-idle-fg: #9ca3af;
+    --session-status-idle-bg: rgba(156, 163, 175, 0.22);
+    /* Complete = Blue */
+    --session-status-complete-fg: #3b82f6;
+    --session-status-complete-bg: rgba(59, 130, 246, 0.25);
+    /* Permission = Amber */
     --session-status-permission-fg: #fbbf24;
     --session-status-permission-bg: rgba(251, 191, 36, 0.35);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
@@ -292,27 +322,35 @@
   --surface-muted: #212529;
   --surface-code: #1a1a1a;
   --surface-hover: #3a3a3a;
-  
+
   /* Border tokens */
   --border-base: #3a3a3a;
   --border-secondary: #3a3a3a;
   --border-muted: #3a3a3a;
-  
+
   /* Text tokens */
   --text-primary: #cfd4dc;
   --text-secondary: #999999;
   --text-muted: #999999;
   --text-inverted: #1a1a1a;
-  
+
   /* Accent tokens */
   --accent-primary: #0080ff;
   --accent-hover: #0066cc;
-  
+
   /* Status tokens */
   --status-success: #4caf50;
   --status-error: #f44336;
   --status-warning: #ff9800;
-  
+
+  /* Subagent status tokens */
+  --status-running: #22c55e;
+  --status-running-bg: rgba(34, 197, 94, 0.2);
+  --status-complete: #3b82f6;
+  --status-complete-bg: rgba(59, 130, 246, 0.2);
+  --status-idle: #9ca3af;
+  --status-idle-bg: rgba(156, 163, 175, 0.2);
+
   /* Message-specific tokens */
   --message-user-bg: #202734;
   --message-user-border: #2196f3;
@@ -323,12 +361,19 @@
   --message-tool-border: #adb5bd;
 
   /* Semantic component colors */
-  --session-status-working-fg: #facc15;
-  --session-status-working-bg: rgba(250, 204, 21, 0.25);
+  /* Running (working) = Green */
+  --session-status-working-fg: #22c55e;
+  --session-status-working-bg: rgba(34, 197, 94, 0.25);
+  /* Compacting = Purple */
   --session-status-compacting-fg: #c084fc;
   --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
-  --session-status-idle-fg: #4ade80;
-  --session-status-idle-bg: rgba(74, 222, 128, 0.22);
+  /* Idle = Gray */
+  --session-status-idle-fg: #9ca3af;
+  --session-status-idle-bg: rgba(156, 163, 175, 0.22);
+  /* Complete = Blue */
+  --session-status-complete-fg: #3b82f6;
+  --session-status-complete-bg: rgba(59, 130, 246, 0.25);
+  /* Permission = Amber */
   --session-status-permission-fg: #fbbf24;
   --session-status-permission-bg: rgba(251, 191, 36, 0.35);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);

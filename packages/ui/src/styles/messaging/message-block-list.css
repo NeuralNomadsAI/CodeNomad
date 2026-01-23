@@ -15,7 +15,7 @@
   flex-direction: column;
   gap: 0.5rem;
   border-radius: 8px;
-  overflow: hidden;
+  /* overflow: hidden removed - was clipping message borders */
 }
 
 /* Tool calls and secondary items are indented under primary messages */

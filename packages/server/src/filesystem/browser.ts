@@ -15,6 +15,7 @@ interface FileSystemBrowserOptions {
 
 interface DirectoryReadOptions {
   includeFiles: boolean
+  includeHidden: boolean
   formatPath: (entryName: string) => string
   formatAbsolutePath: (entryName: string) => string
 }
@@ -34,27 +35,30 @@ export class FileSystemBrowser {
     this.isWindows = process.platform === "win32"
   }
 
-  list(relativePath = ".", options: { includeFiles?: boolean } = {}): FileSystemEntry[] {
+  list(relativePath = ".", options: { includeFiles?: boolean; includeHidden?: boolean } = {}): FileSystemEntry[] {
     if (this.unrestricted) {
       throw new Error("Relative listing is unavailable when running with unrestricted root")
     }
     const includeFiles = options.includeFiles ?? true
+    const includeHidden = options.includeHidden ?? true
     const normalizedPath = this.normalizeRelativePath(relativePath)
     const absolutePath = this.toRestrictedAbsolute(normalizedPath)
     return this.readDirectoryEntries(absolutePath, {
       includeFiles,
+      includeHidden,
       formatPath: (entryName) => this.buildRelativePath(normalizedPath, entryName),
       formatAbsolutePath: (entryName) => this.resolveRestrictedAbsoluteChild(normalizedPath, entryName),
     })
   }
 
-  browse(targetPath?: string, options: { includeFiles?: boolean; forceUnrestricted?: boolean } = {}): FileSystemListResponse {
+  browse(targetPath?: string, options: { includeFiles?: boolean; forceUnrestricted?: boolean; includeHidden?: boolean } = {}): FileSystemListResponse {
     const includeFiles = options.includeFiles ?? true
+    const includeHidden = options.includeHidden ?? true
     const useUnrestricted = this.unrestricted || options.forceUnrestricted
     if (useUnrestricted) {
-      return this.listUnrestricted(targetPath, includeFiles)
+      return this.listUnrestricted(targetPath, includeFiles, includeHidden)
     }
-    return this.listRestrictedWithMetadata(targetPath, includeFiles)
+    return this.listRestrictedWithMetadata(targetPath, includeFiles, includeHidden)
   }
 
   readFile(relativePath: string): string {
@@ -65,11 +69,12 @@ export class FileSystemBrowser {
     return fs.readFileSync(resolved, "utf-8")
   }
 
-  private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {
+  private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean, includeHidden: boolean): FileSystemListResponse {
     const normalizedPath = this.normalizeRelativePath(relativePath)
     const absolutePath = this.toRestrictedAbsolute(normalizedPath)
     const entries = this.readDirectoryEntries(absolutePath, {
       includeFiles,
+      includeHidden,
       formatPath: (entryName) => this.buildRelativePath(normalizedPath, entryName),
       formatAbsolutePath: (entryName) => this.resolveRestrictedAbsoluteChild(normalizedPath, entryName),
     })
@@ -87,7 +92,7 @@ export class FileSystemBrowser {
     return { entries, metadata }
   }
 
-  private listUnrestricted(targetPath: string | undefined, includeFiles: boolean): FileSystemListResponse {
+  private listUnrestricted(targetPath: string | undefined, includeFiles: boolean, includeHidden: boolean): FileSystemListResponse {
     const resolvedPath = this.resolveUnrestrictedPath(targetPath)
 
     if (this.isWindows && resolvedPath === WINDOWS_DRIVES_ROOT) {
@@ -96,6 +101,7 @@ export class FileSystemBrowser {
 
     const entries = this.readDirectoryEntries(resolvedPath, {
       includeFiles,
+      includeHidden,
       formatPath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
       formatAbsolutePath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
     })
@@ -163,6 +169,11 @@ export class FileSystemBrowser {
     const results: FileSystemEntry[] = []
 
     for (const entry of dirents) {
+      // Skip hidden files/folders (starting with .) unless explicitly included
+      if (!options.includeHidden && entry.name.startsWith(".")) {
+        continue
+      }
+
       if (!options.includeFiles && !entry.isDirectory()) {
         continue
       }

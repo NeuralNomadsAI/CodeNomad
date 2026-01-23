@@ -1,10 +1,11 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createEffect, createMemo, createSignal, type Component } from "solid-js"
-import { Plus, Search, RefreshCw, Power, Trash2, Key } from "lucide-solid"
+import { Plus, Search, RefreshCw, Power, Trash2, Key, CheckCircle2, XCircle } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { instances, stopInstance, createInstance } from "../stores/instances"
 import { providers, fetchProviders } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
+import { getProviderLogoUrl } from "../lib/models-api"
 
 const log = getLogger("actions")
 
@@ -262,37 +263,61 @@ const ProviderSettingsPanel: Component = () => {
               when={activeProviders().length > 0}
               fallback={<p class="text-xs text-secondary italic">No providers loaded yet. Add a provider and restart.</p>}
             >
-              <div class="flex flex-col" style={{ gap: "var(--space-sm)" }}>
+              <div class="provider-cards-grid">
                 <For each={activeProviders()}>
                   {(provider) => {
                     const isConfigured = () => configuredProviderIds().has(provider.id)
                     const isConnected = () => connectedProviderIds().has(provider.id)
 
                     return (
-                      <div class="px-3 py-2 rounded-md border bg-surface-secondary border-base">
-                        <div class="flex items-center justify-between" style={{ gap: "var(--space-md)" }}>
-                          <div class="flex flex-col min-w-0">
-                            <div class="text-sm text-primary font-medium truncate">
-                              {provider.name} <span class="text-xs text-secondary">({provider.id})</span>
-                            </div>
-                            <div class="text-xs text-secondary">
-                              <span>Models: {provider.modelCount}</span>
-                              <span class="px-2">•</span>
-                              <span>Configured: {isConfigured() ? "yes" : "no"}</span>
-                              <span class="px-2">•</span>
-                              <span>Connected: {isConnected() ? "yes" : "no"}</span>
-                            </div>
+                      <div class="provider-card">
+                        <div class="provider-card-header">
+                          <div class="provider-card-logo">
+                            <img
+                              src={getProviderLogoUrl(provider.id)}
+                              alt={provider.name}
+                              class="provider-logo-img"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
                           </div>
-
-                          <div class="flex items-center flex-shrink-0" style={{ gap: "var(--space-xs)" }}>
-                            <button
-                              type="button"
-                              class="modal-button modal-button--secondary"
-                              onClick={() => openProviderModal(provider.id)}
-                            >
-                              <Key class="w-3.5 h-3.5" />
-                              Keys
-                            </button>
+                          <div class="provider-card-status">
+                            <Show when={isConnected()}>
+                              <span class="provider-status-badge provider-status-connected">
+                                <CheckCircle2 class="w-3 h-3" />
+                                Connected
+                              </span>
+                            </Show>
+                            <Show when={!isConnected() && isConfigured()}>
+                              <span class="provider-status-badge provider-status-configured">
+                                Configured
+                              </span>
+                            </Show>
+                            <Show when={!isConnected() && !isConfigured()}>
+                              <span class="provider-status-badge provider-status-none">
+                                <XCircle class="w-3 h-3" />
+                                Not configured
+                              </span>
+                            </Show>
+                          </div>
+                        </div>
+                        <div class="provider-card-info">
+                          <div class="provider-card-name">{provider.name}</div>
+                          <div class="provider-card-details">
+                            {provider.modelCount} model{provider.modelCount !== 1 ? 's' : ''} available
+                          </div>
+                        </div>
+                        <div class="provider-card-actions">
+                          <button
+                            type="button"
+                            class="modal-button modal-button--secondary"
+                            onClick={() => openProviderModal(provider.id)}
+                          >
+                            <Key class="w-3.5 h-3.5" />
+                            Configure
+                          </button>
+                          <Show when={isConfigured()}>
                             <button
                               type="button"
                               class="modal-button modal-button--danger"
@@ -301,7 +326,7 @@ const ProviderSettingsPanel: Component = () => {
                             >
                               <Trash2 class="w-3.5 h-3.5" />
                             </button>
-                          </div>
+                          </Show>
                         </div>
                       </div>
                     )
@@ -341,17 +366,29 @@ const ProviderSettingsPanel: Component = () => {
                     />
                   </div>
 
-                  <div class="space-y-2">
+                  <div class="provider-list-grid">
                     <For each={filteredProviders()}>
                       {(entry) => (
                         <button
                           type="button"
-                          class="w-full px-3 py-2 rounded-lg border bg-surface-secondary border-base text-left hover:bg-surface-muted transition-colors"
+                          class="provider-list-item"
                           onClick={() => openProviderModal(entry.id)}
                         >
-                          <div class="text-sm font-medium text-primary">{entry.name}</div>
-                          <div class="text-[11px] text-secondary">
-                            {entry.id} • requires {entry.env?.length ?? 0} key{(entry.env?.length ?? 0) === 1 ? "" : "s"}
+                          <div class="provider-list-item-logo">
+                            <img
+                              src={getProviderLogoUrl(entry.id)}
+                              alt={entry.name}
+                              class="provider-logo-img-sm"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          </div>
+                          <div class="provider-list-item-info">
+                            <div class="text-sm font-medium text-primary">{entry.name}</div>
+                            <div class="text-[11px] text-secondary">
+                              requires {entry.env?.length ?? 0} key{(entry.env?.length ?? 0) === 1 ? "" : "s"}
+                            </div>
                           </div>
                         </button>
                       )}

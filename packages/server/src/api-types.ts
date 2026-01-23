@@ -179,6 +179,68 @@ export type WorkspaceEventType =
   | "instance.event"
   | "instance.eventStatus"
   | "app.releaseAvailable"
+  | "file.changed"
+  | "file.conflict"
+  | "file.conflict.resolved"
+
+// ============================================================
+// File Conflict Types
+// ============================================================
+
+export type FileConflictType = "concurrent-write" | "external-change" | "merge-conflict"
+
+export interface FileSessionInfo {
+  sessionId: string
+  instanceId: string
+  hash: string
+  timestamp: number
+}
+
+export interface FileConflictRegion {
+  startLine: number
+  endLine: number
+  base: string
+  ours: string
+  theirs: string
+}
+
+export interface FileChangedEvent {
+  type: "file.changed"
+  filePath: string
+  absolutePath: string
+  changeType: "add" | "change" | "unlink"
+  sessionId: string
+  instanceId: string
+  hash: string
+  previousHash?: string
+  timestamp: number
+  affectedSessions: string[]
+}
+
+export interface FileConflictEvent {
+  type: "file.conflict"
+  conflictId: string
+  filePath: string
+  absolutePath: string
+  conflictType: FileConflictType
+  involvedSessions: FileSessionInfo[]
+  mergeResult: {
+    canAutoMerge: boolean
+    mergedContent?: string
+    conflicts?: FileConflictRegion[]
+  }
+  timestamp: number
+}
+
+export interface FileConflictResolvedEvent {
+  type: "file.conflict.resolved"
+  conflictId: string
+  filePath: string
+  resolution: "auto-merged" | "keep-ours" | "keep-theirs" | "manual"
+  resolvedBy: string
+  newHash: string
+  timestamp: number
+}
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -192,6 +254,9 @@ export type WorkspaceEventPayload =
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
   | { type: "app.releaseAvailable"; release: LatestReleaseInfo }
+  | FileChangedEvent
+  | FileConflictEvent
+  | FileConflictResolvedEvent
 
 export interface NetworkAddress {
   ip: string

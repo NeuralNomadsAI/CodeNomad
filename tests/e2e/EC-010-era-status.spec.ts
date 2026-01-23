@@ -1,10 +1,113 @@
 import { test, expect } from "@playwright/test"
 
-test.describe("EC-010: Era Code Status", () => {
+const API_BASE = "http://localhost:9898"
+
+test.describe("EC-010: Era Code Status API", () => {
+  test("era status API returns valid response", async ({ request }) => {
+    const response = await request.get(`${API_BASE}/api/era/status`)
+
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+
+    // Should have expected fields
+    expect(data).toHaveProperty("installed")
+    expect(data).toHaveProperty("version")
+    expect(data).toHaveProperty("binaryPath")
+    expect(data).toHaveProperty("projectInitialized")
+    expect(data).toHaveProperty("assetsAvailable")
+
+    // installed should be a boolean
+    expect(typeof data.installed).toBe("boolean")
+
+    // If installed, should have version
+    if (data.installed) {
+      expect(data.version).not.toBeNull()
+      expect(data.binaryPath).not.toBeNull()
+    }
+  })
+
+  test("era assets API returns valid response when installed", async ({ request }) => {
+    // First check if era is installed
+    const statusResponse = await request.get(`${API_BASE}/api/era/status`)
+    const statusData = await statusResponse.json()
+
+    if (statusData.installed) {
+      // Test the assets endpoint
+      const assetsResponse = await request.get(`${API_BASE}/api/era/assets`)
+
+      expect(assetsResponse.ok()).toBeTruthy()
+
+      const data = await assetsResponse.json()
+
+      expect(data).toHaveProperty("available")
+
+      if (data.available) {
+        expect(data).toHaveProperty("agents")
+        expect(data).toHaveProperty("commands")
+        expect(data).toHaveProperty("skills")
+        expect(data).toHaveProperty("plugins")
+
+        // Should be arrays
+        expect(Array.isArray(data.agents)).toBe(true)
+        expect(Array.isArray(data.commands)).toBe(true)
+        expect(Array.isArray(data.skills)).toBe(true)
+        expect(Array.isArray(data.plugins)).toBe(true)
+
+        // Should have assets path
+        expect(data).toHaveProperty("assetsPath")
+      }
+    } else {
+      // If not installed, assets should not be available
+      const assetsResponse = await request.get(`${API_BASE}/api/era/assets`)
+      const data = await assetsResponse.json()
+
+      expect(data.available).toBe(false)
+    }
+  })
+
+  test("era status with folder parameter returns project status", async ({ request }) => {
+    const testFolder = encodeURIComponent("/Users/alexanderollman/CodeNomad")
+    const response = await request.get(
+      `${API_BASE}/api/era/status?folder=${testFolder}`
+    )
+
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+
+    // Should include project initialization status
+    expect(data).toHaveProperty("projectInitialized")
+    expect(typeof data.projectInitialized).toBe("boolean")
+
+    // If project is initialized, should have project details
+    if (data.projectInitialized && data.project) {
+      expect(data.project).toHaveProperty("hasConstitution")
+      expect(data.project).toHaveProperty("hasDirectives")
+    }
+  })
+
+  test("era status returns expected asset counts when installed", async ({ request }) => {
+    const response = await request.get(`${API_BASE}/api/era/status`)
+    const data = await response.json()
+
+    if (data.installed && data.assetsAvailable && data.assets) {
+      // Asset counts should be numbers
+      expect(typeof data.assets.agents).toBe("number")
+      expect(typeof data.assets.commands).toBe("number")
+      expect(typeof data.assets.skills).toBe("number")
+      expect(typeof data.assets.plugins).toBe("number")
+
+      // Should have some assets
+      expect(data.assets.agents).toBeGreaterThanOrEqual(0)
+      expect(data.assets.commands).toBeGreaterThanOrEqual(0)
+    }
+  })
+})
+
+test.describe("EC-010: Era Code Status UI", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the app
     await page.goto("http://localhost:5173")
-    // Wait for initial load
     await page.waitForLoadState("networkidle")
   })
 
@@ -34,70 +137,9 @@ test.describe("EC-010: Era Code Status", () => {
     }
   })
 
-  test("era status API returns valid response", async ({ page }) => {
-    // Test the API endpoint directly
-    const response = await page.request.get("http://localhost:9898/api/era/status")
-
-    expect(response.ok()).toBeTruthy()
-
-    const data = await response.json()
-
-    // Should have expected fields
-    expect(data).toHaveProperty("installed")
-    expect(data).toHaveProperty("version")
-    expect(data).toHaveProperty("binaryPath")
-    expect(data).toHaveProperty("projectInitialized")
-    expect(data).toHaveProperty("assetsAvailable")
-
-    // installed should be a boolean
-    expect(typeof data.installed).toBe("boolean")
-
-    // If installed, should have version
-    if (data.installed) {
-      expect(data.version).not.toBeNull()
-      expect(data.binaryPath).not.toBeNull()
-    }
-  })
-
-  test("era assets API returns valid response when installed", async ({ page }) => {
-    // First check if era is installed
-    const statusResponse = await page.request.get("http://localhost:9898/api/era/status")
-    const statusData = await statusResponse.json()
-
-    if (statusData.installed) {
-      // Test the assets endpoint
-      const assetsResponse = await page.request.get("http://localhost:9898/api/era/assets")
-
-      expect(assetsResponse.ok()).toBeTruthy()
-
-      const data = await assetsResponse.json()
-
-      expect(data).toHaveProperty("available")
-
-      if (data.available) {
-        expect(data).toHaveProperty("agents")
-        expect(data).toHaveProperty("commands")
-        expect(data).toHaveProperty("skills")
-        expect(data).toHaveProperty("plugins")
-
-        // Agents should be an array
-        expect(Array.isArray(data.agents)).toBe(true)
-        expect(Array.isArray(data.commands)).toBe(true)
-        expect(Array.isArray(data.skills)).toBe(true)
-        expect(Array.isArray(data.plugins)).toBe(true)
-      }
-    } else {
-      // If not installed, assets should not be available
-      const assetsResponse = await page.request.get("http://localhost:9898/api/era/assets")
-      const data = await assetsResponse.json()
-
-      expect(data.available).toBe(false)
-    }
-  })
-
-  test("displays correct era installation status", async ({ page }) => {
+  test("displays correct era installation status", async ({ page, request }) => {
     // Get API status first
-    const response = await page.request.get("http://localhost:9898/api/era/status")
+    const response = await request.get(`${API_BASE}/api/era/status`)
     const apiStatus = await response.json()
 
     // Look for settings button
@@ -133,28 +175,6 @@ test.describe("EC-010: Era Code Status", () => {
       }
 
       await page.screenshot({ path: "test-screenshots/EC-010-era-badge.png" })
-    }
-  })
-
-  test("era status with folder parameter returns project status", async ({ page }) => {
-    // Test with a folder parameter
-    const testFolder = encodeURIComponent("/Users/alexanderollman/CodeNomad")
-    const response = await page.request.get(
-      `http://localhost:9898/api/era/status?folder=${testFolder}`
-    )
-
-    expect(response.ok()).toBeTruthy()
-
-    const data = await response.json()
-
-    // Should include project initialization status
-    expect(data).toHaveProperty("projectInitialized")
-    expect(typeof data.projectInitialized).toBe("boolean")
-
-    // If project is initialized, should have project details
-    if (data.projectInitialized && data.project) {
-      expect(data.project).toHaveProperty("hasConstitution")
-      expect(data.project).toHaveProperty("hasDirectives")
     }
   })
 })

@@ -77,7 +77,7 @@ import {
   getChildSessions,
   getSessionInfo,
 } from "./stores/sessions"
-import { setActiveSession } from "./stores/session-state"
+import { setActiveSession, sessionInfoByInstance } from "./stores/session-state"
 import { getGitStatus } from "./stores/workspace-state"
 import { getActiveMcpServerCount, setProjectMcpServer, fetchProjectMcpConfig } from "./stores/project-mcp"
 import { setSessionMcpOverride } from "./stores/session-mcp"
@@ -220,6 +220,25 @@ const App: Component = () => {
     const sessionId = activeParentSessionIdForInstance()
     if (!instance || !sessionId) return null
     return getSessionInfo(instance.id, sessionId)
+  })
+
+  // Aggregate total tokens (input + output) across ALL sessions for this project/instance
+  const totalProjectTokens = createMemo(() => {
+    const instance = activeInstance()
+    if (!instance) return { used: 0, cost: 0 }
+
+    const sessionInfoMap = sessionInfoByInstance().get(instance.id)
+    if (!sessionInfoMap) return { used: 0, cost: 0 }
+
+    let totalUsed = 0
+    let totalCost = 0
+
+    for (const info of sessionInfoMap.values()) {
+      totalUsed += (info.inputTokens ?? 0) + (info.outputTokens ?? 0)
+      totalCost += info.cost ?? 0
+    }
+
+    return { used: totalUsed, cost: totalCost }
   })
 
   const isCompacting = createMemo(() => {
@@ -1010,13 +1029,13 @@ const App: Component = () => {
         <Show when={activeInstance() && !showFolderSelection()}>
           <BottomStatusBar
             projectName={projectName()}
-            usedTokens={activeSessionInfo()?.inputTokens ?? 0}
+            usedTokens={totalProjectTokens().used}
             availableTokens={activeSessionInfo()?.contextAvailableTokens ?? null}
             contextWindow={activeSessionInfo()?.contextWindow ?? 0}
             isCompacting={isCompacting()}
             providerId={activeSessionModel().providerId}
             modelId={activeSessionModel().modelId}
-            cost={activeSessionInfo()?.cost ?? 0}
+            cost={totalProjectTokens().cost}
             mcpActiveCount={mcpActiveCount()}
             lspConnected={lspConnected()}
             lspTotal={lspTotal()}

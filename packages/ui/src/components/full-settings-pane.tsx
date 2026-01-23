@@ -1762,7 +1762,7 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
     setIsSaving(true)
     setSaveError(null)
     try {
-      await saveDirectives("project", projectContent(), props.folder)
+      await saveDirectives(props.folder || "", "project", projectContent())
       await fetchDirectives(props.folder)
       setEditingProject(false)
       setSaveSuccess(true)
@@ -1778,7 +1778,7 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
     setIsSaving(true)
     setSaveError(null)
     try {
-      await saveDirectives("global", globalContent())
+      await saveDirectives("", "global", globalContent())
       await fetchDirectives(props.folder)
       setEditingGlobal(false)
       setSaveSuccess(true)

@@ -57,7 +57,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         <div class="fixed inset-y-0 right-0 z-50 flex">
           <Dialog.Content class="settings-panel">
             <div class="settings-panel-header">
-              <Dialog.Title class="settings-panel-title">Settings</Dialog.Title>
+              <Dialog.Title class="settings-panel-title">Quick Settings</Dialog.Title>
               <Dialog.CloseButton class="settings-panel-close">
                 <X class="w-4 h-4" />
               </Dialog.CloseButton>
@@ -97,7 +97,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                     onClick={() => props.onOpenAdvancedSettings?.()}
                   >
                     <Settings class="w-4 h-4" />
-                    <span>Advanced Settings</span>
+                    <span>All Settings</span>
                   </button>
                 </div>
               </div>
@@ -256,6 +256,12 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                         <span class="settings-detail-label">Port</span>
                         <span class="settings-detail-value font-mono">
                           {props.instance?.port}
+                        </span>
+                      </div>
+                      <div class="settings-detail-row">
+                        <span class="settings-detail-label">PID</span>
+                        <span class="settings-detail-value font-mono">
+                          {props.instance?.pid}
                         </span>
                       </div>
                       <div class="settings-detail-row">

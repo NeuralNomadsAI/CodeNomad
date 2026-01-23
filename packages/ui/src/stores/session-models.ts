@@ -31,27 +31,41 @@ async function getDefaultModel(
 ): Promise<{ providerId: string; modelId: string }> {
   const instanceProviders = providers().get(instanceId) || []
   const instanceAgents = agents().get(instanceId) || []
+  // Use "main" as default agent name if not provided
+  const effectiveAgentName = agentName || "main"
 
-  if (agentName) {
-    const agent = instanceAgents.find((a) => a.name === agentName)
-    if (agent && agent.model && isModelValid(instanceId, agent.model)) {
-      return {
-        providerId: agent.model.providerId,
-        modelId: agent.model.modelId,
-      }
-    }
-
-    const stored = await getAgentModelPreference(instanceId, agentName)
-    if (isModelValid(instanceId, stored)) {
-      return stored
+  // 1. Check if agent has a model from CLI response
+  const agent = instanceAgents.find((a) => a.name === effectiveAgentName)
+  if (agent && agent.model && isModelValid(instanceId, agent.model)) {
+    return {
+      providerId: agent.model.providerId,
+      modelId: agent.model.modelId,
     }
   }
 
+  // 2. Check per-instance stored preference for this agent
+  const stored = await getAgentModelPreference(instanceId, effectiveAgentName)
+  if (isModelValid(instanceId, stored)) {
+    return stored
+  }
+
+  // 3. Check global agent model defaults (from Settings > Models)
+  const globalDefaults = preferences().modelDefaultsByAgent ?? {}
+  const globalDefault = globalDefaults[effectiveAgentName]
+  if (isModelValid(instanceId, globalDefault)) {
+    return {
+      providerId: globalDefault.providerId,
+      modelId: globalDefault.modelId,
+    }
+  }
+
+  // 4. Check recent model preference
   const recent = getRecentModelPreferenceForInstance(instanceId)
   if (recent) {
     return recent
   }
 
+  // 5. Use provider's default model
   for (const provider of instanceProviders) {
     if (provider.defaultModelId) {
       const model = provider.models.find((m) => m.id === provider.defaultModelId)
@@ -64,6 +78,7 @@ async function getDefaultModel(
     }
   }
 
+  // 6. Fall back to first provider's first model
   if (instanceProviders.length > 0) {
     const firstProvider = instanceProviders[0]
     const firstModel = firstProvider.models[0]

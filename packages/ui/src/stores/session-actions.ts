@@ -3,7 +3,7 @@ import { instances } from "./instances"
 
 import { addRecentModelPreference, setAgentModelPreference } from "./preferences"
 import { getEffectivePermissionState } from "./session-permissions"
-import { sessions, withSession } from "./session-state"
+import { sessions, withSession, checkAndArchiveSubagents } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus, triggerCollapseAll } from "./message-v2/bus"
@@ -82,6 +82,10 @@ async function sendMessage(
     cleanupIdleChildren(instanceId, sessionId).catch((error) => {
       log.error("Failed to cleanup idle children:", error)
     })
+    // Check if any completed subagents should be archived
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const parentMessageCount = store.getSessionMessageIds(sessionId).length
+    checkAndArchiveSubagents(instanceId, parentMessageCount)
   }
 
   const messageId = createId("msg")

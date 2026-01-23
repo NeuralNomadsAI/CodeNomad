@@ -19,7 +19,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { instances, addPermissionToQueue, removePermissionFromQueue } from "./instances"
 import { showAlertDialog } from "./alerts"
-import { sessions, setSessions, withSession } from "./session-state"
+import { sessions, setSessions, withSession, markSubagentComplete } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 
@@ -27,6 +27,7 @@ const log = getLogger("sse")
 import { loadMessages } from "./session-api"
 import { setSessionCompactionState } from "./session-compaction"
 import { scheduleChildCleanup, updateSessionActivity, cancelScheduledCleanup } from "./session-cleanup"
+import { processToolCallForWorkspace } from "./workspace-state"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
@@ -124,6 +125,21 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
  
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
 
+    // Track tool calls for workspace panel
+    if (part.type === "tool" && typeof part.tool === "string") {
+      const toolState = (part as any).state
+      const toolStatus = toolState?.status === "completed" ? "complete"
+        : toolState?.status === "error" ? "error"
+        : "running"
+      const input = toolState?.input || {}
+      processToolCallForWorkspace(
+        instanceId,
+        part.id || messageId,
+        part.tool,
+        input,
+        toolStatus
+      )
+    }
 
     updateSessionInfo(instanceId, sessionId)
   } else if (event.type === "message.updated") {
@@ -269,6 +285,12 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
     // Schedule cleanup for idle child sessions
     log.info(`Scheduling cleanup for idle child session: ${sessionId}`)
     scheduleChildCleanup(instanceId, sessionId, session.parentId)
+
+    // Mark subagent as complete for archiving logic
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const parentMessageCount = store.getSessionMessageIds(session.parentId).length
+    markSubagentComplete(instanceId, sessionId, parentMessageCount)
+    log.info(`Marked subagent ${sessionId} as complete at parent message count ${parentMessageCount}`)
   }
 
   // Update session status to idle

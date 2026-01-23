@@ -20,6 +20,9 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerModelsProxyRoutes } from "./routes/models-proxy"
 import { registerEraRoutes } from "./routes/era"
+import { registerSystemRoutes } from "./routes/system"
+import { registerMcpRoutes } from "./routes/mcp"
+import { registerFileRoutes } from "./routes/files"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { EraDetectionService } from "../era/detection"
@@ -153,6 +156,13 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerModelsProxyRoutes(app)
+  registerSystemRoutes(app, { logger: deps.logger })
+  registerMcpRoutes(app, { logger: deps.logger })
+  registerFileRoutes(app, {
+    eventBus: deps.eventBus,
+    workspaceRoot: deps.serverMeta.workspaceRoot,
+    logger: deps.logger,
+  })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
   // Register Era routes

@@ -121,26 +121,33 @@
   margin-top: 0;
 }
 
+/* Completion summary card - distinct teal theme */
 .message-step-finish {
-  background-color: var(--surface-base);
-  border-left: 4px solid var(--message-assistant-border);
+  background: linear-gradient(135deg,
+    rgba(20, 184, 166, 0.08) 0%,
+    rgba(20, 184, 166, 0.04) 100%
+  );
+  border-left: 4px solid rgba(20, 184, 166, 0.6);
+  border: 1px solid rgba(20, 184, 166, 0.2);
+  border-left-width: 4px;
   margin: 0;
-  border-radius: 0 8px 8px 0;
+  border-radius: 8px;
   padding: 0.75rem 1rem;
 }
 
 .message-step-finish-flush {
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
+  margin-left: 1.5rem;
 }
 
 .message-step-usage {
-  @apply flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--text-muted)];
+  @apply flex flex-wrap items-center gap-1.5 text-[10px];
 }
 
 .message-step-usage-chip {
   @apply inline-flex items-center rounded-full border px-2 py-0.5 text-[10px];
-  background-color: var(--surface-secondary);
-  border-color: var(--border-muted);
+  background-color: rgba(20, 184, 166, 0.1);
+  border-color: rgba(20, 184, 166, 0.25);
   color: var(--text-primary);
   font-weight: var(--font-weight-semibold);
 }
@@ -150,7 +157,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-size: 9px;
-  color: var(--text-muted);
+  color: rgba(20, 184, 166, 0.8);
   font-weight: var(--font-weight-medium);
   margin-right: 0.35rem;
 }
@@ -158,19 +165,33 @@
 /* Ready indicator in completion card */
 .message-step-ready {
   @apply ml-auto inline-flex items-center gap-1.5 text-xs;
-  color: rgba(34, 197, 94, 0.8);
+  color: rgba(34, 197, 94, 0.9);
   font-weight: 500;
 }
 
 .message-step-ready-dot {
-  @apply w-1.5 h-1.5 rounded-full;
-  background-color: rgba(34, 197, 94, 0.8);
+  @apply w-2 h-2 rounded-full;
+  background-color: rgba(34, 197, 94, 0.9);
   animation: ready-pulse 2s ease-in-out infinite;
 }
 
 @keyframes ready-pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* Dark theme adjustments for completion card */
+:root[data-theme="dark"] .message-step-finish {
+  background: linear-gradient(135deg,
+    rgba(20, 184, 166, 0.12) 0%,
+    rgba(20, 184, 166, 0.06) 100%
+  );
+  border-color: rgba(20, 184, 166, 0.3);
+}
+
+:root[data-theme="dark"] .message-step-usage-chip {
+  background-color: rgba(20, 184, 166, 0.15);
+  border-color: rgba(20, 184, 166, 0.35);
 }
 
 .message-step-heading {
