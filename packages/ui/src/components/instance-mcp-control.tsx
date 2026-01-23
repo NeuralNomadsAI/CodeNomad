@@ -9,6 +9,9 @@ import { useConfig } from "../stores/preferences"
 import { instanceApi } from "../lib/instance-api"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata"
 import { getLogger } from "../lib/logger"
+import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
+import { getInstanceMetadata } from "../stores/instance-metadata"
+import { showToastNotification } from "../lib/notifications"
 
 const log = getLogger("session")
 
@@ -35,36 +38,51 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
   const [newCommand, setNewCommand] = createSignal("npx -y @modelcontextprotocol/server-playwright")
   const [newUrl, setNewUrl] = createSignal("")
 
+  // Use metadata context if available, otherwise fall back to global store or instance
+  const metadataContext = useOptionalInstanceMetadataContext()
   const instance = createMemo(() => instances().get(props.instance.id) ?? props.instance)
+  
+  // Get metadata from context, global store, or instance (in that priority order)
+  const metadata = createMemo(() => {
+    if (metadataContext) {
+      return metadataContext.metadata()
+    }
+    return getInstanceMetadata(instance().id) ?? instance().metadata
+  })
 
-  const statusMap = createMemo<RawMcpStatus>(() => instance().metadata?.mcpStatus ?? {})
+  const statusMap = createMemo<RawMcpStatus>(() => metadata()?.mcpStatus ?? {})
 
   const rows = createMemo<McpRow[]>(() => {
     const registry = preferences().mcpRegistry ?? {}
     const desired = preferences().mcpDesiredState ?? {}
+    const status = statusMap()
 
-    const names = new Set<string>([...Object.keys(registry), ...Object.keys(statusMap())])
+    const names = new Set<string>([...Object.keys(registry), ...Object.keys(status)])
 
     return Array.from(names)
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const registryEntry = registry[name]
-        const desiredEnabled = desired[name] ?? (registryEntry?.enabled ?? true)
+        const runtimeStatus = status[name]?.status
+        // Switch reflects actual runtime state:
+        // - "connected" = ON
+        // - anything else (disabled, failed, etc.) = OFF
+        const isConnected = runtimeStatus === "connected"
         return {
           name,
-          desiredEnabled,
-          runtime: statusMap()[name],
+          desiredEnabled: isConnected,
+          runtime: status[name],
           hasRegistryEntry: Boolean(registryEntry),
         }
       })
   })
 
-  const applyToInstance = async (name: string, desiredEnabled: boolean) => {
+  const applyToInstance = async (name: string, desiredEnabled: boolean): Promise<{ success: boolean; error?: string }> => {
     const currentInstance = instance()
     const client = currentInstance.client
     if (!client) {
-      return
+      return { success: false, error: "No client connection" }
     }
 
     setPending((prev) => ({ ...prev, [name]: true }))
@@ -82,14 +100,20 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
       }
 
       await loadInstanceMetadata(currentInstance, { force: true })
+      return { success: true }
     } catch (error) {
       log.error("Failed to apply MCP server toggle", { instanceId: currentInstance.id, name, desiredEnabled, error })
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      return { success: false, error: errorMessage }
     } finally {
       setPending((prev) => ({ ...prev, [name]: false }))
     }
   }
 
-  const toggleGlobalDesired = (name: string, enabled: boolean) => {
+  const toggleGlobalDesired = async (name: string, enabled: boolean) => {
+    const previousState = preferences().mcpDesiredState?.[name]
+    
+    // Optimistically update the UI
     updatePreferences({
       mcpDesiredState: {
         ...(preferences().mcpDesiredState ?? {}),
@@ -97,7 +121,24 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
       },
     })
 
-    void applyToInstance(name, enabled)
+    const result = await applyToInstance(name, enabled)
+    
+    if (!result.success) {
+      // Revert to previous state on failure
+      updatePreferences({
+        mcpDesiredState: {
+          ...(preferences().mcpDesiredState ?? {}),
+          [name]: previousState ?? !enabled,
+        },
+      })
+      
+      // Show error toast
+      showToastNotification({
+        title: `MCP Server: ${name}`,
+        message: result.error ?? `Failed to ${enabled ? "connect" : "disconnect"}`,
+        variant: "error",
+      })
+    }
   }
 
   const addMcpServer = async () => {
@@ -263,7 +304,7 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
                     <div class="text-xs text-primary font-medium truncate">
                       {row.name}
                       <Show when={!row.hasRegistryEntry}>
-                        <span class="text-[11px] text-secondary"> (instance-only)</span>
+                        <span class="text-[11px] text-secondary"> (project)</span>
                       </Show>
                     </div>
                     <div class="flex items-center gap-2 text-[11px] text-secondary">

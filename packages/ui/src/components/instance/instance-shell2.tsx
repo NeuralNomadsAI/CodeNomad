@@ -38,6 +38,7 @@ import {
   getSessionFamily,
   getSessionInfo,
   setActiveSession,
+  loading as sessionLoading,
 } from "../../stores/sessions"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -1076,6 +1077,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const hasSessions = createMemo(() => activeSessions().size > 0)
 
+  // Check if we're still fetching sessions for this instance (initial load)
+  const isFetchingSessions = createMemo(() => {
+    return Boolean(sessionLoading().fetchingSessions.get(props.instance.id))
+  })
+
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
 
   const sessionLayout = (
@@ -1349,8 +1355,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   return (
     <>
       <div class="instance-shell2 flex flex-col flex-1 min-h-0">
-        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
-          {sessionLayout}
+        <Show
+          when={!isFetchingSessions()}
+          fallback={
+            <div class="flex-1 flex items-center justify-center">
+              <div class="text-center text-gray-500 dark:text-gray-400">
+                <div class="spinner mb-2 mx-auto" />
+                <p class="text-sm">Loading sessions...</p>
+              </div>
+            </div>
+          }
+        >
+          <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+            {sessionLayout}
+          </Show>
         </Show>
       </div>
 

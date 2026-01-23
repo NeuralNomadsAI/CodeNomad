@@ -825,7 +825,7 @@ const App: Component = () => {
               </Show>
 
               {/* New Tab view or no active instance - show folder selection cards */}
-              <Show when={showFolderSelection() || !activeInstance()}>
+              <Show when={(showFolderSelection() || !activeInstance()) && !isSelectingFolder()}>
                 <div
                   class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-6"
                   style="background-color: var(--surface-secondary)"
