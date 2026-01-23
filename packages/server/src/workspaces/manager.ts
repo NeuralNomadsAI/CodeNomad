@@ -207,13 +207,15 @@ export class WorkspaceManager {
     try {
       const result = spawnSync(locator, [identifier], { encoding: "utf8" })
       if (result.status === 0 && result.stdout) {
-        const resolved = result.stdout
+        const candidates = result.stdout
           .split(/\r?\n/)
           .map((line) => line.trim())
-          .find((line) => line.length > 0)
+          .filter((line) => line.length > 0)
+          .filter((line) => !/^INFO:/i.test(line))
 
-        if (resolved) {
-          this.options.logger.debug({ identifier, resolved }, "Resolved binary path from system PATH")
+        if (candidates.length > 0) {
+          const resolved = this.pickBinaryCandidate(candidates)
+          this.options.logger.debug({ identifier, resolved, candidates }, "Resolved binary path from system PATH")
           return resolved
         }
       } else if (result.error) {
@@ -224,6 +226,23 @@ export class WorkspaceManager {
     }
 
     return identifier
+  }
+
+  private pickBinaryCandidate(candidates: string[]): string {
+    if (process.platform !== "win32") {
+      return candidates[0] ?? ""
+    }
+
+    const extensionPreference = [".exe", ".cmd", ".bat", ".ps1"]
+
+    for (const ext of extensionPreference) {
+      const match = candidates.find((candidate) => candidate.toLowerCase().endsWith(ext))
+      if (match) {
+        return match
+      }
+    }
+
+    return candidates[0] ?? ""
   }
 
   private detectBinaryVersion(resolvedPath: string): string | undefined {
