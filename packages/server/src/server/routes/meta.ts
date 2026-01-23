@@ -24,7 +24,7 @@ function buildMetaResponse(meta: ServerMeta): ServerMeta {
   return {
     ...meta,
     port,
-    listeningMode: meta.host === "0.0.0.0" ? "all" : "local",
+    listeningMode: meta.host === "0.0.0.0" || !isLoopbackHost(meta.host) ? "all" : "local",
     addresses,
   }
 }
@@ -40,6 +40,10 @@ function resolvePort(meta: ServerMeta): number {
   } catch {
     return 0
   }
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 }
 
 function resolveAddresses(port: number, host: string): NetworkAddress[] {

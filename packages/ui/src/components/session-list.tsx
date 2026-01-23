@@ -12,6 +12,7 @@ import { formatTokenTotal } from "../lib/formatters"
 import { getLogger } from "../lib/logger"
 import { DropdownMenu } from "@kobalte/core"
 import { getActiveInstance } from "../stores/instances"
+import { copyToClipboard } from "../lib/clipboard"
 const log = getLogger("session")
 
 
@@ -77,14 +78,14 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const copySessionId = async (event: MouseEvent, sessionId: string) => {
     event.stopPropagation()
- 
+
     try {
-      if (typeof navigator === "undefined" || !navigator.clipboard) {
-        throw new Error("Clipboard API unavailable")
+      const success = await copyToClipboard(sessionId)
+      if (success) {
+        showToastNotification({ message: "Session ID copied", variant: "success" })
+      } else {
+        showToastNotification({ message: "Unable to copy session ID", variant: "error" })
       }
- 
-      await navigator.clipboard.writeText(sessionId)
-      showToastNotification({ message: "Session ID copied", variant: "success" })
     } catch (error) {
       log.error(`Failed to copy session ID ${sessionId}:`, error)
       showToastNotification({ message: "Unable to copy session ID", variant: "error" })

@@ -15,6 +15,16 @@ export interface EraBinaryInfo {
 }
 
 /**
+ * Information about available era-code upgrade
+ */
+export interface EraUpgradeInfo {
+  available: boolean
+  currentVersion: string | null
+  targetVersion: string | null
+  error?: string
+}
+
+/**
  * Era assets available for OpenCode integration
  */
 export interface EraAssets {
@@ -31,6 +41,53 @@ interface EraManifest {
   version: string
   installedAt: string
   files: string[]
+}
+
+/**
+ * Era project status from `era-code status --json`
+ */
+export interface EraProjectStatus {
+  initialized: boolean
+  toolStatus: Array<{
+    id: string
+    name: string
+    configured: boolean
+  }>
+  manifest?: {
+    version: string
+    latestVersion: string
+    initializedDate: string
+    lastUpdatedDate: string
+    tools: string[]
+    features: {
+      directives: boolean
+      workflows: boolean
+    }
+  }
+  directives?: {
+    categoryCount: number
+    categories: string[]
+    directiveCount: number
+  }
+  syncStatus?: {
+    behindMain: boolean
+    behindCount: number
+  }
+  mcpServers?: Array<{
+    id: string
+    name: string
+    enabled: boolean
+  }>
+}
+
+/**
+ * Result of era-code init --json
+ */
+export interface EraInitResult {
+  projectPath: string
+  extendMode: boolean
+  selectedTools: string[]
+  mcpServers: string[]
 }
 
 /**
@@ -216,21 +273,247 @@ export class EraDetectionService {
   }
 
   /**
-   * Get Era project status for a folder
+   * Get Era project status for a folder using era-code status --json
    */
-  getProjectStatus(folder: string): {
-    initialized: boolean
-    hasConstitution: boolean
-    hasDirectives: boolean
-  } {
-    const eraDir = path.join(folder, ".era")
-    const memoryDir = path.join(eraDir, "memory")
+  getProjectStatus(folder: string): EraProjectStatus | null {
+    const binaryInfo = this.detectBinary()
+    
+    if (!binaryInfo.installed || !binaryInfo.path) {
+      // Fallback to file-based check if binary not available
+      const eraDir = path.join(folder, ".era")
+      const memoryDir = path.join(eraDir, "memory")
+      
+      return {
+        initialized: this.isProjectInitialized(folder),
+        toolStatus: [],
+      }
+    }
+
+    try {
+      const result = execSync(`"${binaryInfo.path}" status --json`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 10000,
+        cwd: folder,
+      })
+
+      const data = JSON.parse(result.trim()) as EraProjectStatus
+      
+      this.logger.debug(
+        { folder, initialized: data.initialized, manifestVersion: data.manifest?.version },
+        "Got era project status"
+      )
+      
+      return data
+    } catch (error) {
+      this.logger.debug({ error, folder }, "Error getting era project status")
+      // Fallback to basic file check
+      return {
+        initialized: this.isProjectInitialized(folder),
+        toolStatus: [],
+      }
+    }
+  }
+
+  /**
+   * Check if an era-code upgrade is available
+   */
+  checkUpgrade(): EraUpgradeInfo {
+    const binaryInfo = this.detectBinary()
+    
+    if (!binaryInfo.installed || !binaryInfo.path) {
+      return {
+        available: false,
+        currentVersion: null,
+        targetVersion: null,
+        error: "era-code is not installed",
+      }
+    }
+
+    try {
+      // Run era-code upgrade --check --json
+      const result = execSync(`"${binaryInfo.path}" upgrade --check --json`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 30000,
+      })
+
+      const data = JSON.parse(result.trim()) as {
+        currentVersion: string
+        latestVersion: string
+        upgraded: boolean
+      }
+
+      const available = data.currentVersion !== data.latestVersion
+      
+      if (available) {
+        this.logger.info(
+          { currentVersion: data.currentVersion, targetVersion: data.latestVersion },
+          "Era-code upgrade available"
+        )
+      }
+
+      return {
+        available,
+        currentVersion: data.currentVersion,
+        targetVersion: available ? data.latestVersion : null,
+      }
+    } catch (error) {
+      this.logger.debug({ error }, "Error checking for era-code upgrade")
+      return {
+        available: false,
+        currentVersion: binaryInfo.version,
+        targetVersion: null,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
+    }
+  }
+
+  /**
+   * Run era-code upgrade
+   */
+  async runUpgrade(): Promise<{ success: boolean; version?: string; error?: string }> {
+    const binaryInfo = this.detectBinary()
+    
+    if (!binaryInfo.installed || !binaryInfo.path) {
+      return {
+        success: false,
+        error: "era-code is not installed",
+      }
+    }
+
+    try {
+      this.logger.info("Running era-code upgrade")
+      
+      // Run era-code upgrade --json
+      const result = execSync(`"${binaryInfo.path}" upgrade --json`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 120000, // 2 minutes timeout for upgrade
+      })
+
+      const data = JSON.parse(result.trim()) as {
+        currentVersion: string
+        latestVersion: string
+        upgraded: boolean
+      }
+      
+      this.logger.info(
+        { upgraded: data.upgraded, version: data.currentVersion },
+        "Era-code upgrade completed"
+      )
+      
+      return {
+        success: true,
+        version: data.currentVersion,
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Error running era-code upgrade")
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Upgrade failed",
+      }
+    }
+  }
+
+  /**
+   * Check if a project's manifest is outdated compared to the installed era-code version
+   */
+  isProjectOutdated(folder: string): { outdated: boolean; currentVersion?: string; latestVersion?: string } {
+    const status = this.getProjectStatus(folder)
+    
+    if (!status?.initialized || !status.manifest) {
+      return { outdated: false }
+    }
+
+    const outdated = status.manifest.version !== status.manifest.latestVersion
+    
+    return {
+      outdated,
+      currentVersion: status.manifest.version,
+      latestVersion: status.manifest.latestVersion,
+    }
+  }
+
+  /**
+   * Update a project's era manifest by running era-code init
+   * This brings the manifest up to the current era-code version
+   */
+  async updateProjectManifest(folder: string): Promise<{ success: boolean; error?: string }> {
+    const binaryInfo = this.detectBinary()
+    
+    if (!binaryInfo.installed || !binaryInfo.path) {
+      return {
+        success: false,
+        error: "era-code is not installed",
+      }
+    }
+
+    try {
+      this.logger.info({ folder }, "Updating era project manifest")
+      
+      const result = execSync(`"${binaryInfo.path}" init --json`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 30000,
+        cwd: folder,
+      })
+
+      const data = JSON.parse(result.trim()) as EraInitResult
+      
+      this.logger.info(
+        { folder, tools: data.selectedTools },
+        "Era project manifest updated"
+      )
+      
+      return { success: true }
+    } catch (error) {
+      this.logger.error({ error, folder }, "Error updating era project manifest")
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Update failed",
+      }
+    }
+  }
+
+  /**
+   * Check and auto-update project manifest if outdated
+   * Returns info about what was done
+   */
+  async ensureProjectUpToDate(folder: string): Promise<{
+    wasOutdated: boolean
+    updated: boolean
+    previousVersion?: string
+    currentVersion?: string
+    error?: string
+  }> {
+    const outdatedInfo = this.isProjectOutdated(folder)
+    
+    if (!outdatedInfo.outdated) {
+      return { wasOutdated: false, updated: false }
+    }
+
+    this.logger.info(
+      { folder, from: outdatedInfo.currentVersion, to: outdatedInfo.latestVersion },
+      "Project manifest is outdated, updating..."
+    )
+
+    const updateResult = await this.updateProjectManifest(folder)
+    
+    if (!updateResult.success) {
+      return {
+        wasOutdated: true,
+        updated: false,
+        previousVersion: outdatedInfo.currentVersion,
+        error: updateResult.error,
+      }
+    }
 
     return {
-      initialized: this.isProjectInitialized(folder),
-      hasConstitution: existsSync(path.join(memoryDir, "constitution.md")),
-      hasDirectives: existsSync(path.join(memoryDir, "directives")) ||
-                     existsSync(path.join(memoryDir, "directives.md")),
+      wasOutdated: true,
+      updated: true,
+      previousVersion: outdatedInfo.currentVersion,
+      currentVersion: outdatedInfo.latestVersion,
     }
   }
 }

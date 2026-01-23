@@ -845,7 +845,10 @@ export default function PromptInput(props: PromptInputProps) {
         const currentPrompt = prompt()
         const pos = atPosition()
         const cursorPos = textareaRef?.selectionStart || 0
-        const folderMention = relativePath === "." || relativePath === "" ? "/" : displayPath
+        const folderMention =
+          relativePath === "." || relativePath === ""
+            ? "/"
+            : relativePath.replace(/\/+$/, "") + "/"
 
         if (pos !== null) {
           const before = currentPrompt.substring(0, pos + 1)

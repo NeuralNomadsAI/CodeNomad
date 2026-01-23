@@ -32,6 +32,10 @@ const PreferencesSchema = z.object({
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   showTimelineTools: z.boolean().default(true),
   lastUsedBinary: z.string().optional(),
+  // Tracks whether lastUsedBinary was explicitly set by user or auto-detected
+  // "user" = user explicitly selected this binary, honor their choice
+  // "auto" = system auto-detected/defaulted, can be overridden by era-code detection
+  binaryPreferenceSource: z.enum(["user", "auto"]).default("auto"),
   environmentVariables: z.record(z.string()).default({}),
   modelRecents: z.array(ModelPreferenceSchema).default([]),
   diffViewMode: z.enum(["split", "unified"]).default("split"),

@@ -165,8 +165,12 @@
   pointer-events: none;
 }
 
-.message-timeline-label-short {
+.message-timeline-label-full {
   display: none;
+}
+
+.message-timeline-label-short {
+  display: inline-flex;
   line-height: 1;
   align-items: center;
   justify-content: center;
@@ -175,15 +179,6 @@
 .message-timeline-icon {
   width: 1rem;
   height: 1rem;
-}
-
-@media (max-width: 720px) {
-  .message-timeline-label-full {
-    display: none;
-  }
-  .message-timeline-label-short {
-    display: inline-flex;
-  }
 }
 
 .message-timeline-tooltip {

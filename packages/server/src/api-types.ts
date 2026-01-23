@@ -29,7 +29,12 @@ export interface WorkspaceDescriptor {
   /** Identifier of the binary resolved from config. */
   binaryId: string
   binaryLabel: string
+  /** Version of the binary when this workspace was started. */
   binaryVersion?: string
+  /** Currently installed version of the binary (for comparison). */
+  installedBinaryVersion?: string
+  /** True if the workspace is running an older version than what's installed. */
+  isVersionOutdated?: boolean
   createdAt: string
   updatedAt: string
   /** Present when `status` is "error". */
@@ -265,6 +270,38 @@ export interface EraStatusResponse {
     hasConstitution: boolean
     hasDirectives: boolean
   }
+  /** Version of the project's era manifest */
+  manifestVersion?: string
+  /** Latest available era-code version */
+  latestVersion?: string
+  /** Whether the project manifest is outdated compared to installed era-code */
+  isManifestOutdated?: boolean
+}
+
+/**
+ * Era upgrade check response
+ */
+export interface EraUpgradeCheckResponse {
+  /** Whether an upgrade is available */
+  available: boolean
+  /** Current installed version */
+  currentVersion: string | null
+  /** Target version available for upgrade */
+  targetVersion: string | null
+  /** Error message if check failed */
+  error?: string
+}
+
+/**
+ * Era upgrade result
+ */
+export interface EraUpgradeResult {
+  /** Whether upgrade succeeded */
+  success: boolean
+  /** New version after upgrade */
+  version?: string
+  /** Error message if upgrade failed */
+  error?: string
 }
 
 /**

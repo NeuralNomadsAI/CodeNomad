@@ -21,6 +21,14 @@ export type ToastPayload = {
   }
 }
 
+// Duration defaults by variant (in ms)
+const variantDuration: Record<ToastVariant, number> = {
+  info: 4000,
+  success: 3000,
+  warning: 5000,
+  error: 8000,
+}
+
 const variantAccent: Record<
   ToastVariant,
   {
@@ -58,22 +66,32 @@ const variantAccent: Record<
 
 export function showToastNotification(payload: ToastPayload): ToastHandle {
   const accent = variantAccent[payload.variant]
-  const duration = payload.duration ?? 10000
+  const duration = payload.duration ?? variantDuration[payload.variant]
 
-  const id = toast.custom(
+  let toastId: string
+
+  const dismiss = () => toast.dismiss(toastId)
+
+  toastId = toast.custom(
     () => (
-      <div class={`pointer-events-auto w-[320px] max-w-[360px] rounded-lg border px-4 py-3 shadow-xl ${accent.container}`}>
-        <div class="flex items-start gap-3">
-          <span class={`mt-1 inline-block h-2.5 w-2.5 rounded-full ${accent.badge}`} />
-          <div class="flex-1 text-sm leading-snug">
-            {payload.title && <p class={`font-semibold ${accent.headline}`}>{payload.title}</p>}
-            <p class={`${accent.body} ${payload.title ? "mt-1" : ""}`}>{payload.message}</p>
+      <div
+        class={`pointer-events-auto w-[260px] max-w-[280px] rounded-md border px-3 py-2 shadow-lg cursor-pointer transition-opacity hover:opacity-90 ${accent.container}`}
+        style={{ "margin-right": "40px" }}
+        onClick={dismiss}
+        title="Click to dismiss"
+      >
+        <div class="flex items-start gap-2">
+          <span class={`mt-0.5 inline-block h-2 w-2 rounded-full flex-shrink-0 ${accent.badge}`} />
+          <div class="flex-1 text-xs leading-snug min-w-0">
+            {payload.title && <p class={`font-semibold truncate ${accent.headline}`}>{payload.title}</p>}
+            <p class={`${accent.body} ${payload.title ? "mt-0.5" : ""}`}>{payload.message}</p>
             {payload.action && (
               <a
-                class="mt-3 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
+                class="mt-2 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
                 href={payload.action.href}
                 target="_blank"
                 rel="noreferrer noopener"
+                onClick={(e) => e.stopPropagation()}
               >
                 {payload.action.label}
               </a>
@@ -93,7 +111,7 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
   )
 
   return {
-    id,
-    dismiss: () => toast.dismiss(id),
+    id: toastId,
+    dismiss,
   }
 }

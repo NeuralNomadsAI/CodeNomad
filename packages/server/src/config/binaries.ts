@@ -5,11 +5,13 @@ import {
   BinaryUpdateRequest,
   BinaryValidationResult,
 } from "../api-types"
+import { spawnSync } from "child_process"
 import { ConfigStore } from "./store"
 import { EventBus } from "../events/bus"
 import type { ConfigFile } from "./schema"
 import { Logger } from "../logger"
 import { EraDetectionService } from "../era/detection"
+import { buildSpawnSpec } from "../workspaces/runtime"
 
 export class BinaryRegistry {
   private eraDetection: EraDetectionService | null = null
@@ -24,7 +26,36 @@ export class BinaryRegistry {
   }
 
   list(): BinaryRecord[] {
-    return this.mapRecords()
+    // Merge auto-detected binaries with user-configured ones
+    const autoDetected = this.detectAvailableBinaries()
+    const configured = this.mapRecords()
+    
+    // Build a map of all binaries, auto-detected first, then configured
+    // This ensures era-code appears in the list even if not manually added
+    const binaryMap = new Map<string, BinaryRecord>()
+    
+    // Check if we have a real opencode path detected
+    const hasRealOpencode = autoDetected.some((b) => b.id === "opencode" && b.path !== "opencode")
+    
+    // Add auto-detected binaries first
+    for (const binary of autoDetected) {
+      binaryMap.set(binary.path, binary)
+    }
+    
+    // Add/override with user-configured binaries
+    for (const binary of configured) {
+      // Skip the generic "opencode" fallback if we have a real detected opencode
+      if (binary.path === "opencode" && hasRealOpencode) {
+        continue
+      }
+      // Skip if we already have this exact path
+      if (binaryMap.has(binary.path)) {
+        continue
+      }
+      binaryMap.set(binary.path, binary)
+    }
+    
+    return Array.from(binaryMap.values())
   }
 
   /**
@@ -84,8 +115,34 @@ export class BinaryRegistry {
   resolveDefault(): BinaryRecord {
     const config = this.configStore.get()
     const userPreferred = config.preferences.lastUsedBinary
+    const preferenceSource = config.preferences.binaryPreferenceSource ?? "auto"
 
-    // 1. If user has explicitly set a preference, use it
+    // 1. Check for era-code first - it wins over auto preferences
+    const autoDetected = this.detectAvailableBinaries()
+    const eraCodeBinary = autoDetected.find((b) => b.id === "era-code")
+
+    // 2. If user has EXPLICITLY set a preference (source = "user"), honor it
+    if (preferenceSource === "user" && userPreferred) {
+      const configured = this.mapRecords().find((b) => b.path === userPreferred)
+      if (configured) {
+        this.logger.debug(
+          { binary: configured.path, source: "user-explicit" },
+          "Using user-explicit binary preference"
+        )
+        return configured
+      }
+    }
+
+    // 3. Era-code takes priority over auto preferences
+    if (eraCodeBinary) {
+      this.logger.debug(
+        { binary: eraCodeBinary.path, version: eraCodeBinary.version },
+        "Era-code detected, using as default"
+      )
+      return eraCodeBinary
+    }
+
+    // 4. Fall back to auto preference if no era-code
     if (userPreferred) {
       const configured = this.mapRecords().find((b) => b.path === userPreferred)
       if (configured) {
@@ -93,19 +150,18 @@ export class BinaryRegistry {
       }
     }
 
-    // 2. Check for auto-detected binaries (era-code prioritized)
-    const autoDetected = this.detectAvailableBinaries()
+    // 5. Use any other auto-detected binary
     if (autoDetected.length > 0) {
       return autoDetected[0]
     }
 
-    // 3. Check configured binaries
+    // 6. Check configured binaries
     const binaries = this.mapRecords()
     if (binaries.length > 0) {
       return binaries.find((binary) => binary.isDefault) ?? binaries[0]
     }
 
-    // 4. Fallback to opencode (may not exist)
+    // 7. Fallback to opencode (may not exist)
     this.logger.warn("No binaries found, falling back to opencode")
     return this.buildFallbackRecord("opencode")
   }
@@ -126,6 +182,7 @@ export class BinaryRegistry {
 
     if (request.makeDefault) {
       nextConfig.preferences.lastUsedBinary = request.path
+      nextConfig.preferences.binaryPreferenceSource = "user"
     }
 
     this.configStore.replace(nextConfig)
@@ -144,6 +201,7 @@ export class BinaryRegistry {
 
     if (updates.makeDefault) {
       nextConfig.preferences.lastUsedBinary = id
+      nextConfig.preferences.binaryPreferenceSource = "user"
     }
 
     this.configStore.replace(nextConfig)
@@ -161,6 +219,8 @@ export class BinaryRegistry {
 
     if (nextConfig.preferences.lastUsedBinary === id) {
       nextConfig.preferences.lastUsedBinary = remaining[0]?.path
+      // Reset to auto since the user's explicit choice was removed
+      nextConfig.preferences.binaryPreferenceSource = "auto"
     }
 
     this.configStore.replace(nextConfig)
@@ -212,12 +272,46 @@ export class BinaryRegistry {
 
   private emitChange() {
     this.logger.debug("Emitting binaries changed event")
-    this.eventBus?.publish({ type: "config.binariesChanged", binaries: this.mapRecords() })
+    this.eventBus?.publish({ type: "config.binariesChanged", binaries: this.list() })
   }
 
   private validateRecord(record: BinaryRecord): BinaryValidationResult {
-    // TODO: call actual binary -v check.
-    return { valid: true, version: record.version }
+    const inputPath = record.path
+    if (!inputPath) {
+      return { valid: false, error: "Missing binary path" }
+    }
+
+    const spec = buildSpawnSpec(inputPath, ["--version"])
+
+    try {
+      const result = spawnSync(spec.command, spec.args, {
+        encoding: "utf8",
+        windowsVerbatimArguments: Boolean((spec.options as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments),
+      })
+
+      if (result.error) {
+        return { valid: false, error: result.error.message }
+      }
+
+      if (result.status !== 0) {
+        const stderr = result.stderr?.trim()
+        const stdout = result.stdout?.trim()
+        const combined = stderr || stdout
+        const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
+        return { valid: false, error }
+      }
+
+      const stdout = (result.stdout ?? "").trim()
+      const firstLine = stdout.split(/\r?\n/).find((line) => line.trim().length > 0)
+      const normalized = firstLine?.trim()
+
+      const versionMatch = normalized?.match(/([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/)
+      const version = versionMatch?.[1]
+
+      return { valid: true, version }
+    } catch (error) {
+      return { valid: false, error: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   private buildFallbackRecord(path: string): BinaryRecord {

@@ -17,8 +17,20 @@ export interface GovernanceRule {
   reason: string
   suggestion?: string
   overridable: boolean
-  source: "hardcoded" | "default" | "project" | "user"
+  source: "hardcoded" | "default" | "global" | "project" | "local"
   action: "allow" | "deny"
+  categoryId?: string
+  categoryName?: string
+  isOverridden?: boolean
+}
+
+/**
+ * A category of governance rules
+ */
+export interface GovernanceCategory {
+  categoryId: string
+  categoryName: string
+  rules: GovernanceRule[]
 }
 
 /**
@@ -30,7 +42,9 @@ export interface GovernanceSummary {
   defaultRules: number
   customRules: number
   activeOverrides: number
+  overriddenRules: number
   auditMode: boolean
+  defaultAgent?: string
 }
 
 /**
@@ -51,6 +65,7 @@ interface GovernanceState {
   loading: boolean
   error: string | null
   rules: GovernanceRule[]
+  categories: GovernanceCategory[]
   summary: GovernanceSummary | null
   lastFetched: number | null
 }
@@ -59,6 +74,7 @@ const initialState: GovernanceState = {
   loading: false,
   error: null,
   rules: [],
+  categories: [],
   summary: null,
   lastFetched: null,
 }
@@ -93,18 +109,46 @@ async function fetchGovernanceRules(folder?: string): Promise<void> {
     const rulesData = await rulesResponse.json()
     const summaryData = await summaryResponse.json()
 
+    // Build categories from rules if they have category info
+    const categoriesMap = new Map<string, GovernanceCategory>()
+    for (const rule of rulesData.rules ?? []) {
+      if (rule.categoryId) {
+        if (!categoriesMap.has(rule.categoryId)) {
+          categoriesMap.set(rule.categoryId, {
+            categoryId: rule.categoryId,
+            categoryName: rule.categoryName ?? rule.categoryId,
+            rules: [],
+          })
+        }
+        categoriesMap.get(rule.categoryId)!.rules.push(rule)
+      }
+    }
+
+    // Map summary data to our expected format
+    const summary: GovernanceSummary = {
+      totalRules: summaryData.success ? summaryData.summary?.totalRules ?? 0 : 0,
+      hardcodedRules: 0, // Not tracked separately in new API
+      defaultRules: summaryData.success ? summaryData.summary?.totalRules ?? 0 : 0,
+      customRules: 0,
+      activeOverrides: summaryData.success ? summaryData.summary?.overriddenRules ?? 0 : 0,
+      overriddenRules: summaryData.success ? summaryData.summary?.overriddenRules ?? 0 : 0,
+      auditMode: summaryData.success ? summaryData.summary?.auditMode ?? false : false,
+      defaultAgent: summaryData.success ? summaryData.summary?.defaultAgent : undefined,
+    }
+
     setGovernanceState({
       loading: false,
       error: null,
-      rules: rulesData.rules,
-      summary: summaryData,
+      rules: rulesData.rules ?? [],
+      categories: Array.from(categoriesMap.values()),
+      summary,
       lastFetched: Date.now(),
     })
 
     log.info("Governance rules fetched", {
-      totalRules: rulesData.rules.length,
-      hardcoded: summaryData.hardcodedRules,
-      auditMode: summaryData.auditMode,
+      totalRules: (rulesData.rules ?? []).length,
+      categories: categoriesMap.size,
+      auditMode: summary.auditMode,
     })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
@@ -295,6 +339,11 @@ export const isGovernanceLoading = createMemo(() => governanceState().loading)
  * Derived: Governance error
  */
 export const governanceError = createMemo(() => governanceState().error)
+
+/**
+ * Derived: Governance categories
+ */
+export const governanceCategories = createMemo(() => governanceState().categories)
 
 /**
  * Get governance status summary for display

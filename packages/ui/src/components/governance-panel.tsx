@@ -353,23 +353,48 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                   <Show when={expandedSections().project}>
                     <div class="governance-rules-list">
                       <For each={projectRules()}>
-                        {(rule) => (
-                          <div class="governance-rule">
-                            <div class="governance-rule-header">
-                              <span class="governance-rule-id">{rule.id}</span>
-                              <Show when={rule.action === "allow"}>
-                                <span class="governance-action-badge governance-action-allow">Allow</span>
-                              </Show>
-                              <Show when={rule.action === "deny"}>
-                                <span class="governance-action-badge governance-action-deny">Deny</span>
-                              </Show>
+                        {(rule) => {
+                          const isOverridden = () => rule.action === "allow"
+                          const isToggling = () => togglingRules().has(rule.id)
+
+                          return (
+                            <div class={`governance-rule ${isOverridden() ? "governance-rule-overridden" : ""}`}>
+                              <div class="governance-rule-header">
+                                <span class="governance-rule-id">{rule.id}</span>
+                                <Show when={rule.action === "allow"}>
+                                  <span class="governance-action-badge governance-action-allow">Allow</span>
+                                </Show>
+                                <Show when={rule.action === "deny"}>
+                                  <span class="governance-action-badge governance-action-deny">Deny</span>
+                                </Show>
+                                {/* Toggle Switch for project rules */}
+                                <button
+                                  type="button"
+                                  class={`governance-rule-toggle ${isOverridden() ? "governance-rule-toggle-on" : "governance-rule-toggle-off"}`}
+                                  onClick={() => handleRuleToggle(rule)}
+                                  disabled={isToggling() || !props.folder}
+                                  title={!props.folder ? "Open a project to toggle rules" : isOverridden() ? "Click to deny (remove override)" : "Click to allow (add override)"}
+                                >
+                                  <Show when={isToggling()}>
+                                    <div class="governance-rule-toggle-spinner" />
+                                  </Show>
+                                  <Show when={!isToggling()}>
+                                    <Show when={isOverridden()}>
+                                      <ToggleRight class="w-5 h-5" />
+                                    </Show>
+                                    <Show when={!isOverridden()}>
+                                      <ToggleLeft class="w-5 h-5" />
+                                    </Show>
+                                  </Show>
+                                </button>
+                              </div>
+                              <div class="governance-rule-pattern">
+                                <code>{rule.pattern}</code>
+                              </div>
+                              <div class="governance-rule-reason">{rule.reason}</div>
                             </div>
-                            <div class="governance-rule-pattern">
-                              <code>{rule.pattern}</code>
-                            </div>
-                            <div class="governance-rule-reason">{rule.reason}</div>
-                          </div>
-                        )}
+                          )
+                        }}
                       </For>
                     </div>
                   </Show>

@@ -5,6 +5,8 @@ import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import eraCodeAnimated from "../images/era-code-animated.gif"
+import EraUpgradeBanner from "./era-upgrade-banner"
 
 interface FolderSelectionCardsProps {
   onSelectFolder: (folder: string, binaryPath?: string) => void
@@ -225,8 +227,11 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
       <div class="home-screen">
         {/* Hero section with logo and search */}
         <div class="home-hero">
-          <h1 class="home-title">Era Code</h1>
+          <img src={eraCodeAnimated} alt="Era Code" class="home-animated-logo" />
           <p class="home-subtitle">Your AI-powered coding workspace</p>
+
+          {/* Era upgrade banner */}
+          <EraUpgradeBanner class="mt-4" />
 
           {/* Unified search bar */}
           <div class="home-search-container">

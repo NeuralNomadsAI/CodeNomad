@@ -20,7 +20,7 @@ export const bashRenderer: ToolRenderer = {
     const timeoutLabel = `${timeout}ms`
     return `${baseTitle} · Timeout: ${timeoutLabel}`
   },
-  renderBody({ toolState, renderMarkdown }) {
+  renderBody({ toolState, renderMarkdown, renderAnsi }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
@@ -36,9 +36,19 @@ export const bashRenderer: ToolRenderer = {
     const parts = [command, outputResult?.text].filter(Boolean)
     if (parts.length === 0) return null
 
-    const content = ensureMarkdownContent(parts.join("\n"), "bash", true)
+    const joined = parts.join("\n")
+    if (state.status === "running") {
+      return renderAnsi({ content: joined, variant: "running" })
+    }
+
+    const ansiBody = renderAnsi({ content: joined, requireAnsi: true, variant: "final" })
+    if (ansiBody) {
+      return ansiBody
+    }
+
+    const content = ensureMarkdownContent(joined, "bash", true)
     if (!content) return null
 
-    return renderMarkdown({ content, disableHighlight: state.status === "running" })
+    return renderMarkdown({ content })
   },
 }

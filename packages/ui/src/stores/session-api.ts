@@ -68,8 +68,10 @@ async function fetchSessions(instanceId: string): Promise<void> {
   })
 
   try {
-    log.info("session.list", { instanceId })
-    const response = await instance.client.session.list()
+    log.info("session.list", { instanceId, directory: instance.folder })
+    const response = await instance.client.session.list({
+      query: { directory: instance.folder },
+    })
 
     const sessionMap = new Map<string, Session>()
 

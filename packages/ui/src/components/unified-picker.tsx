@@ -308,7 +308,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       e.preventDefault()
       setSelectedIndex((prev) => Math.max(prev - 1, 0))
       scrollToSelected()
-    } else if (e.key === "Enter") {
+    } else if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault()
       const selected = items[selectedIndex()]
       if (selected) {
@@ -470,7 +470,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
         <div class="dropdown-footer">
           <div>
-            <span class="font-medium">↑↓</span> navigate • <span class="font-medium">Enter</span> select •{" "}
+            <span class="font-medium">↑↓</span> navigate • <span class="font-medium">Tab/Enter</span> select •{" "}
             <span class="font-medium">Esc</span> close
           </div>
         </div>

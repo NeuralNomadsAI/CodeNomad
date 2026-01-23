@@ -1,5 +1,5 @@
 import { createSignal, createMemo } from "solid-js"
-import type { EraStatusResponse } from "../../../server/src/api-types"
+import type { EraStatusResponse, EraUpgradeCheckResponse, EraUpgradeResult } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { ERA_CODE_API_BASE } from "../lib/api-client"
 
@@ -14,6 +14,19 @@ interface EraStatus extends EraStatusResponse {
   lastFetched: number | null
 }
 
+/**
+ * Era Code upgrade status
+ */
+interface EraUpgradeStatus {
+  checking: boolean
+  upgrading: boolean
+  available: boolean
+  currentVersion: string | null
+  targetVersion: string | null
+  error: string | null
+  lastChecked: number | null
+}
+
 const initialStatus: EraStatus = {
   installed: false,
   version: null,
@@ -25,7 +38,18 @@ const initialStatus: EraStatus = {
   lastFetched: null,
 }
 
+const initialUpgradeStatus: EraUpgradeStatus = {
+  checking: false,
+  upgrading: false,
+  available: false,
+  currentVersion: null,
+  targetVersion: null,
+  error: null,
+  lastChecked: null,
+}
+
 const [eraStatus, setEraStatus] = createSignal<EraStatus>(initialStatus)
+const [upgradeStatus, setUpgradeStatus] = createSignal<EraUpgradeStatus>(initialUpgradeStatus)
 
 let initialized = false
 let currentFolder: string | null = null
@@ -158,3 +182,144 @@ export const eraStatusSummary = createMemo(() => {
 
   return `v${status.version}`
 })
+
+/**
+ * Check for era-code upgrade
+ */
+export async function checkEraUpgrade(): Promise<EraUpgradeCheckResponse> {
+  setUpgradeStatus((prev) => ({ ...prev, checking: true, error: null }))
+
+  try {
+    const url = ERA_CODE_API_BASE 
+      ? `${ERA_CODE_API_BASE}/api/era/upgrade/check` 
+      : `/api/era/upgrade/check`
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      throw new Error(`Failed to check for upgrade: ${response.statusText}`)
+    }
+
+    const data: EraUpgradeCheckResponse = await response.json()
+
+    setUpgradeStatus({
+      checking: false,
+      upgrading: false,
+      available: data.available,
+      currentVersion: data.currentVersion,
+      targetVersion: data.targetVersion,
+      error: data.error ?? null,
+      lastChecked: Date.now(),
+    })
+
+    log.info("Era upgrade check completed", {
+      available: data.available,
+      currentVersion: data.currentVersion,
+      targetVersion: data.targetVersion,
+    })
+
+    return data
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    log.warn("Failed to check era upgrade", { error: errorMessage })
+
+    setUpgradeStatus((prev) => ({
+      ...prev,
+      checking: false,
+      error: errorMessage,
+    }))
+
+    return {
+      available: false,
+      currentVersion: null,
+      targetVersion: null,
+      error: errorMessage,
+    }
+  }
+}
+
+/**
+ * Run era-code upgrade
+ */
+export async function runEraUpgrade(): Promise<EraUpgradeResult> {
+  setUpgradeStatus((prev) => ({ ...prev, upgrading: true, error: null }))
+
+  try {
+    const url = ERA_CODE_API_BASE 
+      ? `${ERA_CODE_API_BASE}/api/era/upgrade` 
+      : `/api/era/upgrade`
+    const response = await fetch(url, { method: "POST" })
+
+    if (!response.ok) {
+      throw new Error(`Failed to run upgrade: ${response.statusText}`)
+    }
+
+    const data: EraUpgradeResult = await response.json()
+
+    if (data.success) {
+      // Reset upgrade status and refresh era status
+      setUpgradeStatus({
+        checking: false,
+        upgrading: false,
+        available: false,
+        currentVersion: data.version ?? null,
+        targetVersion: null,
+        error: null,
+        lastChecked: Date.now(),
+      })
+
+      // Refresh era status to get new version
+      void fetchEraStatus(currentFolder ?? undefined)
+
+      log.info("Era upgrade completed", { version: data.version })
+    } else {
+      setUpgradeStatus((prev) => ({
+        ...prev,
+        upgrading: false,
+        error: data.error ?? "Upgrade failed",
+      }))
+    }
+
+    return data
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    log.error("Failed to run era upgrade", { error: errorMessage })
+
+    setUpgradeStatus((prev) => ({
+      ...prev,
+      upgrading: false,
+      error: errorMessage,
+    }))
+
+    return {
+      success: false,
+      error: errorMessage,
+    }
+  }
+}
+
+/**
+ * Get the current upgrade status
+ */
+export function useEraUpgradeStatus() {
+  return upgradeStatus
+}
+
+/**
+ * Derived: Is upgrade available?
+ */
+export const isUpgradeAvailable = createMemo(() => upgradeStatus().available)
+
+/**
+ * Derived: Target version for upgrade
+ */
+export const upgradeTargetVersion = createMemo(() => upgradeStatus().targetVersion)
+
+/**
+ * Derived: Is currently checking for upgrade?
+ */
+export const isCheckingUpgrade = createMemo(() => upgradeStatus().checking)
+
+/**
+ * Derived: Is currently upgrading?
+ */
+export const isUpgrading = createMemo(() => upgradeStatus().upgrading)

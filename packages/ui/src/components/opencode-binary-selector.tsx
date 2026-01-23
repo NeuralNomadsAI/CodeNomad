@@ -36,26 +36,115 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   const [versionInfo, setVersionInfo] = createSignal<Map<string, string>>(new Map<string, string>())
   const [validatingPaths, setValidatingPaths] = createSignal<Set<string>>(new Set<string>())
   const [isBinaryBrowserOpen, setIsBinaryBrowserOpen] = createSignal(false)
+  const [serverBinaries, setServerBinaries] = createSignal<BinaryOption[]>([])
   const nativeDialogsAvailable = supportsNativeDialogs()
+
+  // Fetch server-detected binaries (includes auto-detected era-code, opencode)
+  createEffect(() => {
+    if (!props.isVisible) return
+    serverApi.listBinaries()
+      .then((response) => {
+        const options: BinaryOption[] = response.binaries.map((b) => ({
+          path: b.path,
+          version: b.version,
+          isDefault: b.isDefault,
+        }))
+        setServerBinaries(options)
+        // Update version cache
+        const cache = new Map(versionInfo())
+        for (const b of response.binaries) {
+          if (b.version && !cache.has(b.path)) {
+            cache.set(b.path, b.version)
+          }
+        }
+        setVersionInfo(cache)
+        
+        // Auto-select the server's default binary (era-code if available)
+        // This ensures era-code is selected unless user explicitly chose something else
+        const defaultBinary = response.binaries.find((b) => b.isDefault)
+        if (defaultBinary && !props.selectedBinary) {
+          props.onBinaryChange(defaultBinary.path)
+        }
+      })
+      .catch((error) => log.error("Failed to fetch binaries from server", { error }))
+  })
  
   const binaries = () => opencodeBinaries()
 
   const lastUsedBinary = () => preferences().lastUsedBinary
 
-  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode"))
-
-  const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode", isDefault: true }, ...customBinaries()])
+  // Merge server-detected binaries with local config binaries
+  const binaryOptions = createMemo<BinaryOption[]>(() => {
+    const serverList = serverBinaries()
+    const localList = binaries()
+    
+    // Use a map to dedupe by path, server binaries take precedence for version info
+    const binaryMap = new Map<string, BinaryOption>()
+    
+    // Check if server has a real opencode path (not just "opencode")
+    const hasRealOpencode = serverList.some((b) => 
+      b.path !== "opencode" && (b.path.includes("opencode") || b.path.endsWith("/opencode"))
+    )
+    
+    // Add server-detected binaries first (includes era-code if detected)
+    for (const b of serverList) {
+      binaryMap.set(b.path, b)
+    }
+    
+    // Add local binaries (may add user-configured custom paths)
+    for (const b of localList) {
+      // Skip generic "opencode" if we have a real path from server
+      if (b.path === "opencode" && hasRealOpencode) {
+        continue
+      }
+      if (!binaryMap.has(b.path)) {
+        binaryMap.set(b.path, { path: b.path, version: b.version, lastUsed: b.lastUsed })
+      }
+    }
+    
+    // Ensure we have at least one opencode option if nothing from server
+    if (binaryMap.size === 0) {
+      binaryMap.set("opencode", { path: "opencode", isDefault: true })
+    }
+    
+    return Array.from(binaryMap.values())
+  })
 
   const currentSelectionPath = () => props.selectedBinary || "opencode"
 
+  // Determine initial selection based on preference source
+  // If source is "auto", prefer era-code from server list
+  // If source is "user", use the saved lastUsedBinary
   createEffect(() => {
-    if (!props.selectedBinary && lastUsedBinary()) {
-      props.onBinaryChange(lastUsedBinary()!)
-    } else if (!props.selectedBinary) {
-      const firstBinary = binaries()[0]
-      if (firstBinary) {
-        props.onBinaryChange(firstBinary.path)
+    const preferenceSource = preferences().binaryPreferenceSource ?? "auto"
+    const serverList = serverBinaries()
+    
+    // User explicitly chose a binary - honor that choice
+    if (preferenceSource === "user" && lastUsedBinary()) {
+      // Only update if current selection doesn't match user's choice
+      if (props.selectedBinary !== lastUsedBinary()) {
+        props.onBinaryChange(lastUsedBinary()!)
       }
+      return
+    }
+    
+    // Auto mode: prefer era-code if available, regardless of current selection
+    if (serverList.length > 0) {
+      const eraCode = serverList.find((b) => b.path.includes("era-code"))
+      if (eraCode) {
+        // Only update if not already selected
+        if (props.selectedBinary !== eraCode.path) {
+          props.onBinaryChange(eraCode.path)
+        }
+        return
+      }
+      // Fall back to first server binary
+      if (props.selectedBinary !== serverList[0].path) {
+        props.onBinaryChange(serverList[0].path)
+      }
+    } else if (lastUsedBinary() && props.selectedBinary !== lastUsedBinary()) {
+      // No server list yet, use saved preference temporarily
+      props.onBinaryChange(lastUsedBinary()!)
     }
   })
 
@@ -78,9 +167,9 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   createEffect(() => {
     if (!props.isVisible) return
     const cache = versionInfo()
-    const pathsToValidate = ["opencode", ...customBinaries().map((binary) => binary.path)].filter(
-      (path) => !cache.has(path),
-    )
+    const pathsToValidate = binaryOptions()
+      .map((binary) => binary.path)
+      .filter((path) => !cache.has(path))
 
     if (pathsToValidate.length === 0) return
 
@@ -156,7 +245,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (validation.valid) {
       addOpenCodeBinary(path, validation.version)
       props.onBinaryChange(path)
-      updatePreferences({ lastUsedBinary: path })
+      updatePreferences({ lastUsedBinary: path, binaryPreferenceSource: "user" })
       setCustomPath("")
       setValidationError(null)
     } else {
@@ -181,7 +270,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (props.disabled) return
     if (path === props.selectedBinary) return
     props.onBinaryChange(path)
-    updatePreferences({ lastUsedBinary: path })
+    updatePreferences({ lastUsedBinary: path, binaryPreferenceSource: "user" })
   }
 
   function handleRemoveBinary(path: string, event: Event) {
@@ -191,7 +280,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
     if (props.selectedBinary === path) {
       props.onBinaryChange("opencode")
-      updatePreferences({ lastUsedBinary: "opencode" })
+      updatePreferences({ lastUsedBinary: "opencode", binaryPreferenceSource: "user" })
     }
   }
 
@@ -211,7 +300,17 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   function getDisplayName(path: string): string {
     if (path === "opencode") return "opencode (system PATH)"
     const parts = path.split(/[/\\]/)
-    return parts[parts.length - 1] ?? path
+    const basename = parts[parts.length - 1] ?? path
+    // Check if this is era-code
+    if (basename.toLowerCase().startsWith("era-code") || basename === "era-code.js") {
+      return "Era Code (system PATH)"
+    }
+    return basename
+  }
+
+  // Check if a binary is auto-detected (from server) vs user-added
+  const isAutoDetected = (path: string): boolean => {
+    return serverBinaries().some((b) => b.path === path)
   }
 
   const isPathValidating = (path: string) => validatingPaths().has(path)
@@ -282,7 +381,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
         <div class="panel-list panel-list--fill max-h-80 overflow-y-auto">
           <For each={binaryOptions()}>
             {(binary) => {
-              const isDefault = binary.isDefault
+              const isDefault = binary.isDefault || isAutoDetected(binary.path)
               const versionLabel = () => versionInfo().get(binary.path) ?? binary.version
 
               return (

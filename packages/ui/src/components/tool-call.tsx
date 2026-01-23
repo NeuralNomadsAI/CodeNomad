@@ -13,6 +13,7 @@ import type {
   DiffPayload,
   DiffRenderOptions,
   MarkdownRenderOptions,
+  AnsiRenderOptions,
   ToolCallPart,
   ToolRendererContext,
   ToolScrollHelpers,
@@ -20,10 +21,14 @@ import type {
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
+import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
+import { escapeHtml } from "../lib/markdown"
 
 const log = getLogger("session")
 
 type ToolState = import("@opencode-ai/sdk").ToolState
+
+type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48
@@ -228,21 +233,32 @@ export default function ToolCall(props: ToolCallProps) {
 
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
 
-  const createVariantCache = (variant: string) =>
-
+  const createVariantCache = (variant: string | (() => string)) =>
     useGlobalCache({
       instanceId: () => props.instanceId,
       sessionId: () => props.sessionId,
       scope: TOOL_CALL_CACHE_SCOPE,
       key: () => {
         const context = cacheContext()
-        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, variant)
+        const resolvedVariant = typeof variant === "function" ? variant() : variant
+        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, resolvedVariant)
       },
     })
 
   const diffCache = createVariantCache("diff")
   const permissionDiffCache = createVariantCache("permission-diff")
   const markdownCache = createVariantCache("markdown")
+  const ansiRunningCache = createVariantCache(() => {
+    const versionKey = typeof props.partVersion === "number" ? String(props.partVersion) : "noversion"
+    return `ansi-running:${versionKey}`
+  })
+  const ansiFinalCache = createVariantCache(() => {
+    const versionKey = typeof props.partVersion === "number" ? String(props.partVersion) : "noversion"
+    return `ansi-final:${versionKey}`
+  })
+  const runningAnsiRenderer = createAnsiStreamRenderer()
+  let runningAnsiSource = ""
+
   const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallIdentifier()))
   const pendingPermission = createMemo(() => {
     const state = permissionState()
@@ -619,6 +635,75 @@ export default function ToolCall(props: ToolCallProps) {
     )
   }
 
+  function renderAnsiContent(options: AnsiRenderOptions) {
+    if (!options.content) {
+      return null
+    }
+
+    const size = options.size || "default"
+    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const cacheHandle = options.variant === "running" ? ansiRunningCache : ansiFinalCache
+    const cached = cacheHandle.get<AnsiRenderCache>()
+    const mode = typeof props.partVersion === "number" ? String(props.partVersion) : undefined
+    const isRunningVariant = options.variant === "running"
+
+    let nextCache: AnsiRenderCache
+
+    if (isRunningVariant) {
+      const content = options.content
+      const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
+
+      if (resetStreaming) {
+        const detectedAnsi = hasAnsi(content)
+        if (detectedAnsi) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else {
+          runningAnsiRenderer.reset()
+          nextCache = { text: content, html: escapeHtml(content), mode, hasAnsi: false }
+        }
+      } else {
+        const delta = content.slice(cached.text.length)
+        if (delta.length === 0) {
+          nextCache = { ...cached, mode }
+        } else if (!cached.hasAnsi && hasAnsi(delta)) {
+          runningAnsiRenderer.reset()
+          const html = runningAnsiRenderer.render(content)
+          nextCache = { text: content, html, mode, hasAnsi: true }
+        } else if (cached.hasAnsi) {
+          const htmlChunk = runningAnsiRenderer.render(delta)
+          nextCache = { text: content, html: `${cached.html}${htmlChunk}`, mode, hasAnsi: true }
+        } else {
+          nextCache = { text: content, html: `${cached.html}${escapeHtml(delta)}`, mode, hasAnsi: false }
+        }
+      }
+
+      runningAnsiSource = nextCache.text
+      cacheHandle.set(nextCache)
+    } else {
+      if (cached && cached.text === options.content) {
+        nextCache = { ...cached, mode }
+      } else {
+        const detectedAnsi = hasAnsi(options.content)
+        const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
+        nextCache = { text: options.content, html, mode, hasAnsi: detectedAnsi }
+        cacheHandle.set(nextCache)
+      }
+    }
+
+    if (options.requireAnsi && !nextCache.hasAnsi) {
+      return null
+    }
+
+    return (
+      <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
+        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
+        {scrollHelpers.renderSentinel()}
+      </div>
+    )
+  }
+
   function renderMarkdownContent(options: MarkdownRenderOptions) {
     if (!options.content) {
       return null
@@ -639,7 +724,7 @@ export default function ToolCall(props: ToolCallProps) {
       )
     }
 
-    const markdownPart: TextPart = { type: "text", text: options.content }
+    const markdownPart: TextPart = { type: "text", text: options.content, version: props.partVersion }
     const cached = markdownCache.get<RenderCache>()
     if (cached) {
       markdownPart.renderCache = cached
@@ -675,6 +760,7 @@ export default function ToolCall(props: ToolCallProps) {
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown: renderMarkdownContent,
+    renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
     scrollHelpers,
   }

@@ -5,6 +5,7 @@ import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import EraUpgradeBanner from "./era-upgrade-banner"
 
 const codeNomadLogo = new URL("../images/EraCode-Icon.png", import.meta.url).href
 
@@ -336,6 +337,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <img src={codeNomadLogo} alt="Era Code logo" class="h-28 w-auto sm:h-40" loading="lazy" />
               </div>
               <p class="text-base text-secondary">Select a folder to get started</p>
+              
+              {/* Era upgrade banner */}
+              <div class="mt-4 flex justify-center">
+                <EraUpgradeBanner />
+              </div>
             </div>
 
             {/* Right column: Open Folder options */}

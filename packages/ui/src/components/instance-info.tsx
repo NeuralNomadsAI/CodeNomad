@@ -18,6 +18,13 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const metadata = () => metadataAccessor()
   const binaryVersion = () => currentInstance().binaryVersion || metadata()?.version
   const environmentVariables = () => currentInstance().environmentVariables
+
+  // Determine if this is era-code based on label or path
+  const isEraCode = () => {
+    const label = currentInstance().binaryLabel?.toLowerCase() ?? ""
+    const path = currentInstance().binaryPath?.toLowerCase() ?? ""
+    return label.includes("era") || path.includes("era-code")
+  }
   const environmentEntries = createMemo(() => {
     const env = environmentVariables()
     return env ? Object.entries(env) : []
@@ -73,7 +80,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <Show when={binaryVersion()}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
-              OpenCode Version
+              {isEraCode() ? "Era-Code Version" : "OpenCode Version"}
             </div>
             <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
               v{binaryVersion()}

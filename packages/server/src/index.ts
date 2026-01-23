@@ -107,10 +107,18 @@ function parsePort(input: string): number {
 }
 
 function resolveHost(input: string | undefined): string {
-  if (input && input.trim() === "0.0.0.0") {
+  const trimmed = input?.trim()
+  if (!trimmed) return DEFAULT_HOST
+
+  if (trimmed === "0.0.0.0") {
     return "0.0.0.0"
   }
-  return DEFAULT_HOST
+
+  if (trimmed === "localhost") {
+    return DEFAULT_HOST
+  }
+
+  return trimmed
 }
 
 async function main() {
@@ -143,11 +151,13 @@ async function main() {
     logger: logger.child({ component: "instance-events" }),
   })
 
+  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
+
   const serverMeta: ServerMeta = {
     httpBaseUrl: `http://${options.host}:${options.port}`,
     eventsUrl: `/api/events`,
     host: options.host,
-    listeningMode: options.host === "0.0.0.0" ? "all" : "local",
+    listeningMode: isLoopbackHost(options.host) ? "local" : "all",
     port: options.port,
     hostLabel: options.host,
     workspaceRoot: options.rootDir,

@@ -1,6 +1,7 @@
-import { ChildProcess, spawn, execSync } from "child_process"
+import { ChildProcess, spawn, execSync, spawnSync } from "child_process"
 import { existsSync, statSync } from "fs"
 import path from "path"
+import os from "os"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
@@ -43,6 +44,55 @@ function killProcessTree(pid: number, signal: NodeJS.Signals = "SIGTERM", logger
   }
 }
 
+export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
+export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
+
+export function buildSpawnSpec(binaryPath: string, args: string[]) {
+  if (process.platform !== "win32") {
+    return { command: binaryPath, args, options: {} as const }
+  }
+
+  const extension = path.extname(binaryPath).toLowerCase()
+
+  if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
+    const comspec = process.env.ComSpec || "cmd.exe"
+    // cmd.exe requires the full command as a single string.
+    // Using the ""<script> <args>"" pattern ensures paths with spaces are handled.
+    const commandLine = `""${binaryPath}" ${args.join(" ")}"`
+
+    return {
+      command: comspec,
+      args: ["/d", "/s", "/c", commandLine],
+      options: { windowsVerbatimArguments: true } as const,
+    }
+  }
+
+  if (WINDOWS_POWERSHELL_EXTENSIONS.has(extension)) {
+    // powershell.exe ships with Windows. (pwsh may not.)
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", binaryPath, ...args],
+      options: {} as const,
+    }
+  }
+
+  return { command: binaryPath, args, options: {} as const }
+}
+
+const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
+
+function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const redacted: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      redacted[key] = value
+      continue
+    }
+    redacted[key] = SENSITIVE_ENV_KEY.test(key) ? "[REDACTED]" : value
+  }
+  return redacted
+}
+
 interface LaunchOptions {
   workspaceId: string
   folder: string
@@ -64,6 +114,23 @@ interface ManagedProcess {
   requestedStop: boolean
 }
 
+/**
+ * Check if a binary path is era-code
+ */
+function isEraCodeBinary(binaryPath: string): boolean {
+  const basename = path.basename(binaryPath).toLowerCase()
+  return basename.startsWith("era-code") || basename === "era-code.js"
+}
+
+/**
+ * Check if folder is user's home directory (era-code init should not run there)
+ */
+function isHomeDirectory(folder: string): boolean {
+  const home = os.homedir()
+  const resolved = path.resolve(folder)
+  return resolved === home
+}
+
 export class WorkspaceRuntime {
   private processes = new Map<string, ManagedProcess>()
   private eraConfigService: EraConfigService | null = null
@@ -80,7 +147,8 @@ export class WorkspaceRuntime {
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number }> {
     this.validateFolder(options.folder)
 
-    const args = ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
+    const useEraCode = isEraCodeBinary(options.binaryPath)
+    const isHome = isHomeDirectory(options.folder)
 
     // Build environment with optional era config
     let env = { ...process.env, ...(options.environment ?? {}) }
@@ -100,22 +168,79 @@ export class WorkspaceRuntime {
       )
     }
 
+    // For era-code: run init first (unless in home directory)
+    if (useEraCode && !isHome) {
+      this.logger.info(
+        { workspaceId: options.workspaceId, folder: options.folder },
+        "Running era-code init --quiet"
+      )
+      try {
+        const initSpec = buildSpawnSpec(options.binaryPath, ["init", "--quiet"])
+        const initResult = spawnSync(initSpec.command, initSpec.args, {
+          cwd: options.folder,
+          env,
+          encoding: "utf-8",
+          timeout: 30000, // 30 second timeout for init
+          ...initSpec.options,
+        })
+        if (initResult.error) {
+          this.logger.warn(
+            { workspaceId: options.workspaceId, error: initResult.error.message },
+            "era-code init failed, continuing anyway"
+          )
+        } else if (initResult.status !== 0) {
+          this.logger.warn(
+            { workspaceId: options.workspaceId, status: initResult.status, stderr: initResult.stderr },
+            "era-code init exited with non-zero status, continuing anyway"
+          )
+        } else {
+          this.logger.info(
+            { workspaceId: options.workspaceId },
+            "era-code init completed successfully"
+          )
+        }
+      } catch (error) {
+        this.logger.warn(
+          { workspaceId: options.workspaceId, error },
+          "era-code init threw exception, continuing anyway"
+        )
+      }
+    }
+
+    // Build the command args based on binary type
+    let args: string[]
+    if (useEraCode) {
+      // era-code start --quiet -- serve --port 0 --print-logs --log-level DEBUG
+      args = ["start", "--quiet", "--", "serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
+    } else {
+      // opencode serve --port 0 --print-logs --log-level DEBUG
+      args = ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
+    }
+
     return new Promise((resolve, reject) => {
+      const spec = buildSpawnSpec(options.binaryPath, args)
+      const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
         {
           workspaceId: options.workspaceId,
           folder: options.folder,
           binary: options.binaryPath,
+          useEraCode,
           eraEnabled: options.eraConfig?.enabled ?? false,
+          spawnCommand: spec.command,
+          spawnArgs: spec.args,
+          commandLine,
+          env: redactEnvironment(env),
         },
         "Launching OpenCode process",
       )
-      const child = spawn(options.binaryPath, args, {
+      const child = spawn(spec.command, spec.args, {
         cwd: options.folder,
         env,
         stdio: ["ignore", "pipe", "pipe"],
         // Ensure child processes are in the same process group for proper cleanup
         detached: false,
+        ...spec.options,
       })
 
       const managed: ManagedProcess = { child, requestedStop: false }

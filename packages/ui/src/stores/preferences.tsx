@@ -51,11 +51,15 @@ export type McpRemoteServerConfig = {
 
 export type McpServerConfig = McpLocalServerConfig | McpRemoteServerConfig
 
+export type BinaryPreferenceSource = "user" | "auto"
+
 export interface Preferences {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   lastUsedBinary?: string
+  // Tracks whether lastUsedBinary was explicitly set by user or auto-detected
+  binaryPreferenceSource: BinaryPreferenceSource
   environmentVariables: Record<string, string>
   modelRecents: ModelPreference[]
   diffViewMode: DiffViewMode
@@ -103,6 +107,7 @@ const defaultPreferences: Preferences = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
+  binaryPreferenceSource: "auto",
   environmentVariables: {},
   modelRecents: [],
   diffViewMode: "split",
@@ -161,6 +166,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultPreferences.showTimelineTools,
     lastUsedBinary: sanitized.lastUsedBinary ?? defaultPreferences.lastUsedBinary,
+    binaryPreferenceSource: sanitized.binaryPreferenceSource ?? defaultPreferences.binaryPreferenceSource,
     environmentVariables,
     modelRecents,
     diffViewMode: sanitized.diffViewMode ?? defaultPreferences.diffViewMode,
@@ -456,7 +462,7 @@ function removeOpenCodeBinary(path: string): void {
 function updateLastUsedBinary(path: string): void {
   const target = path || preferences().lastUsedBinary || "opencode"
   updateConfig((draft) => {
-    draft.preferences = normalizePreferences({ ...draft.preferences, lastUsedBinary: target })
+    draft.preferences = normalizePreferences({ ...draft.preferences, lastUsedBinary: target, binaryPreferenceSource: "user" })
     draft.opencodeBinaries = buildBinaryList(target, undefined, draft.opencodeBinaries)
   })
 }
