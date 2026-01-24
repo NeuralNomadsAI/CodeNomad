@@ -46,6 +46,11 @@
   padding: 0;
 }
 
+/* Steps list should be flush (no inset padding). */
+.tool-call-task-section-body .tool-call-task-container.tool-call-markdown {
+  padding: 0;
+}
+
 /* Keep task lists compact vs prompt/output panes. */
 .tool-call-task-container.tool-call-markdown {
   max-height: calc(var(--tool-call-max-height-compact, calc(25 * 1.4em)) / 2);

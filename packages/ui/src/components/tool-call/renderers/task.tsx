@@ -181,8 +181,8 @@ export const taskRenderer: ToolRenderer = {
         <Show when={items().length > 0}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
-              <span class="tool-call-task-section-title">Tasks</span>
-              <span class="tool-call-task-section-meta">{items().length} item(s)</span>
+              <span class="tool-call-task-section-title">Steps</span>
+              <span class="tool-call-task-section-meta">{items().length} steps</span>
             </header>
             <div class="tool-call-task-section-body">
               <div
