@@ -103,6 +103,25 @@
   box-shadow: 0 0 0 2px var(--accent-primary);
 }
 
+/* Form controls */
+.form-input {
+  @apply w-full px-3 py-2 text-sm;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.form-input::placeholder {
+  color: var(--text-muted);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
 /* Shared animations */
 @keyframes pulse {
   0%, 100% { opacity: 1; }

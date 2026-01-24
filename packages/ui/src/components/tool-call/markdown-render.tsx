@@ -23,20 +23,26 @@ export function createMarkdownContentRenderer(params: {
     const size = options.size || "default"
     const disableHighlight = options.disableHighlight || false
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const disableScrollTracking = options.disableScrollTracking || false
 
     const state = params.toolState()
     const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
     if (shouldDeferMarkdown) {
       return (
-        <div class={messageClass} ref={(element) => params.scrollHelpers.registerContainer(element)} onScroll={params.scrollHelpers.handleScroll}>
+        <div
+          class={messageClass}
+          ref={(element) => params.scrollHelpers.registerContainer(element, { disableTracking: disableScrollTracking })}
+          onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
+        >
           <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
-          {params.scrollHelpers.renderSentinel()}
+          {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
         </div>
       )
     }
 
+    const cacheKey = typeof options.cacheKey === "string" && options.cacheKey.length > 0 ? options.cacheKey : undefined
     const markdownPart: TextPart = {
-      id: params.partId(),
+      id: cacheKey ? `${params.partId()}:${cacheKey}` : params.partId(),
       type: "text",
       text: options.content,
       version: params.partVersion?.(),
@@ -48,7 +54,11 @@ export function createMarkdownContentRenderer(params: {
     }
 
     return (
-      <div class={messageClass} ref={(element) => params.scrollHelpers.registerContainer(element)} onScroll={params.scrollHelpers.handleScroll}>
+      <div
+        class={messageClass}
+        ref={(element) => params.scrollHelpers.registerContainer(element, { disableTracking: disableScrollTracking })}
+        onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
+      >
         <Markdown
           part={markdownPart}
           instanceId={params.instanceId}
@@ -57,7 +67,7 @@ export function createMarkdownContentRenderer(params: {
           disableHighlight={disableHighlight}
           onRendered={handleMarkdownRendered}
         />
-        {params.scrollHelpers.renderSentinel()}
+        {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )
   }

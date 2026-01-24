@@ -1,8 +1,7 @@
 import { For, Show, createMemo } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { ToolRenderer } from "../types"
-import { getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
-import { getTodoTitle } from "./todo"
+import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
 import { resolveTitleForTool } from "../tool-title"
 
 interface TaskSummaryItem {
@@ -90,7 +89,51 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, messageVersion, partVersion, scrollHelpers }) {
+  renderBody({ toolState, messageVersion, partVersion, scrollHelpers, renderMarkdown }) {
+    const promptContent = createMemo(() => {
+      const state = toolState()
+      if (!state) return null
+      const { input } = readToolStatePayload(state)
+      const prompt = typeof input.prompt === "string" ? input.prompt : null
+      return ensureMarkdownContent(prompt, undefined, false)
+    })
+
+    const outputContent = createMemo(() => {
+      const state = toolState()
+      if (!state) return null
+      const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
+      return ensureMarkdownContent(output, undefined, false)
+    })
+
+    const agentLabel = createMemo(() => {
+      const state = toolState()
+      if (!state) return null
+      const { input } = readToolStatePayload(state)
+      return typeof input.subagent_type === "string" ? input.subagent_type : null
+    })
+
+    const modelLabel = createMemo(() => {
+      const state = toolState()
+      if (!state) return null
+      const { metadata } = readToolStatePayload(state)
+      const model = (metadata as any).model
+      if (!model || typeof model !== "object") return null
+      const providerId = typeof model.providerID === "string" ? model.providerID : null
+      const modelId = typeof model.modelID === "string" ? model.modelID : null
+      if (!providerId && !modelId) return null
+      if (providerId && modelId) return `${providerId}/${modelId}`
+      return providerId ?? modelId
+    })
+
+    const headerMeta = createMemo(() => {
+      const agent = agentLabel()
+      const model = modelLabel()
+      if (agent && model) return `Agent: ${agent} • Model: ${model}`
+      if (agent) return `Agent: ${agent}`
+      if (model) return `Model: ${model}`
+      return null
+    })
+
     const items = createMemo(() => {
       // Track the reactive change points so we only recompute when the part/message changes
       messageVersion?.()
@@ -114,41 +157,90 @@ export const taskRenderer: ToolRenderer = {
       })
     })
 
-    if (items().length === 0) return null
-
     return (
-      <div
-        class="message-text tool-call-markdown tool-call-task-container"
-        ref={(element) => scrollHelpers?.registerContainer(element)}
-        onScroll={scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined}
-      >
-        <div class="tool-call-task-summary">
-          <For each={items()}>
-            {(item) => {
-              const icon = getToolIcon(item.tool)
-              const description = describeToolTitle(item)
-              const toolLabel = getToolName(item.tool)
-              const status = normalizeStatus(item.status ?? item.state?.status)
-              const statusIcon = summarizeStatusIcon(status)
-              const statusLabel = summarizeStatusLabel(status)
-              const statusAttr = status ?? "pending"
-              return (
-                <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
-                  <span class="tool-call-task-icon">{icon}</span>
-                  <span class="tool-call-task-label">{toolLabel}</span>
-                  <span class="tool-call-task-separator" aria-hidden="true">—</span>
-                  <span class="tool-call-task-text">{description}</span>
-                  <Show when={statusIcon}>
-                    <span class="tool-call-task-status" aria-label={statusLabel} title={statusLabel}>
-                      {statusIcon}
-                    </span>
-                  </Show>
+      <div class="tool-call-task-sections">
+        <Show when={promptContent()}>
+          <section class="tool-call-task-section">
+            <header class="tool-call-task-section-header">
+              <span class="tool-call-task-section-title">Prompt</span>
+              <Show when={headerMeta()}>
+                <span class="tool-call-task-section-meta">{headerMeta()}</span>
+              </Show>
+            </header>
+            <div class="tool-call-task-section-body">
+              {renderMarkdown({
+                content: promptContent()!,
+                cacheKey: "task:prompt",
+                disableScrollTracking: true,
+                disableHighlight: true,
+              })}
+            </div>
+          </section>
+        </Show>
+
+        <Show when={items().length > 0}>
+          <section class="tool-call-task-section">
+            <header class="tool-call-task-section-header">
+              <span class="tool-call-task-section-title">Steps</span>
+              <span class="tool-call-task-section-meta">{items().length} steps</span>
+            </header>
+            <div class="tool-call-task-section-body">
+              <div
+                class="message-text tool-call-markdown tool-call-task-container"
+                ref={(element) => scrollHelpers?.registerContainer(element)}
+                onScroll={
+                  scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
+                }
+              >
+                <div class="tool-call-task-summary">
+                  <For each={items()}>
+                    {(item) => {
+                      const icon = getToolIcon(item.tool)
+                      const description = describeToolTitle(item)
+                      const toolLabel = getToolName(item.tool)
+                      const status = normalizeStatus(item.status ?? item.state?.status)
+                      const statusIcon = summarizeStatusIcon(status)
+                      const statusLabel = summarizeStatusLabel(status)
+                      const statusAttr = status ?? "pending"
+                      return (
+                        <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
+                          <span class="tool-call-task-icon">{icon}</span>
+                          <span class="tool-call-task-label">{toolLabel}</span>
+                          <span class="tool-call-task-separator" aria-hidden="true">—</span>
+                          <span class="tool-call-task-text">{description}</span>
+                          <Show when={statusIcon}>
+                            <span class="tool-call-task-status" aria-label={statusLabel} title={statusLabel}>
+                              {statusIcon}
+                            </span>
+                          </Show>
+                        </div>
+                      )
+                    }}
+                  </For>
                 </div>
-              )
-            }}
-          </For>
-        </div>
-        {scrollHelpers?.renderSentinel?.()}
+                {scrollHelpers?.renderSentinel?.()}
+              </div>
+            </div>
+          </section>
+        </Show>
+
+        <Show when={outputContent()}>
+          <section class="tool-call-task-section">
+            <header class="tool-call-task-section-header">
+              <span class="tool-call-task-section-title">Output</span>
+              <Show when={headerMeta()}>
+                <span class="tool-call-task-section-meta">{headerMeta()}</span>
+              </Show>
+            </header>
+            <div class="tool-call-task-section-body">
+              {renderMarkdown({
+                content: outputContent()!,
+                cacheKey: "task:output",
+                disableScrollTracking: true,
+              })}
+            </div>
+          </section>
+        </Show>
       </div>
     )
   },

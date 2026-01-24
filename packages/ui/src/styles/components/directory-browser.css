@@ -81,6 +81,14 @@
   width: auto;
 }
 
+.directory-browser-current-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .directory-browser-close {
 
   display: inline-flex;

@@ -1,5 +1,72 @@
-.tool-call-task-container {
+.tool-call-task-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: 0;
+}
+
+.tool-call-task-section {
+  border: 1px solid var(--border-base);
+  overflow: hidden;
+  background-color: transparent;
+  border-radius: 0;
+}
+
+.tool-call-task-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-base);
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  color: inherit;
+}
+
+.tool-call-task-section-title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.tool-call-task-section-meta {
+  font-family: var(--font-family-mono);
+  color: var(--text-muted);
+}
+
+.tool-call-task-section-body {
+  background-color: var(--surface-code);
+}
+
+.tool-call-task-section-body .tool-call-markdown {
   padding: 12px;
+}
+
+.tool-call-task-container {
+  padding: 0;
+}
+
+/* Steps list should be flush (no inset padding). */
+.tool-call-task-section-body .tool-call-task-container.tool-call-markdown {
+  padding: 0;
+}
+
+/* Keep task lists compact vs prompt/output panes. */
+.tool-call-task-container.tool-call-markdown {
+  max-height: calc(var(--tool-call-max-height-compact, calc(25 * 1.4em)) / 2);
+}
+
+/* Prompt + output panes: slightly taller than tasks. */
+.tool-call-task-section-body > .tool-call-markdown:not(.tool-call-task-container) {
+  max-height: calc(var(--tool-call-max-height-compact, calc(25 * 1.4em)) * 2 / 3);
+}
+
+.tool-call-task-empty {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  color: var(--text-muted);
+  padding: 0.5rem;
 }
 
 .tool-call-task-summary {

@@ -8,6 +8,7 @@ import type {
   BinaryUpdateRequest,
   BinaryValidationResult,
   FileSystemEntry,
+  FileSystemCreateFolderResponse,
   FileSystemListResponse,
   InstanceData,
   ServerMeta,
@@ -223,6 +224,13 @@ export const serverApi = {
     }
     const query = params.toString()
     return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
+  },
+
+  createFileSystemFolder(parentPath: string | undefined, name: string): Promise<FileSystemCreateFolderResponse> {
+    return request<FileSystemCreateFolderResponse>("/api/filesystem/folders", {
+      method: "POST",
+      body: JSON.stringify({ parentPath, name }),
+    })
   },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)

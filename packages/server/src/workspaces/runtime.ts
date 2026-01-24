@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from "child_process"
+import { ChildProcess, spawn, spawnSync } from "child_process"
 import { existsSync, statSync } from "fs"
 import path from "path"
 import { EventBus } from "../events/bus"
@@ -122,10 +122,12 @@ export class WorkspaceRuntime {
         },
         "Launching OpenCode process",
       )
+      const detached = process.platform !== "win32"
       const child = spawn(spec.command, spec.args, {
         cwd: options.folder,
         env,
         stdio: ["ignore", "pipe", "pipe"],
+        detached,
         ...spec.options,
       })
 
@@ -259,10 +261,96 @@ export class WorkspaceRuntime {
     const child = managed.child
     this.logger.info({ workspaceId }, "Stopping OpenCode process")
 
+    const pid = child.pid
+    if (!pid) {
+      this.logger.warn({ workspaceId }, "Workspace process missing PID; cannot stop")
+      return
+    }
+
+    const isAlreadyExited = () => child.exitCode !== null || child.signalCode !== null
+
+    const tryKillPosixGroup = (signal: NodeJS.Signals) => {
+      try {
+        // Negative PID targets the process group (POSIX).
+        process.kill(-pid, signal)
+        return true
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException
+        if (err?.code === "ESRCH") {
+          return true
+        }
+        this.logger.debug({ workspaceId, pid, err }, "Failed to signal POSIX process group")
+        return false
+      }
+    }
+
+    const tryKillSinglePid = (signal: NodeJS.Signals) => {
+      try {
+        process.kill(pid, signal)
+        return true
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException
+        if (err?.code === "ESRCH") {
+          return true
+        }
+        this.logger.debug({ workspaceId, pid, err }, "Failed to signal workspace PID")
+        return false
+      }
+    }
+
+    const tryTaskkill = (force: boolean) => {
+      const args = ["/PID", String(pid), "/T"]
+      if (force) {
+        args.push("/F")
+      }
+
+      try {
+        const result = spawnSync("taskkill", args, { encoding: "utf8" })
+        const exitCode = result.status
+        if (exitCode === 0) {
+          return true
+        }
+        // If the PID is already gone, treat it as success.
+        const stderr = (result.stderr ?? "").toString().toLowerCase()
+        const stdout = (result.stdout ?? "").toString().toLowerCase()
+        const combined = `${stdout}\n${stderr}`
+        if (combined.includes("not found") || combined.includes("no running instance") || combined.includes("process") && combined.includes("not")) {
+          return true
+        }
+        this.logger.debug({ workspaceId, pid, exitCode, stderr: result.stderr, stdout: result.stdout }, "taskkill failed")
+        return false
+      } catch (error) {
+        this.logger.debug({ workspaceId, pid, err: error }, "taskkill failed to execute")
+        return false
+      }
+    }
+
+    const sendStopSignal = (signal: NodeJS.Signals) => {
+      if (process.platform === "win32") {
+        // Best-effort: terminate the whole process tree rooted at pid.
+        // Use /F only for escalation.
+        tryTaskkill(signal === "SIGKILL")
+        return
+      }
+
+      // Prefer process-group signaling so wrapper launchers (bun/node) don't orphan the real server.
+      const groupOk = tryKillPosixGroup(signal)
+      if (!groupOk) {
+        // Fallback to direct PID kill.
+        tryKillSinglePid(signal)
+      }
+    }
+
     await new Promise<void>((resolve, reject) => {
+      let escalationTimer: NodeJS.Timeout | null = null
+
       const cleanup = () => {
         child.removeListener("exit", onExit)
         child.removeListener("error", onError)
+        if (escalationTimer) {
+          clearTimeout(escalationTimer)
+          escalationTimer = null
+        }
       }
 
       const onExit = () => {
@@ -274,32 +362,30 @@ export class WorkspaceRuntime {
         reject(error)
       }
 
-      const resolveIfAlreadyExited = () => {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          this.logger.debug({ workspaceId, exitCode: child.exitCode, signal: child.signalCode }, "Process already exited")
-          cleanup()
-          resolve()
-          return true
-        }
-        return false
+      if (isAlreadyExited()) {
+        this.logger.debug({ workspaceId, exitCode: child.exitCode, signal: child.signalCode }, "Process already exited")
+        cleanup()
+        resolve()
+        return
       }
 
       child.once("exit", onExit)
       child.once("error", onError)
 
-      if (resolveIfAlreadyExited()) {
-        return
-      }
+      this.logger.debug(
+        { workspaceId, pid, detached: process.platform !== "win32" },
+        "Sending SIGTERM to workspace process (tree/group)",
+      )
+      sendStopSignal("SIGTERM")
 
-      this.logger.debug({ workspaceId }, "Sending SIGTERM to workspace process")
-      child.kill("SIGTERM")
-      setTimeout(() => {
-        if (!child.killed) {
-          this.logger.warn({ workspaceId }, "Process did not stop after SIGTERM, force killing")
-          child.kill("SIGKILL")
-        } else {
-          this.logger.debug({ workspaceId }, "Workspace process stopped gracefully before SIGKILL timeout")
+      escalationTimer = setTimeout(() => {
+        escalationTimer = null
+        if (isAlreadyExited()) {
+          this.logger.debug({ workspaceId, pid }, "Workspace exited before SIGKILL escalation")
+          return
         }
+        this.logger.warn({ workspaceId, pid }, "Process did not stop after SIGTERM, escalating")
+        sendStopSignal("SIGKILL")
       }, 2000)
     })
   }

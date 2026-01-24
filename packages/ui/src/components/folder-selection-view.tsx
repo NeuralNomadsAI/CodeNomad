@@ -57,6 +57,19 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
 
   function handleKeyDown(e: KeyboardEvent) {
+    let activeElement: HTMLElement | null = null
+    if (typeof document !== "undefined") {
+      activeElement = document.activeElement as HTMLElement | null
+    }
+    const insideModal = activeElement?.closest(".modal-surface") || activeElement?.closest("[role='dialog']")
+    const isEditingField =
+      activeElement &&
+      (["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName) || activeElement.isContentEditable || Boolean(insideModal))
+
+    if (isEditingField) {
+      return
+    }
+
     const normalizedKey = e.key.toLowerCase()
     const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
     const blockedKeys = [
