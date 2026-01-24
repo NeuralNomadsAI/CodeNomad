@@ -112,6 +112,28 @@ export const taskRenderer: ToolRenderer = {
       return typeof input.subagent_type === "string" ? input.subagent_type : null
     })
 
+    const modelLabel = createMemo(() => {
+      const state = toolState()
+      if (!state) return null
+      const { metadata } = readToolStatePayload(state)
+      const model = (metadata as any).model
+      if (!model || typeof model !== "object") return null
+      const providerId = typeof model.providerID === "string" ? model.providerID : null
+      const modelId = typeof model.modelID === "string" ? model.modelID : null
+      if (!providerId && !modelId) return null
+      if (providerId && modelId) return `${providerId}/${modelId}`
+      return providerId ?? modelId
+    })
+
+    const headerMeta = createMemo(() => {
+      const agent = agentLabel()
+      const model = modelLabel()
+      if (agent && model) return `Agent: ${agent} • Model: ${model}`
+      if (agent) return `Agent: ${agent}`
+      if (model) return `Model: ${model}`
+      return null
+    })
+
     const items = createMemo(() => {
       // Track the reactive change points so we only recompute when the part/message changes
       messageVersion?.()
@@ -141,8 +163,8 @@ export const taskRenderer: ToolRenderer = {
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">Prompt</span>
-              <Show when={agentLabel()}>
-                <span class="tool-call-task-section-meta">Agent: {agentLabel()}</span>
+              <Show when={headerMeta()}>
+                <span class="tool-call-task-section-meta">{headerMeta()}</span>
               </Show>
             </header>
             <div class="tool-call-task-section-body">
@@ -206,8 +228,8 @@ export const taskRenderer: ToolRenderer = {
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">Output</span>
-              <Show when={agentLabel()}>
-                <span class="tool-call-task-section-meta">Agent: {agentLabel()}</span>
+              <Show when={headerMeta()}>
+                <span class="tool-call-task-section-meta">{headerMeta()}</span>
               </Show>
             </header>
             <div class="tool-call-task-section-body">
