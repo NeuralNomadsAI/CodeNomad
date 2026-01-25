@@ -1,8 +1,8 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { instances } from "./instances"
 
-import { addRecentModelPreference, setAgentModelPreference } from "./preferences"
-import { sessions, withSession } from "./session-state"
+import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
+import { providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -10,6 +10,22 @@ import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 
 const log = getLogger("actions")
+
+function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
+  if (!model.providerId || !model.modelId) return []
+  const instanceProviders = providers().get(instanceId) || []
+  const provider = instanceProviders.find((p) => p.id === model.providerId)
+  const match = provider?.models.find((m) => m.id === model.modelId)
+  return match?.variantKeys ?? []
+}
+
+function getThinkingVariantToSend(instanceId: string, model: { providerId: string; modelId: string }): string | undefined {
+  const selected = getModelThinkingSelection(model)
+  if (!selected) return undefined
+  const keys = getVariantKeysForModel(instanceId, model)
+  if (keys.length === 0) return undefined
+  return keys.includes(selected) ? selected : undefined
+}
 
 const ID_LENGTH = 26
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -170,6 +186,12 @@ async function sendMessage(
           modelID: session.model.modelId,
         },
       }),
+    ...(session.model.providerId &&
+      session.model.modelId &&
+      (() => {
+        const variant = getThinkingVariantToSend(instanceId, session.model)
+        return variant ? { variant } : {}
+      })()),
   }
 
   log.info("sendMessage", {
@@ -215,6 +237,7 @@ async function executeCustomCommand(
     messageID: string
     agent?: string
     model?: string
+    variant?: string
   } = {
     command: commandName,
     arguments: args,
@@ -227,6 +250,8 @@ async function executeCustomCommand(
 
   if (session.model.providerId && session.model.modelId) {
     body.model = `${session.model.providerId}/${session.model.modelId}`
+    const variant = getThinkingVariantToSend(instanceId, session.model)
+    if (variant) body.variant = variant
   }
 
   await requestData(

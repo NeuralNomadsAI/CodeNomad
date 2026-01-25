@@ -163,7 +163,8 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            tauri::RunEvent::ExitRequested { .. } => {
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                api.prevent_exit();
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Some(state) = app.try_state::<AppState>() {
@@ -173,18 +174,18 @@ fn main() {
                 });
             }
             tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::Destroyed,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
-                if app_handle.webview_windows().len() <= 1 {
-                    let app = app_handle.clone();
-                    std::thread::spawn(move || {
-                        if let Some(state) = app.try_state::<AppState>() {
-                            let _ = state.manager.stop();
-                        }
-                        app.exit(0);
-                    });
-                }
+                // Ensure we have time to stop the CLI process before the app exits.
+                api.prevent_close();
+                let app = app_handle.clone();
+                std::thread::spawn(move || {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        let _ = state.manager.stop();
+                    }
+                    app.exit(0);
+                });
             }
             _ => {}
         });

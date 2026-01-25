@@ -177,8 +177,11 @@ export class CliProcessManager extends EventEmitter {
 
     return new Promise((resolve) => {
       const killTimeout = setTimeout(() => {
+        console.warn(
+          `[cli] stop timed out after 30000ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
+        )
         child.kill("SIGKILL")
-      }, 4000)
+      }, 30000)
 
       child.on("exit", () => {
         clearTimeout(killTimeout)
@@ -376,4 +379,3 @@ export class CliProcessManager extends EventEmitter {
     throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
   }
 }
-

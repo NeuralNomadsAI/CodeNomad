@@ -12,8 +12,8 @@ env:
 
 jobs:
   release-ui:
-    # Automated via reusable call (main releases); manual runs allowed on dev.
-    if: ${{ github.event_name == 'workflow_call' || github.ref == 'refs/heads/dev' }}
+    # Automated via reusable call (main releases); manual runs allowed on dev/main.
+    if: ${{ github.event_name == 'workflow_call' || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout

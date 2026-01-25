@@ -69,6 +69,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         if (!instance) return
         emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-agent-selector" })
       },
+      () => {
+        const instance = options.getActiveInstance()
+        if (!instance) return
+        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
+      },
     )
 
     registerEscapeShortcut(

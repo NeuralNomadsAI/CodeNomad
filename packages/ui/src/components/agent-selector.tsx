@@ -4,6 +4,7 @@ import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Agent } from "../types/session"
 import { getLogger } from "../lib/logger"
+import Kbd from "./kbd"
 const log = getLogger("session")
 
 
@@ -99,15 +100,20 @@ export default function AgentSelector(props: AgentSelectorProps) {
           data-agent-selector
           class="selector-trigger"
         >
-          <Select.Value<Agent>>
-            {(state) => (
-              <div class="selector-trigger-label">
-                <span class="selector-trigger-primary">
-                  Agent: {state.selectedOption()?.name ?? "None"}
-                </span>
-              </div>
-            )}
-          </Select.Value>
+          <div class="flex-1 min-w-0">
+            <Select.Value<Agent>>
+              {(state) => (
+                <div class="selector-trigger-label selector-trigger-label--stacked">
+                  <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                    Agent: {state.selectedOption()?.name ?? "None"}
+                  </span>
+                </div>
+              )}
+            </Select.Value>
+          </div>
+          <span class="selector-trigger-hint selector-trigger-hint--top" aria-hidden="true">
+            <Kbd shortcut="cmd+shift+a" />
+          </span>
           <Select.Icon class="selector-trigger-icon">
             <ChevronDown class="w-3 h-3" />
           </Select.Icon>

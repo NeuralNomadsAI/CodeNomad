@@ -1,6 +1,10 @@
 import { keyboardRegistry } from "../keyboard-registry"
 
-export function registerAgentShortcuts(focusModelSelector: () => void, openAgentSelector: () => void) {
+export function registerAgentShortcuts(
+  focusModelSelector: () => void,
+  openAgentSelector: () => void,
+  focusVariantSelector: () => void,
+) {
   const isMac = () => navigator.platform.toLowerCase().includes("mac")
 
   keyboardRegistry.register({
@@ -18,6 +22,15 @@ export function registerAgentShortcuts(focusModelSelector: () => void, openAgent
     modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
     handler: openAgentSelector,
     description: "open agent",
+    context: "global",
+  })
+
+  keyboardRegistry.register({
+    id: "focus-variant",
+    key: "T",
+    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    handler: focusVariantSelector,
+    description: "focus thinking",
     context: "global",
   })
 }

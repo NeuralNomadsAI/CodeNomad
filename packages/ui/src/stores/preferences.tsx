@@ -39,6 +39,7 @@ export interface Preferences {
   lastUsedBinary?: string
   environmentVariables: Record<string, string>
   modelRecents: ModelPreference[]
+  modelThinkingSelections: Record<string, string>
   diffViewMode: DiffViewMode
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
@@ -71,6 +72,7 @@ const defaultPreferences: Preferences = {
   showTimelineTools: true,
   environmentVariables: {},
   modelRecents: [],
+  modelThinkingSelections: {},
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
@@ -102,6 +104,11 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
   const sourceModelRecents = sanitized.modelRecents ?? defaultPreferences.modelRecents
   const modelRecents = sourceModelRecents.map((item) => ({ ...item }))
 
+  const modelThinkingSelections = {
+    ...defaultPreferences.modelThinkingSelections,
+    ...(sanitized.modelThinkingSelections ?? {}),
+  }
+
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultPreferences.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
@@ -109,6 +116,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     lastUsedBinary: sanitized.lastUsedBinary ?? defaultPreferences.lastUsedBinary,
     environmentVariables,
     modelRecents,
+    modelThinkingSelections,
     diffViewMode: sanitized.diffViewMode ?? defaultPreferences.diffViewMode,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultPreferences.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultPreferences.diagnosticsExpansion,
@@ -116,6 +124,35 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultPreferences.autoCleanupBlankSessions,
     listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
   }
+}
+
+function getModelKey(model: { providerId: string; modelId: string }): string {
+  return `${model.providerId}/${model.modelId}`
+}
+
+function getModelThinkingSelection(model: { providerId: string; modelId: string }): string | undefined {
+  if (!model.providerId || !model.modelId) return undefined
+  return preferences().modelThinkingSelections?.[getModelKey(model)]
+}
+
+function setModelThinkingSelection(model: { providerId: string; modelId: string }, value: string | undefined): void {
+  if (!model.providerId || !model.modelId) return
+  const key = getModelKey(model)
+  const current = preferences().modelThinkingSelections?.[key]
+  if (current === value) return
+
+  updateConfig((draft) => {
+    const selections = { ...(draft.preferences.modelThinkingSelections ?? {}) }
+    if (!value) {
+      delete selections[key]
+    } else {
+      selections[key] = value
+    }
+    draft.preferences = normalizePreferences({
+      ...draft.preferences,
+      modelThinkingSelections: selections,
+    })
+  })
 }
 
 const [internalConfig, setInternalConfig] = createSignal<ConfigData>(buildFallbackConfig())
@@ -527,6 +564,8 @@ export {
   addEnvironmentVariable,
   removeEnvironmentVariable,
   addRecentModelPreference,
+  getModelThinkingSelection,
+  setModelThinkingSelection,
   setAgentModelPreference,
   getAgentModelPreference,
   setDiffViewMode,
@@ -539,5 +578,4 @@ export {
   recordWorkspaceLaunch,
  }
  
-
 

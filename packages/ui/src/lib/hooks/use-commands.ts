@@ -375,6 +375,20 @@ export function useCommands(options: UseCommandsOptions) {
     })
 
     commandRegistry.register({
+      id: "open-variant-selector",
+      label: "Select Model Variant",
+      description: "Choose a thinking effort for the current model",
+      category: "Agent & Model",
+      keywords: ["variant", "thinking", "reasoning", "effort"],
+      shortcut: { key: "T", meta: true, shift: true },
+      action: () => {
+        const instance = activeInstance()
+        if (!instance) return
+        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
+      },
+    })
+
+    commandRegistry.register({
       id: "open-agent-selector",
       label: "Open Agent Selector",
       description: "Choose a different agent",

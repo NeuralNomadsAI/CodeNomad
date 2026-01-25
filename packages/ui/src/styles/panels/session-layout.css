@@ -115,29 +115,6 @@ session-sidebar-controls .selector-trigger-primary {
   @apply flex flex-col gap-1 w-full;
 }
 
-.sidebar-selector-hint {
-  @apply flex justify-center text-xs w-full;
-  color: var(--text-muted);
-}
-
-.sidebar-selector-hints {
-  @apply flex items-center gap-2 w-full;
-  justify-content: space-between;
-}
-
-.sidebar-selector-hint--left,
-.sidebar-selector-hint--right {
-  @apply flex-1;
-}
-
-.sidebar-selector-hint--left {
-  justify-content: flex-start;
-}
-
-.sidebar-selector-hint--right {
-  justify-content: flex-end;
-}
-
 .session-header-hints {
   @apply flex-shrink-0;
 }

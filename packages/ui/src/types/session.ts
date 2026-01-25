@@ -85,6 +85,7 @@ export interface Model {
   id: string
   name: string
   providerId: string
+  variantKeys?: string[]
   limit?: {
     context?: number
     output?: number

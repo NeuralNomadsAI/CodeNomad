@@ -1,4 +1,8 @@
-export type SessionSidebarRequestAction = "focus-agent-selector" | "focus-model-selector" | "show-session-list"
+export type SessionSidebarRequestAction =
+  | "focus-agent-selector"
+  | "focus-model-selector"
+  | "focus-variant-selector"
+  | "show-session-list"
 
 export interface SessionSidebarRequestDetail {
   instanceId: string

@@ -483,6 +483,7 @@ async function fetchProviders(instanceId: string): Promise<void> {
         providerId: provider.id,
         limit: model.limit,
         cost: model.cost,
+        variantKeys: Object.keys(model.variants ?? {}),
       })),
     }))
 

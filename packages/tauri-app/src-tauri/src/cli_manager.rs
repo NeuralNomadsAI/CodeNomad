@@ -34,6 +34,8 @@ fn workspace_root() -> Option<PathBuf> {
 
 const SESSION_COOKIE_NAME: &str = "codenomad_session";
 
+const CLI_STOP_GRACE_SECS: u64 = 30;
+
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
         let mut display = url.to_string();
@@ -276,6 +278,7 @@ impl CliProcessManager {
     pub fn stop(&self) -> anyhow::Result<()> {
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
+            log_line(&format!("stopping CLI pid={}", child.id()));
             #[cfg(unix)]
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGTERM);
@@ -290,7 +293,12 @@ impl CliProcessManager {
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => {
-                        if start.elapsed() > Duration::from_secs(4) {
+                        if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
+                            log_line(&format!(
+                                "stop timed out after {}s; sending SIGKILL pid={}",
+                                CLI_STOP_GRACE_SECS,
+                                child.id()
+                            ));
                             #[cfg(unix)]
                             unsafe {
                                 libc::kill(child.id() as i32, libc::SIGKILL);
