@@ -115,34 +115,6 @@ session-sidebar-controls .selector-trigger-primary {
   @apply flex flex-col gap-1 w-full;
 }
 
-.sidebar-selector-hint {
-  @apply flex justify-center text-xs w-full;
-  color: var(--text-muted);
-}
-
-.sidebar-selector-hints {
-  @apply grid gap-2 w-full;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.sidebar-selector-hint--left,
-.sidebar-selector-hint--center,
-.sidebar-selector-hint--right {
-  justify-content: center;
-}
-
-@media (max-width: 520px) {
-  .sidebar-selector-hints {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 360px) {
-  .sidebar-selector-hints {
-    grid-template-columns: 1fr;
-  }
-}
-
 .session-header-hints {
   @apply flex-shrink-0;
 }

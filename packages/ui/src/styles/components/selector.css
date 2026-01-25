@@ -27,6 +27,10 @@
   @apply items-start;
 }
 
+.selector-trigger-label--top {
+  @apply self-start;
+}
+
 .selector-trigger-primary {
   @apply text-sm font-medium truncate;
   color: var(--text-primary);
@@ -44,6 +48,15 @@
 .selector-trigger-icon {
   @apply flex-shrink-0;
   color: var(--text-muted);
+}
+
+.selector-trigger-hint {
+  @apply flex-shrink-0;
+  color: var(--text-muted);
+}
+
+.selector-trigger-hint--top {
+  @apply self-start mt-0.5;
 }
 
 .selector-popover {

@@ -4,6 +4,7 @@ import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Model } from "../types/session"
 import { getLogger } from "../lib/logger"
+import Kbd from "./kbd"
 const log = getLogger("session")
 
 
@@ -105,7 +106,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
             ref={triggerRef}
             class="selector-trigger"
           >
-            <div class="selector-trigger-label selector-trigger-label--stacked">
+            <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 Model: {currentModelValue()?.name ?? "None"}
               </span>
@@ -115,6 +116,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 </span>
               )}
             </div>
+            <span class="selector-trigger-hint selector-trigger-hint--top" aria-hidden="true">
+              <Kbd shortcut="cmd+shift+m" />
+            </span>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
             </Combobox.Icon>

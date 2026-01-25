@@ -48,6 +48,7 @@ import { clearSessionRenderCache } from "../message-block"
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
 import SessionList from "../session-list"
 import KeyboardHint from "../keyboard-hint"
+import Kbd from "../kbd"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import InstanceServiceStatus from "../instance-service-status"
@@ -57,7 +58,6 @@ import ThinkingSelector from "../thinking-selector"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
-import Kbd from "../kbd"
 import { TodoListView } from "../tool-call/renderers/todo"
 import ContextUsagePanel from "../session/context-usage-panel"
 import SessionView from "../session/session-view"
@@ -914,18 +914,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   currentAgent={activeSession().agent}
                   onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
                 />
-
-                <div class="sidebar-selector-hints" aria-hidden="true">
-                  <span class="hint sidebar-selector-hint sidebar-selector-hint--left">
-                    <Kbd shortcut="cmd+shift+a" />
-                  </span>
-                  <span class="hint sidebar-selector-hint sidebar-selector-hint--center">
-                    <Kbd shortcut="cmd+shift+m" />
-                  </span>
-                  <span class="hint sidebar-selector-hint sidebar-selector-hint--right">
-                    <Kbd shortcut="cmd+shift+t" />
-                  </span>
-                </div>
 
                 <ModelSelector
                   instanceId={props.instance.id}
