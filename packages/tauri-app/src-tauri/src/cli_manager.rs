@@ -278,6 +278,7 @@ impl CliProcessManager {
     pub fn stop(&self) -> anyhow::Result<()> {
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
+            log_line(&format!("stopping CLI pid={}", child.id()));
             #[cfg(unix)]
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGTERM);
@@ -293,6 +294,11 @@ impl CliProcessManager {
                     Ok(Some(_)) => break,
                     Ok(None) => {
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
+                            log_line(&format!(
+                                "stop timed out after {}s; sending SIGKILL pid={}",
+                                CLI_STOP_GRACE_SECS,
+                                child.id()
+                            ));
                             #[cfg(unix)]
                             unsafe {
                                 libc::kill(child.id() as i32, libc::SIGKILL);

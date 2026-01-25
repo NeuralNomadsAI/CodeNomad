@@ -177,6 +177,9 @@ export class CliProcessManager extends EventEmitter {
 
     return new Promise((resolve) => {
       const killTimeout = setTimeout(() => {
+        console.warn(
+          `[cli] stop timed out after 30000ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
+        )
         child.kill("SIGKILL")
       }, 30000)
 
