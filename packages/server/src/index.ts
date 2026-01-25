@@ -286,21 +286,33 @@ async function main() {
       return
     }
     shuttingDown = true
-    logger.info("Received shutdown signal, closing server")
-    try {
-      await server.stop()
-      logger.info("HTTP server stopped")
-    } catch (error) {
-      logger.error({ err: error }, "Failed to stop HTTP server")
-    }
+    logger.info("Received shutdown signal, stopping workspaces and server")
 
-    try {
-      instanceEventBridge.shutdown()
-      await workspaceManager.shutdown()
-      logger.info("Workspace manager shutdown complete")
-    } catch (error) {
-      logger.error({ err: error }, "Workspace manager shutdown failed")
-    }
+    const shutdownWorkspaces = (async () => {
+      try {
+        instanceEventBridge.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "Instance event bridge shutdown failed")
+      }
+
+      try {
+        await workspaceManager.shutdown()
+        logger.info("Workspace manager shutdown complete")
+      } catch (error) {
+        logger.error({ err: error }, "Workspace manager shutdown failed")
+      }
+    })()
+
+    const shutdownHttp = (async () => {
+      try {
+        await server.stop()
+        logger.info("HTTP server stopped")
+      } catch (error) {
+        logger.error({ err: error }, "Failed to stop HTTP server")
+      }
+    })()
+
+    await Promise.allSettled([shutdownWorkspaces, shutdownHttp])
 
     // no-op: remote UI manifest replaces GitHub release monitor
 

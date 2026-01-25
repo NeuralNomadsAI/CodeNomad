@@ -187,16 +187,27 @@ export class WorkspaceManager {
 
   async shutdown() {
     this.options.logger.info("Shutting down all workspaces")
+
+    const stopTasks: Array<Promise<void>> = []
+
     for (const [id, workspace] of this.workspaces) {
-      if (workspace.pid) {
-        this.options.logger.info({ workspaceId: id }, "Stopping workspace during shutdown")
-        await this.runtime.stop(id).catch((error) => {
-          this.options.logger.error({ workspaceId: id, err: error }, "Failed to stop workspace during shutdown")
-        })
-      } else {
+      if (!workspace.pid) {
         this.options.logger.debug({ workspaceId: id }, "Workspace already stopped")
+        continue
       }
+
+      this.options.logger.info({ workspaceId: id }, "Stopping workspace during shutdown")
+      stopTasks.push(
+        this.runtime.stop(id).catch((error) => {
+          this.options.logger.error({ workspaceId: id, err: error }, "Failed to stop workspace during shutdown")
+        }),
+      )
     }
+
+    if (stopTasks.length > 0) {
+      await Promise.allSettled(stopTasks)
+    }
+
     this.workspaces.clear()
     this.opencodeAuth.clear()
     this.options.logger.info("All workspaces cleared")
