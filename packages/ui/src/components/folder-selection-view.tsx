@@ -1,5 +1,5 @@
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -7,6 +7,8 @@ import Kbd from "./kbd"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
+import { githubStars } from "../stores/github-stars"
+import { formatCompactCount } from "../lib/formatters"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -282,6 +284,23 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 }}
               >
                 <GitHubMarkIcon class="w-4 h-4" />
+              </a>
+              <a
+                href="https://github.com/NeuralNomadsAI/CodeNomad"
+                target="_blank"
+                rel="noreferrer"
+                class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
+                aria-label="CodeNomad GitHub Stars"
+                title="CodeNomad GitHub Stars"
+                onClick={(event) => {
+                  event.preventDefault()
+                  openExternalLink("https://github.com/NeuralNomadsAI/CodeNomad")
+                }}
+              >
+                <Star class="w-4 h-4" />
+                <Show when={githubStars() !== null}>
+                  <span class="text-xs font-medium">{formatCompactCount(githubStars()!)}</span>
+                </Show>
               </a>
               <a
                 href="https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"

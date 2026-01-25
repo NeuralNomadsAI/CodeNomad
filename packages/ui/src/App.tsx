@@ -10,6 +10,7 @@ import InstanceShell from "./components/instance/instance-shell2"
 import { RemoteAccessOverlay } from "./components/remote-access-overlay"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { initMarkdown } from "./lib/markdown"
+import { initGithubStars } from "./stores/github-stars"
 
 import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
@@ -94,6 +95,7 @@ const App: Component = () => {
   })
 
   onMount(() => {
+    void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
