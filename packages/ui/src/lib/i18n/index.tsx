@@ -1,9 +1,11 @@
-import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, onCleanup, onMount, useContext } from "solid-js"
 import type { ParentComponent } from "solid-js"
 import { useConfig } from "../../stores/preferences"
-import { enMessages } from "./messages/en"
+import { enMessages } from "./messages/en/index"
 
 type Messages = Record<string, string>
+
+export type TranslateParams = Record<string, unknown>
 
 export type Locale = "en"
 
@@ -57,9 +59,25 @@ function interpolate(template: string, params?: Record<string, unknown>): string
   })
 }
 
+function translateFrom(messages: Messages, key: string, params?: TranslateParams): string {
+  const current = messages[key]
+  const fallback = enMessages[key as keyof typeof enMessages]
+  const template = current ?? fallback ?? key
+  return interpolate(template, params)
+}
+
+const [globalRevision, setGlobalRevision] = createSignal(0)
+const initialGlobalLocale: Locale = detectNavigatorLocale() ?? "en"
+let globalMessages: Messages = messagesByLocale[initialGlobalLocale]
+
+export function tGlobal(key: string, params?: TranslateParams): string {
+  globalRevision()
+  return translateFrom(globalMessages, key, params)
+}
+
 export interface I18nContextValue {
   locale: () => Locale
-  t: (key: string, params?: Record<string, unknown>) => string
+  t: (key: string, params?: TranslateParams) => string
 }
 
 const I18nContext = createContext<I18nContextValue>()
@@ -67,6 +85,8 @@ const I18nContext = createContext<I18nContextValue>()
 export const I18nProvider: ParentComponent = (props) => {
   const { preferences } = useConfig()
   const [detectedLocale, setDetectedLocale] = createSignal<Locale>("en")
+
+  const previousMessages = globalMessages
 
   onMount(() => {
     const detected = detectNavigatorLocale()
@@ -80,12 +100,19 @@ export const I18nProvider: ParentComponent = (props) => {
 
   const messages = createMemo<Messages>(() => messagesByLocale[locale()])
 
-  function t(key: string, params?: Record<string, unknown>): string {
-    const current = messages()[key]
-    const fallback = enMessages[key as keyof typeof enMessages]
-    const template = current ?? fallback ?? key
-    return interpolate(template, params)
+  function t(key: string, params?: TranslateParams): string {
+    return translateFrom(messages(), key, params)
   }
+
+  createEffect(() => {
+    globalMessages = messages()
+    setGlobalRevision((value) => value + 1)
+  })
+
+  onCleanup(() => {
+    globalMessages = previousMessages
+    setGlobalRevision((value) => value + 1)
+  })
 
   const value: I18nContextValue = {
     locale,

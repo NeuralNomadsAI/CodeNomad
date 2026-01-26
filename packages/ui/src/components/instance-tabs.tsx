@@ -4,6 +4,7 @@ import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
 import { Plus, MonitorUp } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
+import { useI18n } from "../lib/i18n"
 
 interface InstanceTabsProps {
   instances: Map<string, Instance>
@@ -15,6 +16,7 @@ interface InstanceTabsProps {
 }
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
+  const { t } = useI18n()
   return (
     <div class="tab-bar tab-bar-instance">
       <div class="tab-container" role="tablist">
@@ -34,8 +36,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <button
                 class="new-tab-button"
                 onClick={props.onNew}
-                title="New instance (Cmd/Ctrl+N)"
-                aria-label="New instance"
+                title={t("instanceTabs.new.title")}
+                aria-label={t("instanceTabs.new.ariaLabel")}
               >
                 <Plus class="w-4 h-4" />
               </button>
@@ -54,8 +56,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <button
                 class="new-tab-button tab-remote-button"
                 onClick={() => props.onOpenRemoteAccess?.()}
-                title="Remote connect"
-                aria-label="Remote connect"
+                title={t("instanceTabs.remote.title")}
+                aria-label={t("instanceTabs.remote.ariaLabel")}
               >
                 <MonitorUp class="w-4 h-4" />
               </button>

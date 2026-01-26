@@ -1,6 +1,7 @@
 import { marked } from "marked"
 import { createHighlighter, type Highlighter, bundledLanguages } from "shiki/bundle/full"
 import { getLogger } from "./logger"
+import { tGlobal } from "./i18n"
 
 const log = getLogger("actions")
 
@@ -259,19 +260,20 @@ function setupRenderer(isDark: boolean) {
     // Use "text" as default when no language is specified
     const resolvedLang = lang && lang.trim() ? lang.trim() : "text"
     const escapedLang = escapeHtml(resolvedLang)
+    const copyLabel = escapeHtml(tGlobal("markdown.copy"))
 
     const header = `
-<div class="code-block-header">
-  <span class="code-block-language">${escapedLang}</span>
-  <button class="code-block-copy" data-code="${encodedCode}">
+ <div class="code-block-header">
+   <span class="code-block-language">${escapedLang}</span>
+   <button class="code-block-copy" data-code="${encodedCode}">
     <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-    </svg>
-    <span class="copy-text">Copy</span>
-  </button>
-</div>
-`.trim()
+     </svg>
+    <span class="copy-text">${copyLabel}</span>
+   </button>
+ </div>
+ `.trim()
 
     if (highlightSuppressed) {
       return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre></div>`

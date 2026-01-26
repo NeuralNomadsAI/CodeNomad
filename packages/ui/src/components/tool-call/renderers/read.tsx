@@ -1,9 +1,10 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromPath, readToolStatePayload } from "../utils"
+import { tGlobal } from "../../../lib/i18n"
 
 export const readRenderer: ToolRenderer = {
   tools: ["read"],
-  getAction: () => "Reading file...",
+  getAction: () => tGlobal("toolCall.renderer.action.readingFile"),
   getTitle({ toolState }) {
     const state = toolState()
     if (!state) return undefined
@@ -15,11 +16,11 @@ export const readRenderer: ToolRenderer = {
     const detailParts: string[] = []
 
     if (typeof offset === "number") {
-      detailParts.push(`Offset: ${offset}`)
+      detailParts.push(tGlobal("toolCall.renderer.read.detail.offset", { offset }))
     }
 
     if (typeof limit === "number") {
-      detailParts.push(`Limit: ${limit}`)
+      detailParts.push(tGlobal("toolCall.renderer.read.detail.limit", { limit }))
     }
 
     const baseTitle = relativePath ? `${getToolName("read")} ${relativePath}` : getToolName("read")

@@ -4,6 +4,7 @@ import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
+import { useI18n } from "../lib/i18n"
 
 const log = getLogger("session")
 
@@ -34,6 +35,7 @@ interface MarkdownProps {
 }
 
 export function Markdown(props: MarkdownProps) {
+  const { t } = useI18n()
   const [html, setHtml] = createSignal("")
   let containerRef: HTMLDivElement | undefined
   let latestRequestedText = ""
@@ -145,14 +147,14 @@ export function Markdown(props: MarkdownProps) {
           const copyText = copyButton.querySelector(".copy-text")
           if (copyText) {
             if (success) {
-              copyText.textContent = "Copied!"
+              copyText.textContent = t("markdown.codeBlock.copy.copied")
               setTimeout(() => {
-                copyText.textContent = "Copy"
+                copyText.textContent = t("markdown.codeBlock.copy.label")
               }, 2000)
             } else {
-              copyText.textContent = "Failed"
+              copyText.textContent = t("markdown.codeBlock.copy.failed")
               setTimeout(() => {
-                copyText.textContent = "Copy"
+                copyText.textContent = t("markdown.codeBlock.copy.label")
               }, 2000)
             }
           }

@@ -1,8 +1,10 @@
 import { Show, createEffect, createSignal } from "solid-js"
 import type { ServerMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
+import { useI18n } from "../lib/i18n"
 
 export default function VersionPill() {
+  const { t } = useI18n()
   const [meta, setMeta] = createSignal<ServerMeta | null>(null)
 
   createEffect(() => {
@@ -15,11 +17,13 @@ export default function VersionPill() {
   const uiVersion = () => meta()?.ui?.version
   const uiSource = () => meta()?.ui?.source
 
+  const uiLabel = () => (uiVersion() ? t("versionPill.uiWithVersion", { version: uiVersion() }) : t("versionPill.ui"))
+
   return (
     <Show when={serverVersion() || uiVersion() || uiSource()}>
       <div class="text-[11px] text-muted whitespace-nowrap">
         <Show when={serverVersion()}>
-          {(v) => <span>App {v()}</span>}
+          {(v) => <span>{t("versionPill.appWithVersion", { version: v() })}</span>}
         </Show>
         <Show when={uiVersion() || uiSource()}>
           <>
@@ -27,8 +31,8 @@ export default function VersionPill() {
               <span class="mx-2">·</span>
             </Show>
             <span>
-              UI{uiVersion() ? ` ${uiVersion()}` : ""}
-              <Show when={uiSource()}>{(s) => <span class="opacity-70"> ({s()})</span>}</Show>
+              {uiLabel()}
+              <Show when={uiSource()}>{(s) => <span class="opacity-70">{t("versionPill.source", { source: s() })}</span>}</Show>
             </span>
           </>
         </Show>

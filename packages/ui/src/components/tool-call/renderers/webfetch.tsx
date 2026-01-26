@@ -1,9 +1,10 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, formatUnknown, getToolName, readToolStatePayload } from "../utils"
+import { tGlobal } from "../../../lib/i18n"
 
 export const webfetchRenderer: ToolRenderer = {
   tools: ["webfetch"],
-  getAction: () => "Fetching from the web...",
+  getAction: () => tGlobal("toolCall.renderer.action.fetchingFromWeb"),
   getTitle({ toolState }) {
     const state = toolState()
     if (!state) return undefined

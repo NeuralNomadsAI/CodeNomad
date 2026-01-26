@@ -2,6 +2,7 @@ import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, c
 import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import InstanceInfo from "./instance-info"
+import { useI18n } from "../lib/i18n"
 
 interface InfoViewProps {
   instanceId: string
@@ -10,6 +11,7 @@ interface InfoViewProps {
 const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean }>()
 
 const InfoView: Component<InfoViewProps> = (props) => {
+  const { t } = useI18n()
   let scrollRef: HTMLDivElement | undefined
   const savedState = logsScrollState.get(props.instanceId)
   const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? false)
@@ -90,18 +92,18 @@ const InfoView: Component<InfoViewProps> = (props) => {
 
         <div class="panel flex-1 flex flex-col min-h-0 overflow-hidden">
           <div class="log-header">
-            <h2 class="panel-title">Server Logs</h2>
+            <h2 class="panel-title">{t("infoView.logs.title")}</h2>
             <div class="flex items-center gap-2">
               <Show
                 when={streamingEnabled()}
                 fallback={
                   <button type="button" class="button-tertiary" onClick={handleEnableLogs}>
-                    Show server logs
+                    {t("infoView.logs.actions.show")}
                   </button>
                 }
               >
                 <button type="button" class="button-tertiary" onClick={handleDisableLogs}>
-                  Hide server logs
+                  {t("infoView.logs.actions.hide")}
                 </button>
               </Show>
             </div>
@@ -116,17 +118,17 @@ const InfoView: Component<InfoViewProps> = (props) => {
               when={streamingEnabled()}
               fallback={
                 <div class="log-paused-state">
-                  <p class="log-paused-title">Server logs are paused</p>
-                  <p class="log-paused-description">Enable streaming to watch your OpenCode server activity.</p>
+                  <p class="log-paused-title">{t("infoView.logs.paused.title")}</p>
+                  <p class="log-paused-description">{t("infoView.logs.paused.description")}</p>
                   <button type="button" class="button-primary" onClick={handleEnableLogs}>
-                    Show server logs
+                    {t("infoView.logs.actions.show")}
                   </button>
                 </div>
               }
             >
               <Show
                 when={logs().length > 0}
-                fallback={<div class="log-empty-state">Waiting for server output...</div>}
+                fallback={<div class="log-empty-state">{t("infoView.logs.empty.waiting")}</div>}
               >
                 <For each={logs()}>
                   {(entry) => (
@@ -148,7 +150,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
               class="scroll-to-bottom"
             >
               <ChevronDown class="w-4 h-4" />
-              Scroll to bottom
+              {t("infoView.logs.scrollToBottom")}
             </button>
           </Show>
         </div>

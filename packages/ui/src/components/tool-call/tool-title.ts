@@ -1,6 +1,7 @@
 import type { ToolState } from "@opencode-ai/sdk"
 import type { ToolRendererContext, ToolRenderer, ToolCallPart } from "./types"
 import { getDefaultToolAction, getToolName, isToolStateCompleted, isToolStateRunning } from "./utils"
+import { enMessages } from "../../lib/i18n/messages/en"
 import { defaultRenderer } from "./renderers/default"
 import { bashRenderer } from "./renderers/bash"
 import { readRenderer } from "./renderers/read"
@@ -43,12 +44,28 @@ function createStaticToolPart(snapshot: TitleSnapshot): ToolCallPart {
   } as ToolCallPart
 }
 
+function interpolate(template: string, params?: Record<string, unknown>): string {
+  if (!params) return template
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) => {
+    const value = params[key]
+    return value === undefined || value === null ? "" : String(value)
+  })
+}
+
+function createStaticT(): ToolRendererContext["t"] {
+  return (key, params) => {
+    const template = (enMessages as Record<string, string>)[key] ?? key
+    return interpolate(template, params)
+  }
+}
+
 function createStaticContext(snapshot: TitleSnapshot): ToolRendererContext {
   const toolStateAccessor = () => snapshot.state
   const toolNameAccessor = () => snapshot.toolName
   const toolCallAccessor = () => createStaticToolPart(snapshot)
   const messageVersionAccessor = () => undefined
   const partVersionAccessor = () => undefined
+  const t = createStaticT()
   const renderMarkdown: ToolRendererContext["renderMarkdown"] = () => null
   const renderAnsi: ToolRendererContext["renderAnsi"] = () => null
   const renderDiff: ToolRendererContext["renderDiff"] = () => null
@@ -57,6 +74,7 @@ function createStaticContext(snapshot: TitleSnapshot): ToolRendererContext {
     toolCall: toolCallAccessor,
     toolState: toolStateAccessor,
     toolName: toolNameAccessor,
+    t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown,

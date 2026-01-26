@@ -8,6 +8,7 @@ import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("session")
 
@@ -650,12 +651,12 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
 
   if (fetchIfNeeded) {
     const confirmed = await showConfirmDialog(
-      "This cleanup may be slow, and may delete sessions you didn't intend to delete. Are you sure?",
+      tGlobal("sessionState.cleanup.deepConfirm.message"),
       {
-        title: "Deep Clean Sessions",
-        detail: "Deep Clean Sessions will delete all sessions that have no messages, remove any finished sub-agent sessions, and clear out any unused forks of a session.",
-        confirmLabel: "Continue",
-        cancelLabel: "Cancel"
+        title: tGlobal("sessionState.cleanup.deepConfirm.title"),
+        detail: tGlobal("sessionState.cleanup.deepConfirm.detail"),
+        confirmLabel: tGlobal("sessionState.cleanup.deepConfirm.confirmLabel"),
+        cancelLabel: tGlobal("sessionState.cleanup.deepConfirm.cancelLabel"),
       }
     )
     if (!confirmed) return
@@ -680,7 +681,9 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
 
     if (deletedCount > 0) {
       showToastNotification({
-        message: `Cleaned up ${deletedCount} blank session${deletedCount === 1 ? "" : "s"}`,
+        message: deletedCount === 1
+          ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
+          : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
         variant: "info"
       })
     }

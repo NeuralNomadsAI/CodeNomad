@@ -67,6 +67,7 @@ import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
+import { useI18n } from "../../lib/i18n"
 import {
   SESSION_SIDEBAR_EVENT,
   type SessionSidebarRequestAction,
@@ -121,6 +122,8 @@ function persistPinState(side: "left" | "right", value: boolean) {
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
+  const { t } = useI18n()
+
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
   const [rightDrawerWidth, setRightDrawerWidth] = createSignal(RIGHT_DRAWER_WIDTH)
   const [leftPinned, setLeftPinned] = createSignal(true)
@@ -355,6 +358,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (status === "connecting") return "connecting"
     if (status === "connected") return "connected"
     return "disconnected"
+  }
+
+  const connectionStatusLabel = () => {
+    const status = connectionStatus()
+    if (status === "connected") return t("instanceShell.connection.connected")
+    if (status === "connecting") return t("instanceShell.connection.connecting")
+    if (status === "error" || status === "disconnected") return t("instanceShell.connection.disconnected")
+    return t("instanceShell.connection.unknown")
   }
 
   const handleCommandPaletteClick = () => {
@@ -716,16 +727,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const leftAppBarButtonLabel = () => {
     const state = leftDrawerState()
-    if (state === "pinned") return "Left drawer pinned"
-    if (state === "floating-closed") return "Open left drawer"
-    return "Close left drawer"
+    if (state === "pinned") return t("instanceShell.leftDrawer.toggle.pinned")
+    if (state === "floating-closed") return t("instanceShell.leftDrawer.toggle.open")
+    return t("instanceShell.leftDrawer.toggle.close")
   }
 
   const rightAppBarButtonLabel = () => {
     const state = rightDrawerState()
-    if (state === "pinned") return "Right drawer pinned"
-    if (state === "floating-closed") return "Open right drawer"
-    return "Close right drawer"
+    if (state === "pinned") return t("instanceShell.rightDrawer.toggle.pinned")
+    if (state === "floating-closed") return t("instanceShell.rightDrawer.toggle.open")
+    return t("instanceShell.rightDrawer.toggle.close")
   }
 
   const leftAppBarButtonIcon = () => {
@@ -855,7 +866,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     <div class="flex flex-col h-full min-h-0" ref={setLeftDrawerContentEl}>
       <div class="flex items-start justify-between gap-2 px-4 py-3 border-b border-base">
         <div class="flex flex-col gap-1">
-          <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">Sessions</span>
+          <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
+            {t("instanceShell.leftPanel.sessionsTitle")}
+          </span>
           <div class="session-sidebar-shortcuts">
             <Show when={keyboardShortcuts().length}>
               <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
@@ -866,8 +879,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           <IconButton
             size="small"
             color="inherit"
-            aria-label="Instance Info"
-            title="Instance Info"
+            aria-label={t("instanceShell.leftPanel.instanceInfo")}
+            title={t("instanceShell.leftPanel.instanceInfo")}
             onClick={() => handleSessionSelect("info")}
           >
             <InfoOutlinedIcon fontSize="small" />
@@ -876,7 +889,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             <IconButton
               size="small"
               color="inherit"
-              aria-label={leftPinned() ? "Unpin left drawer" : "Pin left drawer"}
+              aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
               onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
             >
               {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
@@ -935,19 +948,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const renderPlanSectionContent = () => {
       const sessionId = activeSessionIdForInstance()
       if (!sessionId || sessionId === "info") {
-        return <p class="text-xs text-secondary">Select a session to view plan.</p>
+        return <p class="text-xs text-secondary">{t("instanceShell.plan.noSessionSelected")}</p>
       }
       const todoState = latestTodoState()
       if (!todoState) {
-        return <p class="text-xs text-secondary">Nothing planned yet.</p>
+        return <p class="text-xs text-secondary">{t("instanceShell.plan.empty")}</p>
       }
-      return <TodoListView state={todoState} emptyLabel="Nothing planned yet." showStatusLabel={false} />
+      return <TodoListView state={todoState} emptyLabel={t("instanceShell.plan.empty")} showStatusLabel={false} />
     }
 
     const renderBackgroundProcesses = () => {
       const processes = backgroundProcessList()
       if (processes.length === 0) {
-        return <p class="text-xs text-secondary">No background processes.</p>
+        return <p class="text-xs text-secondary">{t("instanceShell.backgroundProcesses.empty")}</p>
       }
 
       return (
@@ -958,9 +971,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <div class="flex flex-col gap-1">
                   <span class="text-xs font-semibold text-primary">{process.title}</span>
                   <div class="flex flex-wrap gap-2 text-[11px] text-secondary">
-                    <span>Status: {process.status}</span>
+                    <span>{t("instanceShell.backgroundProcesses.status", { status: process.status })}</span>
                     <Show when={typeof process.outputSizeBytes === "number"}>
-                      <span>Output: {Math.round((process.outputSizeBytes ?? 0) / 1024)}KB</span>
+                      <span>
+                        {t("instanceShell.backgroundProcesses.output", {
+                          sizeKb: Math.round((process.outputSizeBytes ?? 0) / 1024),
+                        })}
+                      </span>
                     </Show>
                   </div>
                 </div>
@@ -969,8 +986,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     type="button"
                     class="button-tertiary w-full p-1 inline-flex items-center justify-center"
                     onClick={() => openBackgroundOutput(process)}
-                    aria-label="Output"
-                    title="Output"
+                    aria-label={t("instanceShell.backgroundProcesses.actions.output")}
+                    title={t("instanceShell.backgroundProcesses.actions.output")}
                   >
                     <TerminalSquare class="h-4 w-4" />
                   </button>
@@ -979,8 +996,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     class="button-tertiary w-full p-1 inline-flex items-center justify-center"
                     disabled={process.status !== "running"}
                     onClick={() => stopBackgroundProcess(process.id)}
-                    aria-label="Stop"
-                    title="Stop"
+                    aria-label={t("instanceShell.backgroundProcesses.actions.stop")}
+                    title={t("instanceShell.backgroundProcesses.actions.stop")}
                   >
                     <XOctagon class="h-4 w-4" />
                   </button>
@@ -988,8 +1005,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     type="button"
                     class="button-tertiary w-full p-1 inline-flex items-center justify-center"
                     onClick={() => terminateBackgroundProcess(process.id)}
-                    aria-label="Terminate"
-                    title="Terminate"
+                    aria-label={t("instanceShell.backgroundProcesses.actions.terminate")}
+                    title={t("instanceShell.backgroundProcesses.actions.terminate")}
                   >
                     <Trash2 class="h-4 w-4" />
                   </button>
@@ -1004,17 +1021,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sections = [
       {
         id: "plan",
-        label: "Plan",
+        labelKey: "instanceShell.rightPanel.sections.plan",
         render: renderPlanSectionContent,
       },
       {
         id: "background-processes",
-        label: "Background Shells",
+        labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
         render: renderBackgroundProcesses,
       },
       {
         id: "mcp",
-        label: "MCP Servers",
+        labelKey: "instanceShell.rightPanel.sections.mcp",
         render: () => (
           <InstanceServiceStatus
             initialInstance={props.instance}
@@ -1026,7 +1043,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       },
       {
         id: "lsp",
-        label: "LSP Servers",
+        labelKey: "instanceShell.rightPanel.sections.lsp",
         render: () => (
           <InstanceServiceStatus
             initialInstance={props.instance}
@@ -1038,7 +1055,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       },
       {
         id: "plugins",
-        label: "Plugins",
+        labelKey: "instanceShell.rightPanel.sections.plugins",
         render: () => (
           <InstanceServiceStatus
             initialInstance={props.instance}
@@ -1066,14 +1083,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
         <div class="flex items-center justify-between px-4 py-2 border-b border-base">
           <Typography variant="subtitle2" class="uppercase tracking-wide text-xs font-semibold">
-            Status Panel
+            {t("instanceShell.rightPanel.title")}
           </Typography>
           <div class="flex items-center gap-2">
             <Show when={!isPhoneLayout()}>
               <IconButton
                 size="small"
                 color="inherit"
-                aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
+                aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
                 onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
               >
                 {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
@@ -1097,7 +1114,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 >
                   <Accordion.Header>
                     <Accordion.Trigger class="w-full flex items-center justify-between gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">
-                      <span>{section.label}</span>
+                      <span>{t(section.labelKey)}</span>
                       <ChevronDown
                         class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
                       />
@@ -1274,17 +1291,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       type="button"
                       class="connection-status-button px-2 py-0.5 text-xs"
                       onClick={handleCommandPaletteClick}
-                      aria-label="Open command palette"
+                      aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                       style={{ flex: "0 0 auto", width: "auto" }}
                     >
-                      Command Palette
+                      {t("instanceShell.commandPalette.button")}
                     </button>
                     <span class="connection-status-shortcut-hint">
                       <Kbd shortcut="cmd+shift+p" />
                     </span>
                     <span
                       class={`status-indicator ${connectionStatusClass()}`}
-                      aria-label={`Connection ${connectionStatus()}`}
+                      aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
                     >
                       <span class="status-dot" />
                     </span>
@@ -1307,11 +1324,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
                 <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
                   <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
+                    <span class="uppercase text-[10px] tracking-wide text-primary/70">
+                      {t("instanceShell.metrics.usedLabel")}
+                    </span>
                     <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
                   </div>
                   <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
+                    <span class="uppercase text-[10px] tracking-wide text-primary/70">
+                      {t("instanceShell.metrics.availableLabel")}
+                    </span>
                     <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
                   </div>
                 </div>
@@ -1333,11 +1354,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
               <Show when={!showingInfoView()}>
                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                  <span class="uppercase text-[10px] tracking-wide text-primary/70">Used</span>
+                  <span class="uppercase text-[10px] tracking-wide text-primary/70">
+                    {t("instanceShell.metrics.usedLabel")}
+                  </span>
                   <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
                 </div>
                 <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                  <span class="uppercase text-[10px] tracking-wide text-primary/70">Avail</span>
+                  <span class="uppercase text-[10px] tracking-wide text-primary/70">
+                    {t("instanceShell.metrics.availableLabel")}
+                  </span>
                   <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
                 </div>
               </Show>
@@ -1353,10 +1378,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 type="button"
                 class="connection-status-button px-2 py-0.5 text-xs"
                 onClick={handleCommandPaletteClick}
-                aria-label="Open command palette"
+                aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                 style={{ flex: "0 0 auto", width: "auto" }}
               >
-                Command Palette
+                {t("instanceShell.commandPalette.button")}
               </button>
               <span class="connection-status-shortcut-hint">
                 <Kbd shortcut="cmd+shift+p" />
@@ -1371,19 +1396,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <Show when={connectionStatus() === "connected"}>
                   <span class="status-indicator connected">
                     <span class="status-dot" />
-                    <span class="status-text">Connected</span>
+                    <span class="status-text">{t("instanceShell.connection.connected")}</span>
                   </span>
                 </Show>
                 <Show when={connectionStatus() === "connecting"}>
                   <span class="status-indicator connecting">
                     <span class="status-dot" />
-                    <span class="status-text">Connecting...</span>
+                    <span class="status-text">{t("instanceShell.connection.connecting")}</span>
                   </span>
                 </Show>
                 <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
                   <span class="status-indicator disconnected">
                     <span class="status-dot" />
-                    <span class="status-text">Disconnected</span>
+                    <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                   </span>
                 </Show>
               </div>
@@ -1419,8 +1444,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 fallback={
                   <div class="flex items-center justify-center h-full">
                     <div class="text-center text-gray-500 dark:text-gray-400">
-                      <p class="mb-2">No session selected</p>
-                      <p class="text-sm">Select a session to view messages</p>
+                      <p class="mb-2">{t("instanceShell.empty.title")}</p>
+                      <p class="text-sm">{t("instanceShell.empty.description")}</p>
                     </div>
                   </div>
                 }

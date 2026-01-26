@@ -4,6 +4,7 @@ import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
 import FileSystemBrowserDialog from "./filesystem-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")
 
@@ -23,6 +24,7 @@ interface OpenCodeBinarySelectorProps {
 }
 
 const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) => {
+  const { t } = useI18n()
   const {
     opencodeBinaries,
     addOpenCodeBinary,
@@ -103,7 +105,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     }
 
     if (validatingPaths().has(path)) {
-      return { valid: false, error: "Already validating" }
+      return { valid: false, error: t("opencodeBinarySelector.validation.alreadyValidating") }
     }
 
     try {
@@ -139,7 +141,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     setValidationError(null)
     if (nativeDialogsAvailable) {
       const selected = await openNativeFileDialog({
-        title: "Select OpenCode Binary",
+        title: t("opencodeBinarySelector.dialog.title"),
       })
       if (selected) {
         setCustomPath(selected)
@@ -160,7 +162,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       setCustomPath("")
       setValidationError(null)
     } else {
-      setValidationError(validation.error || "Invalid OpenCode binary")
+      setValidationError(validation.error || t("opencodeBinarySelector.validation.invalidBinary"))
     }
   }
  
@@ -202,14 +204,14 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     const hours = Math.floor(minutes / 60)
     const days = Math.floor(hours / 24)
 
-    if (days > 0) return `${days}d ago`
-    if (hours > 0) return `${hours}h ago`
-    if (minutes > 0) return `${minutes}m ago`
-    return "just now"
+    if (days > 0) return t("time.relative.daysAgoShort", { count: days })
+    if (hours > 0) return t("time.relative.hoursAgoShort", { count: hours })
+    if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
+    return t("time.relative.justNow")
   }
 
   function getDisplayName(path: string): string {
-    if (path === "opencode") return "opencode (system PATH)"
+    if (path === "opencode") return t("opencodeBinarySelector.display.systemPath", { name: "opencode" })
     const parts = path.split(/[/\\]/)
     return parts[parts.length - 1] ?? path
   }
@@ -221,13 +223,13 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       <div class="panel">
         <div class="panel-header flex items-center justify-between gap-3">
           <div>
-            <h3 class="panel-title">OpenCode Binary</h3>
-            <p class="panel-subtitle">Choose which executable OpenCode should run</p>
+            <h3 class="panel-title">{t("opencodeBinarySelector.title")}</h3>
+            <p class="panel-subtitle">{t("opencodeBinarySelector.subtitle")}</p>
           </div>
           <Show when={validating()}>
             <div class="selector-loading text-xs">
               <Loader2 class="selector-loading-spinner" />
-              <span>Checking versions…</span>
+              <span>{t("opencodeBinarySelector.status.checkingVersions")}</span>
             </div>
           </Show>
         </div>
@@ -245,7 +247,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                 }
               }}
               disabled={props.disabled}
-              placeholder="Enter path to opencode binary…"
+              placeholder={t("opencodeBinarySelector.customPath.placeholder")}
               class="selector-input"
             />
             <button
@@ -255,7 +257,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
               class="selector-button selector-button-primary"
             >
               <Plus class="w-4 h-4" />
-              Add
+              {t("opencodeBinarySelector.actions.add")}
             </button>
           </div>
 
@@ -266,7 +268,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
             class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2"
           >
             <FolderOpen class="w-4 h-4" />
-            Browse for Binary…
+            {t("opencodeBinarySelector.actions.browse")}
           </button>
 
           <Show when={validationError()}>
@@ -308,16 +310,16 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                       </Show>
                       <div class="flex items-center gap-2 text-xs text-muted pl-6 flex-wrap">
                         <Show when={versionLabel()}>
-                          <span class="selector-badge-version">v{versionLabel()}</span>
+                          <span class="selector-badge-version">{t("opencodeBinarySelector.versionLabel", { version: versionLabel() })}</span>
                         </Show>
                         <Show when={isPathValidating(binary.path)}>
-                          <span class="selector-badge-time">Checking…</span>
+                          <span class="selector-badge-time">{t("opencodeBinarySelector.status.checking")}</span>
                         </Show>
                         <Show when={!isDefault && binary.lastUsed}>
                           <span class="selector-badge-time">{formatRelativeTime(binary.lastUsed)}</span>
                         </Show>
                         <Show when={isDefault}>
-                          <span class="selector-badge-time">Use binary from system PATH</span>
+                          <span class="selector-badge-time">{t("opencodeBinarySelector.badge.systemPath")}</span>
                         </Show>
                       </div>
                     </div>
@@ -328,7 +330,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                       class="p-2 text-muted hover:text-primary"
                       onClick={(event) => handleRemoveBinary(binary.path, event)}
                       disabled={props.disabled}
-                      title="Remove binary"
+                      title={t("opencodeBinarySelector.actions.removeTitle")}
                     >
                       <Trash2 class="w-3.5 h-3.5" />
                     </button>
@@ -343,8 +345,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       <FileSystemBrowserDialog
         open={isBinaryBrowserOpen()}
         mode="files"
-        title="Select OpenCode Binary"
-        description="Browse files exposed by the CLI server."
+        title={t("opencodeBinarySelector.dialog.title")}
+        description={t("opencodeBinarySelector.dialog.description")}
         onClose={() => setIsBinaryBrowserOpen(false)}
         onSelect={handleBinaryBrowserSelect}
       />
@@ -353,4 +355,3 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 }
  
 export default OpenCodeBinarySelector
-

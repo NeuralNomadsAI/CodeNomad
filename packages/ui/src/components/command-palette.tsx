@@ -1,7 +1,8 @@
 import { Component, createSignal, For, Show, createEffect, createMemo } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
-import type { Command } from "../lib/commands"
+import { resolveResolvable, type Command } from "../lib/commands"
 import Kbd from "./kbd"
+import { useI18n } from "../lib/i18n"
 
 interface CommandPaletteProps {
   open: boolean
@@ -24,6 +25,7 @@ function buildShortcutString(shortcut: Command["shortcut"]): string {
 }
 
 const CommandPalette: Component<CommandPaletteProps> = (props) => {
+  const { t } = useI18n()
   const [query, setQuery] = createSignal("")
   const [selectedCommandId, setSelectedCommandId] = createSignal<string | null>(null)
   const [isPointerSelecting, setIsPointerSelecting] = createSignal(false)
@@ -31,6 +33,27 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   let listRef: HTMLDivElement | undefined
 
   const categoryOrder = ["Custom Commands", "Instance", "Session", "Agent & Model", "Input & Focus", "System", "Other"] as const
+
+  const categoryLabel = (category: string) => {
+    switch (category) {
+      case "Custom Commands":
+        return t("commandPalette.category.customCommands")
+      case "Instance":
+        return t("commandPalette.category.instance")
+      case "Session":
+        return t("commandPalette.category.session")
+      case "Agent & Model":
+        return t("commandPalette.category.agentModel")
+      case "Input & Focus":
+        return t("commandPalette.category.inputFocus")
+      case "System":
+        return t("commandPalette.category.system")
+      case "Other":
+        return t("commandPalette.category.other")
+      default:
+        return category
+    }
+  }
 
   type CommandGroup = { category: string; commands: Command[]; startIndex: number }
   type ProcessedCommands = { groups: CommandGroup[]; ordered: Command[] }
@@ -41,18 +64,21 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
 
     const filtered = q
       ? source.filter((cmd) => {
-          const label = typeof cmd.label === "function" ? cmd.label() : cmd.label
+          const label = resolveResolvable(cmd.label)
+          const description = resolveResolvable(cmd.description)
+          const keywords = cmd.keywords ? resolveResolvable(cmd.keywords) : undefined
+          const category = cmd.category ? resolveResolvable(cmd.category) : undefined
           const labelMatch = label.toLowerCase().includes(q)
-          const descMatch = cmd.description.toLowerCase().includes(q)
-          const keywordMatch = cmd.keywords?.some((k) => k.toLowerCase().includes(q))
-          const categoryMatch = cmd.category?.toLowerCase().includes(q)
+          const descMatch = description.toLowerCase().includes(q)
+          const keywordMatch = keywords?.some((k) => k.toLowerCase().includes(q))
+          const categoryMatch = category?.toLowerCase().includes(q)
           return labelMatch || descMatch || keywordMatch || categoryMatch
         })
       : source
 
     const groupsMap = new Map<string, Command[]>()
     for (const cmd of filtered) {
-      const category = cmd.category || "Other"
+      const category = (cmd.category ? resolveResolvable(cmd.category) : undefined) || "Other"
       const list = groupsMap.get(category)
       if (list) {
         list.push(cmd)
@@ -189,12 +215,12 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
-          <Dialog.Content
-            class="modal-surface w-full max-w-2xl max-h-[60vh]"
-            onKeyDown={handleKeyDown}
-          >
-            <Dialog.Title class="sr-only">Command Palette</Dialog.Title>
-            <Dialog.Description class="sr-only">Search and execute commands</Dialog.Description>
+            <Dialog.Content
+              class="modal-surface w-full max-w-2xl max-h-[60vh]"
+              onKeyDown={handleKeyDown}
+            >
+              <Dialog.Title class="sr-only">{t("commandPalette.title")}</Dialog.Title>
+              <Dialog.Description class="sr-only">{t("commandPalette.description")}</Dialog.Description>
 
             <div class="modal-search-container">
               <div class="flex items-center gap-3">
@@ -214,7 +240,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                     setQuery(e.currentTarget.value)
                     setSelectedCommandId(null)
                   }}
-                  placeholder="Type a command or search..."
+                  placeholder={t("commandPalette.searchPlaceholder")}
                   class="modal-search-input"
                 />
               </div>
@@ -228,13 +254,13 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
             >
               <Show
                 when={orderedCommands().length > 0}
-                fallback={<div class="modal-empty-state">No commands found for "{query()}"</div>}
+                fallback={<div class="modal-empty-state">{t("commandPalette.empty", { query: query() })}</div>}
               >
                 <For each={groupedCommandList()}>
                   {(group) => (
                     <div class="py-2">
                       <div class="modal-section-header">
-                        {group.category}
+                        {categoryLabel(group.category)}
                       </div>
                       <For each={group.commands}>
                         {(command, localIndex) => {
@@ -257,10 +283,10 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                             >
                               <div class="flex-1 min-w-0">
                                 <div class="modal-item-label">
-                                  {typeof command.label === "function" ? command.label() : command.label}
+                                  {resolveResolvable(command.label)}
                                 </div>
                                 <div class="modal-item-description">
-                                  {command.description}
+                                  {resolveResolvable(command.description)}
                                 </div>
                               </div>
                               <Show when={command.shortcut}>

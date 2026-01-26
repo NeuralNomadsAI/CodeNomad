@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Model } from "../types/session"
+import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import Kbd from "./kbd"
 const log = getLogger("session")
@@ -22,6 +23,7 @@ interface FlatModel extends Model {
 }
 
 export default function ModelSelector(props: ModelSelectorProps) {
+  const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
   const [isOpen, setIsOpen] = createSignal(false)
   let triggerRef!: HTMLButtonElement
@@ -75,7 +77,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         optionValue="key"
         optionTextValue="searchText"
         optionLabel="name"
-        placeholder="Search models..."
+        placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
         allowsEmptyCollection
         itemComponent={(itemProps) => (
@@ -108,7 +110,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
           >
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                Model: {currentModelValue()?.name ?? "None"}
+                {t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") })}
               </span>
               {currentModelValue() && (
                 <span class="selector-trigger-secondary">
@@ -131,7 +133,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
               <Combobox.Input
                 ref={searchInputRef}
                 class="selector-search-input"
-                placeholder="Search models..."
+                placeholder={t("modelSelector.placeholder.search")}
               />
             </div>
             <Combobox.Listbox class="selector-listbox" />

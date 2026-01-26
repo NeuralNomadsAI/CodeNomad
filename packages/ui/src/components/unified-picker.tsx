@@ -3,6 +3,7 @@ import type { Agent } from "../types/session"
 import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { serverApi } from "../lib/api-client"
+import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")
 
@@ -87,6 +88,7 @@ interface UnifiedPickerProps {
 }
 
 const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
+  const { t } = useI18n()
   const mode = () => props.mode ?? "mention"
 
   const [files, setFiles] = createSignal<FileItem[]>([])
@@ -366,10 +368,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   const isLoading = () => mode() === "mention" && loadingState() !== "idle"
   const loadingMessage = () => {
     if (loadingState() === "search") {
-      return "Searching..."
+      return t("unifiedPicker.loading.searching")
     }
     if (loadingState() === "listing") {
-      return "Loading workspace..."
+      return t("unifiedPicker.loading.loadingWorkspace")
     }
     return ""
   }
@@ -383,8 +385,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       >
         <div class="dropdown-header">
           <div class="dropdown-header-title">
-            <Show when={mode() === "command"} fallback={"Select Agent or File"}>
-              Select Command
+            <Show when={mode() === "command"} fallback={t("unifiedPicker.title.mention")}>
+              {t("unifiedPicker.title.command")}
             </Show>
             <Show when={isLoading()}>
               <span class="ml-2">{loadingMessage()}</span>
@@ -394,11 +396,11 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
         <div ref={scrollContainerRef} class="dropdown-content max-h-60">
           <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && fileCount() === 0)}>
-            <div class="dropdown-empty">No results found</div>
+            <div class="dropdown-empty">{t("unifiedPicker.empty")}</div>
           </Show>
 
           <Show when={mode() === "command" && commandCount() > 0}>
-            <div class="dropdown-section-header">COMMANDS</div>
+            <div class="dropdown-section-header">{t("unifiedPicker.sections.commands")}</div>
             <For each={filteredCommands()}>
               {(command) => {
                 const itemIndex = allItems().findIndex((item) => item.type === "command" && item.command.name === command.name)
@@ -429,7 +431,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
           <Show when={mode() === "mention" && agentCount() > 0}>
             <div class="dropdown-section-header">
-              AGENTS
+              {t("unifiedPicker.sections.agents")}
             </div>
             <For each={filteredAgents()}>
               {(agent) => {
@@ -463,7 +465,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           <span class="text-sm font-medium">{agent.name}</span>
                           <Show when={agent.mode === "subagent"}>
                             <span class="dropdown-badge">
-                              subagent
+                              {t("unifiedPicker.badge.subagent")}
                             </span>
                           </Show>
                         </div>
@@ -484,7 +486,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
           <Show when={mode() === "mention" && fileCount() > 0}>
             <div class="dropdown-section-header">
-              FILES
+              {t("unifiedPicker.sections.files")}
             </div>
             <For each={files()}>
               {(file) => {
@@ -534,8 +536,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
         <div class="dropdown-footer">
           <div>
-            <span class="font-medium">↑↓</span> navigate • <span class="font-medium">Tab/Enter</span> select •{" "}
-            <span class="font-medium">Esc</span> close
+            <span class="font-medium">↑↓</span> {t("unifiedPicker.footer.navigate")} • <span class="font-medium">Tab/Enter</span> {t("unifiedPicker.footer.select")} •{" "}
+            <span class="font-medium">Esc</span> {t("unifiedPicker.footer.close")}
           </div>
         </div>
       </div>

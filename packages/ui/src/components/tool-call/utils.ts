@@ -3,6 +3,7 @@ import { getLanguageFromPath } from "../../lib/markdown"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
+import { tGlobal } from "../../lib/i18n"
 const log = getLogger("session")
 
 
@@ -61,16 +62,16 @@ export function getToolIcon(tool: string): string {
 export function getToolName(tool: string): string {
   switch (tool) {
     case "bash":
-      return "Shell"
+      return tGlobal("toolCall.renderer.toolName.shell")
     case "webfetch":
-      return "Fetch"
+      return tGlobal("toolCall.renderer.toolName.fetch")
     case "invalid":
-      return "Invalid"
+      return tGlobal("toolCall.renderer.toolName.invalid")
     case "todowrite":
     case "todoread":
-      return "Plan"
+      return tGlobal("toolCall.renderer.toolName.plan")
     case "apply_patch":
-      return "Apply patch"
+      return tGlobal("toolCall.renderer.toolName.applyPatch")
     default: {
       const normalized = tool.replace(/^opencode_/, "")
       return normalized.charAt(0).toUpperCase() + normalized.slice(1)
@@ -202,31 +203,31 @@ export function readToolStatePayload(state?: ToolState): {
 export function getDefaultToolAction(toolName: string) {
   switch (toolName) {
     case "task":
-      return "Delegating..."
+      return tGlobal("toolCall.task.action.delegating")
     case "bash":
-      return "Writing command..."
+      return tGlobal("toolCall.renderer.action.writingCommand")
     case "edit":
-      return "Preparing edit..."
+      return tGlobal("toolCall.renderer.action.preparingEdit")
     case "webfetch":
-      return "Fetching from the web..."
+      return tGlobal("toolCall.renderer.action.fetchingFromWeb")
     case "glob":
-      return "Finding files..."
+      return tGlobal("toolCall.renderer.action.findingFiles")
     case "grep":
-      return "Searching content..."
+      return tGlobal("toolCall.renderer.action.searchingContent")
     case "list":
-      return "Listing directory..."
+      return tGlobal("toolCall.renderer.action.listingDirectory")
     case "read":
-      return "Reading file..."
+      return tGlobal("toolCall.renderer.action.readingFile")
     case "write":
-      return "Preparing write..."
+      return tGlobal("toolCall.renderer.action.preparingWrite")
     case "todowrite":
     case "todoread":
-      return "Planning..."
+      return tGlobal("toolCall.renderer.action.planning")
     case "patch":
-      return "Preparing patch..."
+      return tGlobal("toolCall.renderer.action.preparingPatch")
     case "apply_patch":
-      return "Preparing apply_patch..."
+      return tGlobal("toolCall.applyPatch.action.preparing")
     default:
-      return "Working..."
+      return tGlobal("toolCall.renderer.action.working")
   }
 }

@@ -1,9 +1,10 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, extractDiffPayload, getRelativePath, getToolName, isToolStateCompleted, readToolStatePayload } from "../utils"
+import { tGlobal } from "../../../lib/i18n"
 
 export const patchRenderer: ToolRenderer = {
   tools: ["patch"],
-  getAction: () => "Preparing patch...",
+  getAction: () => tGlobal("toolCall.renderer.action.preparingPatch"),
   getTitle({ toolState }) {
     const state = toolState()
     if (!state) return undefined

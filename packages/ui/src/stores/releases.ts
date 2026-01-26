@@ -3,6 +3,7 @@ import type { SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
+import { tGlobal } from "../lib/i18n"
 import { hasInstances, showFolderSelection } from "./ui"
 
 const log = getLogger("actions")
@@ -42,16 +43,16 @@ function ensureVisibilityEffect() {
     if (!activeToast || activeToastKey !== key) {
       dismissActiveToast()
       activeToast = showToastNotification({
-        title: support.message ?? "Upgrade required",
+        title: support.message ?? tGlobal("releases.upgradeRequired.title"),
         message: support.latestServerVersion
-          ? `Update to CodeNomad ${support.latestServerVersion} to use the latest UI.`
-          : "Update CodeNomad to use the latest UI.",
+          ? tGlobal("releases.upgradeRequired.message.withVersion", { version: support.latestServerVersion })
+          : tGlobal("releases.upgradeRequired.message.noVersion"),
         variant: "info",
         duration: Number.POSITIVE_INFINITY,
         position: "bottom-right",
         action: support.latestServerUrl
           ? {
-              label: "Get update",
+              label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
             }
           : undefined,

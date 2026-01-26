@@ -4,6 +4,7 @@ import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
+import { useI18n } from "../lib/i18n"
 
 function normalizePathKey(input?: string | null) {
   if (!input || input === "." || input === "./") {
@@ -62,6 +63,7 @@ type FolderRow =
   | { type: "folder"; entry: FileSystemEntry }
 
 const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) => {
+  const { t } = useI18n()
   const [rootPath, setRootPath] = createSignal("")
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
@@ -110,7 +112,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       const metadata = await loadDirectory()
       applyMetadata(metadata)
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to load filesystem"
+      const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
       setError(message)
     } finally {
       setLoading(false)
@@ -200,7 +202,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       const metadata = await loadDirectory(path)
       applyMetadata(metadata)
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to load filesystem"
+      const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
       setError(message)
     }
   }
@@ -266,19 +268,19 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     }
 
     const name =
-      (await showPromptDialog("Create a new folder in the current directory.", {
-        title: "New Folder",
-        inputLabel: "Folder name",
-        inputPlaceholder: "e.g. my-new-project",
-        confirmLabel: "Create",
-        cancelLabel: "Cancel",
+      (await showPromptDialog(t("directoryBrowser.createFolder.promptMessage"), {
+        title: t("directoryBrowser.createFolder.title"),
+        inputLabel: t("directoryBrowser.createFolder.inputLabel"),
+        inputPlaceholder: t("directoryBrowser.createFolder.inputPlaceholder"),
+        confirmLabel: t("directoryBrowser.createFolder.confirmLabel"),
+        cancelLabel: t("directoryBrowser.createFolder.cancelLabel"),
       }))?.trim() ?? ""
     if (!name) return
 
     if (name === "." || name === ".." || name.startsWith("~") || name.includes("/") || name.includes("\\")) {
-      showAlertDialog("Please enter a single folder name.", {
+      showAlertDialog(t("directoryBrowser.createFolder.invalidNameMessage"), {
         variant: "warning",
-        detail: "Folder names cannot include slashes, '..', or '~'.",
+        detail: t("directoryBrowser.createFolder.invalidNameDetail"),
       })
       return
     }
@@ -297,8 +299,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       const created = await serverApi.createFileSystemFolder(metadata.currentPath, name)
       await navigateTo(created.path)
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to create folder"
-      showAlertDialog(message, { variant: "error", title: "Unable to create folder" })
+      const message = err instanceof Error ? err.message : t("directoryBrowser.createFolder.errorFallback")
+      showAlertDialog(message, { variant: "error", title: t("directoryBrowser.createFolder.errorFallback") })
     } finally {
       setCreatingFolder(false)
     }
@@ -323,10 +325,10 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
               <div class="directory-browser-heading">
                 <h3 class="directory-browser-title">{props.title}</h3>
                 <p class="directory-browser-description">
-                  {props.description || "Browse folders under the configured workspace root."}
+                  {props.description || t("directoryBrowser.defaultDescription")}
                 </p>
               </div>
-              <button type="button" class="directory-browser-close" aria-label="Close" onClick={props.onClose}>
+              <button type="button" class="directory-browser-close" aria-label={t("directoryBrowser.close")} onClick={props.onClose}>
                 <X class="w-5 h-5" />
               </button>
             </div>
@@ -335,7 +337,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
               <Show when={rootPath()}>
                 <div class="directory-browser-current">
                   <div class="directory-browser-current-meta">
-                    <span class="directory-browser-current-label">Current folder</span>
+                    <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
                     <span class="directory-browser-current-path">{currentAbsolutePath()}</span>
                   </div>
                   <div class="directory-browser-current-actions">
@@ -350,7 +352,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                         }
                       }}
                     >
-                      Select Current
+                      {t("directoryBrowser.selectCurrent")}
                     </button>
                     <button
                       type="button"
@@ -360,7 +362,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     >
                       <span class="inline-flex items-center gap-2">
                         <FolderPlus class="w-4 h-4" />
-                        {creatingFolder() ? "Creating…" : "New Folder"}
+                        {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
                       </span>
                     </button>
                   </div>
@@ -373,7 +375,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     <Show when={loading()} fallback={<span class="text-red-500">{error()}</span>}>
                       <div class="directory-browser-loading">
                         <Loader2 class="w-5 h-5 animate-spin" />
-                        <span>Loading folders…</span>
+                        <span>{t("directoryBrowser.loadingFolders")}</span>
                       </div>
                     </Show>
                   </div>
@@ -381,13 +383,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
               >
                 <Show
                   when={folderRows().length > 0}
-                  fallback={<div class="panel-empty-state flex-1">No folders available.</div>}
+                  fallback={<div class="panel-empty-state flex-1">{t("directoryBrowser.noFolders")}</div>}
                 >
                   <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto directory-browser-list" role="listbox">
                     <For each={folderRows()}>
                       {(item) => {
                         const isFolder = item.type === "folder"
-                        const label = isFolder ? item.entry.name || item.entry.path : "Up one level"
+                        const label = isFolder ? item.entry.name || item.entry.path : t("directoryBrowser.upOneLevel")
                         const navigate = () => (isFolder ? handleNavigateTo(item.entry.path) : handleNavigateUp())
                         return (
                           <div class="panel-list-item" role="option">
@@ -414,7 +416,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                     handleEntrySelect(item.entry)
                                   }}
                                 >
-                                  Select
+                                  {t("directoryBrowser.select")}
                                 </button>
                               ) : null}
                             </div>

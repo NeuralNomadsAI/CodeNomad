@@ -18,6 +18,7 @@ import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
 import { initReleaseNotifications } from "./stores/releases"
 import { runtimeEnv } from "./lib/runtime-env"
+import { useI18n } from "./lib/i18n"
 import {
   hasInstances,
   isSelectingFolder,
@@ -51,6 +52,7 @@ const log = getLogger("actions")
 
 const App: Component = () => {
   const { isDark } = useTheme()
+  const { t } = useI18n()
   const {
     preferences,
     recordWorkspaceLaunch,
@@ -119,7 +121,7 @@ const App: Component = () => {
 
   const formatLaunchErrorMessage = (error: unknown): string => {
     if (!error) {
-      return "Failed to launch workspace"
+      return t("app.launchError.fallbackMessage")
     }
     const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
     try {
@@ -202,12 +204,12 @@ const App: Component = () => {
 
   async function handleCloseInstance(instanceId: string) {
     const confirmed = await showConfirmDialog(
-      "Stop OpenCode instance? This will stop the server.",
+      t("app.stopInstance.confirmMessage"),
       {
-        title: "Stop instance",
+        title: t("app.stopInstance.title"),
         variant: "warning",
-        confirmLabel: "Stop",
-        cancelLabel: "Keep running",
+        confirmLabel: t("app.stopInstance.confirmLabel"),
+        cancelLabel: t("app.stopInstance.cancelLabel"),
       },
     )
 
@@ -330,21 +332,20 @@ const App: Component = () => {
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-6">
               <div>
-                <Dialog.Title class="text-xl font-semibold text-primary">Unable to launch OpenCode</Dialog.Title>
+                <Dialog.Title class="text-xl font-semibold text-primary">{t("app.launchError.title")}</Dialog.Title>
                 <Dialog.Description class="text-sm text-secondary mt-2 break-words">
-                  We couldn't start the selected OpenCode binary. Review the error output below or choose a different
-                  binary from Advanced Settings.
+                  {t("app.launchError.description")}
                 </Dialog.Description>
               </div>
 
               <div class="rounded-lg border border-base bg-surface-secondary p-4">
-                <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Binary path</p>
+                <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                 <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
               </div>
 
               <Show when={launchErrorMessage()}>
                 <div class="rounded-lg border border-base bg-surface-secondary p-4">
-                  <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Error output</p>
+                  <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.errorOutputLabel")}</p>
                   <pre class="text-sm font-mono text-primary whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{launchErrorMessage()}</pre>
                 </div>
               </Show>
@@ -356,11 +357,11 @@ const App: Component = () => {
                     class="selector-button selector-button-secondary"
                     onClick={handleLaunchErrorAdvanced}
                   >
-                    Open Advanced Settings
+                    {t("app.launchError.openAdvancedSettings")}
                   </button>
                 </Show>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
-                  Close
+                  {t("app.launchError.close")}
                 </button>
               </div>
             </Dialog.Content>
@@ -430,7 +431,7 @@ const App: Component = () => {
                   clearLaunchError()
                 }}
                 class="absolute top-4 right-4 z-10 p-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                title="Close (Esc)"
+                title={t("app.launchError.closeTitle")}
               >
                 <svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />

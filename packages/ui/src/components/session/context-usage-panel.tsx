@@ -1,6 +1,7 @@
 import { createMemo, type Component } from "solid-js"
 import { getSessionInfo } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
+import { useI18n } from "../../lib/i18n"
 
 interface ContextUsagePanelProps {
   instanceId: string
@@ -12,6 +13,7 @@ const chipLabelClass = "uppercase text-[10px] tracking-wide text-primary/70"
 const headingClass = "text-xs font-semibold text-primary/70 uppercase tracking-wide"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
+  const { t } = useI18n()
   const info = createMemo(
     () =>
       getSessionInfo(props.instanceId, props.sessionId) ?? {
@@ -39,7 +41,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
 
 
   const formatTokenValue = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return "--"
+    if (value === null || value === undefined) return t("contextUsagePanel.unavailable")
     return formatTokenTotal(value)
   }
 
@@ -48,29 +50,29 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   return (
     <div class="session-context-panel border-r border-base border-b px-3 py-3 space-y-3">
       <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
-        <div class={headingClass}>Tokens</div>
+        <div class={headingClass}>{t("contextUsagePanel.headings.tokens")}</div>
         <div class={chipClass}>
-          <span class={chipLabelClass}>Input</span>
+          <span class={chipLabelClass}>{t("contextUsagePanel.labels.input")}</span>
           <span class="font-semibold text-primary">{formatTokenTotal(inputTokens())}</span>
         </div>
         <div class={chipClass}>
-          <span class={chipLabelClass}>Output</span>
+          <span class={chipLabelClass}>{t("contextUsagePanel.labels.output")}</span>
           <span class="font-semibold text-primary">{formatTokenTotal(outputTokens())}</span>
         </div>
         <div class={chipClass}>
-          <span class={chipLabelClass}>Cost</span>
+          <span class={chipLabelClass}>{t("contextUsagePanel.labels.cost")}</span>
           <span class="font-semibold text-primary">{costDisplay()}</span>
         </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
-        <div class={headingClass}>Context</div>
+        <div class={headingClass}>{t("contextUsagePanel.headings.context")}</div>
         <div class={chipClass}>
-          <span class={chipLabelClass}>Used</span>
+          <span class={chipLabelClass}>{t("contextUsagePanel.labels.used")}</span>
           <span class="font-semibold text-primary">{formatTokenTotal(actualUsageTokens())}</span>
         </div>
         <div class={chipClass}>
-          <span class={chipLabelClass}>Avail</span>
+          <span class={chipLabelClass}>{t("contextUsagePanel.labels.available")}</span>
           <span class="font-semibold text-primary">{formatTokenValue(availableTokens())}</span>
         </div>
       </div>

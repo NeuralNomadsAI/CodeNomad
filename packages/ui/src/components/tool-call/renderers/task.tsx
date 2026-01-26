@@ -37,18 +37,7 @@ function summarizeStatusIcon(status?: ToolState["status"]) {
 }
 
 function summarizeStatusLabel(status?: ToolState["status"]) {
-  switch (status) {
-    case "pending":
-      return "Pending"
-    case "running":
-      return "Running"
-    case "completed":
-      return "Completed"
-    case "error":
-      return "Error"
-    default:
-      return "Unknown"
-  }
+  return status
 }
 
 function describeTaskTitle(input: Record<string, any>) {
@@ -82,14 +71,14 @@ function describeToolTitle(item: TaskSummaryItem): string {
 
 export const taskRenderer: ToolRenderer = {
   tools: ["task"],
-  getAction: () => "Delegating...",
+  getAction: ({ t }) => t("toolCall.task.action.delegating"),
   getTitle({ toolState }) {
     const state = toolState()
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, messageVersion, partVersion, scrollHelpers, renderMarkdown }) {
+  renderBody({ toolState, messageVersion, partVersion, scrollHelpers, renderMarkdown, t }) {
     const promptContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
@@ -128,9 +117,9 @@ export const taskRenderer: ToolRenderer = {
     const headerMeta = createMemo(() => {
       const agent = agentLabel()
       const model = modelLabel()
-      if (agent && model) return `Agent: ${agent} • Model: ${model}`
-      if (agent) return `Agent: ${agent}`
-      if (model) return `Model: ${model}`
+      if (agent && model) return t("toolCall.task.meta.agentModel", { agent, model })
+      if (agent) return t("toolCall.task.meta.agent", { agent })
+      if (model) return t("toolCall.task.meta.model", { model })
       return null
     })
 
@@ -162,7 +151,7 @@ export const taskRenderer: ToolRenderer = {
         <Show when={promptContent()}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
-              <span class="tool-call-task-section-title">Prompt</span>
+              <span class="tool-call-task-section-title">{t("toolCall.task.sections.prompt")}</span>
               <Show when={headerMeta()}>
                 <span class="tool-call-task-section-meta">{headerMeta()}</span>
               </Show>
@@ -181,8 +170,8 @@ export const taskRenderer: ToolRenderer = {
         <Show when={items().length > 0}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
-              <span class="tool-call-task-section-title">Steps</span>
-              <span class="tool-call-task-section-meta">{items().length} steps</span>
+              <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
+              <span class="tool-call-task-section-meta">{t("toolCall.task.steps.count", { count: items().length })}</span>
             </header>
             <div class="tool-call-task-section-body">
               <div
@@ -200,7 +189,10 @@ export const taskRenderer: ToolRenderer = {
                       const toolLabel = getToolName(item.tool)
                       const status = normalizeStatus(item.status ?? item.state?.status)
                       const statusIcon = summarizeStatusIcon(status)
-                      const statusLabel = summarizeStatusLabel(status)
+                      const statusKey = summarizeStatusLabel(status)
+                      const statusLabel = statusKey
+                        ? t(`toolCall.status.${statusKey}`)
+                        : t("toolCall.status.unknown")
                       const statusAttr = status ?? "pending"
                       return (
                         <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
@@ -227,7 +219,7 @@ export const taskRenderer: ToolRenderer = {
         <Show when={outputContent()}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
-              <span class="tool-call-task-section-title">Output</span>
+              <span class="tool-call-task-section-title">{t("toolCall.task.sections.output")}</span>
               <Show when={headerMeta()}>
                 <span class="tool-call-task-section-meta">{headerMeta()}</span>
               </Show>

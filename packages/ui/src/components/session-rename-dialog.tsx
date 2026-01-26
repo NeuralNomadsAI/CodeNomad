@@ -1,5 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Component, Show, createEffect, createSignal } from "solid-js"
+import { useI18n } from "../lib/i18n"
 
 interface SessionRenameDialogProps {
   open: boolean
@@ -11,6 +12,7 @@ interface SessionRenameDialogProps {
 }
 
 const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
+  const { t } = useI18n()
   const [title, setTitle] = createSignal("")
   const inputId = `session-rename-${Math.random().toString(36).slice(2)}`
   let inputRef: HTMLInputElement | undefined
@@ -40,9 +42,9 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
 
   const description = () => {
     if (props.sessionLabel && props.sessionLabel.trim()) {
-      return `Update the title for "${props.sessionLabel}".`
+      return t("sessionRenameDialog.description.withLabel", { label: props.sessionLabel })
     }
-    return "Set a new title for this session."
+    return t("sessionRenameDialog.description.default")
   }
 
   return (
@@ -58,7 +60,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface w-full max-w-sm p-6" tabIndex={-1}>
-            <Dialog.Title class="text-lg font-semibold text-primary">Rename Session</Dialog.Title>
+            <Dialog.Title class="text-lg font-semibold text-primary">{t("sessionRenameDialog.title")}</Dialog.Title>
             <Dialog.Description class="text-sm text-secondary mt-1">
               {description()}
             </Dialog.Description>
@@ -66,7 +68,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
             <form class="mt-4 space-y-4" onSubmit={handleRename}>
               <div class="space-y-2">
                 <label class="text-sm font-medium text-secondary" for={inputId}>
-                  Session name
+                  {t("sessionRenameDialog.input.label")}
                 </label>
                 <input
                   id={inputId}
@@ -76,7 +78,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
                   type="text"
                   value={title()}
                   onInput={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="Enter a session name"
+                  placeholder={t("sessionRenameDialog.input.placeholder")}
                   class="w-full px-3 py-2 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent"
                 />
               </div>
@@ -92,7 +94,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
                   }}
                   disabled={isSubmitting()}
                 >
-                  Cancel
+                  {t("sessionRenameDialog.actions.cancel")}
                 </button>
                 <button
                   type="submit"
@@ -111,11 +113,11 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
                             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                           />
                         </svg>
-                        <span>Renaming…</span>
+                        <span>{t("sessionRenameDialog.actions.renaming")}</span>
                       </>
                     }
                   >
-                    Rename
+                    {t("sessionRenameDialog.actions.rename")}
                   </Show>
                 </button>
               </div>

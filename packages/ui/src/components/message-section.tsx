@@ -6,6 +6,7 @@ import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useScrollCache } from "../lib/hooks/use-scroll-cache"
+import { useI18n } from "../lib/i18n"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 
 const SCROLL_SCOPE = "session"
@@ -31,6 +32,7 @@ export interface MessageSectionProps {
 
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences } = useConfig()
+  const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -107,7 +109,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return
       seenTimelineMessageIds.add(messageId)
-      const built = buildTimelineSegments(props.instanceId, record)
+      const built = buildTimelineSegments(props.instanceId, record, t)
       built.forEach((segment) => {
         const key = makeTimelineKey(segment)
         if (seenTimelineSegmentKeys.has(key)) return
@@ -121,7 +123,7 @@ export default function MessageSection(props: MessageSectionProps) {
   function appendTimelineForMessage(messageId: string) {
     const record = untrack(() => store().getMessage(messageId))
     if (!record) return
-    const built = buildTimelineSegments(props.instanceId, record)
+    const built = buildTimelineSegments(props.instanceId, record, t)
     if (built.length === 0) return
     const newSegments: TimelineSegment[] = []
     built.forEach((segment) => {
@@ -558,7 +560,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     previousLastTimelineMessageId = lastId
     previousLastTimelinePartCount = partCount
-    const built = buildTimelineSegments(props.instanceId, record)
+    const built = buildTimelineSegments(props.instanceId, record, t)
     const newSegments: TimelineSegment[] = []
     built.forEach((segment) => {
       const key = makeTimelineKey(segment)
@@ -753,19 +755,19 @@ export default function MessageSection(props: MessageSectionProps) {
               <div class="empty-state">
                 <div class="empty-state-content">
                   <div class="flex flex-col items-center gap-3 mb-6">
-                    <img src={codeNomadLogo} alt="CodeNomad logo" class="h-48 w-auto" loading="lazy" />
-                    <h1 class="text-3xl font-semibold text-primary">CodeNomad</h1>
+                    <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="h-48 w-auto" loading="lazy" />
+                    <h1 class="text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
                   </div>
-                  <h3>Start a conversation</h3>
-                  <p>Type a message below or open the Command Palette:</p>
+                  <h3>{t("messageSection.empty.title")}</h3>
+                  <p>{t("messageSection.empty.description")}</p>
                   <ul>
                     <li>
-                      <span>Command Palette</span>
+                      <span>{t("messageSection.empty.tips.commandPalette")}</span>
                       <Kbd shortcut="cmd+shift+p" class="ml-2" />
                     </li>
-                    <li>Ask about your codebase</li>
+                    <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                     <li>
-                      Attach files with <code>@</code>
+                      {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
                     </li>
                   </ul>
                 </div>
@@ -775,7 +777,7 @@ export default function MessageSection(props: MessageSectionProps) {
             <Show when={props.loading}>
               <div class="loading-state">
                 <div class="spinner" />
-                <p>Loading messages...</p>
+                <p>{t("messageSection.loading.messages")}</p>
               </div>
             </Show>
  
@@ -803,7 +805,7 @@ export default function MessageSection(props: MessageSectionProps) {
           <Show when={showScrollTopButton() || showScrollBottomButton()}>
             <div class="message-scroll-button-wrapper">
               <Show when={showScrollTopButton()}>
-                <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label="Scroll to first message">
+                <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label={t("messageSection.scroll.toFirstAriaLabel")}>
                   <span class="message-scroll-icon" aria-hidden="true">↑</span>
                 </button>
               </Show>
@@ -812,7 +814,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   type="button"
                   class="message-scroll-button"
                   onClick={() => scrollToBottom(false, { suppressAutoAnchor: false })}
-                  aria-label="Scroll to latest message"
+                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                 >
                   <span class="message-scroll-icon" aria-hidden="true">↓</span>
                 </button>
@@ -828,10 +830,10 @@ export default function MessageSection(props: MessageSectionProps) {
               >
                 <div class="message-quote-button-group">
                   <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
-                    Add as quote
+                    {t("messageSection.quote.addAsQuote")}
                   </button>
                   <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("code")}>
-                    Add as code
+                    {t("messageSection.quote.addAsCode")}
                   </button>
                 </div>
               </div>

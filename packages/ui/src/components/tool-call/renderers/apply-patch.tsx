@@ -35,10 +35,10 @@ function determineSeverityTone(severity?: number): DiagnosticEntry["tone"] {
   return "info"
 }
 
-function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
-  if (tone === "error") return { label: "ERR", icon: "!", rank: 0 }
-  if (tone === "warning") return { label: "WARN", icon: "!", rank: 1 }
-  return { label: "INFO", icon: "i", rank: 2 }
+function getSeverityMeta(tone: DiagnosticEntry["tone"], t: (key: string, params?: Record<string, unknown>) => string) {
+  if (tone === "error") return { label: t("toolCall.diagnostics.severity.error.short"), icon: "!", rank: 0 }
+  if (tone === "warning") return { label: t("toolCall.diagnostics.severity.warning.short"), icon: "!", rank: 1 }
+  return { label: t("toolCall.diagnostics.severity.info.short"), icon: "i", rank: 2 }
 }
 
 function resolveDiagnosticsKey(
@@ -69,6 +69,7 @@ function resolveDiagnosticsKey(
 function buildDiagnostics(
   diagnostics: Record<string, LspDiagnostic[] | undefined>,
   file: ApplyPatchFile,
+  t: (key: string, params?: Record<string, unknown>) => string,
 ): DiagnosticEntry[] {
   const key = resolveDiagnosticsKey(diagnostics, file)
   if (!key) return []
@@ -82,7 +83,7 @@ function buildDiagnostics(
     if (!diagnostic || typeof diagnostic.message !== "string") continue
 
     const tone = determineSeverityTone(typeof diagnostic.severity === "number" ? diagnostic.severity : undefined)
-    const severityMeta = getSeverityMeta(tone)
+    const severityMeta = getSeverityMeta(tone, t)
     const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
     const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
 
@@ -103,11 +104,14 @@ function buildDiagnostics(
   return entries.sort((a, b) => a.severity - b.severity)
 }
 
-function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string }) {
+function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t: (key: string, params?: Record<string, unknown>) => string }) {
   return (
     <Show when={props.entries.length > 0}>
       <div class="tool-call-diagnostics-wrapper">
-        <div class="tool-call-diagnostics" role="region" aria-label={`Diagnostics ${props.label}`}
+        <div
+          class="tool-call-diagnostics"
+          role="region"
+          aria-label={props.t("toolCall.diagnostics.ariaLabel.withLabel", { label: props.label })}
         >
           <div class="tool-call-diagnostics-body" role="list">
             <For each={props.entries}>
@@ -134,19 +138,22 @@ function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string })
 
 export const applyPatchRenderer: ToolRenderer = {
   tools: ["apply_patch"],
-  getAction: () => "Preparing apply_patch...",
-  getTitle({ toolState }) {
+  getAction: ({ t }) => t("toolCall.applyPatch.action.preparing"),
+  getTitle({ toolState, t }) {
     const state = toolState()
     if (!state) return undefined
     if (state.status === "pending") return getToolName("apply_patch")
     const { metadata } = readToolStatePayload(state)
     const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as ApplyPatchFile[]) : []
     if (files.length > 0) {
-      return `${getToolName("apply_patch")} (${files.length} file${files.length === 1 ? "" : "s"})`
+      const tool = getToolName("apply_patch")
+      return files.length === 1
+        ? t("toolCall.applyPatch.title.withFileCount.one", { tool, count: files.length })
+        : t("toolCall.applyPatch.title.withFileCount.other", { tool, count: files.length })
     }
     return getToolName("apply_patch")
   },
-  renderBody({ toolState, renderDiff, renderMarkdown }) {
+  renderBody({ toolState, renderDiff, renderMarkdown, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
@@ -170,10 +177,10 @@ export const applyPatchRenderer: ToolRenderer = {
       <div class="tool-call-apply-patch">
         <For each={files()}>
           {(file, index) => {
-            const labelBase = file.relativePath || file.filePath || `File ${index() + 1}`
+            const labelBase = file.relativePath || file.filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
             const diffText = typeof file.diff === "string" ? file.diff : ""
             const filePath = typeof file.filePath === "string" ? file.filePath : file.relativePath
-            const entries = createMemo(() => buildDiagnostics(diagnosticsMap(), file))
+            const entries = createMemo(() => buildDiagnostics(diagnosticsMap(), file, t))
 
             return (
               <div class="tool-call-apply-patch-file">
@@ -181,12 +188,12 @@ export const applyPatchRenderer: ToolRenderer = {
                   {renderDiff(
                     { diffText, filePath },
                     {
-                      label: `Diff · ${getRelativePath(labelBase)}`,
+                      label: t("toolCall.diff.label.withPath", { path: getRelativePath(labelBase) }),
                       cacheKey: `apply_patch:${labelBase}:${index()}`,
                     },
                   )}
                 </Show>
-                <DiagnosticsInline entries={entries()} label={labelBase} />
+                <DiagnosticsInline entries={entries()} label={labelBase} t={t} />
               </div>
             )
           }}

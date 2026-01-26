@@ -1,4 +1,4 @@
-export const enMessages = {
+export const folderSelectionMessages = {
   "folderSelection.logoAlt": "CodeNomad logo",
   "folderSelection.tagline": "Select a folder to start coding with AI",
 
@@ -31,9 +31,4 @@ export const enMessages = {
 
   "folderSelection.dialog.title": "Select Workspace",
   "folderSelection.dialog.description": "Select workspace to start coding.",
-
-  "time.relative.justNow": "just now",
-  "time.relative.daysAgoShort": "{count}d ago",
-  "time.relative.hoursAgoShort": "{count}h ago",
-  "time.relative.minutesAgoShort": "{count}m ago",
 } as const
