@@ -37,6 +37,7 @@ export interface Preferences {
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   lastUsedBinary?: string
+  locale?: string
   environmentVariables: Record<string, string>
   modelRecents: ModelPreference[]
   modelThinkingSelections: Record<string, string>
@@ -114,6 +115,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultPreferences.showTimelineTools,
     lastUsedBinary: sanitized.lastUsedBinary ?? defaultPreferences.lastUsedBinary,
+    locale: sanitized.locale ?? defaultPreferences.locale,
     environmentVariables,
     modelRecents,
     modelThinkingSelections,
@@ -578,4 +580,3 @@ export {
   recordWorkspaceLaunch,
  }
  
-

@@ -13,6 +13,7 @@ const PreferencesSchema = z.object({
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   showTimelineTools: z.boolean().default(true),
   lastUsedBinary: z.string().optional(),
+  locale: z.string().optional(),
   environmentVariables: z.record(z.string()).default({}),
   modelRecents: z.array(ModelPreferenceSchema).default([]),
   modelThinkingSelections: z.record(z.string(), z.string()).default({}),
