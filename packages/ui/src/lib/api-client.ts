@@ -8,6 +8,7 @@ import type {
   FileSystemListResponse,
   InstanceData,
   ServerMeta,
+  UpdateCheckResult,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -236,6 +237,65 @@ export const serverApi = {
     }
     return source
   },
+
+  // Process Management APIs
+  fetchProcesses(): Promise<ProcessInfo> {
+    return request<ProcessInfo>("/api/system/processes")
+  },
+  fetchPidRegistry(): Promise<Record<string, WorkspacePidEntry>> {
+    return request<Record<string, WorkspacePidEntry>>("/api/system/processes/registry")
+  },
+  cleanupOrphans(): Promise<CleanupResult> {
+    return request<CleanupResult>("/api/system/processes/cleanup", { method: "POST" })
+  },
+  killProcess(pid: number): Promise<{ killed: boolean; pid: number }> {
+    return request<{ killed: boolean; pid: number }>(`/api/system/processes/${pid}`, { method: "DELETE" })
+  },
+  killAllOrphans(): Promise<CleanupResult> {
+    return request<CleanupResult>("/api/system/processes/kill-all-orphans", { method: "POST" })
+  },
+
+  // Update Check APIs
+  checkForUpdates(): Promise<UpdateCheckResult> {
+    return request<UpdateCheckResult>("/api/updates/check")
+  },
+  getUpdateStatus(): Promise<UpdateCheckResult | { lastChecked: null }> {
+    return request<UpdateCheckResult | { lastChecked: null }>("/api/updates/status")
+  },
+}
+
+// Process management types
+export interface WorkspacePidEntry {
+  pid: number
+  folder: string
+  startedAt: string
+}
+
+export interface ProcessInfo {
+  registered: Array<{
+    workspaceId: string
+    entry: WorkspacePidEntry
+    running: boolean
+  }>
+  unregistered: number[]
+  summary: {
+    totalRegistered: number
+    runningRegistered: number
+    unregisteredOrphans: number
+  }
+}
+
+export interface CleanupResult {
+  registeredCleanup: {
+    cleaned: number
+    failed: number
+    failedPids: number[]
+  }
+  unregisteredCleanup: {
+    found: number
+    killed: number
+    pids: number[]
+  }
 }
 
 export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType }

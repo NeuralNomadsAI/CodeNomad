@@ -20,13 +20,15 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerModelsProxyRoutes } from "./routes/models-proxy"
 import { registerEraRoutes } from "./routes/era"
-import { registerSystemRoutes } from "./routes/system"
+import { registerSystemRoutes, registerProcessManagementRoutes } from "./routes/system"
 import { registerMcpRoutes } from "./routes/mcp"
 import { registerFileRoutes } from "./routes/files"
+import { registerSessionRoutes } from "./routes/sessions"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { EraDetectionService } from "../era/detection"
 import { EraGovernanceService } from "../era/governance"
+import type { UpdateMonitor } from "../updates/update-monitor"
 
 interface HttpServerDeps {
   host: string
@@ -39,6 +41,7 @@ interface HttpServerDeps {
   serverMeta: ServerMeta
   instanceStore: InstanceStore
   eraDetection?: EraDetectionService
+  updateMonitor?: UpdateMonitor
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -157,6 +160,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerModelsProxyRoutes(app)
   registerSystemRoutes(app, { logger: deps.logger })
+  registerProcessManagementRoutes(app, { logger: deps.logger })
   registerMcpRoutes(app, { logger: deps.logger })
   registerFileRoutes(app, {
     eventBus: deps.eventBus,
@@ -166,8 +170,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 
   // Register Era routes
-  registerEraRoutes(app, { eraDetection, eraGovernance, logger: deps.logger })
+  registerEraRoutes(app, { eraDetection, eraGovernance, updateMonitor: deps.updateMonitor, logger: deps.logger })
 
+  // Register Session management routes
+  registerSessionRoutes(app, { logger: deps.logger })
 
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl)
@@ -297,7 +303,11 @@ async function proxyWorkspaceRequest(args: {
 
   const port = workspaceManager.getInstancePort(workspaceId)
   if (!port) {
-    reply.code(502).send({ error: "Workspace instance is not ready" })
+    reply.code(502).send({
+      error: "Workspace instance is not ready",
+      code: "INSTANCE_NOT_READY",
+      hint: "The workspace instance is still starting up. Please wait a moment and try again.",
+    })
     return
   }
 
@@ -313,9 +323,49 @@ async function proxyWorkspaceRequest(args: {
 
   return reply.from(targetUrl, {
     onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
+      const errorMsg = error?.message ?? ""
+      const isTimeout = errorMsg.includes("timeout") || errorMsg.includes("ETIMEDOUT")
+      const isConnectionRefused = errorMsg.includes("ECONNREFUSED")
+      const isConnectionReset = errorMsg.includes("ECONNRESET")
+
+      // Determine error context based on the path for better hints
+      const isMcpEndpoint = normalizedSuffix.includes("/mcp/")
+
+      logger.error(
+        { err: error, workspaceId, targetUrl, isTimeout, isMcpEndpoint },
+        "Failed to proxy workspace request"
+      )
+
       if (!proxyReply.sent) {
-        proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
+        if (isTimeout) {
+          proxyReply.code(504).send({
+            error: "Instance request timed out",
+            code: "INSTANCE_TIMEOUT",
+            hint: isMcpEndpoint
+              ? "The MCP server is not responding. The instance may be overloaded or the model is stuck. Try switching to a different model."
+              : "The workspace instance is not responding. It may be overloaded or stuck. Try switching to a different model or restarting the instance.",
+          })
+        } else if (isConnectionRefused) {
+          proxyReply.code(502).send({
+            error: "Cannot connect to workspace instance",
+            code: "INSTANCE_UNAVAILABLE",
+            hint: "The workspace instance is not running or has crashed. Try restarting the project.",
+          })
+        } else if (isConnectionReset) {
+          proxyReply.code(502).send({
+            error: "Connection to instance was reset",
+            code: "INSTANCE_RESET",
+            hint: isMcpEndpoint
+              ? "The MCP connection was lost. The instance may have crashed or restarted. Try reconnecting."
+              : "The workspace instance connection was lost. The instance may have crashed. Try restarting the project.",
+          })
+        } else {
+          proxyReply.code(502).send({
+            error: "Workspace instance proxy failed",
+            code: "PROXY_ERROR",
+            hint: "An unexpected error occurred while communicating with the workspace instance. Check the logs for more details.",
+          })
+        }
       }
     },
   })

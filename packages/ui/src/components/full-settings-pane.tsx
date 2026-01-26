@@ -39,12 +39,17 @@ import {
   FileCode,
   FolderCog,
   Folder,
+  History,
+  Activity,
 } from "lucide-solid"
 import UnifiedGovernancePanel from "./unified-governance-panel"
 import ConstitutionPanel from "./constitution-panel"
+import SessionManagerSection from "./session-manager-section"
+import OpenCodeBinarySelector from "./opencode-binary-selector"
 import GlobalDirectivesPanel from "./global-directives-panel"
 import ProjectDirectivesPanel from "./project-directives-panel"
 import ActiveRulesPanel from "./active-rules-panel"
+import ProcessManagerPanel from "./process-manager-panel"
 import type { Instance } from "../types/instance"
 import {
   preferences,
@@ -89,6 +94,12 @@ import {
   isDirectivesLoading,
   saveDirectives,
 } from "../stores/era-directives"
+import {
+  useUpdateStatus,
+  useIsCheckingUpdates,
+  triggerUpdateCheck,
+  formatLastChecked,
+} from "../stores/update-checker"
 import { getCommands, fetchCommands } from "../stores/commands"
 import { instances } from "../stores/instances"
 import McpSettingsPanel from "./mcp-settings-panel"
@@ -146,6 +157,8 @@ type SettingsSection =
   | "governance-rules"
   | "environment"
   | "accounts"
+  | "sessions"
+  | "processes"
   | "era-code"
   | "about"
 
@@ -193,10 +206,17 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
       ],
     },
     {
+      title: "Data",
+      items: [
+        { id: "sessions" as const, label: "All Sessions", icon: History },
+      ],
+    },
+    {
       title: "System",
       items: [
         { id: "environment" as const, label: "Environment", icon: Terminal },
         { id: "accounts" as const, label: "Accounts", icon: User },
+        { id: "processes" as const, label: "Processes", icon: Activity },
         { id: "era-code" as const, label: "Era Code", icon: Sparkles },
         { id: "about" as const, label: "About", icon: Info },
       ],
@@ -227,6 +247,10 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
         return <EnvironmentSection instance={props.instance} />
       case "accounts":
         return <AccountsSection onOpenGCloudModal={props.onOpenGCloudModal} />
+      case "sessions":
+        return <SessionManagerSection />
+      case "processes":
+        return <ProcessManagerPanel />
       case "era-code":
         return <EraCodeSection />
       case "about":
@@ -2355,11 +2379,29 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
 const EraCodeSection: Component = () => {
   const counts = createMemo(() => eraAssetCounts())
+  const { preferences: prefs, updatePreferences } = useConfig()
+  const [selectedBinary, setSelectedBinary] = createSignal(prefs().lastUsedBinary || "opencode")
+
+  const handleBinaryChange = (binary: string) => {
+    setSelectedBinary(binary)
+    updatePreferences({ lastUsedBinary: binary, binaryPreferenceSource: "user" })
+  }
 
   return (
     <div class="full-settings-section">
       <h2 class="full-settings-section-title">Era Code</h2>
       <p class="full-settings-section-subtitle">Era Code CLI status and installed assets</p>
+
+      {/* OpenCode Binary Selector */}
+      <div class="full-settings-subsection">
+        <OpenCodeBinarySelector
+          selectedBinary={selectedBinary()}
+          onBinaryChange={handleBinaryChange}
+          isVisible={true}
+        />
+      </div>
+
+      <div class="full-settings-section-divider" />
 
       {/* Version and status */}
       <div class="full-settings-era-version">
@@ -2463,18 +2505,122 @@ const EraCodeSection: Component = () => {
 const APP_VERSION = "0.4.0" // TODO: Import from package.json or env var
 
 const AboutSection: Component = () => {
+  const updateStatus = useUpdateStatus()
+  const isCheckingUpdates = useIsCheckingUpdates()
+
   const openLink = (url: string) => {
     window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  const handleCheckForUpdates = async () => {
+    await triggerUpdateCheck()
   }
 
   return (
     <div class="full-settings-section">
       <h2 class="full-settings-section-title">About</h2>
-      <p class="full-settings-section-subtitle">Version information and links</p>
+      <p class="full-settings-section-subtitle">Version information and updates</p>
 
       <div class="full-settings-era-version">
         <div class="full-settings-era-version-label">Era Code</div>
         <div class="full-settings-era-version-value">v{APP_VERSION}</div>
+      </div>
+
+      <div class="full-settings-section-divider" />
+
+      {/* Updates Section */}
+      <div class="full-settings-subsection">
+        <h3 class="full-settings-subsection-title">Updates</h3>
+        <div class="full-settings-card">
+          <table class="w-full text-sm">
+            <tbody>
+              {/* Era Code CLI Row */}
+              <Show when={isEraInstalled()}>
+                <tr>
+                  <td class="py-2 text-secondary w-1/3">Era Code CLI</td>
+                  <td class="py-2">
+                    <div class="flex items-center gap-2">
+                      <span>{eraVersion()}</span>
+                      <Show
+                        when={updateStatus()?.eraCode?.available}
+                        fallback={
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+                            Up to date
+                          </span>
+                        }
+                      >
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          {updateStatus()?.eraCode?.targetVersion} available
+                        </span>
+                        <button
+                          type="button"
+                          class="text-xs text-accent hover:underline"
+                          onClick={() => openLink("https://github.com/neural-nomads/era-code/releases")}
+                        >
+                          Update
+                        </button>
+                      </Show>
+                    </div>
+                  </td>
+                </tr>
+              </Show>
+              <Show when={!isEraInstalled()}>
+                <tr>
+                  <td class="py-2 text-secondary w-1/3">Era Code CLI</td>
+                  <td class="py-2 text-muted">Not installed</td>
+                </tr>
+              </Show>
+
+              {/* OpenCode Row */}
+              <tr>
+                <td class="py-2 text-secondary w-1/3">OpenCode</td>
+                <td class="py-2">
+                  <div class="flex items-center gap-2">
+                    <span>{updateStatus()?.openCode?.currentVersion ?? "Unknown"}</span>
+                    <Show
+                      when={updateStatus()?.openCode?.available}
+                      fallback={
+                        <Show when={updateStatus()?.openCode?.currentVersion}>
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+                            Up to date
+                          </span>
+                        </Show>
+                      }
+                    >
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                        {updateStatus()?.openCode?.latestVersion} available
+                      </span>
+                      <button
+                        type="button"
+                        class="text-xs text-accent hover:underline"
+                        onClick={() => openLink("https://www.npmjs.com/package/opencode-ai")}
+                      >
+                        Update
+                      </button>
+                    </Show>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="mt-4 pt-4 border-t border-base flex items-center justify-between">
+            <button
+              type="button"
+              class="full-settings-btn full-settings-btn-secondary"
+              onClick={handleCheckForUpdates}
+              disabled={isCheckingUpdates()}
+            >
+              <RefreshCw class={`w-4 h-4 ${isCheckingUpdates() ? "animate-spin" : ""}`} />
+              {isCheckingUpdates() ? "Checking..." : "Check for Updates"}
+            </button>
+            <Show when={formatLastChecked()}>
+              <span class="text-xs text-muted">
+                Last checked: {formatLastChecked()}
+              </span>
+            </Show>
+          </div>
+        </div>
       </div>
 
       <div class="full-settings-section-divider" />
@@ -2492,16 +2638,6 @@ const AboutSection: Component = () => {
                 <td class="py-1 text-secondary">Server Version</td>
                 <td class="py-1">{APP_VERSION}</td>
               </tr>
-              <tr>
-                <td class="py-1 text-secondary">OpenCode Binary</td>
-                <td class="py-1 font-mono">{APP_VERSION}</td>
-              </tr>
-              <Show when={isEraInstalled()}>
-                <tr>
-                  <td class="py-1 text-secondary">Era Code CLI</td>
-                  <td class="py-1">{eraVersion()} (installed)</td>
-                </tr>
-              </Show>
             </tbody>
           </table>
         </div>

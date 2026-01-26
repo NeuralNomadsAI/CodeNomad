@@ -179,6 +179,7 @@ export type WorkspaceEventType =
   | "instance.event"
   | "instance.eventStatus"
   | "app.releaseAvailable"
+  | "app.updateAvailable"
   | "file.changed"
   | "file.conflict"
   | "file.conflict.resolved"
@@ -254,6 +255,7 @@ export type WorkspaceEventPayload =
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
   | { type: "app.releaseAvailable"; release: LatestReleaseInfo }
+  | { type: "app.updateAvailable"; updates: UpdateCheckResult }
   | FileChangedEvent
   | FileConflictEvent
   | FileConflictResolvedEvent
@@ -380,4 +382,30 @@ export interface EraGovernanceRule {
   suggestion?: string
   overridable: boolean
   source: "hardcoded" | "default" | "project" | "user"
+}
+
+// ============================================================
+// Update Checker Types
+// ============================================================
+
+/**
+ * Information about OpenCode binary update availability
+ */
+export interface OpenCodeUpdateInfo {
+  available: boolean
+  currentVersion: string | null
+  latestVersion: string | null
+}
+
+/**
+ * Combined result of checking for updates (Era Code + OpenCode)
+ */
+export interface UpdateCheckResult {
+  eraCode: {
+    available: boolean
+    currentVersion?: string
+    targetVersion?: string
+  } | null
+  openCode: OpenCodeUpdateInfo | null
+  lastChecked: number
 }

@@ -55,6 +55,10 @@ const PreferencesSchema = z.object({
   mcpRegistry: z.record(McpServerConfigSchema).default({}),
   mcpDesiredState: z.record(z.boolean()).default({}),
   mcpAutoApply: z.boolean().default(true),
+
+  // Update checking preferences
+  lastUpdateCheckTime: z.number().nonnegative().optional(),
+  autoCheckForUpdates: z.boolean().default(true),
 })
 
 const RecentFolderSchema = z.object({

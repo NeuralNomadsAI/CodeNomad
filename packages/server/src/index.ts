@@ -18,7 +18,14 @@ import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { startReleaseMonitor } from "./releases/release-monitor"
-import { cleanupOrphanedWorkspaces } from "./workspaces/pid-registry"
+import { startUpdateMonitor } from "./updates/update-monitor"
+import { EraDetectionService } from "./era/detection"
+import {
+  cleanupOrphanedWorkspaces,
+  scanForUnregisteredOrphans,
+  startOrphanScanner,
+  stopOrphanScanner,
+} from "./workspaces/pid-registry"
 
 const require = createRequire(import.meta.url)
 
@@ -131,7 +138,17 @@ async function main() {
   logger.info({ options }, "Starting Era Code CLI server")
 
   // Clean up any orphaned workspace processes from previous crashes
-  cleanupOrphanedWorkspaces(workspaceLogger)
+  // This now properly awaits kill completion before proceeding
+  const registryCleanup = await cleanupOrphanedWorkspaces(workspaceLogger)
+  if (registryCleanup.cleaned > 0 || registryCleanup.failed > 0) {
+    logger.info(registryCleanup, "Startup orphan cleanup complete")
+  }
+
+  // Also scan for unregistered orphans (processes not in registry)
+  const unregisteredCleanup = await scanForUnregisteredOrphans(workspaceLogger)
+  if (unregisteredCleanup.found > 0) {
+    logger.info(unregisteredCleanup, "Unregistered orphan cleanup complete")
+  }
 
   const eventBus = new EventBus(eventLogger)
   const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
@@ -143,6 +160,11 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
   })
+
+  // Start periodic orphan scanner AFTER workspace manager is created
+  // Pass the getActiveWorkspaceIds function so scanner knows which workspaces are active
+  startOrphanScanner(workspaceLogger, () => workspaceManager.getActiveWorkspaceIds())
+
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
   const instanceStore = new InstanceStore()
   const instanceEventBridge = new InstanceEventBridge({
@@ -178,6 +200,16 @@ async function main() {
     },
   })
 
+  // Start update monitor for Era Code and OpenCode updates
+  const eraDetection = new EraDetectionService(logger.child({ component: "era-detection" }))
+  const updateMonitor = startUpdateMonitor({
+    configStore,
+    eventBus,
+    eraDetection,
+    binaryRegistry,
+    logger: logger.child({ component: "update-monitor" }),
+  })
+
   const server = createHttpServer({
     host: options.host,
     port: options.port,
@@ -188,6 +220,8 @@ async function main() {
     eventBus,
     serverMeta,
     instanceStore,
+    eraDetection,
+    updateMonitor,
     uiStaticDir: options.uiStaticDir,
     uiDevServerUrl: options.uiDevServer,
     logger,
@@ -226,6 +260,8 @@ async function main() {
     }
 
     releaseMonitor.stop()
+    updateMonitor.stop()
+    stopOrphanScanner(workspaceLogger)
 
     logger.info("Exiting process")
     process.exit(0)

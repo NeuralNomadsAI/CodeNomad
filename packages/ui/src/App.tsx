@@ -23,6 +23,7 @@ import InstanceInfoModal from "./components/instance-info-modal"
 import BottomStatusBar from "./components/bottom-status-bar"
 import ModelSelectorModal from "./components/model-selector-modal"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
+import ToolCallModal from "./components/tool-call-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { RemoteAccessOverlay } from "./components/remote-access-overlay"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
@@ -33,6 +34,7 @@ import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
 import { initReleaseNotifications } from "./stores/releases"
+import { initUpdateChecker } from "./stores/update-checker"
 import {
   checkGCloudAuth,
   isGCloudExpired,
@@ -86,6 +88,8 @@ import { loadInstanceMetadata } from "./lib/hooks/use-instance-metadata"
 import { ensureInstanceConfigLoaded, getInstanceConfig, updateInstanceConfig } from "./stores/instance-config"
 import { isSessionCompactionActive } from "./stores/session-compaction"
 import { isSessionBusy as checkSessionBusy } from "./stores/session-status"
+import { modelSelectorRequestedSignal, acknowledgeModelSelectorRequest, clearContinueFlag, shouldContinueAfterSwitch, instanceInfoRequestedSignal, acknowledgeInstanceInfoRequest } from "./stores/ui-actions"
+import { sendMessage } from "./stores/session-actions"
 
 const log = getLogger("actions")
 
@@ -148,12 +152,37 @@ const App: Component = () => {
 
   createEffect(() => {
     initReleaseNotifications()
+    initUpdateChecker()
   })
 
   createEffect(() => {
     instances()
     hasInstances()
     requestAnimationFrame(() => updateInstanceTabBarHeight())
+  })
+
+  // Listen for model selector requests from stalled tools
+  // Use the signal accessor directly for proper dependency tracking
+  createEffect(() => {
+    const requested = modelSelectorRequestedSignal()
+    console.log("[App] Model selector effect running, requested:", requested)
+    if (requested) {
+      console.log("[App] Opening model selector modal")
+      acknowledgeModelSelectorRequest()
+      setModelSelectorOpen(true)
+    }
+  })
+
+  // Listen for instance info modal requests from stalled tools
+  // Use the signal accessor directly for proper dependency tracking
+  createEffect(() => {
+    const requested = instanceInfoRequestedSignal()
+    console.log("[App] Instance info effect running, requested:", requested)
+    if (requested) {
+      console.log("[App] Opening instance info modal")
+      acknowledgeInstanceInfoRequest()
+      setInstanceInfoModalOpen(true)
+    }
   })
 
   onMount(() => {
@@ -560,15 +589,34 @@ const App: Component = () => {
   }
 
   async function handleModelSelect(providerId: string, modelId: string) {
+    console.log("[App] handleModelSelect called with:", { providerId, modelId })
     const instance = activeInstance()
     const sessionId = activeParentSessionIdForInstance()
-    if (!instance || !sessionId) return
+    console.log("[App] handleModelSelect - instance:", instance?.id, "sessionId:", sessionId)
+    if (!instance || !sessionId) {
+      console.log("[App] handleModelSelect - early return, missing instance or sessionId")
+      return
+    }
+
+    // Check if we should continue session after model switch (from stalled tool)
+    const shouldContinue = shouldContinueAfterSwitch()
+    console.log("[App] handleModelSelect - shouldContinue:", shouldContinue)
+    clearContinueFlag()
 
     try {
       await updateSessionModel(instance.id, sessionId, { providerId, modelId })
       log.info("Updated session model", { providerId, modelId })
+      console.log("[App] handleModelSelect - model updated successfully")
+
+      // If requested from stalled tool, send continue message to resume with new model
+      if (shouldContinue) {
+        console.log("[App] handleModelSelect - sending continue message")
+        await sendMessage(instance.id, sessionId, "continue")
+        log.info("Sent continue message after model switch")
+      }
     } catch (error) {
       log.error("Failed to update session model", error)
+      console.error("[App] handleModelSelect - error:", error)
     }
     setModelSelectorOpen(false)
   }
@@ -1064,6 +1112,8 @@ const App: Component = () => {
           onSelect={handleModelSelect}
           onCancel={() => setModelSelectorOpen(false)}
         />
+
+        <ToolCallModal />
 
         <AlertDialog />
 
