@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
+import { useI18n } from "../lib/i18n"
 
 interface InstanceInfoProps {
   instance: Instance
@@ -9,6 +10,7 @@ interface InstanceInfoProps {
 }
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
+  const { t } = useI18n()
   const metadataContext = useOptionalInstanceMetadataContext()
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
@@ -26,11 +28,11 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   return (
     <div class="panel">
       <div class="panel-header">
-        <h2 class="panel-title">Instance Information</h2>
+        <h2 class="panel-title">{t("instanceInfo.title")}</h2>
       </div>
       <div class="panel-body space-y-3">
         <div>
-          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Folder</div>
+          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("instanceInfo.labels.folder")}</div>
           <div class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
             {currentInstance().folder}
           </div>
@@ -41,7 +43,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <>
               <div>
                 <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
-                  Project
+                  {t("instanceInfo.labels.project")}
                 </div>
                 <div class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
                   {project().id}
@@ -51,7 +53,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
               <Show when={project().vcs}>
                 <div>
                   <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
-                    Version Control
+                    {t("instanceInfo.labels.versionControl")}
                   </div>
                   <div class="flex items-center gap-2 text-xs text-primary">
                     <svg
@@ -73,7 +75,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <Show when={binaryVersion()}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
-              OpenCode Version
+              {t("instanceInfo.labels.opencodeVersion")}
             </div>
             <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
               v{binaryVersion()}
@@ -84,7 +86,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <Show when={currentInstance().binaryPath}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
-              Binary Path
+              {t("instanceInfo.labels.binaryPath")}
             </div>
             <div class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
               {currentInstance().binaryPath}
@@ -95,7 +97,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <Show when={environmentEntries().length > 0}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">
-              Environment Variables ({environmentEntries().length})
+              {t("instanceInfo.labels.environmentVariables", { count: environmentEntries().length })}
             </div>
             <div class="space-y-1">
               <For each={environmentEntries()}>
@@ -127,24 +129,24 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 />
               </svg>
-              Loading...
+              {t("instanceInfo.loading")}
             </div>
           </div>
         </Show>
 
         <div>
-          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">Server</div>
+          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">{t("instanceInfo.server.title")}</div>
           <div class="space-y-1 text-xs">
             <div class="flex justify-between items-center">
-              <span class="text-secondary">Port:</span>
+              <span class="text-secondary">{t("instanceInfo.server.port")}</span>
               <span class="text-primary font-mono">{currentInstance().port}</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-secondary">PID:</span>
+              <span class="text-secondary">{t("instanceInfo.server.pid")}</span>
               <span class="text-primary font-mono">{currentInstance().pid}</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-secondary">Status:</span>
+              <span class="text-secondary">{t("instanceInfo.server.status")}</span>
               <span class={`status-badge ${currentInstance().status}`}>
                 <div
                   class={`status-dot ${currentInstance().status === "ready" ? "ready" : currentInstance().status === "starting" ? "starting" : currentInstance().status === "error" ? "error" : "stopped"} ${currentInstance().status === "ready" || currentInstance().status === "starting" ? "animate-pulse" : ""}`}

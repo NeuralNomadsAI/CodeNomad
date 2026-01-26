@@ -3,6 +3,7 @@ import type { Command as SDKCommand } from "@opencode-ai/sdk"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { activeSessionId, executeCustomCommand } from "../stores/sessions"
 import { getLogger } from "./logger"
+import { tGlobal } from "./i18n"
 
 const log = getLogger("actions")
 
@@ -17,19 +18,19 @@ export async function promptForCommandArguments(command: SDKCommand): Promise<st
   }
 
   try {
-    return await showPromptDialog(`Arguments for /${command.name}`, {
-      title: "Custom command",
+    return await showPromptDialog(tGlobal("commands.custom.argumentsPrompt.message", { name: command.name }), {
+      title: tGlobal("commands.custom.argumentsPrompt.title"),
       variant: "info",
-      inputLabel: "Arguments",
-      inputPlaceholder: "e.g. foo bar",
+      inputLabel: tGlobal("commands.custom.argumentsPrompt.inputLabel"),
+      inputPlaceholder: tGlobal("commands.custom.argumentsPrompt.inputPlaceholder"),
       inputDefaultValue: "",
-      confirmLabel: "Run",
-      cancelLabel: "Cancel",
+      confirmLabel: tGlobal("commands.custom.argumentsPrompt.confirmLabel"),
+      cancelLabel: tGlobal("commands.custom.argumentsPrompt.cancelLabel"),
     })
   } catch (error) {
     log.error("Failed to prompt for command arguments", error)
-    showAlertDialog("Failed to open arguments prompt.", {
-      title: "Command arguments",
+    showAlertDialog(tGlobal("commands.custom.argumentsPrompt.openFailed.message"), {
+      title: tGlobal("commands.custom.argumentsPrompt.openFailed.title"),
       variant: "error",
     })
     return null
@@ -45,14 +46,14 @@ export function buildCustomCommandEntries(instanceId: string, commands: SDKComma
   return commands.map((cmd) => ({
     id: `custom:${instanceId}:${cmd.name}`,
     label: formatCommandLabel(cmd.name),
-    description: cmd.description ?? "Custom command",
+    description: () => cmd.description ?? tGlobal("commands.custom.entries.descriptionFallback"),
     category: "Custom Commands",
     keywords: [cmd.name, ...(cmd.description ? cmd.description.split(/\s+/).filter(Boolean) : [])],
     action: async () => {
       const sessionId = activeSessionId().get(instanceId)
       if (!sessionId || sessionId === "info") {
-        showAlertDialog("Select a session before running a custom command.", {
-          title: "Session required",
+        showAlertDialog(tGlobal("commands.custom.sessionRequired.message"), {
+          title: tGlobal("commands.custom.sessionRequired.title"),
           variant: "warning",
         })
         return
@@ -65,8 +66,8 @@ export function buildCustomCommandEntries(instanceId: string, commands: SDKComma
         await executeCustomCommand(instanceId, sessionId, cmd.name, args)
       } catch (error) {
         log.error("Failed to run custom command", error)
-        showAlertDialog("Failed to run custom command. Check the console for details.", {
-          title: "Command failed",
+        showAlertDialog(tGlobal("commands.custom.runFailed.message"), {
+          title: tGlobal("commands.custom.runFailed.title"),
           variant: "error",
         })
       }

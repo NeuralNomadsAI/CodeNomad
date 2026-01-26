@@ -7,6 +7,7 @@ import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
+import { useI18n } from "../lib/i18n"
 import {
   deleteSession,
   ensureSessionParentExpanded,
@@ -37,17 +38,11 @@ interface SessionListProps {
 }
 
 function formatSessionStatus(status: SessionStatus): string {
-  switch (status) {
-    case "working":
-      return "Working"
-    case "compacting":
-      return "Compacting"
-    default:
-      return "Idle"
-  }
+  return status
 }
 
 const SessionList: Component<SessionListProps> = (props) => {
+  const { t } = useI18n()
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
@@ -73,13 +68,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     try {
       const success = await copyToClipboard(sessionId)
       if (success) {
-        showToastNotification({ message: "Session ID copied", variant: "success" })
+        showToastNotification({ message: t("sessionList.copyId.success"), variant: "success" })
       } else {
-        showToastNotification({ message: "Unable to copy session ID", variant: "error" })
+        showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
       }
     } catch (error) {
       log.error(`Failed to copy session ID ${sessionId}:`, error)
-      showToastNotification({ message: "Unable to copy session ID", variant: "error" })
+      showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
     }
   }
  
@@ -127,7 +122,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     } catch (error) {
       log.error(`Failed to delete session ${sessionId}:`, error)
-      showToastNotification({ message: "Unable to delete session", variant: "error" })
+      showToastNotification({ message: t("sessionList.delete.error"), variant: "error" })
     }
   }
 
@@ -152,7 +147,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       setRenameTarget(null)
     } catch (error) {
       log.error(`Failed to rename session ${target.id}:`, error)
-      showToastNotification({ message: "Unable to rename session", variant: "error" })
+      showToastNotification({ message: t("sessionList.rename.error"), variant: "error" })
     } finally {
       setIsRenaming(false)
     }
@@ -172,14 +167,28 @@ const SessionList: Component<SessionListProps> = (props) => {
       return <></>
     }
     const isActive = () => props.activeSessionId === rowProps.sessionId
-    const title = () => session()?.title || "Untitled"
+    const title = () => session()?.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
-    const statusLabel = () => formatSessionStatus(status())
+    const statusLabel = () => {
+      switch (formatSessionStatus(status())) {
+        case "working":
+          return t("sessionList.status.working")
+        case "compacting":
+          return t("sessionList.status.compacting")
+        default:
+          return t("sessionList.status.idle")
+      }
+    }
     const needsPermission = () => Boolean(session()?.pendingPermission)
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => (needsInput() ? "session-permission" : `session-${status()}`)
-    const statusText = () => (needsPermission() ? "Needs Permission" : needsQuestion() ? "Needs Input" : statusLabel())
+    const statusText = () =>
+      needsPermission()
+        ? t("sessionList.status.needsPermission")
+        : needsQuestion()
+          ? t("sessionList.status.needsInput")
+          : statusLabel()
  
     return (
        <div class="session-list-item group">
@@ -219,8 +228,8 @@ const SessionList: Component<SessionListProps> = (props) => {
                   }}
                   role="button"
                   tabIndex={0}
-                  aria-label={rowProps.expanded ? "Collapse session" : "Expand session"}
-                  title={rowProps.expanded ? "Collapse" : "Expand"}
+                  aria-label={rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")}
+                  title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
                 >
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
@@ -240,8 +249,8 @@ const SessionList: Component<SessionListProps> = (props) => {
                 onClick={(event) => copySessionId(event, rowProps.sessionId)}
                 role="button"
                 tabIndex={0}
-                aria-label="Copy session ID"
-                title="Copy session ID"
+                aria-label={t("sessionList.actions.copyId.ariaLabel")}
+                title={t("sessionList.actions.copyId.title")}
               >
                 <Copy class="w-3 h-3" />
               </span>
@@ -253,8 +262,8 @@ const SessionList: Component<SessionListProps> = (props) => {
                 }}
                 role="button"
                 tabIndex={0}
-                aria-label="Rename session"
-                title="Rename session"
+                aria-label={t("sessionList.actions.rename.ariaLabel")}
+                title={t("sessionList.actions.rename.title")}
               >
                 <Pencil class="w-3 h-3" />
               </span>
@@ -263,8 +272,8 @@ const SessionList: Component<SessionListProps> = (props) => {
                 onClick={(event) => handleDeleteSession(event, rowProps.sessionId)}
                 role="button"
                 tabIndex={0}
-                aria-label="Delete session"
-                title="Delete session"
+                aria-label={t("sessionList.actions.delete.ariaLabel")}
+                title={t("sessionList.actions.delete.title")}
               >
                 <Show
                   when={!isSessionDeleting(rowProps.sessionId)}
@@ -360,7 +369,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         <div class="session-list-header p-3 border-b border-base">
           {props.headerContent ?? (
             <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold text-primary">Sessions</h3>
+              <h3 class="text-sm font-semibold text-primary">{t("sessionList.header.title")}</h3>
               <KeyboardHint
                 shortcuts={[keyboardRegistry.get("session-prev")!, keyboardRegistry.get("session-next")!].filter(Boolean)}
               />
@@ -420,4 +429,3 @@ const SessionList: Component<SessionListProps> = (props) => {
 }
 
 export default SessionList
-

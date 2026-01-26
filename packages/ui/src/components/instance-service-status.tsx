@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
+import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
@@ -42,6 +43,7 @@ function parseMcpStatus(status?: RawMcpStatus): ParsedMcpStatus[] {
 }
 
 const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => {
+  const { t } = useI18n()
   const metadataContext = useOptionalInstanceMetadataContext()
   const instance = metadataContext?.instance ?? (() => {
     if (props.initialInstance) {
@@ -112,12 +114,12 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     <section class="space-y-1.5">
       <Show when={showHeadings()}>
         <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          LSP Servers
+          {t("instanceServiceStatus.sections.lsp")}
         </div>
       </Show>
       <Show
         when={!isLspLoading() && lspServers().length > 0}
-        fallback={renderEmptyState(isLspLoading() ? "Loading LSP servers..." : "No LSP servers detected.")}
+        fallback={renderEmptyState(isLspLoading() ? t("instanceServiceStatus.lsp.loading") : t("instanceServiceStatus.lsp.empty"))}
       >
         <div class="space-y-1.5">
           <For each={lspServers()}>
@@ -132,7 +134,11 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                   </div>
                   <div class="flex items-center gap-1.5 flex-shrink-0 text-xs text-secondary">
                     <div class={`status-dot ${server.status === "connected" ? "ready animate-pulse" : "error"}`} />
-                    <span>{server.status === "connected" ? "Connected" : "Error"}</span>
+                    <span>
+                      {server.status === "connected"
+                        ? t("instanceServiceStatus.lsp.status.connected")
+                        : t("instanceServiceStatus.lsp.status.error")}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -147,12 +153,12 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     <section class="space-y-1.5">
       <Show when={showHeadings()}>
         <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          MCP Servers
+          {t("instanceServiceStatus.sections.mcp")}
         </div>
       </Show>
       <Show
         when={!isMcpLoading() && mcpServers().length > 0}
-        fallback={renderEmptyState(isMcpLoading() ? "Loading MCP servers..." : "No MCP servers detected.")}
+        fallback={renderEmptyState(isMcpLoading() ? t("instanceServiceStatus.mcp.loading") : t("instanceServiceStatus.mcp.empty"))}
       >
         <div class="space-y-1.5">
           <For each={mcpServers()}>
@@ -192,7 +198,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                             disabled={switchDisabled()}
                             color="success"
                             size="small"
-                            inputProps={{ "aria-label": `Toggle ${server.name} MCP server` }}
+                            inputProps={{ "aria-label": t("instanceServiceStatus.mcp.toggleAriaLabel", { name: server.name }) }}
                             onChange={(_, checked) => {
                               if (switchDisabled()) return
                               void toggleMcpServer(server.name, Boolean(checked))
@@ -222,12 +228,12 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     <section class="space-y-1.5">
       <Show when={showHeadings()}>
         <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          Plugins
+          {t("instanceServiceStatus.sections.plugins")}
         </div>
       </Show>
       <Show
         when={!isPluginsLoading() && plugins().length > 0}
-        fallback={renderEmptyState(isPluginsLoading() ? "Loading plugins..." : "No plugins configured.")}
+        fallback={renderEmptyState(isPluginsLoading() ? t("instanceServiceStatus.plugins.loading") : t("instanceServiceStatus.plugins.empty"))}
       >
         <div class="space-y-1.5">
           <For each={plugins()}>

@@ -2,6 +2,7 @@ import { Component, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
 import { FolderOpen, ShieldAlert, X } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
 
 interface InstanceTabProps {
   instance: Instance
@@ -27,6 +28,7 @@ function formatFolderName(path: string, instances: Instance[], currentInstance: 
 }
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
+  const { t } = useI18n()
   const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id))
   const statusClassName = createMemo(() => {
     const status = aggregatedStatus()
@@ -35,13 +37,13 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
   const statusTitle = createMemo(() => {
     switch (aggregatedStatus()) {
       case "permission":
-        return "Waiting on permission"
+        return t("instanceTab.status.permission")
       case "compacting":
-        return "Compacting"
+        return t("instanceTab.status.compacting")
       case "working":
-        return "Working"
+        return t("instanceTab.status.working")
       default:
-        return "Idle"
+        return t("instanceTab.status.idle")
     }
   })
 
@@ -61,7 +63,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         <span
           class={`status-indicator session-status ml-auto ${statusClassName()}`}
           title={statusTitle()}
-          aria-label={`Instance status: ${statusTitle()}`}
+          aria-label={t("instanceTab.status.ariaLabel", { status: statusTitle() })}
         >
           {aggregatedStatus() === "permission" ? (
             <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
@@ -77,7 +79,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           }}
           role="button"
           tabIndex={0}
-          aria-label="Close instance"
+          aria-label={t("instanceTab.actions.close.ariaLabel")}
         >
           <X class="w-3 h-3" />
         </span>

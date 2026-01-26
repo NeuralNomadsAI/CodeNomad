@@ -19,6 +19,7 @@ export function createDiffContentRenderer(params: {
   preferences: Accessor<DiffPrefs>
   setDiffViewMode: (mode: DiffViewMode) => void
   isDark: Accessor<boolean>
+  t: (key: string, params?: Record<string, unknown>) => string
   diffCache: CacheHandle
   permissionDiffCache: CacheHandle
   scrollHelpers: ToolScrollHelpers
@@ -27,7 +28,9 @@ export function createDiffContentRenderer(params: {
 }) {
   function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null {
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
-    const toolbarLabel = options?.label || (relativePath ? `Diff · ${relativePath}` : "Diff")
+    const toolbarLabel = options?.label || (relativePath
+      ? params.t("toolCall.diff.label.withPath", { path: relativePath })
+      : params.t("toolCall.diff.label"))
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
     const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
@@ -67,7 +70,7 @@ export function createDiffContentRenderer(params: {
         ref={(element) => params.scrollHelpers.registerContainer(element, { disableTracking: options?.disableScrollTracking })}
         onScroll={options?.disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
       >
-        <div class="tool-call-diff-toolbar" role="group" aria-label="Diff view mode">
+        <div class="tool-call-diff-toolbar" role="group" aria-label={params.t("toolCall.diff.viewMode.ariaLabel")}>
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
           <div class="tool-call-diff-toggle">
             <button
@@ -76,7 +79,7 @@ export function createDiffContentRenderer(params: {
               aria-pressed={diffMode() === "split"}
               onClick={() => handleModeChange("split")}
             >
-              Split
+              {params.t("toolCall.diff.viewMode.split")}
             </button>
             <button
               type="button"
@@ -84,7 +87,7 @@ export function createDiffContentRenderer(params: {
               aria-pressed={diffMode() === "unified"}
               onClick={() => handleModeChange("unified")}
             >
-              Unified
+              {params.t("toolCall.diff.viewMode.unified")}
             </button>
           </div>
         </div>

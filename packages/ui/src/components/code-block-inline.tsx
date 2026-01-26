@@ -3,6 +3,7 @@ import type { Highlighter } from "shiki/bundle/full"
 import { useTheme } from "../lib/theme"
 import { getSharedHighlighter, escapeHtml } from "../lib/markdown"
 import { copyToClipboard } from "../lib/clipboard"
+import { useI18n } from "../lib/i18n"
 
 const inlineLoadedLanguages = new Set<string>()
 
@@ -15,6 +16,7 @@ interface CodeBlockInlineProps {
 }
 
 export function CodeBlockInline(props: CodeBlockInlineProps) {
+  const { t } = useI18n()
   const { isDark } = useTheme()
   const [html, setHtml] = createSignal("")
   const [copied, setCopied] = createSignal(false)
@@ -97,8 +99,8 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
             <span class="copy-text">
-              <Show when={copied()} fallback="Copy">
-                Copied!
+              <Show when={copied()} fallback={t("codeBlockInline.actions.copy")}>
+                {t("codeBlockInline.actions.copied")}
               </Show>
             </span>
           </button>

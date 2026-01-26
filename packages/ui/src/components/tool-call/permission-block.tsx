@@ -2,6 +2,7 @@ import { Show, type Accessor, type JSXElement } from "solid-js"
 import type { PermissionRequestLike } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
+import { useI18n } from "../../lib/i18n"
 import type { DiffPayload, DiffRenderOptions } from "./types"
 import { getRelativePath } from "./utils"
 
@@ -18,6 +19,8 @@ export type PermissionToolBlockProps = {
 }
 
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
+  const { t } = useI18n()
+
   const diffPayload = () => {
     const permission = props.permission()
     if (!permission) return null
@@ -48,7 +51,9 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
       {(permission) => (
         <div class={`tool-call-permission ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
           <div class="tool-call-permission-header">
-            <span class="tool-call-permission-label">{props.active() ? "Permission Required" : "Permission Queued"}</span>
+            <span class="tool-call-permission-label">
+              {props.active() ? t("toolCall.permission.status.required") : t("toolCall.permission.status.queued")}
+            </span>
             <span class="tool-call-permission-type">{getPermissionKind(permission())}</span>
           </div>
           <div class="tool-call-permission-body">
@@ -62,14 +67,14 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                     variant: "permission-diff",
                     disableScrollTracking: true,
                     label: payload().filePath
-                      ? `Requested diff · ${getRelativePath(payload().filePath || "")}`
-                      : "Requested diff",
+                      ? t("toolCall.permission.requestedDiff.withPath", { path: getRelativePath(payload().filePath || "") })
+                      : t("toolCall.permission.requestedDiff.label"),
                   })}
                 </div>
               )}
             </Show>
             <Show when={!props.active()}>
-              <p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>
+              <p class="tool-call-permission-queued-text">{t("toolCall.permission.queuedText")}</p>
             </Show>
             <div class="tool-call-permission-actions">
               <div class="tool-call-permission-buttons">
@@ -79,7 +84,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   disabled={props.submitting()}
                   onClick={() => respond("once")}
                 >
-                  Allow Once
+                  {t("toolCall.permission.actions.allowOnce")}
                 </button>
                 <button
                   type="button"
@@ -87,7 +92,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   disabled={props.submitting()}
                   onClick={() => respond("always")}
                 >
-                  Always Allow
+                  {t("toolCall.permission.actions.alwaysAllow")}
                 </button>
                 <button
                   type="button"
@@ -95,17 +100,17 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   disabled={props.submitting()}
                   onClick={() => respond("reject")}
                 >
-                  Deny
+                  {t("toolCall.permission.actions.deny")}
                 </button>
               </div>
               <Show when={props.active()}>
                 <div class="tool-call-permission-shortcuts">
                   <kbd class="kbd">Enter</kbd>
-                  <span>Allow once</span>
+                  <span>{t("toolCall.permission.shortcuts.allowOnce")}</span>
                   <kbd class="kbd">A</kbd>
-                  <span>Always allow</span>
+                  <span>{t("toolCall.permission.shortcuts.alwaysAllow")}</span>
                   <kbd class="kbd">D</kbd>
-                  <span>Deny</span>
+                  <span>{t("toolCall.permission.shortcuts.deny")}</span>
                 </div>
               </Show>
             </div>

@@ -2,6 +2,7 @@ import { For, Show } from "solid-js"
 import type { DiagnosticEntry } from "./diagnostics"
 
 export function renderDiagnosticsSection(
+  t: (key: string, params?: Record<string, unknown>) => string,
   entries: DiagnosticEntry[],
   expanded: boolean,
   toggle: () => void,
@@ -22,13 +23,13 @@ export function renderDiagnosticsSection(
         <span class="tool-call-emoji" aria-hidden="true">
           🛠
         </span>
-        <span class="tool-call-summary">Diagnostics</span>
+        <span class="tool-call-summary">{t("toolCall.diagnostics.title")}</span>
         <span class="tool-call-diagnostics-file" title={fileLabel}>
           {fileLabel}
         </span>
       </button>
       <Show when={expanded}>
-        <div class="tool-call-diagnostics" role="region" aria-label="Diagnostics">
+        <div class="tool-call-diagnostics" role="region" aria-label={t("toolCall.diagnostics.ariaLabel")}>
           <div class="tool-call-diagnostics-body" role="list">
             <For each={entries}>
               {(entry) => (

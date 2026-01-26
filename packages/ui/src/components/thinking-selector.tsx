@@ -4,6 +4,7 @@ import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
 import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
+import { useI18n } from "../lib/i18n"
 import Kbd from "./kbd"
 
 const log = getLogger("session")
@@ -20,6 +21,7 @@ type ThinkingOption = {
 }
 
 export default function ThinkingSelector(props: ThinkingSelectorProps) {
+  const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
 
   createEffect(() => {
@@ -37,7 +39,10 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
 
   const options = createMemo<ThinkingOption[]>(() => {
     const keys = variantKeys()
-    return [{ key: "__default__", label: "Default", value: undefined }, ...keys.map((k) => ({ key: k, label: k, value: k }))]
+    return [
+      { key: "__default__", label: t("thinkingSelector.variant.default"), value: undefined },
+      ...keys.map((k) => ({ key: k, label: k, value: k })),
+    ]
   })
 
   const currentValue = createMemo(() => {
@@ -56,7 +61,8 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
 
   const triggerPrimary = createMemo(() => {
     const selected = currentValue()?.value
-    return selected ? `Thinking: ${selected}` : "Thinking: Default"
+    const variant = selected ?? t("thinkingSelector.variant.default")
+    return t("thinkingSelector.label", { variant })
   })
 
   return (
@@ -67,7 +73,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
         options={options()}
         optionValue="key"
         optionLabel="label"
-        placeholder="Thinking: Default"
+        placeholder={t("thinkingSelector.label", { variant: t("thinkingSelector.variant.default") })}
         itemComponent={(itemProps) => (
           <Combobox.Item item={itemProps.item} class="selector-option">
             <div class="selector-option-content">

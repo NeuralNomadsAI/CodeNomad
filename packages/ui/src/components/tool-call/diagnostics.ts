@@ -1,5 +1,6 @@
 import type { ToolState } from "@opencode-ai/sdk"
 import { getRelativePath, isToolStateCompleted, isToolStateError, isToolStateRunning } from "./utils"
+import { tGlobal } from "../../lib/i18n"
 
 interface LspRangePosition {
   line?: number
@@ -40,9 +41,9 @@ function determineSeverityTone(severity?: number): DiagnosticEntry["tone"] {
 }
 
 function getSeverityMeta(tone: DiagnosticEntry["tone"]) {
-  if (tone === "error") return { label: "ERR", icon: "!", rank: 0 }
-  if (tone === "warning") return { label: "WARN", icon: "!", rank: 1 }
-  return { label: "INFO", icon: "i", rank: 2 }
+  if (tone === "error") return { label: tGlobal("toolCall.diagnostics.severity.error.short"), icon: "!", rank: 0 }
+  if (tone === "warning") return { label: tGlobal("toolCall.diagnostics.severity.warning.short"), icon: "!", rank: 1 }
+  return { label: tGlobal("toolCall.diagnostics.severity.info.short"), icon: "i", rank: 2 }
 }
 
 export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntry[] {

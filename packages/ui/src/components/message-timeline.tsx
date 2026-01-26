@@ -6,6 +6,7 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -29,14 +30,6 @@ interface MessageTimelineProps {
   showToolSegments?: boolean
 }
 
-const SEGMENT_LABELS: Record<TimelineSegmentType, string> = {
-  user: "You",
-  assistant: "Asst",
-  tool: "Tool",
-  compaction: "Compaction",
-}
-
-const TOOL_FALLBACK_LABEL = "Tool Call"
 const MAX_TOOLTIP_LENGTH = 220
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
@@ -90,7 +83,7 @@ function collectReasoningText(part: ClientPart): string {
   return ""
 }
 
-function collectTextFromPart(part: ClientPart): string {
+function collectTextFromPart(part: ClientPart, t: (key: string, params?: Record<string, unknown>) => string): string {
   if (!part) return ""
   if (typeof (part as any).text === "string") {
     return (part as any).text as string
@@ -106,26 +99,28 @@ function collectTextFromPart(part: ClientPart): string {
   }
   if (part.type === "file") {
     const filename = (part as any)?.filename
-    return typeof filename === "string" && filename.length > 0 ? `[File] ${filename}` : "Attachment"
+    return typeof filename === "string" && filename.length > 0
+      ? t("messageTimeline.text.filePrefix", { filename })
+      : t("messageTimeline.text.attachment")
   }
   return ""
 }
 
-function getToolTitle(part: ToolCallPart): string {
+function getToolTitle(part: ToolCallPart, t: (key: string, params?: Record<string, unknown>) => string): string {
   const metadata = (((part as unknown as { state?: { metadata?: unknown } })?.state?.metadata) || {}) as { title?: unknown }
   const title = typeof metadata.title === "string" && metadata.title.length > 0 ? metadata.title : undefined
   if (title) return title
   if (typeof part.tool === "string" && part.tool.length > 0) {
     return part.tool
   }
-  return TOOL_FALLBACK_LABEL
+  return t("messageTimeline.tool.fallbackLabel")
 }
 
-function getToolTypeLabel(part: ToolCallPart): string {
+function getToolTypeLabel(part: ToolCallPart, t: (key: string, params?: Record<string, unknown>) => string): string {
   if (typeof part.tool === "string" && part.tool.trim().length > 0) {
     return part.tool.trim().slice(0, 4)
   }
-  return TOOL_FALLBACK_LABEL.slice(0, 4)
+  return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
 }
 
 function formatTextsTooltip(texts: string[], fallback: string): string {
@@ -139,18 +134,32 @@ function formatTextsTooltip(texts: string[], fallback: string): string {
   return fallback
 }
 
-function formatToolTooltip(titles: string[]): string {
+function formatToolTooltip(
+  titles: string[],
+  t: (key: string, params?: Record<string, unknown>) => string,
+): string {
   if (titles.length === 0) {
-    return TOOL_FALLBACK_LABEL
+    return t("messageTimeline.tool.fallbackLabel")
   }
-  return truncateText(`${TOOL_FALLBACK_LABEL}: ${titles.join(", ")}`)
+  return truncateText(`${t("messageTimeline.tool.fallbackLabel")}: ${titles.join(", ")}`)
 }
 
-export function buildTimelineSegments(instanceId: string, record: MessageRecord): TimelineSegment[] {
+export function buildTimelineSegments(
+  instanceId: string,
+  record: MessageRecord,
+  t: (key: string, params?: Record<string, unknown>) => string,
+): TimelineSegment[] {
   if (!record) return []
   const { orderedParts } = buildRecordDisplayData(instanceId, record)
   if (!orderedParts || orderedParts.length === 0) {
     return []
+  }
+
+  const segmentLabel = (type: TimelineSegmentType) => {
+    if (type === "user") return t("messageTimeline.segment.user.label")
+    if (type === "assistant") return t("messageTimeline.segment.assistant.label")
+    if (type === "compaction") return t("messageTimeline.segment.compaction.label")
+    return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
   }
 
   const result: TimelineSegment[] = []
@@ -164,14 +173,14 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
     }
     const isToolSegment = pending.type === "tool"
     const label = isToolSegment
-      ? pending.toolTypeLabels[0] || TOOL_FALLBACK_LABEL.slice(0, 4)
-      : SEGMENT_LABELS[pending.type]
+      ? pending.toolTypeLabels[0] || segmentLabel("tool")
+      : segmentLabel(pending.type)
     const shortLabel = isToolSegment ? pending.toolIcons[0] || getToolIcon("tool") : undefined
     const tooltip = isToolSegment
-      ? formatToolTooltip(pending.toolTitles)
+      ? formatToolTooltip(pending.toolTitles, t)
       : formatTextsTooltip(
           [...pending.texts, ...pending.reasoningTexts],
-          pending.type === "user" ? "User message" : "Assistant response",
+          pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
         )
  
     result.push({
@@ -204,8 +213,8 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
     if (part.type === "tool") {
       const target = ensureSegment("tool")
       const toolPart = part as ToolCallPart
-      target.toolTitles.push(getToolTitle(toolPart))
-      target.toolTypeLabels.push(getToolTypeLabel(toolPart))
+      target.toolTitles.push(getToolTitle(toolPart, t))
+      target.toolTypeLabels.push(getToolTypeLabel(toolPart, t))
       target.toolIcons.push(getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"))
       if (typeof toolPart.id === "string" && toolPart.id.length > 0) {
         target.toolPartIds.push(toolPart.id)
@@ -230,8 +239,8 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
         id: `${record.id}:${segmentIndex}`,
         messageId: record.id,
         type: "compaction",
-        label: SEGMENT_LABELS.compaction,
-        tooltip: isAuto ? "Auto Compaction" : "User Compaction",
+        label: segmentLabel("compaction"),
+        tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
         variant: isAuto ? "auto" : "manual",
       })
       segmentIndex += 1
@@ -242,7 +251,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
       continue
     }
  
-    const text = collectTextFromPart(part)
+    const text = collectTextFromPart(part, t)
     if (text.trim().length === 0) continue
     const target = ensureSegment(defaultContentType)
     if (target) {
@@ -258,6 +267,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
 }
 
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
+  const { t } = useI18n()
   const buttonRefs = new Map<string, HTMLButtonElement>()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
@@ -360,7 +370,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
  
   return (
-    <div class="message-timeline" role="navigation" aria-label="Message timeline">
+    <div class="message-timeline" role="navigation" aria-label={t("messageTimeline.ariaLabel")}>
       <For each={props.segments}>
         {(segment) => {
           onCleanup(() => buttonRefs.delete(segment.id))
@@ -438,4 +448,3 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 }
  
 export default MessageTimeline
-

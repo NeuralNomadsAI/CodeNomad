@@ -7,6 +7,7 @@ import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQue
 import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
@@ -67,6 +68,7 @@ interface ToolCallProps {
 export default function ToolCall(props: ToolCallProps) {
   const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
+  const { t } = useI18n()
   const toolCallMemo = createMemo(() => props.toolCall)
   const toolName = createMemo(() => toolCallMemo()?.tool || "")
   const toolCallIdentifier = createMemo(() => {
@@ -442,7 +444,7 @@ export default function ToolCall(props: ToolCallProps) {
       return row.map((value) => value.trim()).filter((value) => value.length > 0)
     })
     if (normalized.some((item) => (item?.length ?? 0) === 0)) {
-      setQuestionError("Please answer all questions before submitting.")
+      setQuestionError(t("toolCall.question.validation.answerAll"))
       return
     }
 
@@ -453,7 +455,7 @@ export default function ToolCall(props: ToolCallProps) {
       await sendQuestionReply(props.instanceId, sessionId, request.id, normalized)
     } catch (error) {
       log.error("Failed to send question reply", error)
-      setQuestionError(error instanceof Error ? error.message : "Unable to reply")
+      setQuestionError(error instanceof Error ? error.message : t("toolCall.question.errors.unableToReply"))
     } finally {
       setQuestionSubmitting(false)
     }
@@ -471,7 +473,7 @@ export default function ToolCall(props: ToolCallProps) {
       await sendQuestionReject(props.instanceId, sessionId, request.id)
     } catch (error) {
       log.error("Failed to reject question", error)
-      setQuestionError(error instanceof Error ? error.message : "Unable to dismiss")
+      setQuestionError(error instanceof Error ? error.message : t("toolCall.question.errors.unableToDismiss"))
     } finally {
       setQuestionSubmitting(false)
     }
@@ -545,6 +547,7 @@ export default function ToolCall(props: ToolCallProps) {
     preferences,
     setDiffViewMode,
     isDark,
+    t,
     diffCache,
     permissionDiffCache,
     scrollHelpers,
@@ -568,6 +571,7 @@ export default function ToolCall(props: ToolCallProps) {
     toolCall: toolCallMemo,
     toolState,
     toolName,
+    t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown: renderMarkdownContent,
@@ -639,7 +643,7 @@ export default function ToolCall(props: ToolCallProps) {
       await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
     } catch (error) {
       log.error("Failed to send permission response", error)
-      setPermissionError(error instanceof Error ? error.message : "Unable to update permission")
+      setPermissionError(error instanceof Error ? error.message : t("toolCall.permission.errors.unableToUpdate"))
     } finally {
       setPermissionSubmitting(false)
     }
@@ -651,7 +655,7 @@ export default function ToolCall(props: ToolCallProps) {
     if (state.status === "error" && state.error) {
       return (
         <div class="tool-call-error-content">
-          <strong>Error:</strong> {state.error}
+          <strong>{t("toolCall.error.label")}</strong> {state.error}
         </div>
       )
     }
@@ -752,7 +756,7 @@ export default function ToolCall(props: ToolCallProps) {
           <Show when={status() === "pending" && !pendingPermission()}>
             <div class="tool-call-pending-message">
               <span class="spinner-small"></span>
-              <span>Waiting to run...</span>
+              <span>{t("toolCall.pending.waitingToRun")}</span>
             </div>
           </Show>
         </div>
@@ -761,6 +765,7 @@ export default function ToolCall(props: ToolCallProps) {
       <Show when={diagnosticsEntries().length}>
 
         {renderDiagnosticsSection(
+          t,
           diagnosticsEntries(),
           diagnosticsExpanded(),
           () => setDiagnosticsOverride((prev) => {

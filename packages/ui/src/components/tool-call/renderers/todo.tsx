@@ -2,6 +2,7 @@ import { For, Show } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { ToolRenderer } from "../types"
 import { readToolStatePayload } from "../utils"
+import { useI18n, tGlobal } from "../../../lib/i18n"
 
 export type TodoViewStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
@@ -45,16 +46,16 @@ function summarizeTodos(todos: TodoViewItem[]) {
   )
 }
 
-function getTodoStatusLabel(status: TodoViewStatus): string {
+function getTodoStatusLabel(t: (key: string) => string, status: TodoViewStatus): string {
   switch (status) {
     case "completed":
-      return "Completed"
+      return t("toolCall.renderer.todo.status.completed")
     case "in_progress":
-      return "In progress"
+      return t("toolCall.renderer.todo.status.inProgress")
     case "cancelled":
-      return "Cancelled"
+      return t("toolCall.renderer.todo.status.cancelled")
     default:
-      return "Pending"
+      return t("toolCall.renderer.todo.status.pending")
   }
 }
 
@@ -65,11 +66,12 @@ interface TodoListViewProps {
 }
 
 export function TodoListView(props: TodoListViewProps) {
+  const { t } = useI18n()
   const todos = extractTodosFromState(props.state)
   const counts = summarizeTodos(todos)
 
   if (counts.total === 0) {
-    return <div class="tool-call-todo-empty">{props.emptyLabel ?? "No plan items yet."}</div>
+    return <div class="tool-call-todo-empty">{props.emptyLabel ?? t("toolCall.renderer.todo.empty")}</div>
   }
 
   return (
@@ -77,7 +79,7 @@ export function TodoListView(props: TodoListViewProps) {
       <div class="tool-call-todos" role="list">
         <For each={todos}>
           {(todo) => {
-            const label = getTodoStatusLabel(todo.status)
+            const label = getTodoStatusLabel(t, todo.status)
             return (
               <div
                 class="tool-call-todo-item"
@@ -108,20 +110,20 @@ export function TodoListView(props: TodoListViewProps) {
 }
 
 export function getTodoTitle(state?: ToolState): string {
-  if (!state) return "Plan"
+  if (!state) return tGlobal("toolCall.renderer.todo.title.plan")
 
   const todos = extractTodosFromState(state)
-  if (state.status !== "completed" || todos.length === 0) return "Plan"
+  if (state.status !== "completed" || todos.length === 0) return tGlobal("toolCall.renderer.todo.title.plan")
 
   const counts = summarizeTodos(todos)
-  if (counts.pending === counts.total) return "Creating plan"
-  if (counts.completed === counts.total) return "Completing plan"
-  return "Updating plan"
+  if (counts.pending === counts.total) return tGlobal("toolCall.renderer.todo.title.creating")
+  if (counts.completed === counts.total) return tGlobal("toolCall.renderer.todo.title.completing")
+  return tGlobal("toolCall.renderer.todo.title.updating")
 }
 
 export const todoRenderer: ToolRenderer = {
   tools: ["todowrite", "todoread"],
-  getAction: () => "Planning...",
+  getAction: () => tGlobal("toolCall.renderer.action.planning"),
   getTitle({ toolState }) {
     return getTodoTitle(toolState())
   },

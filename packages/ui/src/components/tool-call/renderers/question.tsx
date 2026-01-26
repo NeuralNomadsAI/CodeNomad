@@ -2,12 +2,12 @@ import type { ToolRenderer } from "../types"
 
 export const questionRenderer: ToolRenderer = {
   tools: ["question"],
-  getAction: () => "Awaiting answers...",
-  getTitle({ toolState }) {
+  getAction: ({ t }) => t("toolCall.question.action.awaitingAnswers"),
+  getTitle({ toolState, t }) {
     const state = toolState()
-    if (!state) return "Questions"
-    if (state.status === "completed") return "Questions"
-    return "Asking questions"
+    if (!state) return t("toolCall.question.title.questions")
+    if (state.status === "completed") return t("toolCall.question.title.questions")
+    return t("toolCall.question.title.askingQuestions")
   },
   renderBody() {
     // The question tool UI is rendered by ToolCall itself so

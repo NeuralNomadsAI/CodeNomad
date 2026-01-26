@@ -1,0 +1,160 @@
+export const commandMessages = {
+  "commandPalette.title": "Палитра команд",
+  "commandPalette.description": "Поиск и запуск команд",
+  "commandPalette.searchPlaceholder": "Введите команду или начните поиск…",
+  "commandPalette.empty": "Команды по запросу \"{query}\" не найдены",
+  "commandPalette.category.customCommands": "Пользовательские команды",
+  "commandPalette.category.instance": "Экземпляр",
+  "commandPalette.category.session": "Сессия",
+  "commandPalette.category.agentModel": "Агент и модель",
+  "commandPalette.category.inputFocus": "Ввод и фокус",
+  "commandPalette.category.system": "Система",
+  "commandPalette.category.other": "Другое",
+
+  "commands.newInstance.label": "Новый экземпляр",
+  "commands.newInstance.description": "Открыть выбор папки для создания нового экземпляра",
+  "commands.newInstance.keywords": "папка, проект, рабочее пространство",
+
+  "commands.closeInstance.label": "Закрыть экземпляр",
+  "commands.closeInstance.description": "Остановить сервер текущего экземпляра",
+  "commands.closeInstance.keywords": "остановить, выйти, закрыть",
+
+  "commands.nextInstance.label": "Следующий экземпляр",
+  "commands.nextInstance.description": "Переключиться на следующую вкладку экземпляра",
+  "commands.nextInstance.keywords": "переключить, навигация",
+
+  "commands.previousInstance.label": "Предыдущий экземпляр",
+  "commands.previousInstance.description": "Переключиться на предыдущую вкладку экземпляра",
+  "commands.previousInstance.keywords": "переключить, навигация",
+
+  "commands.newSession.label": "Новая сессия",
+  "commands.newSession.description": "Создать новую родительскую сессию",
+  "commands.newSession.keywords": "создать, начать",
+
+  "commands.closeSession.label": "Закрыть сессию",
+  "commands.closeSession.description": "Закрыть текущую родительскую сессию",
+  "commands.closeSession.keywords": "закрыть, остановить",
+
+  "commands.scrubSessions.label": "Очистить сессии",
+  "commands.scrubSessions.description": "Удалить пустые сессии, завершенные сессии субагентов и лишние форкнутые сессии.",
+  "commands.scrubSessions.keywords": "очистка, пустые, сессии, удалить, убрать",
+
+  "commands.instanceInfo.label": "Информация об экземпляре",
+  "commands.instanceInfo.description": "Открыть обзор экземпляра с логами и статусом",
+  "commands.instanceInfo.keywords": "информация, логи, консоль, вывод",
+
+  "commands.nextSession.label": "Следующая сессия",
+  "commands.nextSession.description": "Переключиться на следующую вкладку сессии",
+  "commands.nextSession.keywords": "переключить, навигация",
+
+  "commands.previousSession.label": "Предыдущая сессия",
+  "commands.previousSession.description": "Переключиться на предыдущую вкладку сессии",
+  "commands.previousSession.keywords": "переключить, навигация",
+
+  "commands.compactSession.label": "Компактировать сессию",
+  "commands.compactSession.description": "Суммировать и компактировать текущую сессию",
+  "commands.compactSession.keywords": "суммировать, сжать",
+  "commands.compactSession.errorFallback": "Не удалось компактировать сессию",
+  "commands.compactSession.alert.title": "Компактация не удалась",
+  "commands.compactSession.alert.message": "Компактация не удалась: {message}",
+
+  "commands.undoLastMessage.label": "Отменить последнее сообщение",
+  "commands.undoLastMessage.description": "Откатить последнее сообщение",
+  "commands.undoLastMessage.keywords": "откат, отмена",
+  "commands.undoLastMessage.none.title": "Нечего отменять",
+  "commands.undoLastMessage.none.message": "Нечего отменять",
+  "commands.undoLastMessage.failed.title": "Не удалось отменить",
+  "commands.undoLastMessage.failed.message": "Не удалось откатить сообщение",
+
+  "commands.openModelSelector.label": "Открыть выбор модели",
+  "commands.openModelSelector.description": "Выбрать другую модель",
+  "commands.openModelSelector.keywords": "модель, llm, ai",
+
+  "commands.selectModelVariant.label": "Выбрать вариант модели",
+  "commands.selectModelVariant.description": "Выбрать интенсивность размышлений для текущей модели",
+  "commands.selectModelVariant.keywords": "вариант, thinking, reasoning, интенсивность",
+
+  "commands.openAgentSelector.label": "Открыть выбор агента",
+  "commands.openAgentSelector.description": "Выбрать другого агента",
+  "commands.openAgentSelector.keywords": "агент, режим",
+
+  "commands.clearInput.label": "Очистить ввод",
+  "commands.clearInput.description": "Очистить поле prompt",
+  "commands.clearInput.keywords": "очистить, сброс",
+
+  "commands.thinkingBlocks.label.show": "Показать блоки размышлений",
+  "commands.thinkingBlocks.label.hide": "Скрыть блоки размышлений",
+  "commands.thinkingBlocks.description": "Показать/скрыть процесс рассуждений AI",
+  "commands.thinkingBlocks.keywords": "thinking, reasoning, переключить, показать, скрыть",
+
+  "commands.timelineToolCalls.label.show": "Показать Tool Calls в таймлайне",
+  "commands.timelineToolCalls.label.hide": "Скрыть Tool Calls в таймлайне",
+  "commands.timelineToolCalls.description": "Переключить отображение вызовов инструментов в таймлайне сообщений",
+  "commands.timelineToolCalls.keywords": "таймлайн, tool, переключить",
+
+  "commands.common.expanded": "Развернуто",
+  "commands.common.collapsed": "Свернуто",
+  "commands.common.visible": "Видимо",
+  "commands.common.hidden": "Скрыто",
+  "commands.common.enabled": "Включено",
+  "commands.common.disabled": "Выключено",
+
+  "commands.thinkingBlocksDefault.label": "Блоки размышлений по умолчанию · {state}",
+  "commands.thinkingBlocksDefault.description": "Переключить, разворачивать ли блоки размышлений по умолчанию",
+  "commands.thinkingBlocksDefault.keywords": "thinking, reasoning, развернуть, свернуть, по умолчанию",
+
+  "commands.diffViewSplit.label": "Раздельный просмотр diff",
+  "commands.diffViewSplit.description": "Показывать diff вызовов инструментов рядом",
+  "commands.diffViewSplit.keywords": "diff, split, просмотр",
+
+  "commands.diffViewUnified.label": "Единый просмотр diff",
+  "commands.diffViewUnified.description": "Показывать diff вызовов инструментов в одну колонку",
+  "commands.diffViewUnified.keywords": "diff, unified, просмотр",
+
+  "commands.toolOutputsDefault.label": "Выводы инструментов по умолчанию · {state}",
+  "commands.toolOutputsDefault.description": "Переключить, разворачивать ли выводы инструментов по умолчанию",
+  "commands.toolOutputsDefault.keywords": "tool, output, развернуть, свернуть",
+
+  "commands.diagnosticsDefault.label": "Диагностика по умолчанию · {state}",
+  "commands.diagnosticsDefault.description": "Переключить, разворачивать ли вывод диагностики по умолчанию",
+  "commands.diagnosticsDefault.keywords": "diagnostics, развернуть, свернуть",
+
+  "commands.tokenUsageDisplay.label": "Отображение token-статистики · {state}",
+  "commands.tokenUsageDisplay.description": "Показать или скрыть статистику token и стоимости для сообщений ассистента",
+  "commands.tokenUsageDisplay.keywords": "token, usage, cost, статистика",
+
+  "commands.autoCleanupBlankSessions.label": "Авто-очистка пустых сессий · {state}",
+  "commands.autoCleanupBlankSessions.description": "Автоматически очищать пустые сессии при создании новых",
+  "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, пустые, сессии, переключить",
+
+  "commands.showHelp.label": "Показать справку",
+  "commands.showHelp.description": "Показать горячие клавиши и справку",
+  "commands.showHelp.keywords": "горячие клавиши, справка",
+
+  "commands.custom.argumentsPrompt.message": "Аргументы для /{name}",
+  "commands.custom.argumentsPrompt.title": "Пользовательская команда",
+  "commands.custom.argumentsPrompt.inputLabel": "Аргументы",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "например: foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "Запустить",
+  "commands.custom.argumentsPrompt.cancelLabel": "Отмена",
+  "commands.custom.argumentsPrompt.openFailed.message": "Не удалось открыть prompt аргументов.",
+  "commands.custom.argumentsPrompt.openFailed.title": "Аргументы команды",
+  "commands.custom.entries.descriptionFallback": "Пользовательская команда",
+  "commands.custom.sessionRequired.message": "Выберите сессию перед запуском пользовательской команды.",
+  "commands.custom.sessionRequired.title": "Требуется сессия",
+  "commands.custom.runFailed.message": "Не удалось запустить пользовательскую команду. Проверьте консоль для подробностей.",
+  "commands.custom.runFailed.title": "Команда не выполнена",
+
+  "unifiedPicker.loading.searching": "Поиск…",
+  "unifiedPicker.loading.loadingWorkspace": "Загрузка рабочего пространства…",
+  "unifiedPicker.title.command": "Выберите команду",
+  "unifiedPicker.title.mention": "Выберите агента или файл",
+  "unifiedPicker.empty": "Ничего не найдено",
+  "unifiedPicker.sections.commands": "КОМАНДЫ",
+  "unifiedPicker.sections.agents": "АГЕНТЫ",
+  "unifiedPicker.sections.files": "ФАЙЛЫ",
+  "unifiedPicker.badge.subagent": "субагент",
+  "unifiedPicker.footer.navigate": "навигация",
+  "unifiedPicker.footer.select": "выбрать",
+  "unifiedPicker.footer.close": "закрыть",
+} as const

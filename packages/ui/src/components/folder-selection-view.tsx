@@ -1,5 +1,6 @@
+import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -9,6 +10,7 @@ import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
 import { githubStars } from "../stores/github-stars"
 import { formatCompactCount } from "../lib/formatters"
+import { useI18n, type Locale } from "../lib/i18n"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -23,13 +25,27 @@ interface FolderSelectionViewProps {
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const { recentFolders, removeRecentFolder, preferences } = useConfig()
+  const { recentFolders, removeRecentFolder, preferences, updatePreferences } = useConfig()
+  const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
+
+  type LanguageOption = { value: Locale; label: string }
+
+  const languageOptions: LanguageOption[] = [
+    { value: "en", label: "English" },
+    { value: "es", label: "Español" },
+    { value: "fr", label: "Français" },
+    { value: "ru", label: "Русский" },
+    { value: "ja", label: "日本語" },
+    { value: "zh-Hans", label: "简体中文" },
+  ]
+
+  const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
  
   const folders = () => recentFolders()
   const isLoading = () => Boolean(props.isLoading)
@@ -181,10 +197,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     const hours = Math.floor(minutes / 60)
     const days = Math.floor(hours / 24)
 
-    if (days > 0) return `${days}d ago`
-    if (hours > 0) return `${hours}h ago`
-    if (minutes > 0) return `${minutes}m ago`
-    return "just now"
+    if (days > 0) return t("time.relative.daysAgoShort", { count: days })
+    if (hours > 0) return t("time.relative.hoursAgoShort", { count: hours })
+    if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
+    return t("time.relative.justNow")
   }
 
   function handleFolderSelect(path: string) {
@@ -203,7 +219,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (nativeDialogsAvailable) {
       const fallbackPath = folders()[0]?.path
       const selected = await openNativeFolderDialog({
-        title: "Select Workspace",
+        title: t("folderSelection.dialog.title"),
         defaultPath: fallbackPath,
       })
       if (selected) {
@@ -253,6 +269,50 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
           aria-busy={isLoading() ? "true" : "false"}
         >
+          <div class="absolute top-4 left-6">
+            <Select<LanguageOption>
+              value={selectedLanguageOption()}
+              onChange={(value) => {
+                if (!value) return
+                if (value.value === locale()) return
+                updatePreferences({ locale: value.value })
+              }}
+              options={languageOptions}
+              optionValue="value"
+              optionTextValue="label"
+              itemComponent={(itemProps) => (
+                <Select.Item item={itemProps.item} class="selector-option">
+                  <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                </Select.Item>
+              )}
+            >
+              <Select.Trigger
+                class="selector-trigger"
+                aria-label={t("folderSelection.language.ariaLabel")}
+                title={t("folderSelection.language.ariaLabel")}
+              >
+                <Languages class="w-4 h-4 icon-muted" aria-hidden="true" />
+                <div class="flex-1 min-w-0">
+                  <Select.Value<LanguageOption>>
+                    {(state) => (
+                      <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                        {state.selectedOption()?.label}
+                      </span>
+                    )}
+                  </Select.Value>
+                </div>
+                <Select.Icon class="selector-trigger-icon">
+                  <ChevronDown class="w-3 h-3" />
+                </Select.Icon>
+              </Select.Trigger>
+
+              <Select.Portal>
+                <Select.Content class="selector-popover min-w-[180px]">
+                  <Select.Listbox class="selector-listbox" />
+                </Select.Content>
+              </Select.Portal>
+            </Select>
+          </div>
           <Show when={props.onOpenRemoteAccess}>
             <div class="absolute top-4 right-6">
               <button
@@ -266,7 +326,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </Show>
           <div class="mb-6 text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt="CodeNomad logo" class="h-32 w-auto sm:h-48" loading="lazy" />
+              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="h-32 w-auto sm:h-48" loading="lazy" />
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
@@ -275,8 +335,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                aria-label="CodeNomad GitHub"
-                title="CodeNomad GitHub"
+                aria-label={t("folderSelection.links.github")}
+                title={t("folderSelection.links.github")}
                 onClick={(event) => {
                   event.preventDefault()
                   openExternalLink("https://github.com/NeuralNomadsAI/CodeNomad")
@@ -289,8 +349,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
-                aria-label="CodeNomad GitHub Stars"
-                title="CodeNomad GitHub Stars"
+                aria-label={t("folderSelection.links.githubStars")}
+                title={t("folderSelection.links.githubStars")}
                 onClick={(event) => {
                   event.preventDefault()
                   openExternalLink("https://github.com/NeuralNomadsAI/CodeNomad")
@@ -306,8 +366,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                aria-label="CodeNomad Discord"
-                title="CodeNomad Discord"
+                aria-label={t("folderSelection.links.discord")}
+                title={t("folderSelection.links.discord")}
                 onClick={(event) => {
                   event.preventDefault()
                   openExternalLink(
@@ -318,7 +378,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <DiscordSymbolIcon class="w-4 h-4" />
               </a>
             </div>
-            <p class="mt-3 text-base text-secondary">Select a folder to start coding with AI</p>
+            <p class="mt-3 text-base text-secondary">{t("folderSelection.tagline")}</p>
           </div>
 
           <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
@@ -332,16 +392,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     <div class="panel-empty-state-icon">
                       <Clock class="w-12 h-12 mx-auto" />
                     </div>
-                    <p class="panel-empty-state-title">No Recent Folders</p>
-                    <p class="panel-empty-state-description">Browse for a folder to get started</p>
+                    <p class="panel-empty-state-title">{t("folderSelection.empty.title")}</p>
+                    <p class="panel-empty-state-description">{t("folderSelection.empty.description")}</p>
                   </div>
                 }
               >
                 <div class="panel flex flex-col flex-1 min-h-0">
                   <div class="panel-header">
-                    <h2 class="panel-title">Recent Folders</h2>
+                    <h2 class="panel-title">{t("folderSelection.recent.title")}</h2>
                     <p class="panel-subtitle">
-                      {folders().length} {folders().length === 1 ? "folder" : "folders"} available
+                      {t(
+                        folders().length === 1
+                          ? "folderSelection.recent.subtitle.one"
+                          : "folderSelection.recent.subtitle.other",
+                        { count: folders().length },
+                      )}
                     </p>
                   </div>
                   <div
@@ -393,7 +458,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               onClick={(e) => handleRemove(folder.path, e)}
                               disabled={isLoading()}
                               class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
-                              title="Remove from recent"
+                              title={t("folderSelection.recent.remove")}
                             >
                               <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
                             </button>
@@ -411,8 +476,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0">
               <div class="panel shrink-0">
                 <div class="panel-header hidden sm:block">
-                  <h2 class="panel-title">Browse for Folder</h2>
-                  <p class="panel-subtitle">Select any folder on your computer</p>
+                  <h2 class="panel-title">{t("folderSelection.browse.title")}</h2>
+                  <p class="panel-subtitle">{t("folderSelection.browse.subtitle")}</p>
                 </div>
 
                 <div class="panel-body">
@@ -424,7 +489,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   >
                     <div class="flex items-center gap-2">
                       <FolderPlus class="w-4 h-4" />
-                      <span>{props.isLoading ? "Opening..." : "Browse Folders"}</span>
+                      <span>
+                        {props.isLoading
+                          ? t("folderSelection.browse.buttonOpening")
+                          : t("folderSelection.browse.button")}
+                      </span>
                     </div>
                     <Kbd shortcut="cmd+n" class="ml-2" />
                   </button>
@@ -435,7 +504,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <button onClick={() => props.onAdvancedSettingsOpen?.()} class="panel-section-header w-full justify-between">
                     <div class="flex items-center gap-2">
                       <Settings class="w-4 h-4 icon-muted" />
-                      <span class="text-sm font-medium text-secondary">Advanced Settings</span>
+                      <span class="text-sm font-medium text-secondary">{t("folderSelection.advancedSettings")}</span>
                     </div>
                     <ChevronRight class="w-4 h-4 icon-muted" />
                   </button>
@@ -457,20 +526,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <div class="flex items-center gap-1.5">
                     <kbd class="kbd">↑</kbd>
                     <kbd class="kbd">↓</kbd>
-                    <span>Navigate</span>
+                    <span>{t("folderSelection.hints.navigate")}</span>
                   </div>
                   <div class="flex items-center gap-1.5">
                     <kbd class="kbd">Enter</kbd>
-                    <span>Select</span>
+                    <span>{t("folderSelection.hints.select")}</span>
                   </div>
                   <div class="flex items-center gap-1.5">
                     <kbd class="kbd">Del</kbd>
-                    <span>Remove</span>
+                    <span>{t("folderSelection.hints.remove")}</span>
                   </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
                   <Kbd shortcut="cmd+n" />
-                  <span>Browse</span>
+                  <span>{t("folderSelection.hints.browse")}</span>
                 </div>
               </div>
             </div>
@@ -480,8 +549,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           <div class="folder-loading-overlay">
             <div class="folder-loading-indicator">
               <div class="spinner" />
-              <p class="folder-loading-text">Starting instance…</p>
-              <p class="folder-loading-subtext">Hang tight while we prepare your workspace.</p>
+              <p class="folder-loading-text">{t("folderSelection.loading.title")}</p>
+              <p class="folder-loading-subtext">{t("folderSelection.loading.subtitle")}</p>
             </div>
           </div>
         </Show>
@@ -497,8 +566,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
       <DirectoryBrowserDialog
         open={isFolderBrowserOpen()}
-        title="Select Workspace"
-        description="Select workspace to start coding."
+        title={t("folderSelection.dialog.title")}
+        description={t("folderSelection.dialog.description")}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
       />

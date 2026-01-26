@@ -1,12 +1,14 @@
 import { Component, createSignal, For, Show } from "solid-js"
 import { Plus, Trash2, Key, Globe } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
+import { useI18n } from "../lib/i18n"
 
 interface EnvironmentVariablesEditorProps {
   disabled?: boolean
 }
 
 const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (props) => {
+  const { t } = useI18n()
   const {
     preferences,
     addEnvironmentVariable,
@@ -54,9 +56,11 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
     <div class="space-y-3">
       <div class="flex items-center gap-2 mb-3">
         <Globe class="w-4 h-4 icon-muted" />
-        <span class="text-sm font-medium text-secondary">Environment Variables</span>
+        <span class="text-sm font-medium text-secondary">{t("envEditor.title")}</span>
         <span class="text-xs text-muted">
-          ({entries().length} variable{entries().length !== 1 ? "s" : ""})
+          {entries().length === 1
+            ? t("envEditor.count.one", { count: entries().length })
+            : t("envEditor.count.other", { count: entries().length })}
         </span>
       </div>
 
@@ -73,8 +77,8 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     value={key}
                     disabled={props.disabled}
                     class="flex-1 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base rounded text-muted cursor-not-allowed"
-                    placeholder="Variable name"
-                    title="Variable name (read-only)"
+                    placeholder={t("envEditor.fields.name.placeholder")}
+                    title={t("envEditor.fields.name.readOnlyTitle")}
                   />
                   <input
                     type="text"
@@ -82,14 +86,14 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
                     class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                    placeholder="Variable value"
+                    placeholder={t("envEditor.fields.value.placeholder")}
                   />
                 </div>
                 <button
                   onClick={() => handleRemoveVariable(key)}
                   disabled={props.disabled}
                   class="p-1.5 icon-muted icon-danger-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title="Remove variable"
+                  title={t("envEditor.actions.remove.title")}
                 >
                   <Trash2 class="w-3.5 h-3.5" />
                 </button>
@@ -110,7 +114,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
             class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-            placeholder="Variable name"
+            placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
             type="text"
@@ -119,14 +123,14 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
             class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-            placeholder="Variable value"
+            placeholder={t("envEditor.fields.value.placeholder")}
           />
         </div>
         <button
           onClick={handleAddVariable}
           disabled={props.disabled || !newKey().trim()}
           class="p-1.5 icon-muted icon-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="Add variable"
+          title={t("envEditor.actions.add.title")}
         >
           <Plus class="w-3.5 h-3.5" />
         </button>
@@ -134,12 +138,12 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
 
       <Show when={entries().length === 0}>
         <div class="text-xs text-muted text-center py-2">
-          No environment variables configured. Add variables above to customize the OpenCode environment.
+          {t("envEditor.empty")}
         </div>
       </Show>
 
       <div class="text-xs text-muted mt-2">
-        These variables will be available in the OpenCode environment when starting instances.
+        {t("envEditor.help")}
       </div>
     </div>
   )

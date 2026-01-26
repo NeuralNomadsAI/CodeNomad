@@ -9,6 +9,7 @@ import { restartCli } from "../lib/native/cli"
 import { preferences, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { getLogger } from "../lib/logger"
+import { useI18n } from "../lib/i18n"
 const log = getLogger("actions")
 
 
@@ -18,6 +19,7 @@ interface RemoteAccessOverlayProps {
 }
 
 export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
+  const { t } = useI18n()
   const [meta, setMeta] = createSignal<ServerMeta | null>(null)
   const [authStatus, setAuthStatus] = createSignal<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean } | null>(null)
   const [loading, setLoading] = createSignal(false)
@@ -85,11 +87,11 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       return
     }
 
-    const confirmed = await showConfirmDialog("Restart to apply listening mode? This will stop all running instances.", {
-      title: allow ? "Open to other devices" : "Limit to this device",
+    const confirmed = await showConfirmDialog(t("remoteAccess.listeningMode.restartConfirm.message"), {
+      title: allow ? t("remoteAccess.listeningMode.restartConfirm.title.all") : t("remoteAccess.listeningMode.restartConfirm.title.local"),
       variant: "warning",
-      confirmLabel: "Restart now",
-      cancelLabel: "Cancel",
+      confirmLabel: t("remoteAccess.listeningMode.restartConfirm.confirmLabel"),
+      cancelLabel: t("remoteAccess.listeningMode.restartConfirm.cancelLabel"),
     })
 
     if (!confirmed) {
@@ -100,7 +102,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
     setListeningMode(targetMode)
     const restarted = await restartCli()
     if (!restarted) {
-      setError("Unable to restart automatically. Please restart the app to apply the change.")
+      setError(t("remoteAccess.restart.errorManual"))
     } else {
       setMeta((prev) => (prev ? { ...prev, listeningMode: targetMode } : prev))
     }
@@ -123,12 +125,12 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
     const confirm = passwordConfirm()
 
     if (next.trim().length < 8) {
-      setPasswordError("Password must be at least 8 characters.")
+      setPasswordError(t("remoteAccess.password.error.tooShort"))
       return
     }
 
     if (next !== confirm) {
-      setPasswordError("Passwords do not match.")
+      setPasswordError(t("remoteAccess.password.error.mismatch"))
       return
     }
 
@@ -162,11 +164,11 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
           <Dialog.Content class="modal-surface remote-panel" tabIndex={-1}>
             <header class="remote-header">
               <div>
-                <p class="remote-eyebrow">Remote handover</p>
-                <h2 class="remote-title">Connect to CodeNomad remotely</h2>
-                <p class="remote-subtitle">Use the addresses below to open CodeNomad from another device.</p>
+                <p class="remote-eyebrow">{t("remoteAccess.eyebrow")}</p>
+                <h2 class="remote-title">{t("remoteAccess.title")}</h2>
+                <p class="remote-subtitle">{t("remoteAccess.subtitle")}</p>
               </div>
-              <button type="button" class="remote-close" onClick={props.onClose} aria-label="Close remote access">
+              <button type="button" class="remote-close" onClick={props.onClose} aria-label={t("remoteAccess.close")}>
                 ×
               </button>
             </header>
@@ -177,13 +179,13 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                   <div class="remote-section-title">
                     <Shield class="remote-icon" />
                     <div>
-                      <p class="remote-label">Listening mode</p>
-                      <p class="remote-help">Allow or limit remote handovers by binding to all interfaces or just localhost.</p>
+                      <p class="remote-label">{t("remoteAccess.sections.listeningMode.label")}</p>
+                      <p class="remote-help">{t("remoteAccess.sections.listeningMode.help")}</p>
                     </div>
                   </div>
                   <button class="remote-refresh" type="button" onClick={() => void refreshMeta()} disabled={loading()}>
                     <RefreshCw class={`remote-icon ${loading() ? "remote-spin" : ""}`} />
-                    <span class="remote-refresh-label">Refresh</span>
+                    <span class="remote-refresh-label">{t("remoteAccess.refresh")}</span>
                   </button>
                 </div>
 
@@ -196,19 +198,18 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                 >
                   <Switch.Input />
                   <Switch.Control class="remote-toggle-switch" data-checked={allowExternalConnections()}>
-                    <span class="remote-toggle-state">{allowExternalConnections() ? "On" : "Off"}</span>
+                    <span class="remote-toggle-state">{allowExternalConnections() ? t("remoteAccess.toggle.on") : t("remoteAccess.toggle.off")}</span>
                     <Switch.Thumb class="remote-toggle-thumb" />
                   </Switch.Control>
                   <div class="remote-toggle-copy">
-                    <span class="remote-toggle-title">Allow connections from other IPs</span>
+                    <span class="remote-toggle-title">{t("remoteAccess.toggle.title")}</span>
                     <span class="remote-toggle-caption">
-                      {allowExternalConnections() ? "Binding to 0.0.0.0" : "Binding to 127.0.0.1"}
+                      {allowExternalConnections() ? t("remoteAccess.toggle.caption.all") : t("remoteAccess.toggle.caption.local")}
                     </span>
                   </div>
                 </Switch>
                 <p class="remote-toggle-note">
-                  Changing this requires a restart and temporarily stops all active instances. Share the addresses below once the
-                  server restarts.
+                  {t("remoteAccess.toggle.note")}
                 </p>
               </section>
 
@@ -217,22 +218,24 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                   <div class="remote-section-title">
                     <Shield class="remote-icon" />
                     <div>
-                      <p class="remote-label">Server password</p>
-                      <p class="remote-help">Remote handovers require a password. Set a memorable one to enable logins from other devices.</p>
+                      <p class="remote-label">{t("remoteAccess.sections.serverPassword.label")}</p>
+                      <p class="remote-help">{t("remoteAccess.sections.serverPassword.help")}</p>
                     </div>
                   </div>
                 </div>
 
                 <Show
                   when={authStatus() && authStatus()!.authenticated}
-                  fallback={<div class="remote-card">Authentication status unavailable.</div>}
+                  fallback={<div class="remote-card">{t("remoteAccess.authStatus.unavailable")}</div>}
                 >
                   <div class="remote-card">
-                    <p class="remote-help">Username: {authStatus()!.username ?? "codenomad"}</p>
+                    <p class="remote-help">
+                      {t("remoteAccess.username", { username: authStatus()!.username ?? "codenomad" })}
+                    </p>
                     <p class="remote-help">
                       {authStatus()!.passwordUserProvided
-                        ? "A password is set for remote access."
-                        : "No memorable password is set yet. Set one to allow remote handover logins."}
+                        ? t("remoteAccess.password.status.set")
+                        : t("remoteAccess.password.status.unset")}
                     </p>
 
                     <div class="remote-actions" style={{ "justify-content": "flex-start", "margin-top": "12px" }}>
@@ -245,26 +248,26 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                         }}
                       >
                         {passwordFormOpen()
-                          ? "Cancel"
+                          ? t("remoteAccess.password.actions.cancel")
                           : authStatus()!.passwordUserProvided
-                            ? "Change password"
-                            : "Set password"}
+                            ? t("remoteAccess.password.actions.change")
+                            : t("remoteAccess.password.actions.set")}
                       </button>
                     </div>
 
                     <Show when={passwordFormOpen()}>
                       <div class="selector-input-group" style={{ "margin-top": "12px" }}>
-                        <label class="text-sm font-medium text-secondary">New password</label>
+                        <label class="text-sm font-medium text-secondary">{t("remoteAccess.password.form.newPassword")}</label>
                         <input
                           class="selector-input w-full"
                           type="password"
                           value={passwordValue()}
                           onInput={(event) => setPasswordValue(event.currentTarget.value)}
-                          placeholder="At least 8 characters"
+                          placeholder={t("remoteAccess.password.form.placeholder")}
                         />
                       </div>
                       <div class="selector-input-group" style={{ "margin-top": "10px" }}>
-                        <label class="text-sm font-medium text-secondary">Confirm password</label>
+                        <label class="text-sm font-medium text-secondary">{t("remoteAccess.password.form.confirmPassword")}</label>
                         <input
                           class="selector-input w-full"
                           type="password"
@@ -284,7 +287,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                           disabled={savingPassword()}
                           onClick={() => void handleSubmitPassword()}
                         >
-                          {savingPassword() ? "Saving…" : "Save password"}
+                          {savingPassword() ? t("remoteAccess.password.save.saving") : t("remoteAccess.password.save.label")}
                         </button>
                       </div>
                     </Show>
@@ -298,33 +301,39 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                   <div class="remote-section-title">
                     <Wifi class="remote-icon" />
                     <div>
-                      <p class="remote-label">Reachable addresses</p>
-                      <p class="remote-help">Launch or scan from another machine to hand over control.</p>
+                      <p class="remote-label">{t("remoteAccess.sections.addresses.label")}</p>
+                      <p class="remote-help">{t("remoteAccess.sections.addresses.help")}</p>
                     </div>
                   </div>
                 </div>
 
-                <Show when={!loading()} fallback={<div class="remote-card">Loading addresses…</div>}>
+                <Show when={!loading()} fallback={<div class="remote-card">{t("remoteAccess.addresses.loading")}</div>}>
                   <Show when={!error()} fallback={<div class="remote-error">{error()}</div>}>
-                    <Show when={displayAddresses().length > 0} fallback={<div class="remote-card">No addresses available yet.</div>}>
+                    <Show when={displayAddresses().length > 0} fallback={<div class="remote-card">{t("remoteAccess.addresses.none")}</div>}>
                       <div class="remote-address-list">
                         <For each={displayAddresses()}>
                           {(address) => {
                             const expandedState = () => expandedUrl() === address.url
                             const qr = () => qrCodes()[address.url]
+                            const scopeLabel = () =>
+                              address.scope === "external"
+                                ? t("remoteAccess.address.scope.network")
+                                : address.scope === "loopback"
+                                  ? t("remoteAccess.address.scope.loopback")
+                                  : t("remoteAccess.address.scope.internal")
                             return (
                               <div class="remote-address">
                                 <div class="remote-address-main">
                                   <div>
                                     <p class="remote-address-url">{address.url}</p>
                                     <p class="remote-address-meta">
-                                      {address.family.toUpperCase()} • {address.scope === "external" ? "Network" : address.scope === "loopback" ? "Loopback" : "Internal"} • {address.ip}
+                                      {address.family.toUpperCase()} • {scopeLabel()} • {address.ip}
                                     </p>
                                   </div>
                                   <div class="remote-actions">
                                     <button class="remote-pill" type="button" onClick={() => handleOpenUrl(address.url)}>
                                       <ExternalLink class="remote-icon" />
-                                      Open
+                                      {t("remoteAccess.address.open")}
                                     </button>
                                     <button
                                       class="remote-pill"
@@ -333,14 +342,20 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                                       aria-expanded={expandedState()}
                                     >
                                       <Link2 class="remote-icon" />
-                                      {expandedState() ? "Hide QR" : "Show QR"}
+                                      {expandedState() ? t("remoteAccess.address.hideQr") : t("remoteAccess.address.showQr")}
                                     </button>
                                   </div>
                                 </div>
                                 <Show when={expandedState()}>
                                   <div class="remote-qr">
                                     <Show when={qr()} fallback={<Loader2 class="remote-icon remote-spin" aria-hidden="true" />}>
-                                      {(dataUrl) => <img src={dataUrl()} alt={`QR for ${address.url}`} class="remote-qr-img" />}
+                                      {(dataUrl) => (
+                                        <img
+                                          src={dataUrl()}
+                                          alt={t("remoteAccess.address.qrAlt", { url: address.url })}
+                                          class="remote-qr-img"
+                                        />
+                                      )}
                                     </Show>
                                   </div>
                                 </Show>

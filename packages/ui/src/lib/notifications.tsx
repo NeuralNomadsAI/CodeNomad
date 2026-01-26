@@ -62,8 +62,19 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
 
   const id = toast.custom(
     () => (
-      <div class={`pointer-events-auto w-[320px] max-w-[360px] rounded-lg border px-4 py-3 shadow-xl ${accent.container}`}>
-        <div class="flex items-start gap-3">
+      <div
+        class={`pointer-events-auto relative w-[320px] max-w-[360px] rounded-lg border px-4 py-3 shadow-xl ${accent.container}`}
+      >
+        <button
+          type="button"
+          class="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-200/80 hover:text-slate-50 hover:bg-white/10"
+          aria-label="Close notification"
+          title="Close"
+          onClick={() => toast.dismiss(id)}
+        >
+          x
+        </button>
+        <div class="flex items-start gap-3 pr-6">
           <span class={`mt-1 inline-block h-2.5 w-2.5 rounded-full ${accent.badge}`} />
           <div class="flex-1 text-sm leading-snug">
             {payload.title && <p class={`font-semibold ${accent.headline}`}>{payload.title}</p>}

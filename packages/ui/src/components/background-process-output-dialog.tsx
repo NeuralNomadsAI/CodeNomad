@@ -3,6 +3,7 @@ import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { BackgroundProcess } from "../../../server/src/api-types"
 import { buildBackgroundProcessStreamUrl, serverApi } from "../lib/api-client"
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
+import { useI18n } from "../lib/i18n"
 
 interface BackgroundProcessOutputDialogProps {
   open: boolean
@@ -12,6 +13,7 @@ interface BackgroundProcessOutputDialogProps {
 }
 
 export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDialogProps) {
+  const { t } = useI18n()
   const [output, setOutput] = createSignal("")
   const [outputHtml, setOutputHtml] = createSignal("")
   const [ansiEnabled, setAnsiEnabled] = createSignal(false)
@@ -67,7 +69,7 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
       })
       .catch(() => {
         if (!active) return
-        setRawOutput("Failed to load output.")
+        setRawOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
         setAnsiEnabled(false)
         setOutputHtml("")
       })
@@ -121,7 +123,7 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
           <Dialog.Content class="modal-surface w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
             <div class="flex items-start justify-between px-6 py-4 border-b border-base gap-4">
               <div class="flex-1 min-w-0">
-                <Dialog.Title class="text-lg font-semibold text-primary">Background Output</Dialog.Title>
+                <Dialog.Title class="text-lg font-semibold text-primary">{t("backgroundProcessOutputDialog.title")}</Dialog.Title>
                 <Show when={props.process}>
                   <span class="text-xs text-secondary block">
                     {props.process?.title} · {props.process?.id}
@@ -133,16 +135,16 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
               </div>
 
               <button type="button" class="button-tertiary flex-shrink-0" onClick={props.onClose}>
-                Close
+                {t("backgroundProcessOutputDialog.actions.close")}
               </button>
             </div>
             <div class="flex-1 overflow-auto p-6">
               <Show when={loading()}>
-                <p class="text-xs text-secondary">Loading output...</p>
+                <p class="text-xs text-secondary">{t("backgroundProcessOutputDialog.loading")}</p>
               </Show>
               <Show when={!loading()}>
                 <Show when={truncated()}>
-                  <p class="text-xs text-secondary mb-2">Output truncated for display.</p>
+                  <p class="text-xs text-secondary mb-2">{t("backgroundProcessOutputDialog.truncatedNotice")}</p>
                 </Show>
                 <Show
                   when={ansiEnabled()}

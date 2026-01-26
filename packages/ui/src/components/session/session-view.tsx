@@ -14,6 +14,7 @@ import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-stat
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { requestData } from "../../lib/opencode-api"
+import { useI18n } from "../../lib/i18n"
 
 const log = getLogger("session")
 
@@ -34,6 +35,7 @@ interface SessionViewProps {
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
+  const { t } = useI18n()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -152,8 +154,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       log.info("Abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
     } catch (error) {
       log.error("Failed to abort session", error)
-      showAlertDialog("Failed to stop session", {
-        title: "Stop failed",
+      showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
+        title: t("sessionView.alerts.abortFailed.title"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
@@ -201,8 +203,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     } catch (error) {
       log.error("Failed to revert message", error)
-      showAlertDialog("Failed to revert to message", {
-        title: "Revert failed",
+      showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
+        title: t("sessionView.alerts.revertFailed.title"),
         variant: "error",
       })
     }
@@ -237,8 +239,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     } catch (error) {
       log.error("Failed to fork session", error)
-      showAlertDialog("Failed to fork session", {
-        title: "Fork failed",
+      showAlertDialog(t("sessionView.alerts.forkFailed.message"), {
+        title: t("sessionView.alerts.forkFailed.title"),
         variant: "error",
       })
     }
@@ -250,7 +252,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       when={session()}
       fallback={
         <div class="flex items-center justify-center h-full">
-          <div class="text-center text-gray-500">Session not found</div>
+          <div class="text-center text-gray-500">{t("sessionView.fallback.sessionNotFound")}</div>
         </div>
       }
     >
@@ -296,8 +298,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                               type="button"
                               class="attachment-expand"
                               onClick={() => handleExpandTextAttachment(attachment)}
-                              aria-label="Expand pasted text"
-                              title="Insert pasted text"
+                              aria-label={t("sessionView.attachments.expandPastedTextAriaLabel")}
+                              title={t("sessionView.attachments.insertPastedTextTitle")}
                             >
                               <Expand class="h-3 w-3" aria-hidden="true" />
                             </button>
@@ -306,7 +308,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                             type="button"
                             class="attachment-remove"
                             onClick={() => removeAttachment(props.instanceId, props.sessionId, attachment.id)}
-                            aria-label="Remove attachment"
+                            aria-label={t("sessionView.attachments.removeAriaLabel")}
                           >
                             ×
                           </button>

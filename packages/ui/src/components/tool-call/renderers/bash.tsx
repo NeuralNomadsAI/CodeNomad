@@ -1,9 +1,10 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, formatUnknown, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
+import { tGlobal } from "../../../lib/i18n"
 
 export const bashRenderer: ToolRenderer = {
   tools: ["bash"],
-  getAction: () => "Writing command...",
+  getAction: () => tGlobal("toolCall.renderer.action.writingCommand"),
   getTitle({ toolState }) {
     const state = toolState()
     if (!state) return undefined
@@ -18,7 +19,7 @@ export const bashRenderer: ToolRenderer = {
     }
 
     const timeoutLabel = `${timeout}ms`
-    return `${baseTitle} · Timeout: ${timeoutLabel}`
+    return `${baseTitle} · ${tGlobal("toolCall.renderer.bash.title.timeout", { timeout: timeoutLabel })}`
   },
   renderBody({ toolState, renderMarkdown, renderAnsi }) {
     const state = toolState()

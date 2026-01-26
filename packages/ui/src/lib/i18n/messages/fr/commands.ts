@@ -1,0 +1,160 @@
+export const commandMessages = {
+  "commandPalette.title": "Palette de commandes",
+  "commandPalette.description": "Rechercher et exécuter des commandes",
+  "commandPalette.searchPlaceholder": "Tapez une commande ou recherchez...",
+  "commandPalette.empty": "Aucune commande trouvée pour \"{query}\"",
+  "commandPalette.category.customCommands": "Commandes personnalisées",
+  "commandPalette.category.instance": "Instance",
+  "commandPalette.category.session": "Session",
+  "commandPalette.category.agentModel": "Agent et modèle",
+  "commandPalette.category.inputFocus": "Saisie et focus",
+  "commandPalette.category.system": "Système",
+  "commandPalette.category.other": "Autre",
+
+  "commands.newInstance.label": "Nouvelle instance",
+  "commands.newInstance.description": "Ouvrir le sélecteur de dossiers pour créer une nouvelle instance",
+  "commands.newInstance.keywords": "dossier, projet, espace de travail",
+
+  "commands.closeInstance.label": "Fermer l'instance",
+  "commands.closeInstance.description": "Arrêter le serveur de l'instance actuelle",
+  "commands.closeInstance.keywords": "arrêter, quitter, fermer",
+
+  "commands.nextInstance.label": "Instance suivante",
+  "commands.nextInstance.description": "Passer à l'onglet d'instance suivant",
+  "commands.nextInstance.keywords": "changer, naviguer, suivant",
+
+  "commands.previousInstance.label": "Instance précédente",
+  "commands.previousInstance.description": "Passer à l'onglet d'instance précédent",
+  "commands.previousInstance.keywords": "changer, naviguer, précédent",
+
+  "commands.newSession.label": "Nouvelle session",
+  "commands.newSession.description": "Créer une nouvelle session parente",
+  "commands.newSession.keywords": "créer, démarrer",
+
+  "commands.closeSession.label": "Fermer la session",
+  "commands.closeSession.description": "Fermer la session parente actuelle",
+  "commands.closeSession.keywords": "fermer, arrêter",
+
+  "commands.scrubSessions.label": "Nettoyer les sessions",
+  "commands.scrubSessions.description": "Supprimer les sessions vides, les sessions de sous-agent ayant terminé leur tâche principale, ainsi que les sessions forkées inutiles.",
+  "commands.scrubSessions.keywords": "nettoyage, vide, sessions, supprimer, effacer",
+
+  "commands.instanceInfo.label": "Infos de l'instance",
+  "commands.instanceInfo.description": "Ouvrir la vue d'ensemble de l'instance pour les journaux et le statut",
+  "commands.instanceInfo.keywords": "infos, journaux, console, sortie, logs",
+
+  "commands.nextSession.label": "Session suivante",
+  "commands.nextSession.description": "Passer à l'onglet de session suivant",
+  "commands.nextSession.keywords": "changer, naviguer, suivant",
+
+  "commands.previousSession.label": "Session précédente",
+  "commands.previousSession.description": "Passer à l'onglet de session précédent",
+  "commands.previousSession.keywords": "changer, naviguer, précédent",
+
+  "commands.compactSession.label": "Compacter la session",
+  "commands.compactSession.description": "Résumer et compacter la session actuelle",
+  "commands.compactSession.keywords": "résumer, compresser, compact",
+  "commands.compactSession.errorFallback": "Impossible de compacter la session",
+  "commands.compactSession.alert.title": "Échec du compactage",
+  "commands.compactSession.alert.message": "Échec du compactage : {message}",
+
+  "commands.undoLastMessage.label": "Annuler le dernier message",
+  "commands.undoLastMessage.description": "Revenir sur le dernier message",
+  "commands.undoLastMessage.keywords": "revenir, annuler",
+  "commands.undoLastMessage.none.title": "Aucune action à annuler",
+  "commands.undoLastMessage.none.message": "Rien à annuler",
+  "commands.undoLastMessage.failed.title": "Échec de l'annulation",
+  "commands.undoLastMessage.failed.message": "Impossible de revenir au message",
+
+  "commands.openModelSelector.label": "Ouvrir le sélecteur de modèle",
+  "commands.openModelSelector.description": "Choisir un autre modèle",
+  "commands.openModelSelector.keywords": "modèle, llm, ia, ai",
+
+  "commands.selectModelVariant.label": "Sélectionner la variante du modèle",
+  "commands.selectModelVariant.description": "Choisir un effort de réflexion pour le modèle actuel",
+  "commands.selectModelVariant.keywords": "variante, réflexion, raisonnement, effort",
+
+  "commands.openAgentSelector.label": "Ouvrir le sélecteur d'agent",
+  "commands.openAgentSelector.description": "Choisir un autre agent",
+  "commands.openAgentSelector.keywords": "agent, mode",
+
+  "commands.clearInput.label": "Effacer la saisie",
+  "commands.clearInput.description": "Effacer la zone de texte du prompt",
+  "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
+
+  "commands.thinkingBlocks.label.show": "Afficher les blocs de réflexion",
+  "commands.thinkingBlocks.label.hide": "Masquer les blocs de réflexion",
+  "commands.thinkingBlocks.description": "Afficher/masquer le processus de réflexion de l'IA",
+  "commands.thinkingBlocks.keywords": "réflexion, raisonnement, basculer, afficher, masquer",
+
+  "commands.timelineToolCalls.label.show": "Afficher les appels d'outil dans la timeline",
+  "commands.timelineToolCalls.label.hide": "Masquer les appels d'outil dans la timeline",
+  "commands.timelineToolCalls.description": "Afficher/masquer les entrées d'appel d'outil dans la timeline des messages",
+  "commands.timelineToolCalls.keywords": "timeline, outil, basculer",
+
+  "commands.common.expanded": "Développé",
+  "commands.common.collapsed": "Réduit",
+  "commands.common.visible": "Visible",
+  "commands.common.hidden": "Masqué",
+  "commands.common.enabled": "Activé",
+  "commands.common.disabled": "Désactivé",
+
+  "commands.thinkingBlocksDefault.label": "Blocs de réflexion par défaut · {state}",
+  "commands.thinkingBlocksDefault.description": "Choisir si les blocs de réflexion démarrent développés",
+  "commands.thinkingBlocksDefault.keywords": "réflexion, raisonnement, développer, réduire, défaut",
+
+  "commands.diffViewSplit.label": "Utiliser la vue diff côte à côte",
+  "commands.diffViewSplit.description": "Afficher les diffs d'appels d'outil côte à côte",
+  "commands.diffViewSplit.keywords": "diff, côte à côte, vue",
+
+  "commands.diffViewUnified.label": "Utiliser la vue diff unifiée",
+  "commands.diffViewUnified.description": "Afficher les diffs d'appels d'outil en ligne",
+  "commands.diffViewUnified.keywords": "diff, unifiée, vue",
+
+  "commands.toolOutputsDefault.label": "Sorties d'outil par défaut · {state}",
+  "commands.toolOutputsDefault.description": "Choisir l'ouverture par défaut des sorties d'outil",
+  "commands.toolOutputsDefault.keywords": "outil, sortie, développer, réduire",
+
+  "commands.diagnosticsDefault.label": "Diagnostics par défaut · {state}",
+  "commands.diagnosticsDefault.description": "Choisir l'ouverture par défaut de la sortie des diagnostics",
+  "commands.diagnosticsDefault.keywords": "diagnostics, développer, réduire",
+
+  "commands.tokenUsageDisplay.label": "Affichage de l'usage des tokens · {state}",
+  "commands.tokenUsageDisplay.description": "Afficher ou masquer les stats de tokens et de coût pour les messages de l'assistant",
+  "commands.tokenUsageDisplay.keywords": "token, usage, coût, stats",
+
+  "commands.autoCleanupBlankSessions.label": "Nettoyage auto des sessions vides · {state}",
+  "commands.autoCleanupBlankSessions.description": "Nettoyer automatiquement les sessions vides lors de la création de nouvelles",
+  "commands.autoCleanupBlankSessions.keywords": "auto, nettoyage, vide, sessions, basculer",
+
+  "commands.showHelp.label": "Afficher l'aide",
+  "commands.showHelp.description": "Afficher les raccourcis clavier et l'aide",
+  "commands.showHelp.keywords": "raccourcis, aide",
+
+  "commands.custom.argumentsPrompt.message": "Arguments pour /{name}",
+  "commands.custom.argumentsPrompt.title": "Commande personnalisée",
+  "commands.custom.argumentsPrompt.inputLabel": "Arguments",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "ex. foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "Exécuter",
+  "commands.custom.argumentsPrompt.cancelLabel": "Annuler",
+  "commands.custom.argumentsPrompt.openFailed.message": "Impossible d'ouvrir l'invite d'arguments.",
+  "commands.custom.argumentsPrompt.openFailed.title": "Arguments de commande",
+  "commands.custom.entries.descriptionFallback": "Commande personnalisée",
+  "commands.custom.sessionRequired.message": "Sélectionnez une session avant d'exécuter une commande personnalisée.",
+  "commands.custom.sessionRequired.title": "Session requise",
+  "commands.custom.runFailed.message": "Impossible d'exécuter la commande personnalisée. Consultez la console pour les détails.",
+  "commands.custom.runFailed.title": "Échec de la commande",
+
+  "unifiedPicker.loading.searching": "Recherche...",
+  "unifiedPicker.loading.loadingWorkspace": "Chargement de l'espace de travail...",
+  "unifiedPicker.title.command": "Sélectionner une commande",
+  "unifiedPicker.title.mention": "Sélectionner un agent ou un fichier",
+  "unifiedPicker.empty": "Aucun résultat",
+  "unifiedPicker.sections.commands": "COMMANDES",
+  "unifiedPicker.sections.agents": "AGENTS",
+  "unifiedPicker.sections.files": "FICHIERS",
+  "unifiedPicker.badge.subagent": "sous-agent",
+  "unifiedPicker.footer.navigate": "naviguer",
+  "unifiedPicker.footer.select": "sélectionner",
+  "unifiedPicker.footer.close": "fermer",
+} as const

@@ -1,5 +1,6 @@
 import { Component } from "solid-js"
 import type { Attachment } from "../types/attachment"
+import { useI18n } from "../lib/i18n"
 
 interface AttachmentChipProps {
   attachment: Attachment
@@ -7,6 +8,7 @@ interface AttachmentChipProps {
 }
 
 const AttachmentChip: Component<AttachmentChipProps> = (props) => {
+  const { t } = useI18n()
   return (
     <div
       class="attachment-chip"
@@ -16,7 +18,7 @@ const AttachmentChip: Component<AttachmentChipProps> = (props) => {
       <button
         onClick={props.onRemove}
         class="attachment-remove"
-        aria-label="Remove attachment"
+        aria-label={t("attachmentChip.removeAriaLabel")}
       >
         ×
       </button>

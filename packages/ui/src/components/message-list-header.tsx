@@ -1,5 +1,6 @@
 import { Show } from "solid-js"
 import Kbd from "./kbd"
+import { useI18n } from "../lib/i18n"
 
 const METRIC_CHIP_CLASS = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
 const METRIC_LABEL_CLASS = "uppercase text-[10px] tracking-wide text-primary/70"
@@ -17,6 +18,7 @@ interface MessageListHeaderProps {
 }
 
 export default function MessageListHeader(props: MessageListHeaderProps) {
+  const { t } = useI18n()
 
   const hasAvailableTokens = () => typeof props.availableTokens === "number"
   const availableDisplay = () => (hasAvailableTokens() ? props.formatTokens(props.availableTokens as number) : "--")
@@ -29,7 +31,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
             type="button"
             class="session-sidebar-menu-button"
             onClick={() => props.onSidebarToggle?.()}
-            aria-label="Open session list"
+            aria-label={t("messageListHeader.sidebar.openSessionListAriaLabel")}
           >
             <span aria-hidden="true" class="session-sidebar-menu-icon">☰</span>
           </button>
@@ -39,11 +41,11 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
       <div class="connection-status-text connection-status-info">
         <div class="connection-status-usage">
           <div class={METRIC_CHIP_CLASS}>
-            <span class={METRIC_LABEL_CLASS}>Used</span>
+            <span class={METRIC_LABEL_CLASS}>{t("messageListHeader.metrics.usedLabel")}</span>
             <span class="font-semibold text-primary">{props.formatTokens(props.usedTokens)}</span>
           </div>
           <div class={METRIC_CHIP_CLASS}>
-            <span class={METRIC_LABEL_CLASS}>Avail</span>
+            <span class={METRIC_LABEL_CLASS}>{t("messageListHeader.metrics.availableLabel")}</span>
             <span class="font-semibold text-primary">{hasAvailableTokens() ? availableDisplay() : "--"}</span>
           </div>
         </div>
@@ -51,8 +53,13 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
 
       <div class="connection-status-text connection-status-shortcut">
         <div class="connection-status-shortcut-action">
-          <button type="button" class="connection-status-button" onClick={props.onCommandPalette} aria-label="Open command palette">
-            Command Palette
+          <button
+            type="button"
+            class="connection-status-button"
+            onClick={props.onCommandPalette}
+            aria-label={t("messageListHeader.commandPalette.ariaLabel")}
+          >
+            {t("messageListHeader.commandPalette.button")}
           </button>
           <span class="connection-status-shortcut-hint">
             <Kbd shortcut="cmd+shift+p" />
@@ -64,19 +71,19 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
         <Show when={props.connectionStatus === "connected"}>
           <span class="status-indicator connected">
             <span class="status-dot" />
-            <span class="status-text">Connected</span>
+            <span class="status-text">{t("messageListHeader.connection.connected")}</span>
           </span>
         </Show>
         <Show when={props.connectionStatus === "connecting"}>
           <span class="status-indicator connecting">
             <span class="status-dot" />
-            <span class="status-text">Connecting...</span>
+            <span class="status-text">{t("messageListHeader.connection.connecting")}</span>
           </span>
         </Show>
         <Show when={props.connectionStatus === "error" || props.connectionStatus === "disconnected"}>
           <span class="status-indicator disconnected">
             <span class="status-dot" />
-            <span class="status-text">Disconnected</span>
+            <span class="status-text">{t("messageListHeader.connection.disconnected")}</span>
           </span>
         </Show>
       </div>

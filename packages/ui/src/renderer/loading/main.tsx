@@ -1,22 +1,25 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import iconUrl from "../../images/CodeNomad-Icon.png"
+import { tGlobal } from "../../lib/i18n"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
 import "../../index.css"
 import "./loading.css"
 
-const phrases = [
-  "Warming up the AI neurons…",
-  "Convincing the AI to stop daydreaming…",
-  "Polishing the AI’s code goggles…",
-  "Asking the AI to stop reorganizing your files…",
-  "Feeding the AI additional coffee…",
-  "Teaching the AI not to delete node_modules (again)…",
-  "Telling the AI to act natural before you arrive…",
-  "Asking the AI to please stop rewriting history…",
-  "Letting the AI stretch before its coding sprint…",
-  "Persuading the AI to give you keyboard control…",
-]
+const phraseKeys = [
+  "loadingScreen.phrases.neurons",
+  "loadingScreen.phrases.daydreaming",
+  "loadingScreen.phrases.goggles",
+  "loadingScreen.phrases.reorganizingFiles",
+  "loadingScreen.phrases.coffee",
+  "loadingScreen.phrases.nodeModules",
+  "loadingScreen.phrases.actNatural",
+  "loadingScreen.phrases.rewritingHistory",
+  "loadingScreen.phrases.stretch",
+  "loadingScreen.phrases.keyboardControl",
+] as const
+
+type PhraseKey = (typeof phraseKeys)[number]
 
 interface CliStatus {
   state?: string
@@ -31,9 +34,9 @@ interface TauriBridge {
   }
 }
 
-function pickPhrase(previous?: string) {
-  const filtered = phrases.filter((phrase) => phrase !== previous)
-  const source = filtered.length > 0 ? filtered : phrases
+function pickPhraseKey(previous?: PhraseKey) {
+  const filtered = phraseKeys.filter((key) => key !== previous)
+  const source = filtered.length > 0 ? filtered : phraseKeys
   const index = Math.floor(Math.random() * source.length)
   return source[index]
 }
@@ -63,15 +66,15 @@ function annotateDocument() {
 }
 
 function LoadingApp() {
-  const [phrase, setPhrase] = createSignal(pickPhrase())
+  const [phraseKey, setPhraseKey] = createSignal<PhraseKey>(pickPhraseKey())
   const [error, setError] = createSignal<string | null>(null)
-  const [status, setStatus] = createSignal<string | null>(null)
+  const [statusKey, setStatusKey] = createSignal<string | null>(null)
 
-  const changePhrase = () => setPhrase(pickPhrase(phrase()))
+  const changePhrase = () => setPhraseKey(pickPhraseKey(phraseKey()))
 
   onMount(() => {
     annotateDocument()
-    setPhrase(pickPhrase())
+    setPhraseKey(pickPhraseKey())
     const unsubscribers: Array<() => void> = []
 
     async function bootstrapTauri(tauriBridge: TauriBridge | null) {
@@ -82,26 +85,26 @@ function LoadingApp() {
         const readyUnlisten = await tauriBridge.event.listen("cli:ready", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           setError(null)
-          setStatus(null)
+          setStatusKey(null)
           navigateTo(payload.url)
         })
         const errorUnlisten = await tauriBridge.event.listen("cli:error", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.error) {
             setError(payload.error)
-            setStatus("Encountered an issue")
+            setStatusKey("loadingScreen.status.issue")
           }
         })
         const statusUnlisten = await tauriBridge.event.listen("cli:status", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.state === "error" && payload.error) {
             setError(payload.error)
-            setStatus("Encountered an issue")
+            setStatusKey("loadingScreen.status.issue")
             return
           }
           if (payload.state && payload.state !== "ready") {
             setError(null)
-            setStatus(null)
+            setStatusKey(null)
           }
         })
         unsubscribers.push(readyUnlisten, errorUnlisten, statusUnlisten)
@@ -111,11 +114,11 @@ function LoadingApp() {
           navigateTo(result.url)
         } else if (result?.state === "error" && result.error) {
           setError(result.error)
-          setStatus("Encountered an issue")
+          setStatusKey("loadingScreen.status.issue")
         }
       } catch (err) {
         setError(String(err))
-        setStatus("Encountered an issue")
+        setStatusKey("loadingScreen.status.issue")
       }
     }
 
@@ -136,19 +139,21 @@ function LoadingApp() {
 
   return (
     <div class="loading-wrapper" role="status" aria-live="polite">
-      <img src={iconUrl} alt="CodeNomad" class="loading-logo" width="180" height="180" />
+      <img src={iconUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="180" height="180" />
       <div class="loading-heading">
         <h1 class="loading-title">CodeNomad</h1>
-        <Show when={status()}>{(statusText) => <p class="loading-status">{statusText()}</p>}</Show>
+        <Show when={statusKey()}>
+          {(key) => <p class="loading-status">{tGlobal(key())}</p>}
+        </Show>
       </div>
       <div class="loading-card">
         <div class="loading-row">
           <div class="spinner" aria-hidden="true" />
-          <span>{phrase()}</span>
+          <span>{tGlobal(phraseKey())}</span>
         </div>
         <div class="phrase-controls">
           <button type="button" onClick={changePhrase}>
-            Show another
+            {tGlobal("loadingScreen.actions.showAnother")}
           </button>
         </div>
         {error() && <div class="loading-error">{error()}</div>}
@@ -160,7 +165,7 @@ function LoadingApp() {
 const root = document.getElementById("loading-root")
 
 if (!root) {
-  throw new Error("Loading root element not found")
+  throw new Error(tGlobal("loadingScreen.errors.missingRoot"))
 }
 
 render(() => <LoadingApp />, root)

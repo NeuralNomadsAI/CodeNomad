@@ -11,6 +11,7 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
+import { useI18n } from "../lib/i18n"
 
 const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
@@ -236,6 +237,7 @@ interface MessageBlockProps {
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
+  const { t } = useI18n()
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
@@ -465,8 +467,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                         <div class="tool-call-header-label">
                           <div class="tool-call-header-meta">
                             <span class="tool-call-icon">{TOOL_ICON}</span>
-                            <span>Tool Call</span>
-                            <span class="tool-name">{toolItem.toolPart.tool || "unknown"}</span>
+                            <span>{t("messageBlock.tool.header")}</span>
+                            <span class="tool-name">{toolItem.toolPart.tool || t("messageBlock.tool.unknown")}</span>
                           </div>
                           <Show when={taskSessionId}>
                             <button
@@ -474,9 +476,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                               type="button"
                               disabled={!taskLocation}
                               onClick={handleGoToTaskSession}
-                              title={!taskLocation ? "Session not available yet" : "Go to session"}
+                              title={!taskLocation ? t("messageBlock.tool.goToSession.unavailableTitle") : t("messageBlock.tool.goToSession.title")}
                             >
-                              Go to Session
+                              {t("messageBlock.tool.goToSession.label")}
                             </button>
                           </Show>
                         </div>
@@ -538,8 +540,9 @@ interface StepCardProps {
 }
 
 function CompactionCard(props: { part: ClientPart; messageInfo?: MessageInfo; borderColor?: string }) {
+  const { t } = useI18n()
   const isAuto = () => Boolean((props.part as any)?.auto)
-  const label = () => (isAuto() ? "Session auto-compacted" : "Session compacted by you")
+  const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
 
   const containerClass = () =>
@@ -550,7 +553,7 @@ function CompactionCard(props: { part: ClientPart; messageInfo?: MessageInfo; bo
       class={containerClass()}
       style={{ "border-left": `4px solid ${borderColor()}` }}
       role="status"
-      aria-label="Session compaction"
+      aria-label={t("messageBlock.compaction.ariaLabel")}
     >
       <div class="message-compaction-row">
         <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
@@ -561,6 +564,7 @@ function CompactionCard(props: { part: ClientPart; messageInfo?: MessageInfo; bo
 }
 
 function StepCard(props: StepCardProps) {
+  const { t } = useI18n()
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -607,12 +611,12 @@ function StepCard(props: StepCardProps) {
 
   const renderUsageChips = (usage: NonNullable<ReturnType<typeof usageStats>>) => {
     const entries = [
-      { label: "Input", value: usage.input, formatter: formatTokenTotal },
-      { label: "Output", value: usage.output, formatter: formatTokenTotal },
-      { label: "Reasoning", value: usage.reasoning, formatter: formatTokenTotal },
-      { label: "Cache Read", value: usage.cacheRead, formatter: formatTokenTotal },
-      { label: "Cache Write", value: usage.cacheWrite, formatter: formatTokenTotal },
-      { label: "Cost", value: usage.cost, formatter: formatCostValue },
+      { label: t("messageBlock.usage.input"), value: usage.input, formatter: formatTokenTotal },
+      { label: t("messageBlock.usage.output"), value: usage.output, formatter: formatTokenTotal },
+      { label: t("messageBlock.usage.reasoning"), value: usage.reasoning, formatter: formatTokenTotal },
+      { label: t("messageBlock.usage.cacheRead"), value: usage.cacheRead, formatter: formatTokenTotal },
+      { label: t("messageBlock.usage.cacheWrite"), value: usage.cacheWrite, formatter: formatTokenTotal },
+      { label: t("messageBlock.usage.cost"), value: usage.cost, formatter: formatCostValue },
     ]
 
     return (
@@ -647,8 +651,8 @@ function StepCard(props: StepCardProps) {
           <div class="message-step-title-left">
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
               <span class="message-step-meta-inline">
-                <Show when={agentIdentifier()}>{(value) => <span>Agent: {value()}</span>}</Show>
-                <Show when={modelIdentifier()}>{(value) => <span>Model: {value()}</span>}</Show>
+                <Show when={agentIdentifier()}>{(value) => <span>{t("messageBlock.step.agentLabel", { agent: value() })}</span>}</Show>
+                <Show when={modelIdentifier()}>{(value) => <span>{t("messageBlock.step.modelLabel", { model: value() })}</span>}</Show>
               </span>
             </Show>
           </div>
@@ -675,6 +679,7 @@ interface ReasoningCardProps {
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
 
   createEffect(() => {
@@ -746,19 +751,29 @@ function ReasoningCard(props: ReasoningCardProps) {
         class="message-reasoning-toggle"
         onClick={toggle}
         aria-expanded={expanded()}
-        aria-label={expanded() ? "Collapse thinking" : "Expand thinking"}
+        aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
       >
         <span class="message-reasoning-label flex flex-wrap items-center gap-2">
-          <span>Thinking</span>
+          <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
           <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
             <span class="message-step-meta-inline">
-              <Show when={agentIdentifier()}>{(value) => <span class="font-medium text-[var(--message-assistant-border)]">Agent: {value()}</span>}</Show>
-              <Show when={modelIdentifier()}>{(value) => <span class="font-medium text-[var(--message-assistant-border)]">Model: {value()}</span>}</Show>
+              <Show when={agentIdentifier()}>
+                {(value) => (
+                  <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+                )}
+              </Show>
+              <Show when={modelIdentifier()}>
+                {(value) => (
+                  <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+                )}
+              </Show>
             </span>
           </Show>
         </span>
         <span class="message-reasoning-meta">
-          <span class="message-reasoning-indicator">{expanded() ? "Hide" : "View"}</span>
+          <span class="message-reasoning-indicator">
+            {expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")}
+          </span>
           <span class="message-reasoning-time">{timestamp()}</span>
         </span>
       </button>
@@ -766,7 +781,7 @@ function ReasoningCard(props: ReasoningCardProps) {
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
-            <div class="message-reasoning-output" role="region" aria-label="Reasoning details">
+            <div class="message-reasoning-output" role="region" aria-label={t("messageBlock.reasoning.detailsAriaLabel")}>
               <pre class="message-reasoning-text">{reasoningText() || ""}</pre>
             </div>
           </div>

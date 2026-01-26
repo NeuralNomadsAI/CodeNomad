@@ -1,5 +1,6 @@
 import { Show } from "solid-js"
 import { Maximize2, Minimize2 } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
 
 interface ExpandButtonProps {
   expandState: () => "normal" | "expanded"
@@ -7,6 +8,8 @@ interface ExpandButtonProps {
 }
 
 export default function ExpandButton(props: ExpandButtonProps) {
+  const { t } = useI18n()
+
   function handleClick() {
     const current = props.expandState()
     props.onToggleExpand(current === "normal" ? "expanded" : "normal")
@@ -17,7 +20,7 @@ export default function ExpandButton(props: ExpandButtonProps) {
       type="button"
       class="prompt-expand-button"
       onClick={handleClick}
-      aria-label="Toggle chat input height"
+      aria-label={t("expandButton.toggleAriaLabel")}
     >
       <Show
         when={props.expandState() === "normal"}

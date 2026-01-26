@@ -1,0 +1,160 @@
+export const commandMessages = {
+  "commandPalette.title": "命令面板",
+  "commandPalette.description": "搜索并执行命令",
+  "commandPalette.searchPlaceholder": "输入命令或搜索...",
+  "commandPalette.empty": "未找到与 \"{query}\" 匹配的命令",
+  "commandPalette.category.customCommands": "自定义命令",
+  "commandPalette.category.instance": "实例",
+  "commandPalette.category.session": "会话",
+  "commandPalette.category.agentModel": "智能体与模型",
+  "commandPalette.category.inputFocus": "输入与焦点",
+  "commandPalette.category.system": "系统",
+  "commandPalette.category.other": "其他",
+
+  "commands.newInstance.label": "新建实例",
+  "commands.newInstance.description": "打开文件夹选择器以创建新实例",
+  "commands.newInstance.keywords": "folder, project, workspace, 文件夹, 项目, 工作区",
+
+  "commands.closeInstance.label": "关闭实例",
+  "commands.closeInstance.description": "停止当前实例的服务器",
+  "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭",
+
+  "commands.nextInstance.label": "下一个实例",
+  "commands.nextInstance.description": "切换到下一个实例标签页",
+  "commands.nextInstance.keywords": "switch, navigate, 切换, 导航",
+
+  "commands.previousInstance.label": "上一个实例",
+  "commands.previousInstance.description": "切换到上一个实例标签页",
+  "commands.previousInstance.keywords": "switch, navigate, 切换, 导航",
+
+  "commands.newSession.label": "新建会话",
+  "commands.newSession.description": "创建新的父会话",
+  "commands.newSession.keywords": "create, start, 创建, 开始",
+
+  "commands.closeSession.label": "关闭会话",
+  "commands.closeSession.description": "关闭当前父会话",
+  "commands.closeSession.keywords": "close, stop, 关闭, 停止",
+
+  "commands.scrubSessions.label": "清理会话",
+  "commands.scrubSessions.description": "移除空会话、已完成主任务的子智能体会话，以及多余的分叉会话。",
+  "commands.scrubSessions.keywords": "cleanup, blank, empty, sessions, remove, delete, scrub, 清理, 空白, 会话, 删除, 整理",
+
+  "commands.instanceInfo.label": "实例信息",
+  "commands.instanceInfo.description": "打开实例概览以查看日志和状态",
+  "commands.instanceInfo.keywords": "info, logs, console, output, 信息, 日志, 控制台, 输出",
+
+  "commands.nextSession.label": "下一个会话",
+  "commands.nextSession.description": "切换到下一个会话标签页",
+  "commands.nextSession.keywords": "switch, navigate, 切换, 导航",
+
+  "commands.previousSession.label": "上一个会话",
+  "commands.previousSession.description": "切换到上一个会话标签页",
+  "commands.previousSession.keywords": "switch, navigate, 切换, 导航",
+
+  "commands.compactSession.label": "压缩会话",
+  "commands.compactSession.description": "总结并压缩当前会话",
+  "commands.compactSession.keywords": "summarize, compress, 总结, 压缩",
+  "commands.compactSession.errorFallback": "压缩会话失败",
+  "commands.compactSession.alert.title": "压缩失败",
+  "commands.compactSession.alert.message": "压缩失败：{message}",
+
+  "commands.undoLastMessage.label": "撤销上一条消息",
+  "commands.undoLastMessage.description": "回退上一条消息",
+  "commands.undoLastMessage.keywords": "revert, undo, 回退, 撤销",
+  "commands.undoLastMessage.none.title": "没有可撤销的操作",
+  "commands.undoLastMessage.none.message": "没有可撤销的内容",
+  "commands.undoLastMessage.failed.title": "撤销失败",
+  "commands.undoLastMessage.failed.message": "回退消息失败",
+
+  "commands.openModelSelector.label": "打开模型选择器",
+  "commands.openModelSelector.description": "选择其他模型",
+  "commands.openModelSelector.keywords": "model, llm, ai, 模型",
+
+  "commands.selectModelVariant.label": "选择模型变体",
+  "commands.selectModelVariant.description": "为当前模型选择思考强度",
+  "commands.selectModelVariant.keywords": "variant, thinking, reasoning, effort, 变体, 思考, 推理, 强度",
+
+  "commands.openAgentSelector.label": "打开智能体选择器",
+  "commands.openAgentSelector.description": "选择其他智能体",
+  "commands.openAgentSelector.keywords": "agent, mode, 智能体, 模式",
+
+  "commands.clearInput.label": "清空输入",
+  "commands.clearInput.description": "清空 prompt 输入框",
+  "commands.clearInput.keywords": "clear, reset, 清空, 重置",
+
+  "commands.thinkingBlocks.label.show": "显示思考块",
+  "commands.thinkingBlocks.label.hide": "隐藏思考块",
+  "commands.thinkingBlocks.description": "显示/隐藏 AI 思考过程",
+  "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide, 思考, 推理, 切换, 显示, 隐藏",
+
+  "commands.timelineToolCalls.label.show": "显示时间轴工具调用",
+  "commands.timelineToolCalls.label.hide": "隐藏时间轴工具调用",
+  "commands.timelineToolCalls.description": "切换消息时间轴中的工具调用条目",
+  "commands.timelineToolCalls.keywords": "timeline, tool, toggle, 时间轴, 工具, 切换",
+
+  "commands.common.expanded": "展开",
+  "commands.common.collapsed": "折叠",
+  "commands.common.visible": "可见",
+  "commands.common.hidden": "隐藏",
+  "commands.common.enabled": "启用",
+  "commands.common.disabled": "禁用",
+
+  "commands.thinkingBlocksDefault.label": "思考块默认 · {state}",
+  "commands.thinkingBlocksDefault.description": "切换思考块是否默认展开",
+  "commands.thinkingBlocksDefault.keywords": "thinking, reasoning, expand, collapse, default, 思考, 推理, 展开, 折叠, 默认",
+
+  "commands.diffViewSplit.label": "使用分栏 Diff 视图",
+  "commands.diffViewSplit.description": "并排显示工具调用的 diff",
+  "commands.diffViewSplit.keywords": "diff, split, view, 差异, 分栏, 视图",
+
+  "commands.diffViewUnified.label": "使用统一 Diff 视图",
+  "commands.diffViewUnified.description": "以内联方式显示工具调用的 diff",
+  "commands.diffViewUnified.keywords": "diff, unified, view, 差异, 统一, 视图",
+
+  "commands.toolOutputsDefault.label": "工具输出默认 · {state}",
+  "commands.toolOutputsDefault.description": "切换工具输出是否默认展开",
+  "commands.toolOutputsDefault.keywords": "tool, output, expand, collapse, 工具, 输出, 展开, 折叠",
+
+  "commands.diagnosticsDefault.label": "诊断默认 · {state}",
+  "commands.diagnosticsDefault.description": "切换诊断输出是否默认展开",
+  "commands.diagnosticsDefault.keywords": "diagnostics, expand, collapse, 诊断, 展开, 折叠",
+
+  "commands.tokenUsageDisplay.label": "Token 使用显示 · {state}",
+  "commands.tokenUsageDisplay.description": "显示或隐藏助手消息的 token 和费用统计",
+  "commands.tokenUsageDisplay.keywords": "token, usage, cost, stats, 令牌, 用量, 费用, 统计",
+
+  "commands.autoCleanupBlankSessions.label": "自动清理空白会话 · {state}",
+  "commands.autoCleanupBlankSessions.description": "在创建新会话时自动清理空白会话",
+  "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, blank, sessions, toggle, 自动, 清理, 空白, 会话, 切换",
+
+  "commands.showHelp.label": "显示帮助",
+  "commands.showHelp.description": "显示键盘快捷键与帮助",
+  "commands.showHelp.keywords": "shortcuts, help, 快捷键, 帮助",
+
+  "commands.custom.argumentsPrompt.message": "/{name} 的参数",
+  "commands.custom.argumentsPrompt.title": "自定义命令",
+  "commands.custom.argumentsPrompt.inputLabel": "参数",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "例如 foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "运行",
+  "commands.custom.argumentsPrompt.cancelLabel": "取消",
+  "commands.custom.argumentsPrompt.openFailed.message": "无法打开参数输入框。",
+  "commands.custom.argumentsPrompt.openFailed.title": "命令参数",
+  "commands.custom.entries.descriptionFallback": "自定义命令",
+  "commands.custom.sessionRequired.message": "运行自定义命令前请先选择一个会话。",
+  "commands.custom.sessionRequired.title": "需要会话",
+  "commands.custom.runFailed.message": "运行自定义命令失败。请查看控制台了解详情。",
+  "commands.custom.runFailed.title": "命令失败",
+
+  "unifiedPicker.loading.searching": "正在搜索...",
+  "unifiedPicker.loading.loadingWorkspace": "正在加载工作区...",
+  "unifiedPicker.title.command": "选择命令",
+  "unifiedPicker.title.mention": "选择智能体或文件",
+  "unifiedPicker.empty": "未找到结果",
+  "unifiedPicker.sections.commands": "命令",
+  "unifiedPicker.sections.agents": "智能体",
+  "unifiedPicker.sections.files": "文件",
+  "unifiedPicker.badge.subagent": "子智能体",
+  "unifiedPicker.footer.navigate": "导航",
+  "unifiedPicker.footer.select": "选择",
+  "unifiedPicker.footer.close": "关闭",
+} as const

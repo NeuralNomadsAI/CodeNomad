@@ -1,6 +1,7 @@
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
 import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
 
 interface LogsViewProps {
   instanceId: string
@@ -9,6 +10,7 @@ interface LogsViewProps {
 const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean }>()
 
 const LogsView: Component<LogsViewProps> = (props) => {
+  const { t } = useI18n()
   let scrollRef: HTMLDivElement | undefined
   const savedState = logsScrollState.get(props.instanceId)
   const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? false)
@@ -83,18 +85,18 @@ const LogsView: Component<LogsViewProps> = (props) => {
   return (
     <div class="log-container">
       <div class="log-header">
-        <h3 class="text-sm font-medium" style="color: var(--text-secondary)">Server Logs</h3>
+        <h3 class="text-sm font-medium" style="color: var(--text-secondary)">{t("logsView.title")}</h3>
         <div class="flex items-center gap-2">
           <Show
             when={streamingEnabled()}
             fallback={
               <button type="button" class="button-tertiary" onClick={handleEnableLogs}>
-                Show server logs
+                {t("logsView.actions.show")}
               </button>
             }
           >
             <button type="button" class="button-tertiary" onClick={handleDisableLogs}>
-              Hide server logs
+              {t("logsView.actions.hide")}
             </button>
           </Show>
         </div>
@@ -103,7 +105,7 @@ const LogsView: Component<LogsViewProps> = (props) => {
       <Show when={instance()?.environmentVariables && Object.keys(instance()?.environmentVariables!).length > 0}>
         <div class="env-vars-container">
           <div class="env-vars-title">
-            Environment Variables ({Object.keys(instance()?.environmentVariables!).length})
+            {t("logsView.envVars.title", { count: Object.keys(instance()?.environmentVariables!).length })}
           </div>
           <div class="space-y-1">
             <For each={Object.entries(instance()?.environmentVariables!)}>
@@ -130,17 +132,17 @@ const LogsView: Component<LogsViewProps> = (props) => {
           when={streamingEnabled()}
           fallback={
             <div class="log-paused-state">
-              <p class="log-paused-title">Server logs are paused</p>
-              <p class="log-paused-description">Enable streaming to watch your OpenCode server activity.</p>
+              <p class="log-paused-title">{t("logsView.paused.title")}</p>
+              <p class="log-paused-description">{t("logsView.paused.description")}</p>
               <button type="button" class="button-primary" onClick={handleEnableLogs}>
-                Show server logs
+                {t("logsView.actions.show")}
               </button>
             </div>
           }
         >
           <Show
             when={logs().length > 0}
-            fallback={<div class="log-empty-state">Waiting for server output...</div>}
+            fallback={<div class="log-empty-state">{t("logsView.empty.waiting")}</div>}
           >
             <For each={logs()}>
               {(entry) => (
@@ -160,7 +162,7 @@ const LogsView: Component<LogsViewProps> = (props) => {
           class="scroll-to-bottom"
         >
           <ChevronDown class="w-4 h-4" />
-          Scroll to bottom
+          {t("logsView.scrollToBottom")}
         </button>
       </Show>
     </div>

@@ -9,6 +9,7 @@ import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry, type KeyboardShortcut } from "../lib/keyboard-registry"
 import { isMac } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
+import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")
 
@@ -19,6 +20,7 @@ interface InstanceWelcomeViewProps {
 }
 
 const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
+  const { t } = useI18n()
   const [isCreating, setIsCreating] = createSignal(false)
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"sessions" | "new-session" | null>("sessions")
@@ -47,7 +49,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
         ctrl: !isMac(),
       },
       handler: () => {},
-      description: "New Session",
+      description: t("instanceWelcome.shortcuts.newSession"),
       context: "global",
     }
   })
@@ -248,10 +250,10 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     const hours = Math.floor(minutes / 60)
     const days = Math.floor(hours / 24)
 
-    if (days > 0) return `${days}d ago`
-    if (hours > 0) return `${hours}h ago`
-    if (minutes > 0) return `${minutes}m ago`
-    return "just now"
+    if (days > 0) return t("time.relative.daysAgoShort", { count: days })
+    if (hours > 0) return t("time.relative.hoursAgoShort", { count: hours })
+    if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
+    return t("time.relative.justNow")
   }
 
   function formatTimestamp(timestamp: number): string {
@@ -291,7 +293,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
       setRenameTarget(null)
     } catch (error) {
       log.error("Failed to rename session:", error)
-      showToastNotification({ message: "Unable to rename session", variant: "error" })
+      showToastNotification({ message: t("instanceWelcome.toasts.renameError"), variant: "error" })
     } finally {
       setIsRenaming(false)
     }
@@ -333,11 +335,11 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                         />
                       </svg>
                     </div>
-                    <p class="panel-empty-state-title">No Previous Sessions</p>
-                    <p class="panel-empty-state-description">Create a new session below to get started</p>
+                    <p class="panel-empty-state-title">{t("instanceWelcome.empty.title")}</p>
+                    <p class="panel-empty-state-description">{t("instanceWelcome.empty.description")}</p>
                     <Show when={!isDesktopLayout() && !showInstanceInfoOverlay()}>
                       <button type="button" class="button-tertiary mt-4 lg:hidden" onClick={openInstanceInfoOverlay}>
-                        View Instance Info
+                        {t("instanceWelcome.actions.viewInstanceInfo")}
                       </button>
                     </Show>
                   </div>
@@ -347,8 +349,8 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                   <div class="panel-empty-state-icon">
                     <Loader2 class="w-12 h-12 mx-auto animate-spin text-muted" />
                   </div>
-                  <p class="panel-empty-state-title">Loading Sessions</p>
-                  <p class="panel-empty-state-description">Fetching your previous sessions...</p>
+                  <p class="panel-empty-state-title">{t("instanceWelcome.loading.title")}</p>
+                  <p class="panel-empty-state-description">{t("instanceWelcome.loading.description")}</p>
                 </div>
               </Show>
             }
@@ -357,9 +359,11 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
               <div class="panel-header">
                 <div class="flex flex-row flex-wrap items-center gap-2 justify-between">
                   <div>
-                    <h2 class="panel-title">Resume Session</h2>
+                    <h2 class="panel-title">{t("instanceWelcome.resume.title")}</h2>
                     <p class="panel-subtitle">
-                      {parentSessions().length} {parentSessions().length === 1 ? "session" : "sessions"} available
+                      {parentSessions().length === 1
+                        ? t("instanceWelcome.resume.subtitle.one", { count: parentSessions().length })
+                        : t("instanceWelcome.resume.subtitle.other", { count: parentSessions().length })}
                     </p>
                   </div>
                   <Show when={!isDesktopLayout() && !showInstanceInfoOverlay()}>
@@ -368,7 +372,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                       class="button-tertiary lg:hidden flex-shrink-0"
                       onClick={openInstanceInfoOverlay}
                     >
-                      View Instance Info
+                      {t("instanceWelcome.actions.viewInstanceInfo")}
                     </button>
                   </Show>
                 </div>
@@ -404,7 +408,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                                       "text-accent": isFocused(),
                                     }}
                                   >
-                                    {session.title || "Untitled Session"}
+                                    {session.title || t("instanceWelcome.session.untitled")}
                                   </span>
                                 </div>
                                 <div class="flex items-center gap-3 text-xs text-muted mt-0.5">
@@ -421,7 +425,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                               <button
                                 type="button"
                                 class="p-1.5 rounded transition-colors text-muted hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                                title="Rename session"
+                                title={t("instanceWelcome.actions.renameTitle")}
                                 onClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
@@ -433,7 +437,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                               <button
                                 type="button"
                                 class="p-1.5 rounded transition-colors text-muted hover:text-red-500 dark:hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                                title="Delete session"
+                                title={t("instanceWelcome.actions.deleteTitle")}
                                 disabled={isSessionDeleting(session.id)}
                                 onClick={(event) => {
                                   event.preventDefault()
@@ -470,8 +474,8 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
 
           <div class="panel flex-shrink-0">
             <div class="panel-header">
-              <h2 class="panel-title">Start New Session</h2>
-              <p class="panel-subtitle">We’ll reuse your last agent/model automatically</p>
+              <h2 class="panel-title">{t("instanceWelcome.new.title")}</h2>
+              <p class="panel-subtitle">{t("instanceWelcome.new.subtitle")}</p>
             </div>
             <div class="panel-body">
               <div class="space-y-3">
@@ -496,7 +500,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                       </svg>
                     )}
-                    <span>Create Session</span>
+                    <span>{t("instanceWelcome.new.createButton")}</span>
                   </div>
                   <Kbd shortcut={newSessionShortcutString()} class="ml-2" />
                 </button>
@@ -524,7 +528,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
             >
               <div class="flex justify-end">
                 <button type="button" class="button-tertiary" onClick={closeInstanceInfoOverlay}>
-                  Close
+                  {t("instanceWelcome.overlay.close")}
                 </button>
               </div>
               <div class="max-h-[85vh] overflow-y-auto pr-1">
@@ -541,25 +545,25 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">↑</kbd>
             <kbd class="kbd">↓</kbd>
-            <span>Navigate</span>
+            <span>{t("instanceWelcome.hints.navigate")}</span>
           </div>
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">PgUp</kbd>
             <kbd class="kbd">PgDn</kbd>
-            <span>Jump</span>
+            <span>{t("instanceWelcome.hints.jump")}</span>
           </div>
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">Home</kbd>
             <kbd class="kbd">End</kbd>
-            <span>First/Last</span>
+            <span>{t("instanceWelcome.hints.firstLast")}</span>
           </div>
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">Enter</kbd>
-            <span>Resume</span>
+            <span>{t("instanceWelcome.hints.resume")}</span>
           </div>
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">Del</kbd>
-            <span>Delete</span>
+            <span>{t("instanceWelcome.hints.delete")}</span>
           </div>
         </div>
       </div>

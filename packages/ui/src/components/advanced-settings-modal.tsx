@@ -2,6 +2,7 @@ import { Component } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import OpenCodeBinarySelector from "./opencode-binary-selector"
 import EnvironmentVariablesEditor from "./environment-variables-editor"
+import { useI18n } from "../lib/i18n"
 
 interface AdvancedSettingsModalProps {
   open: boolean
@@ -12,6 +13,8 @@ interface AdvancedSettingsModalProps {
 }
 
 const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => {
+  const { t } = useI18n()
+
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
@@ -19,7 +22,7 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
             <header class="px-6 py-4 border-b" style={{ "border-color": "var(--border-base)" }}>
-              <Dialog.Title class="text-xl font-semibold text-primary">Advanced Settings</Dialog.Title>
+              <Dialog.Title class="text-xl font-semibold text-primary">{t("advancedSettings.title")}</Dialog.Title>
             </header>
 
             <div class="flex-1 overflow-y-auto p-6 space-y-6">
@@ -32,8 +35,8 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
 
               <div class="panel">
                 <div class="panel-header">
-                  <h3 class="panel-title">Environment Variables</h3>
-                  <p class="panel-subtitle">Applied whenever a new OpenCode instance starts</p>
+                  <h3 class="panel-title">{t("advancedSettings.environmentVariables.title")}</h3>
+                  <p class="panel-subtitle">{t("advancedSettings.environmentVariables.subtitle")}</p>
                 </div>
                 <div class="panel-body">
                   <EnvironmentVariablesEditor disabled={Boolean(props.isLoading)} />
@@ -47,7 +50,7 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
                 class="selector-button selector-button-secondary"
                 onClick={props.onClose}
               >
-                Close
+                {t("advancedSettings.actions.close")}
               </button>
             </div>
           </Dialog.Content>

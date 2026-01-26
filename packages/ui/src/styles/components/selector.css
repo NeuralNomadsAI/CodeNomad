@@ -148,6 +148,61 @@
   color: var(--accent-primary);
 }
 
+.selector-option-action {
+  @apply flex items-center justify-center py-1;
+  color: var(--text-muted);
+}
+
+.selector-option-star {
+  @apply p-1 rounded transition-colors flex-shrink-0 mt-0.5;
+  color: var(--text-muted);
+}
+
+.selector-option-star[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+.selector-option-star:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-option-star:focus-visible {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+.selector-favorites-toggle {
+  @apply p-2 rounded border transition-colors flex items-center justify-center;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-muted);
+}
+
+.selector-favorites-toggle[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+.selector-favorites-toggle:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-favorites-toggle:focus-visible {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+.selector-favorites-toggle:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-footer {
+  @apply border-t;
+  border-color: var(--border-base);
+  background-color: var(--surface-base);
+  position: relative;
+  z-index: 1;
+}
+
 .selector-section {
   @apply px-3 py-2 border-b;
   border-color: var(--border-base);

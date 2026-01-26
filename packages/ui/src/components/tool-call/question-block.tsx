@@ -1,6 +1,7 @@
 import { createMemo, Show, For, type Accessor } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import { useI18n } from "../../lib/i18n"
 
 type QuestionOption = { label: string; description: string }
 
@@ -26,6 +27,8 @@ export type QuestionToolBlockProps = {
 }
 
 export function QuestionToolBlock(props: QuestionToolBlockProps) {
+  const { t } = useI18n()
+
   const requestId = createMemo(() => {
     const state = props.toolState()
     const request = props.request()
@@ -163,9 +166,15 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
       <div class={`tool-call-permission ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
         <div class="tool-call-permission-header">
           <span class="tool-call-permission-label">
-            {props.active() ? "Question Required" : props.request() ? "Question Queued" : "Questions"}
+            {props.active()
+              ? t("toolCall.question.status.required")
+              : props.request()
+                ? t("toolCall.question.status.queued")
+                : t("toolCall.question.status.questions")}
           </span>
-          <span class="tool-call-permission-type">{questions().length === 1 ? "Question" : "Questions"}</span>
+          <span class="tool-call-permission-type">
+            {questions().length === 1 ? t("toolCall.question.type.one") : t("toolCall.question.type.other")}
+          </span>
         </div>
 
         <div class="tool-call-permission-body">
@@ -186,10 +195,10 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                   <div class="rounded-md border border-base/60 bg-surface/30 p-3">
                     <div class="flex items-baseline justify-between gap-2">
                       <div class="text-xs">
-                        Q{i() + 1}: <span class="font-semibold">{q?.header}</span>
+                        {t("toolCall.question.number", { number: i() + 1 })} <span class="font-semibold">{q?.header}</span>
                       </div>
                       <Show when={multi()}>
-                        <div class="text-xs text-muted">Multiple</div>
+                        <div class="text-xs text-muted">{t("toolCall.question.multiple")}</div>
                       </Show>
                     </div>
 
@@ -222,7 +231,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
 
                       <label
                         class={`mt-2 flex items-start gap-2 py-1 ${props.active() ? "cursor-pointer" : props.request() ? "opacity-80" : ""}`}
-                        title="Type a custom answer"
+                        title={t("toolCall.question.custom.title")}
                       >
                         <input
                           type={inputType()}
@@ -244,11 +253,11 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                           }}
                         />
                         <div class="flex flex-1 flex-col gap-2">
-                          <div class="text-sm leading-tight">Custom answer</div>
+                          <div class="text-sm leading-tight">{t("toolCall.question.custom.label")}</div>
                           <input
                             class="w-full rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
                             type="text"
-                            placeholder="Type your own answer"
+                            placeholder={t("toolCall.question.custom.placeholder")}
                             disabled={!props.active() || props.submitting()}
                             value={customValue()}
                             onFocus={(e) => {
@@ -275,7 +284,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                     disabled={submitDisabled()}
                     onClick={() => props.onSubmit()}
                   >
-                    Submit
+                    {t("toolCall.question.actions.submit")}
                   </button>
                   <button
                     type="button"
@@ -283,15 +292,15 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                     disabled={props.submitting()}
                     onClick={() => props.onDismiss()}
                   >
-                    Dismiss
+                    {t("toolCall.question.actions.dismiss")}
                   </button>
                 </div>
 
                 <div class="tool-call-permission-shortcuts">
                   <kbd class="kbd">Enter</kbd>
-                  <span>Submit</span>
+                  <span>{t("toolCall.question.shortcuts.submit")}</span>
                   <kbd class="kbd">Esc</kbd>
-                  <span>Dismiss</span>
+                  <span>{t("toolCall.question.shortcuts.dismiss")}</span>
                 </div>
 
                 <Show when={props.error()}>
@@ -301,7 +310,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
             </Show>
 
             <Show when={!props.active() && props.request()}>
-              <p class="tool-call-permission-queued-text">Waiting for earlier responses.</p>
+              <p class="tool-call-permission-queued-text">{t("toolCall.question.queuedText")}</p>
             </Show>
           </div>
         </div>

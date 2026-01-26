@@ -4,6 +4,7 @@ import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
+import { useI18n } from "../lib/i18n"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -19,6 +20,7 @@ interface MessageItemProps {
 }
 
 export default function MessageItem(props: MessageItemProps) {
+  const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
 
   const isUser = () => props.record.role === "user"
@@ -49,15 +51,15 @@ export default function MessageItem(props: MessageItemProps) {
     }
     const url = part.url || ""
     if (url.startsWith("data:")) {
-      return "attachment"
+      return t("messageItem.attachment.defaultName")
     }
     try {
       const parsed = new URL(url)
       const segments = parsed.pathname.split("/")
-      return segments.pop() || "attachment"
+      return segments.pop() || t("messageItem.attachment.defaultName")
     } catch (error) {
       const fallback = url.split("/").pop()
-      return fallback && fallback.length > 0 ? fallback : "attachment"
+      return fallback && fallback.length > 0 ? fallback : t("messageItem.attachment.defaultName")
     }
   }
 
@@ -112,16 +114,16 @@ export default function MessageItem(props: MessageItemProps) {
 
     const error = info.error
     if (error.name === "ProviderAuthError") {
-      return error.data?.message || "Authentication error"
+      return error.data?.message || t("messageItem.errors.authenticationFallback")
     }
     if (error.name === "MessageOutputLengthError") {
-      return "Message output length exceeded"
+      return t("messageItem.errors.outputLengthExceeded")
     }
     if (error.name === "MessageAbortedError") {
-      return "Request was aborted"
+      return t("messageItem.errors.requestAborted")
     }
     if (error.name === "UnknownError") {
-      return error.data?.message || "Unknown error occurred"
+      return error.data?.message || t("messageItem.errors.unknownFallback")
     }
     return null
   }
@@ -170,7 +172,7 @@ export default function MessageItem(props: MessageItemProps) {
       ? "message-item-base bg-[var(--message-user-bg)] border-l-4 border-[var(--message-user-border)]"
       : "message-item-base assistant-message bg-[var(--message-assistant-bg)] border-l-4 border-[var(--message-assistant-border)]"
 
-  const speakerLabel = () => (isUser() ? "You" : "Assistant")
+  const speakerLabel = () => (isUser() ? t("messageItem.speaker.you") : t("messageItem.speaker.assistant"))
 
   const agentIdentifier = () => {
     if (isUser()) return ""
@@ -195,10 +197,10 @@ export default function MessageItem(props: MessageItemProps) {
     const agent = agentIdentifier()
     const model = modelIdentifier()
     if (agent) {
-      segments.push(`Agent: ${agent}`)
+      segments.push(t("messageItem.agentMeta.agentLabel", { agent }))
     }
     if (model) {
-      segments.push(`Model: ${model}`)
+      segments.push(t("messageItem.agentMeta.modelLabel", { model }))
     }
     return segments.join(" • ")
   }
@@ -220,30 +222,30 @@ export default function MessageItem(props: MessageItemProps) {
                 <button
                   class="message-action-button"
                   onClick={handleRevert}
-                  title="Revert to this message"
-                  aria-label="Revert to this message"
+                  title={t("messageItem.actions.revertTitle")}
+                  aria-label={t("messageItem.actions.revertTitle")}
                 >
-                  Revert
+                  {t("messageItem.actions.revert")}
                 </button>
               </Show>
               <Show when={props.onFork}>
                 <button
                   class="message-action-button"
                   onClick={() => props.onFork?.(props.record.id)}
-                  title="Fork from this message"
-                  aria-label="Fork from this message"
+                  title={t("messageItem.actions.forkTitle")}
+                  aria-label={t("messageItem.actions.forkTitle")}
                 >
-                  Fork
+                  {t("messageItem.actions.fork")}
                 </button>
               </Show>
               <button
                 class="message-action-button"
                 onClick={handleCopy}
-                title="Copy message"
-                aria-label="Copy message"
+                title={t("messageItem.actions.copyTitle")}
+                aria-label={t("messageItem.actions.copyTitle")}
               >
-                <Show when={copied()} fallback="Copy">
-                  Copied!
+                <Show when={copied()} fallback={t("messageItem.actions.copy")}>
+                  {t("messageItem.actions.copied")}
                 </Show>
               </button>
             </div>
@@ -252,11 +254,11 @@ export default function MessageItem(props: MessageItemProps) {
             <button
               class="message-action-button"
               onClick={handleCopy}
-              title="Copy message"
-              aria-label="Copy message"
+              title={t("messageItem.actions.copyTitle")}
+              aria-label={t("messageItem.actions.copyTitle")}
             >
-              <Show when={copied()} fallback="Copy">
-                Copied!
+              <Show when={copied()} fallback={t("messageItem.actions.copy")}>
+                {t("messageItem.actions.copied")}
               </Show>
             </button>
           </Show>
@@ -269,7 +271,7 @@ export default function MessageItem(props: MessageItemProps) {
 
 
         <Show when={props.isQueued && isUser()}>
-          <div class="message-queued-badge">QUEUED</div>
+          <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
         </Show>
 
         <Show when={errorMessage()}>
@@ -278,7 +280,7 @@ export default function MessageItem(props: MessageItemProps) {
 
         <Show when={isGenerating()}>
           <div class="message-generating">
-            <span class="generating-spinner">⏳</span> Generating...
+            <span class="generating-spinner">⏳</span> {t("messageItem.status.generating")}
           </div>
         </Show>
 
@@ -319,7 +321,7 @@ export default function MessageItem(props: MessageItemProps) {
                       type="button"
                       onClick={() => void handleAttachmentDownload(attachment)}
                       class="attachment-download"
-                      aria-label={`Download ${name}`}
+                      aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
                     >
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
@@ -340,12 +342,12 @@ export default function MessageItem(props: MessageItemProps) {
 
         <Show when={props.record.status === "sending"}>
           <div class="message-sending">
-            <span class="generating-spinner">●</span> Sending...
+            <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
           </div>
         </Show>
 
         <Show when={props.record.status === "error"}>
-          <div class="message-error">⚠ Message failed to send</div>
+          <div class="message-error">⚠ {t("messageItem.status.failedToSend")}</div>
         </Show>
       </div>
     </div>

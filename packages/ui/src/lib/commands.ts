@@ -6,14 +6,20 @@ export interface KeyboardShortcut {
   alt?: boolean
 }
 
+export type Resolvable<T> = T | (() => T)
+
+export function resolveResolvable<T>(value: Resolvable<T>): T {
+  return typeof value === "function" ? (value as () => T)() : value
+}
+
 export interface Command {
   id: string
-  label: string | (() => string)
-  description: string
-  keywords?: string[]
+  label: Resolvable<string>
+  description: Resolvable<string>
+  keywords?: Resolvable<string[]>
   shortcut?: KeyboardShortcut
   action: () => void | Promise<void>
-  category?: string
+  category?: Resolvable<string>
 }
 
 export function createCommandRegistry() {
@@ -47,11 +53,15 @@ export function createCommandRegistry() {
 
     const lowerQuery = query.toLowerCase()
     return getAll().filter((cmd) => {
-      const label = typeof cmd.label === "function" ? cmd.label() : cmd.label
+      const label = resolveResolvable(cmd.label)
+      const description = resolveResolvable(cmd.description)
+      const keywords = cmd.keywords ? resolveResolvable(cmd.keywords) : undefined
+      const category = cmd.category ? resolveResolvable(cmd.category) : undefined
       const labelMatch = label.toLowerCase().includes(lowerQuery)
-      const descMatch = cmd.description.toLowerCase().includes(lowerQuery)
-      const keywordMatch = cmd.keywords?.some((k) => k.toLowerCase().includes(lowerQuery))
-      return labelMatch || descMatch || keywordMatch
+      const descMatch = description.toLowerCase().includes(lowerQuery)
+      const keywordMatch = keywords?.some((k) => k.toLowerCase().includes(lowerQuery))
+      const categoryMatch = category?.toLowerCase().includes(lowerQuery)
+      return labelMatch || descMatch || keywordMatch || categoryMatch
     })
   }
 

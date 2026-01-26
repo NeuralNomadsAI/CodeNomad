@@ -5,6 +5,7 @@ import { getParentSessions, createSession, setActiveParentSession } from "../sto
 import { instances, stopInstance } from "../stores/instances"
 import { agents } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
+import { useI18n } from "../lib/i18n"
 const log = getLogger("session")
 
 
@@ -15,6 +16,7 @@ interface SessionPickerProps {
 }
 
 const SessionPicker: Component<SessionPickerProps> = (props) => {
+  const { t } = useI18n()
   const [selectedAgent, setSelectedAgent] = createSignal<string>("")
   const [isCreating, setIsCreating] = createSignal(false)
 
@@ -40,10 +42,10 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
     const hours = Math.floor(minutes / 60)
     const days = Math.floor(hours / 24)
 
-    if (days > 0) return `${days}d ago`
-    if (hours > 0) return `${hours}h ago`
-    if (minutes > 0) return `${minutes}m ago`
-    return "just now"
+    if (days > 0) return t("time.relative.daysAgoShort", { count: days })
+    if (hours > 0) return t("time.relative.hoursAgoShort", { count: hours })
+    if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
+    return t("time.relative.justNow")
   }
 
   async function handleSessionSelect(sessionId: string) {
@@ -74,19 +76,19 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface w-full max-w-lg p-6">
-            <Dialog.Title class="text-xl font-semibold text-primary mb-4">
-              OpenCode • {instance()?.folder.split("/").pop()}
-            </Dialog.Title>
+            <Dialog.Content class="modal-surface w-full max-w-lg p-6">
+              <Dialog.Title class="text-xl font-semibold text-primary mb-4">
+              {t("sessionPicker.title", { folder: instance()?.folder.split("/").pop() })}
+              </Dialog.Title>
 
             <div class="space-y-6">
               <Show
                 when={parentSessions().length > 0}
-                fallback={<div class="text-center py-4 text-sm text-muted">No previous sessions</div>}
+                fallback={<div class="text-center py-4 text-sm text-muted">{t("sessionPicker.empty.noPrevious")}</div>}
               >
                 <div>
                   <h3 class="text-sm font-medium text-secondary mb-2">
-                    Resume a session ({parentSessions().length}):
+                    {t("sessionPicker.resume.title", { count: parentSessions().length })}
                   </h3>
                   <div class="space-y-1 max-h-[400px] overflow-y-auto">
                     <For each={parentSessions()}>
@@ -98,7 +100,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                         >
                           <div class="selector-option-content w-full">
                             <span class="selector-option-label truncate">
-                              {session.title || "Untitled"}
+                              {session.title || t("sessionPicker.session.untitled")}
                             </span>
                           </div>
                           <span class="selector-badge-time flex-shrink-0">
@@ -116,16 +118,16 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                   <div class="w-full border-t border-base" />
                 </div>
                 <div class="relative flex justify-center text-sm">
-                  <span class="px-2 bg-surface-base text-muted">or</span>
+                  <span class="px-2 bg-surface-base text-muted">{t("sessionPicker.divider.or")}</span>
                 </div>
               </div>
 
               <div>
-                <h3 class="text-sm font-medium text-secondary mb-2">Start new session:</h3>
+                <h3 class="text-sm font-medium text-secondary mb-2">{t("sessionPicker.new.title")}</h3>
                 <div class="space-y-3">
                   <Show
                     when={agentList().length > 0}
-                    fallback={<div class="text-sm text-muted">Loading agents...</div>}
+                    fallback={<div class="text-sm text-muted">{t("sessionPicker.agents.loading")}</div>}
                   >
                     <select
                       class="selector-input w-full"
@@ -161,9 +163,13 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                       </Show>
                       <Show
                         when={!isCreating()}
-                        fallback={<span>Creating...</span>}
+                        fallback={<span>{t("sessionPicker.actions.creating")}</span>}
                       >
-                        <span>{agentList().length === 0 ? "Loading agents..." : "Create Session"}</span>
+                        <span>
+                          {agentList().length === 0
+                            ? t("sessionPicker.agents.loading")
+                            : t("sessionPicker.actions.createSession")}
+                        </span>
                       </Show>
                     </div>
                     <kbd class="kbd ml-2">
@@ -180,7 +186,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                 class="selector-button selector-button-secondary"
                 onClick={handleCancel}
               >
-                Cancel
+                {t("sessionPicker.actions.cancel")}
               </button>
             </div>
           </Dialog.Content>
