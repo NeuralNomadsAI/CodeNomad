@@ -380,6 +380,16 @@ async function proxyWorkspaceRequest(args: {
       if (instanceAuthHeader) {
         headers.authorization = instanceAuthHeader
       }
+
+      // Enforce per-workspace directory scoping for all proxied OpenCode requests.
+      // OpenCode expects the *full* path; we send it via header to avoid query tampering.
+      const directory = workspace.path
+      const isNonASCII = /[^\x00-\x7F]/.test(directory)
+      const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
+
+      // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
+      ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
+
       return headers
     },
     onError: (proxyReply, { error }) => {
