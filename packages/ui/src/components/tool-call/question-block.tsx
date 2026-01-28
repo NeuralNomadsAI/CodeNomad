@@ -1,4 +1,4 @@
-import { createMemo, Show, For, type Accessor } from "solid-js"
+import { createMemo, Show, For, createEffect, type Accessor } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useI18n } from "../../lib/i18n"
@@ -28,6 +28,13 @@ export type QuestionToolBlockProps = {
 
 export function QuestionToolBlock(props: QuestionToolBlockProps) {
   const { t } = useI18n()
+  let firstInputRef: HTMLInputElement | undefined
+
+  createEffect(() => {
+    if (props.active() && firstInputRef) {
+      firstInputRef.focus()
+    }
+  })
 
   const requestId = createMemo(() => {
     const state = props.toolState()
@@ -206,7 +213,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
 
                     <div class="mt-3 flex flex-col gap-1">
                       <For each={q?.options ?? []}>
-                        {(opt) => {
+                        {(opt, optIndex) => {
                           const checked = () => selected().includes(opt.label)
                           return (
                             <label
@@ -214,6 +221,9 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                               title={opt.description}
                             >
                               <input
+                                ref={(el) => {
+                                  if (i() === 0 && optIndex() === 0) firstInputRef = el
+                                }}
                                 type={inputType()}
                                 name={groupName()}
                                 checked={checked()}
@@ -234,6 +244,9 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                         title={t("toolCall.question.custom.title")}
                       >
                         <input
+                          ref={(el) => {
+                            if (i() === 0 && (q?.options?.length ?? 0) === 0) firstInputRef = el
+                          }}
                           type={inputType()}
                           name={groupName()}
                           checked={customChecked()}
@@ -266,6 +279,13 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                               toggleFromCustomInput(i(), e.currentTarget)
                             }}
                             onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.isComposing) {
+                                if (!submitDisabled()) {
+                                  props.onSubmit()
+                                }
+                              }
+                            }}
                           />
                         </div>
                       </label>
