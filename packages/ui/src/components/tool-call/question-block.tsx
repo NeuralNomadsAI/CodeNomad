@@ -112,13 +112,25 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
     if (!props.active()) return
     const rawValue = input?.value ?? ""
     const value = rawValue
-    if (value.trim().length === 0) return
 
     const info = questions()[questionIndex]
     const multi = info?.multiple === true
     if (!multi) {
       // When switching a radio to custom, clear existing selection first.
       updateAnswer(questionIndex, [])
+    }
+
+    // If the custom field is empty, treat it as unanswered.
+    // This prevents submitting a previously selected option when the user
+    // has explicitly switched focus to the custom input.
+    if (value.trim().length === 0) return
+
+    if (multi) {
+      const existing = answers()[questionIndex] ?? []
+      if (!existing.includes(value)) {
+        updateAnswer(questionIndex, [...existing, value])
+      }
+      return
     }
 
     toggleOption(questionIndex, value)
@@ -281,6 +293,9 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                             onInput={(e) => handleCustomTyping(i(), e.currentTarget)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" && !e.isComposing) {
+                                // Don't submit if the custom field is empty (common when switching to it).
+                                if (e.currentTarget.value.trim().length === 0) return
+                                e.preventDefault()
                                 if (!submitDisabled()) {
                                   props.onSubmit()
                                 }
