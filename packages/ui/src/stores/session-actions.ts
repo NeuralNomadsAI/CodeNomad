@@ -33,6 +33,58 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 let lastTimestamp = 0
 let localCounter = 0
 
+function generateHeuristicTitle(prompt: string): string | null {
+  // 1. Check for file paths/mentions first (High signal)
+  // Matches: @file.ext, ./file.ext, /path/to/file
+  const fileMatch = prompt.match(/(?:@|[\/\\])?([\w.-]+\.\w+)/)
+  if (fileMatch?.[1] && fileMatch[1].length < 30) return `Context: ${fileMatch[1]}`
+
+  // 2. Filter conversational noise (Stop words)
+  const stopWords = new Set(
+    "hi hello hey can you please pls help me with the a an is it does how to for in of about what we i my our us this that there here".split(
+      " ",
+    ),
+  )
+
+  // Split, clean, and filter
+  const words = prompt
+    .replace(/[^\w\s-]/g, "") // Remove special chars (keep dashes/underscores)
+    .split(/\s+/)
+    .filter((w) => {
+      // Filter stop words and suspicious long strings (potential keys > 25 chars)
+      return !stopWords.has(w.toLowerCase()) && w.length < 25
+    })
+
+  // 3. Construct Title (Character Budget Approach)
+  if (words.length > 0) {
+    let title = ""
+    const charLimit = 30
+
+    for (const word of words) {
+      // If adding this word exceeds limit (plus space), check if we should stop
+      if (title.length + word.length + (title ? 1 : 0) > charLimit) {
+        // If we have at least one word, stop and add ellipsis
+        if (title.length > 0) {
+          title += "..."
+          break
+        }
+      }
+
+      // Capitalize first letter of the result for the very first word
+      const nextWord = title.length === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word
+      title += (title ? " " : "") + nextWord
+    }
+
+    // If we used all words but didn't hit the limit, no ellipsis needed.
+    // But if there were more words remaining in the source array than we used, add ellipsis
+    if (!title.endsWith("...") && title.split(" ").length < words.length) title += "..."
+
+    return title
+  }
+
+  return null
+}
+
 function randomBase62(length: number): string {
   let result = ""
   const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto
@@ -159,6 +211,19 @@ async function sendMessage(
 
   const store = messageStoreBus.getOrCreate(instanceId)
   const createdAt = Date.now()
+
+  // Heuristic Session Naming
+  // If this is the first message in the session, generate a better title
+  // based on the user's prompt (without using premium tokens)
+  if (store.getSessionMessageIds(sessionId).length === 0) {
+    const autoTitle = generateHeuristicTitle(prompt)
+    if (autoTitle && session.title.startsWith("New session -")) {
+      // Fire and forget - don't block the message sending
+      renameSession(instanceId, sessionId, autoTitle).catch((err) => {
+        log.warn("Failed to auto-rename session", err)
+      })
+    }
+  }
 
   store.upsertMessage({
     id: messageId,
