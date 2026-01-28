@@ -4,12 +4,15 @@ mod cli_manager;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
+
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -167,6 +170,11 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
+                // `app_handle.exit(0)` triggers another `ExitRequested`. Without a guard, we can
+                // prevent exit forever and the app never quits (Cmd+Q / Quit menu appears stuck).
+                if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
+                    return;
+                }
                 api.prevent_exit();
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
@@ -181,6 +189,9 @@ fn main() {
                 ..
             } => {
                 // Ensure we have time to stop the CLI process before the app exits.
+                if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
+                    return;
+                }
                 api.prevent_close();
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
