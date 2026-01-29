@@ -1,31 +1,33 @@
 import { Component, Show } from "solid-js"
 import { Dialog } from "@kobalte/core"
 import { X } from "lucide-solid"
-import InstanceMcpControl from "./instance-mcp-control"
+import InstanceServiceStatus from "./instance-service-status"
 import type { Instance } from "../types/instance"
 
-interface McpSettingsModalProps {
+interface LspSettingsModalProps {
   open: boolean
   onClose: () => void
   instance: Instance | null
 }
 
-const McpSettingsModal: Component<McpSettingsModalProps> = (props) => {
+const LspSettingsModal: Component<LspSettingsModalProps> = (props) => {
   return (
     <Dialog.Root open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay class="dialog-overlay" />
         <Dialog.Content class="dialog-content dialog-content-md">
           <div class="dialog-header">
-            <Dialog.Title class="dialog-title">MCP Servers</Dialog.Title>
+            <Dialog.Title class="dialog-title">LSP Servers</Dialog.Title>
             <Dialog.CloseButton class="dialog-close-button">
               <X size={16} />
             </Dialog.CloseButton>
           </div>
           <div class="dialog-body">
             <Show when={props.instance} fallback={<p class="text-muted text-sm">No instance connected.</p>}>
-              <InstanceMcpControl
-                instance={props.instance!}
+              <InstanceServiceStatus
+                initialInstance={props.instance!}
+                sections={["lsp"]}
+                showSectionHeadings={false}
                 class="space-y-2"
               />
             </Show>
@@ -41,4 +43,4 @@ const McpSettingsModal: Component<McpSettingsModalProps> = (props) => {
   )
 }
 
-export default McpSettingsModal
+export default LspSettingsModal

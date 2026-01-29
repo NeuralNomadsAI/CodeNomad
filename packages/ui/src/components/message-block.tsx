@@ -147,7 +147,6 @@ interface MessageBlockProps {
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   showUsageMetrics: () => boolean
-  isSessionReady?: boolean
   isLastMessage?: boolean
   isLastInAssistantTurn?: boolean
   turnMessageIds?: string[]
@@ -358,6 +357,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     | { type: "subagent-group"; tools: ToolDisplayItem[] }
     | { type: "pipeline-group"; tools: ToolDisplayItem[]; patternName: string }
     | { type: "standalone-tool"; tool: ToolDisplayItem }
+    | { type: "collapsed-tools"; hiddenCount: number; toolGroupCount: number }
 
   const renderSections = createMemo<RenderSection[]>(() => {
     const items = block()?.items ?? []
@@ -440,6 +440,43 @@ export default function MessageBlock(props: MessageBlockProps) {
     return sections
   })
 
+  // Collapse excess tool-group sections behind a "Show more" toggle
+  const TOOL_SECTION_COLLAPSE_THRESHOLD = 4
+  const [sectionsExpanded, setSectionsExpanded] = createSignal(false)
+
+  const displaySections = createMemo<RenderSection[]>(() => {
+    const all = renderSections()
+    if (sectionsExpanded()) return all
+
+    // Find indices of tool-like sections
+    const toolIndices: number[] = []
+    for (let i = 0; i < all.length; i++) {
+      const t = all[i].type
+      if (t === "tool-group" || t === "subagent-group" || t === "pipeline-group") {
+        toolIndices.push(i)
+      }
+    }
+
+    if (toolIndices.length <= TOOL_SECTION_COLLAPSE_THRESHOLD) return all
+
+    // Keep sections up to and including the 3rd tool section,
+    // collapse middle, then show from the last tool section onward
+    const collapseStart = toolIndices[2] + 1
+    const resumeAt = toolIndices[toolIndices.length - 1]
+
+    if (resumeAt <= collapseStart) return all
+
+    const hiddenSlice = all.slice(collapseStart, resumeAt)
+    const hiddenToolGroups = hiddenSlice.filter(
+      (s) => s.type === "tool-group" || s.type === "subagent-group" || s.type === "pipeline-group"
+    ).length
+
+    return [
+      ...all.slice(0, collapseStart),
+      { type: "collapsed-tools" as const, hiddenCount: hiddenSlice.length, toolGroupCount: hiddenToolGroups },
+      ...all.slice(resumeAt),
+    ]
+  })
 
   // Render a single non-tool item
   const renderItem = (item: MessageBlockItem) => (
@@ -468,7 +505,7 @@ export default function MessageBlock(props: MessageBlockProps) {
           messageInfo={(item as StepDisplayItem).messageInfo}
           showUsage={props.showUsageMetrics()}
           borderColor={(item as StepDisplayItem).accentColor}
-          isSessionReady={props.isSessionReady && props.isLastMessage}
+
         />
       </Match>
       <Match when={item.type === "reasoning"}>
@@ -488,6 +525,17 @@ export default function MessageBlock(props: MessageBlockProps) {
   const renderSection = (section: RenderSection) => {
     if (section.type === "item") {
       return renderItem(section.item)
+    }
+    if (section.type === "collapsed-tools") {
+      return (
+        <button
+          type="button"
+          class="tool-groups-collapsed-toggle"
+          onClick={() => setSectionsExpanded(true)}
+        >
+          Show {section.toolGroupCount} more tool group{section.toolGroupCount !== 1 ? "s" : ""}
+        </button>
+      )
     }
     if (section.type === "pipeline-group") {
       return (
@@ -539,7 +587,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       {(resolvedBlock) => (
         <div class="message-stream-block" data-message-id={resolvedBlock.record.id}>
           {/* Render sections: content, reasoning, and grouped tools in their original order */}
-          <For each={renderSections()}>{(section) => renderSection(section)}</For>
+          <For each={displaySections()}>{(section) => renderSection(section)}</For>
 
           {/* Step-finish (usage/summary bar) - only shown when session is ready for user input */}
           <Show when={props.showStepFinish && stepFinishItem()}>
@@ -550,7 +598,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 messageInfo={item().messageInfo}
                 showUsage={props.showUsageMetrics()}
                 borderColor={item().accentColor}
-                isSessionReady={props.isSessionReady && props.isLastMessage}
+      
               />
             )}
           </Show>
@@ -567,7 +615,6 @@ interface StepCardProps {
   showAgentMeta?: boolean
   showUsage?: boolean
   borderColor?: string
-  isSessionReady?: boolean
 }
 
 function StepCard(props: StepCardProps) {
@@ -646,12 +693,6 @@ function StepCard(props: StepCardProps) {
     return (
       <div class={`message-step-card message-step-finish message-step-finish-flush`} style={finishStyle()}>
         {renderUsageChips(usage)}
-        <Show when={props.isSessionReady}>
-          <span class="message-step-ready">
-            <span class="message-step-ready-dot" />
-            Ready
-          </span>
-        </Show>
       </div>
     )
   }

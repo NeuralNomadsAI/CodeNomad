@@ -34,8 +34,6 @@ import {
   XCircle,
   Loader2,
   ListChecks,
-  Plug,
-  Server,
 } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
@@ -64,8 +62,6 @@ import SessionList from "../session-list"
 import KeyboardHint from "../keyboard-hint"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
-import InstanceServiceStatus from "../instance-service-status"
-import InstanceMcpControl from "../instance-mcp-control"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import ThinkingSelector from "../thinking-selector"
@@ -94,7 +90,6 @@ import {
   type SessionSidebarRequestDetail,
 } from "../../lib/session-sidebar-events"
 import { useConfig } from "../../stores/preferences"
-import { getActiveMcpServerCount } from "../../stores/project-mcp"
 
 const log = getLogger("session")
 
@@ -162,7 +157,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["actions", "files", "tasks"])
+  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["tasks", "git", "actions", "files"])
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = createSignal(false)
 
   const { preferences, updateLastUsedBinary } = useConfig()
@@ -355,9 +350,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return {
       used: usage?.actualUsageTokens ?? info?.actualUsageTokens ?? 0,
       avail: info?.contextAvailableTokens ?? null,
-      inputTokens: info?.inputTokens ?? 0,
-      outputTokens: info?.outputTokens ?? 0,
-      cost: info?.isSubscriptionModel ? 0 : (info?.cost ?? 0),
     }
   })
 
@@ -383,6 +375,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const state = part.state
     if (!state || state.status !== "completed") return null
     return state
+  })
+
+  // Auto-expand tasks section when there are pending todos
+  createEffect(() => {
+    const todoState = latestTodoState()
+    if (!todoState?.todos?.length) return
+    const hasPending = todoState.todos.some(t => t.status !== "completed")
+    if (hasPending) {
+      setRightPanelExpandedItems((prev) => {
+        if (prev.includes("tasks")) return prev
+        return [...prev, "tasks"]
+      })
+    }
   })
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
@@ -1087,48 +1092,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </Show>
     )
 
-    // 6 peer sections - flattened from nested workspace
-    // Order: Recent Actions, Files Touched, LSP, MCP, Git Status, Tasks
+    // 4 peer sections - Tasks first, then Git, Actions, Files
     const sections = [
       {
-        id: "actions",
-        label: "Recent Actions",
-        icon: () => <Clock class="w-4 h-4" />,
-        count: () => recentActions().length,
-        render: renderRecentActionsContent,
-      },
-      {
-        id: "files",
-        label: "Files Touched",
-        icon: () => <FileText class="w-4 h-4" />,
-        count: () => filesTouched().length,
-        render: renderFilesTouchedContent,
-      },
-      {
-        id: "lsp",
-        label: "LSP Servers",
-        icon: () => <Server class="w-4 h-4" />,
-        count: () => props.instance.metadata?.lspStatus?.length ?? 0,
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["lsp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
-      {
-        id: "mcp",
-        label: "MCP Servers",
-        icon: () => <Plug class="w-4 h-4" />,
-        count: () => getActiveMcpServerCount(props.instance.id, props.instance.folder),
-        render: () => (
-          <InstanceMcpControl
-            instance={props.instance}
-            class="space-y-2"
-          />
-        ),
+        id: "tasks",
+        label: "Tasks",
+        icon: () => <ListChecks class="w-4 h-4" />,
+        count: () => {
+          const todoState = latestTodoState()
+          if (!todoState?.todos?.length) return null
+          const pending = todoState.todos.filter(t => t.status !== "completed").length
+          return pending > 0 ? pending : null
+        },
+        render: renderPlanSectionContent,
       },
       {
         id: "git",
@@ -1142,16 +1118,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         render: renderGitStatusContent,
       },
       {
-        id: "tasks",
-        label: "Tasks",
-        icon: () => <ListChecks class="w-4 h-4" />,
-        count: () => {
-          const todoState = latestTodoState()
-          if (!todoState?.todos?.length) return null
-          const pending = todoState.todos.filter(t => t.status !== "completed").length
-          return pending > 0 ? pending : null
-        },
-        render: renderPlanSectionContent,
+        id: "actions",
+        label: "Recent Actions",
+        icon: () => <Clock class="w-4 h-4" />,
+        count: () => recentActions().length,
+        render: renderRecentActionsContent,
+      },
+      {
+        id: "files",
+        label: "Files Touched",
+        icon: () => <FileText class="w-4 h-4" />,
+        count: () => filesTouched().length,
+        render: renderFilesTouchedContent,
       },
     ]
 
@@ -1420,18 +1398,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     />
                     <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
                   </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">In</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">Out</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">Cost</span>
-                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
-                  </div>
                 </div>
               </div>
             }
@@ -1489,18 +1455,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       class="header-context-progress header-context-progress--thick"
                     />
                     <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">In</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">Out</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">Cost</span>
-                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
                   </div>
                 </div>
               </Show>

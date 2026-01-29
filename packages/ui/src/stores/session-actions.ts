@@ -10,6 +10,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus, triggerCollapseAll } from "./message-v2/bus"
 import { cleanupIdleChildren } from "./session-cleanup"
 import { getLogger } from "../lib/logger"
+import { setRequestSent } from "./streaming-metrics"
 
 const log = getLogger("actions")
 
@@ -241,6 +242,7 @@ async function sendMessage(
   })
 
   try {
+    setRequestSent(instanceId, sessionId)
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const response = await instance.client.session.promptAsync({
       path: { id: sessionId },

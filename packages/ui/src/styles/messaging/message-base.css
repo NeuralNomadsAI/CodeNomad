@@ -162,24 +162,6 @@
   margin-right: 0.35rem;
 }
 
-/* Ready indicator in completion card */
-.message-step-ready {
-  @apply ml-auto inline-flex items-center gap-1.5 text-xs;
-  color: rgba(34, 197, 94, 0.9);
-  font-weight: 500;
-}
-
-.message-step-ready-dot {
-  @apply w-2 h-2 rounded-full;
-  background-color: rgba(34, 197, 94, 0.9);
-  animation: ready-pulse 2s ease-in-out infinite;
-}
-
-@keyframes ready-pulse {
-  0%, 100% { opacity: 0.6; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1); }
-}
-
 /* Dark theme adjustments for completion card */
 :root[data-theme="dark"] .message-step-finish {
   background: linear-gradient(135deg,

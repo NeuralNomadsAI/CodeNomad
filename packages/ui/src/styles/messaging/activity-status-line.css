@@ -1,13 +1,9 @@
-/* Activity Status Line - sticky bottom status during assistant processing */
+/* Activity Status Line — permanently mounted between message thread and prompt input */
 .activity-status-line {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  flex-shrink: 0;
   border-top: 1px solid var(--border-base);
-  padding: 0.5rem 0.75rem;
-  animation: activity-status-fade-in 0.3s ease-out;
-  backdrop-filter: blur(8px);
-  background: color-mix(in srgb, var(--surface-base) 85%, transparent);
+  padding: 0.375rem 0.75rem;
+  background: var(--surface-base);
 }
 
 .activity-status-main {
@@ -18,13 +14,36 @@
   color: var(--text-secondary);
 }
 
+/* ── Status dot ── */
 .activity-status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--status-success, #22c55e);
-  animation: activity-dot-pulse 1.5s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+/* Idle: neutral gray — at rest, no action needed */
+.activity-status-dot--idle {
+  background: #6b7280;
+  opacity: 0.7;
+}
+
+/* Working: blue — active processing */
+.activity-status-dot--working {
+  background: #3b82f6;
+  animation: activity-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Compacting: violet — system maintenance */
+.activity-status-dot--compacting {
+  background: #8b5cf6;
+  animation: activity-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Waiting (question/permission): amber — user attention needed */
+.activity-status-dot--waiting-question,
+.activity-status-dot--waiting-permission {
+  background: #f59e0b;
 }
 
 @keyframes activity-dot-pulse {
@@ -38,22 +57,28 @@
   }
 }
 
-@keyframes activity-status-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
+/* ── Verb text — color matches dot ── */
 .activity-status-verb {
   font-weight: 500;
-  color: var(--accent-primary);
 }
 
+.activity-status-line--idle .activity-status-verb {
+  color: #9ca3af;
+}
+
+.activity-status-line--working .activity-status-verb {
+  color: #60a5fa;
+}
+
+.activity-status-line--compacting .activity-status-verb {
+  color: #a78bfa;
+}
+
+.activity-status-line--waiting .activity-status-verb {
+  color: #fbbf24;
+}
+
+/* ── Metrics ── */
 .activity-status-elapsed {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -69,13 +94,41 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Streaming metrics ── */
+.activity-metric-in {
+  color: var(--text-muted);
+}
+
+.activity-metric-out {
+  color: var(--text-muted);
+}
+
+.activity-status-line--working .activity-metric-out {
+  color: #60a5fa;
+}
+
+.activity-status-ttft {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-status-tps {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-status-line--working .activity-status-tps {
+  color: #60a5fa;
+}
+
+/* ── Penguin facts (shown only when no plan/todos) ── */
 .activity-status-fact {
   display: flex;
   align-items: baseline;
   gap: 0.375rem;
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-  padding: 0.25rem 0 0 1.25rem;
+  padding: 0.125rem 0 0 1.25rem;
   animation: activity-fact-fade 8s ease-in-out infinite;
 }
 
@@ -94,10 +147,11 @@
   flex-shrink: 0;
 }
 
+/* ── Todo / Plan section ── */
 .activity-status-todos {
   border-top: 1px solid var(--border-subtle, var(--border-base));
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
 }
 
 .activity-status-todos-toggle {
@@ -113,21 +167,10 @@
   color: var(--accent-primary);
 }
 
-/* Waiting state (question / permission pending) */
-.activity-status-dot--waiting {
-  background: var(--status-warning, #f59e0b);
-  animation: none;
-  opacity: 1;
-}
-
-.activity-status-verb--waiting {
-  color: var(--status-warning, #f59e0b);
-}
-
-/* Responsive adjustments */
+/* ── Responsive ── */
 @media (max-width: 640px) {
   .activity-status-line {
-    padding: 0.375rem 0.5rem;
+    padding: 0.25rem 0.5rem;
   }
 
   .activity-status-main {

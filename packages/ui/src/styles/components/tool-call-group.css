@@ -202,6 +202,31 @@
   white-space: nowrap;
 }
 
+/* Collapsed tool groups toggle */
+.tool-groups-collapsed-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 10px;
+  margin: 2px 0;
+  background: transparent;
+  border: 1px dashed var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tool-groups-collapsed-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
 /* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
   .tool-row-result,

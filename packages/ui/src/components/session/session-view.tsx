@@ -3,6 +3,7 @@ import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
+import ActivityStatusLine from "../activity-status-line"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import { instances } from "../../stores/instances"
@@ -261,6 +262,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                onQuoteSelection={handleQuoteSelection}
              />
 
+            <ActivityStatusLine
+              instanceId={props.instanceId}
+              sessionId={activeSession.id}
+              store={messageStore}
+            />
 
             <PromptInput
               instanceId={props.instanceId}

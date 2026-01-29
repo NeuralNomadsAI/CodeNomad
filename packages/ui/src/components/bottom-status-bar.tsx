@@ -9,6 +9,8 @@ import { preferences } from "../stores/preferences"
 interface BottomStatusBarProps {
   projectName: string
   usedTokens: number
+  inputTokens: number
+  outputTokens: number
   availableTokens: number | null
   contextWindow: number
   isCompacting: boolean
@@ -113,12 +115,12 @@ const BottomStatusBar: Component<BottomStatusBarProps> = (props) => {
 
       <div class="bottom-status-divider" />
 
-      {/* Token usage - shows project total (input+output across all sessions) */}
+      {/* Token usage - shows project total input and output across all sessions */}
       <button
         type="button"
         class="bottom-status-item bottom-status-context"
         onClick={props.onContextClick}
-        title="Total tokens used (input + output) across all sessions"
+        title="Total tokens across all sessions (↑ input  ↓ output)"
       >
         <Show when={props.isCompacting}>
           <Loader2 class="bottom-status-icon bottom-status-spinner" />
@@ -130,8 +132,7 @@ const BottomStatusBar: Component<BottomStatusBarProps> = (props) => {
               when={props.usedTokens > 0}
               fallback={<span class="bottom-status-muted">Tokens: --</span>}
             >
-              {formatTokenTotal(props.usedTokens)}
-              <span class="bottom-status-muted"> tokens</span>
+              ↑{formatTokenTotal(props.inputTokens)} ↓{formatTokenTotal(props.outputTokens)}
             </Show>
           </span>
         </Show>

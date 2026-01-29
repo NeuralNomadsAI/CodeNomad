@@ -29,6 +29,7 @@ import { loadMessages } from "./session-api"
 import { setSessionCompactionState } from "./session-compaction"
 import { scheduleChildCleanup, updateSessionActivity, cancelScheduledCleanup } from "./session-cleanup"
 import { processToolCallForWorkspace } from "./workspace-state"
+import { recordFirstToken, addDeltaChars, setCompleted } from "./streaming-metrics"
 import { addQuestionRequest, removeQuestionRequest } from "./question-store"
 import type { QuestionRequest } from "./question-store"
 import {
@@ -128,6 +129,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
  
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
 
+    // Track streaming metrics for text parts
+    if (part.type === "text" && typeof (part as any).text === "string") {
+      recordFirstToken(instanceId, sessionId)
+      const textLen = ((part as any).text as string).length
+      addDeltaChars(instanceId, sessionId, textLen)
+    }
+
     // Track tool calls for workspace panel
     if (part.type === "tool" && typeof part.tool === "string") {
       const toolState = (part as any).state
@@ -184,6 +192,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     }
 
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
+
+    // Record completion metrics for assistant messages
+    if (info.role === "assistant") {
+      const completedAt = (info.time as { completed?: number })?.completed ?? Date.now()
+      const outputTokens = (info as any).tokens?.output ?? 0
+      setCompleted(instanceId, sessionId, outputTokens, completedAt)
+    }
 
     updateSessionInfo(instanceId, sessionId)
   }

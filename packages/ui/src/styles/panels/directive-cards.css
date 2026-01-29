@@ -632,3 +632,109 @@
   @apply absolute right-2 pointer-events-none;
   color: var(--text-muted);
 }
+
+/* ============================================ */
+/* Quick-Add Input (AI-assisted)                */
+/* ============================================ */
+
+.directives-quick-add {
+  @apply rounded-lg p-3;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.directives-quick-add-textarea {
+  @apply w-full p-2 rounded-md text-sm resize-none;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  color: var(--text-primary);
+  min-height: 48px;
+}
+
+.directives-quick-add-textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.directives-quick-add-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.directives-quick-add-preview {
+  @apply mt-3 flex flex-col gap-2;
+}
+
+.directives-quick-add-preview-row {
+  @apply flex items-center gap-2 text-xs flex-wrap;
+  color: var(--text-secondary);
+}
+
+.directives-quick-add-section-override {
+  @apply ml-auto px-2 py-1 rounded text-xs;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  color: var(--text-secondary);
+}
+
+.directives-quick-add-section-override:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.directives-quick-add-btn {
+  @apply self-end inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors;
+  background-color: var(--accent-primary);
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.directives-quick-add-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.directives-quick-add-btn:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+/* Section Badge */
+.directives-section-badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  background-color: var(--surface-tertiary);
+  color: var(--text-primary);
+}
+
+.directives-section-badge[data-color="red"] {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.directives-section-badge[data-color="blue"] {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.directives-section-badge[data-color="purple"] {
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+}
+
+.directives-section-badge[data-color="green"] {
+  background-color: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.directives-section-badge[data-color="orange"] {
+  background-color: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.directives-section-badge[data-color="cyan"] {
+  background-color: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+}
+
+.directives-section-badge[data-color="gray"] {
+  background-color: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+}

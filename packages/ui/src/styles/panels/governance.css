@@ -1101,3 +1101,185 @@
   color: var(--accent-primary-text, white);
   border-color: var(--accent-primary);
 }
+
+/* ============================================ */
+/* Directives Structured View                   */
+/* ============================================ */
+
+/* Structured Toolbar (search + expand/collapse) */
+.directives-structured-toolbar {
+  @apply flex items-center gap-3 mb-4 flex-wrap;
+}
+
+.directives-structured-view {
+  @apply flex flex-col gap-3 mb-4;
+}
+
+.directives-sections-list {
+  @apply flex flex-col gap-3;
+}
+
+/* Summary Bar */
+.directives-summary-bar {
+  @apply flex items-center gap-2 px-3 py-2 mb-3 rounded-md text-xs;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  color: var(--text-secondary);
+}
+
+/* Validation Indicators */
+.directives-validation-ok {
+  @apply inline-flex items-center gap-1 text-xs;
+  color: var(--status-success, #22c55e);
+}
+
+.directives-validation-error {
+  @apply inline-flex items-center gap-1 text-xs;
+  color: var(--status-error, #ef4444);
+}
+
+/* ============================================ */
+/* Directives Template Wizard                   */
+/* ============================================ */
+
+.directives-wizard {
+  @apply mb-4;
+}
+
+.directives-wizard-step {
+  @apply flex flex-col gap-4 p-4 rounded-lg;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.directives-wizard-heading {
+  @apply text-base font-semibold;
+  color: var(--text-primary);
+}
+
+.directives-wizard-description {
+  @apply text-sm;
+  color: var(--text-secondary);
+}
+
+.directives-wizard-grid {
+  @apply flex flex-col gap-3;
+}
+
+.directives-wizard-card {
+  @apply w-full p-4 rounded-lg text-left transition-colors;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  cursor: pointer;
+}
+
+.directives-wizard-card:hover {
+  border-color: var(--accent-primary);
+  background-color: var(--surface-tertiary);
+}
+
+.directives-wizard-card-name {
+  @apply text-sm font-semibold mb-1;
+  color: var(--text-primary);
+}
+
+.directives-wizard-card-description {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.directives-wizard-skip {
+  @apply self-center px-4 py-2 rounded-md text-sm font-medium transition-colors;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-base);
+  cursor: pointer;
+}
+
+.directives-wizard-skip:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+/* Wizard Section Toggles */
+.directives-wizard-section-toggles {
+  @apply flex flex-col gap-2;
+}
+
+.directives-wizard-section-toggle {
+  @apply flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer transition-colors;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  color: var(--text-primary);
+}
+
+.directives-wizard-section-toggle:hover {
+  background-color: var(--surface-tertiary);
+}
+
+.directives-wizard-section-toggle input[type="checkbox"] {
+  @apply w-4 h-4;
+  accent-color: var(--accent-primary);
+}
+
+.directives-wizard-section-count {
+  @apply text-xs ml-auto;
+  color: var(--text-muted);
+}
+
+/* Wizard Preview */
+.directives-wizard-preview {
+  @apply rounded-lg overflow-hidden;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+}
+
+.directives-wizard-preview-label {
+  @apply px-3 py-2 text-xs font-medium uppercase tracking-wide;
+  background-color: var(--surface-tertiary);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-base);
+}
+
+.directives-wizard-preview-content {
+  @apply p-3 text-xs font-mono overflow-auto;
+  color: var(--text-secondary);
+  max-height: 200px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+/* Wizard Actions */
+.directives-wizard-actions {
+  @apply flex items-center justify-between;
+}
+
+.directives-wizard-btn-back {
+  @apply px-4 py-2 rounded-md text-sm font-medium transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-base);
+  cursor: pointer;
+}
+
+.directives-wizard-btn-back:hover {
+  background-color: var(--surface-tertiary);
+  color: var(--text-primary);
+}
+
+.directives-wizard-btn-apply {
+  @apply px-4 py-2 rounded-md text-sm font-medium transition-colors;
+  background-color: var(--accent-primary);
+  color: var(--accent-primary-text, white);
+  border: none;
+  cursor: pointer;
+}
+
+.directives-wizard-btn-apply:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.directives-wizard-btn-apply:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}

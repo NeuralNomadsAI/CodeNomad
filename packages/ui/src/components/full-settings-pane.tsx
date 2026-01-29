@@ -2142,12 +2142,10 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
   const handleGitHubLogin = async () => {
     setLoginMessage(null)
-    const result = await initiateGitHubLogin()
-    if (result.error && result.success) {
-      // This is the device code message
-      setLoginMessage(result.error)
-    } else if (!result.success) {
-      setLoginMessage(result.error || "Login failed")
+    try {
+      await initiateGitHubLogin()
+    } catch (error) {
+      setLoginMessage(error instanceof Error ? error.message : "Login failed")
     }
   }
 
@@ -2162,10 +2160,12 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
   const handleInstallGhCli = async () => {
     setGhInstalling(true)
     setGhInstallError(null)
-    const result = await installGhCli()
-    setGhInstalling(false)
-    if (!result.success) {
-      setGhInstallError(result.error || "Installation failed")
+    try {
+      await installGhCli()
+    } catch (error) {
+      setGhInstallError(error instanceof Error ? error.message : "Installation failed")
+    } finally {
+      setGhInstalling(false)
     }
   }
 

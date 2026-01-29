@@ -25,12 +25,38 @@ const BinaryValidateSchema = z.object({
 })
 
 export function registerConfigRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get("/api/config/app", async () => deps.configStore.get())
+  app.get("/api/config/app", async (_request, reply) => {
+    try {
+      return deps.configStore.get()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error"
+      reply.code(500).send({
+        error: "Failed to load app config",
+        detail: message,
+        hint: "The config file may be corrupted. Try deleting ~/.config/era-code/config.json and restarting.",
+      })
+    }
+  })
 
-  app.put("/api/config/app", async (request) => {
-    const body = ConfigFileSchema.parse(request.body ?? {})
-    deps.configStore.replace(body)
-    return deps.configStore.get()
+  app.put("/api/config/app", async (request, reply) => {
+    try {
+      const body = ConfigFileSchema.parse(request.body ?? {})
+      deps.configStore.replace(body)
+      return deps.configStore.get()
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        reply.code(400).send({
+          error: "Invalid config data",
+          detail: error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; "),
+        })
+        return
+      }
+      const message = error instanceof Error ? error.message : "Unknown error"
+      reply.code(500).send({
+        error: "Failed to save app config",
+        detail: message,
+      })
+    }
   })
 
   app.get("/api/config/binaries", async () => {

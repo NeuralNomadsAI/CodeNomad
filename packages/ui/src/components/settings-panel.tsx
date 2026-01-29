@@ -18,6 +18,7 @@ interface SettingsPanelProps {
   instance: Instance | null
   serverStatus: "healthy" | "warning" | "error"
   onOpenMcpSettings?: () => void
+  onOpenLspSettings?: () => void
   onOpenAdvancedSettings?: () => void
   onOpenCommandsSettings?: () => void
   onOpenGovernancePanel?: () => void
@@ -91,6 +92,13 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                   >
                     <Plug class="w-4 h-4" />
                     <span>MCP Servers</span>
+                  </button>
+                  <button
+                    class="settings-action-button"
+                    onClick={() => props.onOpenLspSettings?.()}
+                  >
+                    <Server class="w-4 h-4" />
+                    <span>LSP Servers</span>
                   </button>
                   <button
                     class="settings-action-button"

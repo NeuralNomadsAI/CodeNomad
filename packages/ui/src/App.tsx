@@ -11,6 +11,7 @@ import SubagentBar from "./components/subagent-bar"
 import SettingsPanel from "./components/settings-panel"
 import CommandsSettingsPanel from "./components/commands-settings-panel"
 import McpSettingsModal from "./components/mcp-settings-modal"
+import LspSettingsModal from "./components/lsp-settings-modal"
 import AddMcpServerModal, { type AddMcpServerResult } from "./components/add-mcp-server-modal"
 import GovernancePanel from "./components/governance-panel"
 import DirectivesEditorPanel from "./components/directives-editor-panel"
@@ -113,6 +114,7 @@ const App: Component = () => {
   const [settingsPanelOpen, setSettingsPanelOpen] = createSignal(false)
   const [commandsPanelOpen, setCommandsPanelOpen] = createSignal(false)
   const [mcpSettingsOpen, setMcpSettingsOpen] = createSignal(false)
+  const [lspSettingsOpen, setLspSettingsOpen] = createSignal(false)
   const [addMcpServerOpen, setAddMcpServerOpen] = createSignal(false)
   const [governancePanelOpen, setGovernancePanelOpen] = createSignal(false)
   const [directivesEditorOpen, setDirectivesEditorOpen] = createSignal(false)
@@ -253,20 +255,24 @@ const App: Component = () => {
   // Aggregate total tokens (input + output) across ALL sessions for this project/instance
   const totalProjectTokens = createMemo(() => {
     const instance = activeInstance()
-    if (!instance) return { used: 0, cost: 0 }
+    if (!instance) return { used: 0, input: 0, output: 0, cost: 0 }
 
     const sessionInfoMap = sessionInfoByInstance().get(instance.id)
-    if (!sessionInfoMap) return { used: 0, cost: 0 }
+    if (!sessionInfoMap) return { used: 0, input: 0, output: 0, cost: 0 }
 
     let totalUsed = 0
+    let totalInput = 0
+    let totalOutput = 0
     let totalCost = 0
 
     for (const info of sessionInfoMap.values()) {
+      totalInput += info.inputTokens ?? 0
+      totalOutput += info.outputTokens ?? 0
       totalUsed += (info.inputTokens ?? 0) + (info.outputTokens ?? 0)
       totalCost += info.cost ?? 0
     }
 
-    return { used: totalUsed, cost: totalCost }
+    return { used: totalUsed, input: totalInput, output: totalOutput, cost: totalCost }
   })
 
   const isCompacting = createMemo(() => {
@@ -970,6 +976,10 @@ const App: Component = () => {
             setSettingsPanelOpen(false)
             setMcpSettingsOpen(true)
           }}
+          onOpenLspSettings={() => {
+            setSettingsPanelOpen(false)
+            setLspSettingsOpen(true)
+          }}
           onOpenAdvancedSettings={() => {
             setSettingsPanelOpen(false)
             setFullSettingsOpen(true)
@@ -1011,9 +1021,13 @@ const App: Component = () => {
         <McpSettingsModal
           open={mcpSettingsOpen()}
           onClose={() => setMcpSettingsOpen(false)}
-          folder={activeInstance()?.folder}
-          instanceId={activeInstance()?.id}
-          onAddServer={handleOpenAddServer}
+          instance={activeInstance() ?? null}
+        />
+
+        <LspSettingsModal
+          open={lspSettingsOpen()}
+          onClose={() => setLspSettingsOpen(false)}
+          instance={activeInstance() ?? null}
         />
 
         <AddMcpServerModal
@@ -1084,6 +1098,8 @@ const App: Component = () => {
           <BottomStatusBar
             projectName={projectName()}
             usedTokens={totalProjectTokens().used}
+            inputTokens={totalProjectTokens().input}
+            outputTokens={totalProjectTokens().output}
             availableTokens={activeSessionInfo()?.contextAvailableTokens ?? null}
             contextWindow={activeSessionInfo()?.contextWindow ?? 0}
             isCompacting={isCompacting()}

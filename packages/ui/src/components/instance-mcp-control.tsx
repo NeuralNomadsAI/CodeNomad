@@ -12,6 +12,7 @@ import { getLogger } from "../lib/logger"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { getInstanceMetadata } from "../stores/instance-metadata"
 import { showToastNotification } from "../lib/notifications"
+import { getBuiltInMcpConfig } from "../stores/era-mcp"
 
 const log = getLogger("session")
 
@@ -65,13 +66,13 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
       .map((name) => {
         const registryEntry = registry[name]
         const runtimeStatus = status[name]?.status
-        // Switch reflects actual runtime state:
-        // - "connected" = ON
-        // - anything else (disabled, failed, etc.) = OFF
         const isConnected = runtimeStatus === "connected"
+        // Use user's desired state when set (enables optimistic toggle);
+        // fall back to runtime status so fresh loads reflect reality.
+        const desiredEnabled = name in desired ? desired[name] : isConnected
         return {
           name,
-          desiredEnabled: isConnected,
+          desiredEnabled,
           runtime: status[name],
           hasRegistryEntry: Boolean(registryEntry),
         }
@@ -88,7 +89,8 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
     setPending((prev) => ({ ...prev, [name]: true }))
 
     try {
-      const registryEntry = preferences().mcpRegistry?.[name]
+      // Resolve config: user registry entry first, then built-in defaults
+      const registryEntry = preferences().mcpRegistry?.[name] ?? getBuiltInMcpConfig(name)
       if (registryEntry) {
         await instanceApi.upsertMcp(currentInstance, name, { ...registryEntry, enabled: desiredEnabled })
       }
@@ -124,8 +126,21 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
     })
 
     const result = await applyToInstance(name, enabled)
-    
-    if (!result.success) {
+
+    if (result.success) {
+      // Sync desired state with actual runtime after metadata refresh
+      const runtimeStatus = statusMap()[name]?.status
+      const actuallyConnected = runtimeStatus === "connected"
+      if (actuallyConnected !== enabled) {
+        // Runtime disagrees with intent — update desired to match reality
+        updatePreferences({
+          mcpDesiredState: {
+            ...(preferences().mcpDesiredState ?? {}),
+            [name]: actuallyConnected,
+          },
+        })
+      }
+    } else {
       // Revert to previous state on failure
       updatePreferences({
         mcpDesiredState: {
@@ -179,6 +194,15 @@ const InstanceMcpControl: Component<InstanceMcpControlProps> = (props) => {
       }
     } catch (error) {
       log.error("Failed to add MCP server", { instanceId: instance().id, name, error })
+      const apiError = error as InstanceApiError
+      const msg = apiError?.message ?? String(error)
+      const hint = apiError?.hint
+      showToastNotification({
+        title: `MCP Server: ${name}`,
+        message: hint ? `${msg} — ${hint}` : msg,
+        variant: "error",
+        duration: 10000,
+      })
     }
 
     setNewName("")

@@ -1,7 +1,6 @@
-import { Index, Show, createMemo, createSignal, createEffect, onCleanup, type Accessor } from "solid-js"
+import { Index, createMemo, type Accessor } from "solid-js"
 import VirtualItem from "./virtual-item"
 import MessageBlock from "./message-block"
-import ActivityStatusLine from "./activity-status-line"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 
 export function getMessageAnchorId(messageId: string) {
@@ -58,39 +57,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
     return info
   })
 
-  // Timer-based activity status display with delay to avoid flash for fast responses
-  // Shows after 500ms whenever the session is busy (processing tools, generating, etc.)
-  const ACTIVITY_STATUS_DELAY_MS = 500
-  const [showActivityStatus, setShowActivityStatus] = createSignal(false)
-  let activityTimerId: ReturnType<typeof setTimeout> | null = null
-
-  createEffect(() => {
-    const busy = props.isSessionBusy
-
-    if (busy && !showActivityStatus()) {
-      // Start timer to show status after delay (avoids flash for fast responses)
-      activityTimerId = setTimeout(() => {
-        if (props.isSessionBusy) {
-          setShowActivityStatus(true)
-        }
-      }, ACTIVITY_STATUS_DELAY_MS)
-
-      onCleanup(() => {
-        if (activityTimerId) {
-          clearTimeout(activityTimerId)
-          activityTimerId = null
-        }
-      })
-    } else if (!busy && showActivityStatus()) {
-      // Hide immediately when session becomes idle
-      setShowActivityStatus(false)
-      if (activityTimerId) {
-        clearTimeout(activityTimerId)
-        activityTimerId = null
-      }
-    }
-  })
-
   // Get all message IDs in the same assistant turn (for tool consolidation)
   const getAssistantTurnIds = (messageId: string, index: number) => {
     const info = assistantTurnInfo().get(messageId)
@@ -116,8 +82,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
       <Index each={props.messageIds()}>
         {(messageId, index) => {
           const isLastMessage = () => index === props.messageIds().length - 1
-          const isSessionReady = () => !props.isSessionBusy && !props.loading && isLastMessage()
-
           // Only show tools on the last message of each assistant turn
           const turnInfo = () => assistantTurnInfo().get(messageId())
           const isLastInAssistantTurn = () => turnInfo()?.isLastInTurn ?? false
@@ -125,8 +89,8 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           // Get all message IDs in this turn for tool consolidation
           const turnMessageIds = () => isLastInAssistantTurn() ? getAssistantTurnIds(messageId(), index) : []
 
-          // Only show step-finish (summary pill) when session is ready for user input
-          const showStepFinish = () => isSessionReady() && isLastMessage()
+          // Only show step-finish (summary pill) when session is idle and this is the last message
+          const showStepFinish = () => !props.isSessionBusy && !props.loading && isLastMessage()
 
           return (
             <VirtualItem
@@ -148,7 +112,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
                 showThinking={props.showThinking}
                 thinkingDefaultExpanded={props.thinkingDefaultExpanded}
                 showUsageMetrics={props.showUsageMetrics}
-                isSessionReady={isSessionReady()}
                 isLastMessage={isLastMessage()}
                 isLastInAssistantTurn={isLastInAssistantTurn()}
                 turnMessageIds={turnMessageIds()}
@@ -161,15 +124,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           )
         }}
       </Index>
-      {/* Activity status line - shown after delay whenever session is busy */}
-      <Show when={showActivityStatus()}>
-        <ActivityStatusLine
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-          store={props.store}
-        />
-      </Show>
-      {/* Ready indicator is now integrated into the completion card in the last message */}
       <div ref={props.setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
     </>
   )

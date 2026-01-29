@@ -137,7 +137,7 @@ function extractUsageEntry(info: MessageInfo | undefined): UsageEntry | null {
 function applyUsageState(state: SessionUsageState, entry: UsageEntry | null) {
   if (!entry) return
   state.entries[entry.messageId] = entry
-  state.totalInputTokens += entry.inputTokens
+  state.totalInputTokens += entry.inputTokens + entry.cacheReadTokens + entry.cacheWriteTokens
   state.totalOutputTokens += entry.outputTokens
   state.totalReasoningTokens += entry.reasoningTokens
   state.totalCost += entry.cost
@@ -151,7 +151,7 @@ function removeUsageEntry(state: SessionUsageState, messageId: string | undefine
   if (!messageId) return
   const existing = state.entries[messageId]
   if (!existing) return
-  state.totalInputTokens -= existing.inputTokens
+  state.totalInputTokens -= existing.inputTokens + existing.cacheReadTokens + existing.cacheWriteTokens
   state.totalOutputTokens -= existing.outputTokens
   state.totalReasoningTokens -= existing.reasoningTokens
   state.totalCost -= existing.cost
