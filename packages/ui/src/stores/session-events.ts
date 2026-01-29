@@ -37,6 +37,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
 import { loadMessages } from "./session-api"
+import { isTransientSession } from "./session-actions"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
@@ -181,8 +182,6 @@ function findPendingMessageId(
 }
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
-  const instanceSessions = sessions().get(instanceId)
-
   if (event.type === "message.part.updated") {
     const rawPart = event.properties?.part
     if (!rawPart) return
@@ -196,6 +195,10 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
+
+    // Skip events for transient sessions used by semantic naming
+    if (isTransientSession(sessionId)) return
+
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting")
     }
@@ -245,6 +248,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+
+    // Skip events for transient sessions used by semantic naming
+    if (isTransientSession(sessionId)) return
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; completed?: number }
     const nextUpdated =
@@ -300,6 +306,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const info = event.properties?.info
 
   if (!info) return
+
+  // Skip events for transient sessions used by semantic naming
+  if (isTransientSession(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
 
@@ -381,6 +390,9 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
+  // Skip events for transient sessions used by semantic naming
+  if (isTransientSession(sessionId)) return
+
   ensureSessionStatus(instanceId, sessionId, "idle")
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
@@ -388,6 +400,9 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
 function handleSessionStatus(instanceId: string, event: EventSessionStatus): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
+
+  // Skip events for transient sessions used by semantic naming
+  if (isTransientSession(sessionId)) return
 
   const status = mapSdkSessionStatus(event.properties.status)
   ensureSessionStatus(instanceId, sessionId, status)
@@ -397,6 +412,9 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
   const sessionID = event.properties?.sessionID
   if (!sessionID) return
+
+  // Skip events for transient sessions used by semantic naming
+  if (isTransientSession(sessionID)) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
 

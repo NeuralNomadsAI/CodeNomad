@@ -2,7 +2,7 @@ import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { instances } from "./instances"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { providers, sessions, withSession } from "./session-state"
+import { providers, sessions, setSessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
@@ -32,6 +32,46 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 let lastTimestamp = 0
 let localCounter = 0
+
+const SEMANTIC_NAMING_MODELS = [
+  "opencode/big-pickle",
+  "github-copilot/gpt-5-mini",
+  "google/antigravity-gemini-3-flash",
+  "zai-coding-plan/glm-4.7",
+  "github-copilot/gpt-4o",
+  "github-copilot/gpt-4.1",
+]
+
+// Track transient sessions used for semantic naming to filter their SSE events
+const transientSessionIds = new Set<string>()
+
+/**
+ * Check if a session is transient (used for background semantic naming).
+ * SSE event handlers should ignore events for transient sessions.
+ */
+export function isTransientSession(sessionId: string): boolean {
+  return transientSessionIds.has(sessionId)
+}
+
+function getSemanticNamingModel(instanceId: string): { providerId: string; modelId: string } | undefined {
+  const instanceProviders = providers().get(instanceId) || []
+
+  // Helper to find if a model exists in providers
+  const findModel = (fullId: string) => {
+    const [pId, ...mIdParts] = fullId.split("/")
+    const mId = mIdParts.join("/")
+    const provider = instanceProviders.find((p) => p.id === pId)
+    return provider?.models.find((m) => m.id === mId) ? { providerId: pId, modelId: mId } : undefined
+  }
+
+  // 2. Iterate through free/preferred list
+  for (const modelKey of SEMANTIC_NAMING_MODELS) {
+    const found = findModel(modelKey)
+    if (found) return found
+  }
+
+  return undefined
+}
 
 function generateHeuristicTitle(prompt: string): string | null {
   // 1. Check for file paths/mentions first (High signal)
@@ -212,18 +252,127 @@ async function sendMessage(
   const store = messageStoreBus.getOrCreate(instanceId)
   const createdAt = Date.now()
 
-  // Heuristic Session Naming
+  // Semantic Session Naming
   // If this is the first message in the session, generate a better title
-  // based on the user's prompt (without using premium tokens)
+  // using a free model (without consuming premium tokens)
   if (store.getSessionMessageIds(sessionId).length === 0) {
-    const autoTitle = generateHeuristicTitle(prompt)
-    if (autoTitle && session.title.startsWith("New session -")) {
-      // Fire and forget - don't block the message sending
-      renameSession(instanceId, sessionId, autoTitle).catch((err) => {
-        log.warn("Failed to auto-rename session", err)
-      })
+    const semanticModel = getSemanticNamingModel(instanceId)
+    const client = instance.client
+
+    if (semanticModel && client) {
+      // Use a transient session to generate the title safely without compacting the main session history
+      client.session
+        .create({})
+        .then(async (res) => {
+          const tempId = res.data?.id
+          if (!tempId) throw new Error("Failed to create temp session")
+
+          // Track this session as transient so SSE handlers ignore its events
+          transientSessionIds.add(tempId)
+
+          // Clean up if SSE already added this session to the store (race condition)
+          const existingSession = sessions().get(instanceId)?.get(tempId)
+          if (existingSession) {
+            setSessions((prev) => {
+              const next = new Map(prev)
+              const instanceSessions = next.get(instanceId)
+              if (instanceSessions) {
+                instanceSessions.delete(tempId)
+                next.set(instanceId, instanceSessions)
+              }
+              return next
+            })
+          }
+
+          try {
+            // Send the user prompt to the temp session using a free model
+            await requestData(
+              client.session.promptAsync({
+                sessionID: tempId,
+                parts: [
+                  {
+                    type: "text",
+                    text: prompt,
+                  },
+                ],
+                model: { providerID: semanticModel.providerId, modelID: semanticModel.modelId },
+              }),
+              "session.promptAsync_temp",
+            )
+            
+            // Wait for the backend to process and set a title
+            await new Promise(resolve => setTimeout(resolve, 2000))
+
+            // Fetch the title from the temp session
+            const tempSessionData = await requestData(
+              client.session.get({
+                sessionID: tempId,
+              }),
+              "session.get_temp",
+            )
+
+            const semanticTitle = tempSessionData?.title
+            if (semanticTitle && !semanticTitle.startsWith("New session -")) {
+              // Apply the semantic title to the real session
+              await renameSession(instanceId, sessionId, semanticTitle)
+              log.info("Semantic session naming applied", { sessionId, title: semanticTitle })
+            } else {
+              // Fallback to heuristic
+              throw new Error("No semantic title generated")
+            }
+          } catch (innerErr) {
+            log.warn("Transient semantic naming failed", innerErr)
+            // Fallback: Use heuristic naming
+            const autoTitle = generateHeuristicTitle(prompt)
+            if (autoTitle && session.title.startsWith("New session -")) {
+              renameSession(instanceId, sessionId, autoTitle).catch((err) => {
+                log.warn("Failed to auto-rename session (fallback)", err)
+              })
+            }
+          } finally {
+            // Cleanup: Delete the temp session and remove from transient tracking
+            transientSessionIds.delete(tempId)
+
+            // Also clean up from sessions store if it somehow got added
+            const residualSession = sessions().get(instanceId)?.get(tempId)
+            if (residualSession) {
+              setSessions((prev) => {
+                const next = new Map(prev)
+                const instanceSessions = next.get(instanceId)
+                if (instanceSessions) {
+                  instanceSessions.delete(tempId)
+                  next.set(instanceId, instanceSessions)
+                }
+                return next
+              })
+            }
+
+            client.session.delete({ sessionID: tempId }).catch((err) => {
+              log.warn("Failed to delete temp session", err)
+            })
+          }
+        })
+        .catch((err) => {
+          log.warn("Failed to initiate semantic naming", err)
+          // Fallback: Heuristic
+          const autoTitle = generateHeuristicTitle(prompt)
+          if (autoTitle && session.title.startsWith("New session -")) {
+            renameSession(instanceId, sessionId, autoTitle).catch((err) => {
+              log.warn("Failed to auto-rename session", err)
+            })
+          }
+        })
+    } else {
+      const autoTitle = generateHeuristicTitle(prompt)
+      if (autoTitle && session.title.startsWith("New session -")) {
+        // Fire and forget - don't block the message sending
+        renameSession(instanceId, sessionId, autoTitle).catch((err) => {
+          log.warn("Failed to auto-rename session", err)
+        })
+      }
     }
   }
+
 
   store.upsertMessage({
     id: messageId,
