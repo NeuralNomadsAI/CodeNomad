@@ -51,8 +51,17 @@ You can configure the server using flags or environment variables:
 | `--config <path>` | `CLI_CONFIG` | Config file location |
 | `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
+| `--username <username>` | `CODENOMAD_SERVER_USERNAME` | Username for CodeNomad's internal auth (default `codenomad`) |
+| `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
+| `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows |
+| `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | Disable CodeNomad's internal auth (use only behind a trusted perimeter) |
+
+### Authentication
+- Default behavior: CodeNomad requires a login (username/password) and stores a session cookie in the browser.
+- `--dangerously-skip-auth` / `CODENOMAD_SKIP_AUTH=true` disables the login prompt and treats all requests as authenticated.
+  Use this only when access is already protected by another layer (SSO proxy, VPN, Coder workspace auth, etc.).
+  If you bind to `0.0.0.0` while skipping auth, anyone who can reach the port can access the API.
 
 ### Data Storage
 - **Config**: `~/.config/codenomad/config.json`
 - **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)
-
