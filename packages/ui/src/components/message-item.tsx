@@ -137,8 +137,17 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const isGenerating = () => {
+    if (hasContent()) {
+      return false
+    }
+
+    // Prefer the local record status for streaming placeholders.
+    if (!isUser() && props.record.status === "streaming") {
+      return true
+    }
+
     const info = props.messageInfo
-    return !hasContent() && info && info.role === "assistant" && info.time.completed !== undefined && info.time.completed === 0
+    return Boolean(info && info.role === "assistant" && info.time.completed !== undefined && info.time.completed === 0)
   }
 
   const handleRevert = () => {
@@ -163,7 +172,7 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  if (!isUser() && !hasContent()) {
+  if (!isUser() && !hasContent() && !isGenerating()) {
     return null
   }
 

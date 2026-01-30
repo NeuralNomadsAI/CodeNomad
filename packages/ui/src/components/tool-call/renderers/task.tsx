@@ -176,7 +176,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               <div
                 class="message-text tool-call-markdown tool-call-task-container"
-                ref={(element) => scrollHelpers?.registerContainer(element)}
+                ref={scrollHelpers?.registerContainer}
                 onScroll={
                   scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                 }

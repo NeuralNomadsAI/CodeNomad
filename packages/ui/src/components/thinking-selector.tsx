@@ -5,7 +5,6 @@ import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
 import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
-import Kbd from "./kbd"
 
 const log = getLogger("session")
 
@@ -93,9 +92,6 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">{triggerPrimary()}</span>
             </div>
-            <span class="selector-trigger-hint" aria-hidden="true">
-              <Kbd shortcut="cmd+shift+t" />
-            </span>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
             </Combobox.Icon>

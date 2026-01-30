@@ -464,13 +464,33 @@ impl CliProcessManager {
         let status_clone = status.clone();
         let app_clone = app.clone();
         thread::spawn(move || {
-            let code = {
-                let mut guard = child_holder.lock();
-                if let Some(child) = guard.as_mut() {
-                    child.wait().ok()
-                } else {
-                    None
+            // Do not hold the child mutex while waiting for process exit.
+            // Holding the lock across `wait()` deadlocks `stop()`, which needs the
+            // same lock to send SIGTERM/SIGKILL when the user quits the app.
+            let code = loop {
+                let maybe_exited = {
+                    let mut guard = child_holder.lock();
+                    if guard.is_none() {
+                        return;
+                    }
+                    match guard
+                        .as_mut()
+                        .and_then(|child| child.try_wait().ok().flatten())
+                    {
+                        Some(status) => {
+                            // Drop the handle after the process exits so other callers
+                            // don't attempt to stop/kill a finished process.
+                            *guard = None;
+                            Some(status)
+                        }
+                        None => None,
+                    }
+                };
+
+                if let Some(status) = maybe_exited {
+                    break Some(status);
                 }
+                thread::sleep(Duration::from_millis(100));
             };
 
             let mut locked = status_clone.lock();

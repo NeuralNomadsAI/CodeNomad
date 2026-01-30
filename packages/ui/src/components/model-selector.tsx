@@ -6,7 +6,6 @@ import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { preferences, toggleFavoriteModelPreference } from "../stores/preferences"
-import Kbd from "./kbd"
 const log = getLogger("session")
 
 
@@ -295,15 +294,12 @@ export default function ModelSelector(props: ModelSelectorProps) {
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 {t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") })}
               </span>
-              {currentModelValue() && (
+          {currentModelValue() && (
                 <span class="selector-trigger-secondary">
                   {currentModelValue()!.providerId}/{currentModelValue()!.id}
                 </span>
               )}
             </div>
-            <span class="selector-trigger-hint selector-trigger-hint--top" aria-hidden="true">
-              <Kbd shortcut="cmd+shift+m" />
-            </span>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
             </Combobox.Icon>

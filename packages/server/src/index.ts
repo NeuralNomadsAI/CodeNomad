@@ -44,6 +44,7 @@ interface CliOptions {
   authUsername: string
   authPassword?: string
   generateToken: boolean
+  dangerouslySkipAuth: boolean
 }
 
 const DEFAULT_PORT = 9898
@@ -84,6 +85,14 @@ function parseCliOptions(argv: string[]): CliOptions {
         .env("CODENOMAD_GENERATE_TOKEN")
         .default(false),
     )
+    .addOption(
+      new Option(
+        "--dangerously-skip-auth",
+        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc).",
+      )
+        .env("CODENOMAD_SKIP_AUTH")
+        .default(false),
+    )
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -104,7 +113,13 @@ function parseCliOptions(argv: string[]): CliOptions {
     username: string
     password?: string
     generateToken?: boolean
+    dangerouslySkipAuth?: boolean
   }>()
+
+  const parseBooleanEnv = (value: string | undefined): boolean => {
+    const normalized = (value ?? "").trim().toLowerCase()
+    return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y" || normalized === "on"
+  }
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
 
@@ -130,6 +145,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     authUsername: parsed.username,
     authPassword: parsed.password,
     generateToken: Boolean(parsed.generateToken),
+    dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
   }
 }
 
@@ -174,6 +190,12 @@ async function main() {
 
   logger.info({ options: logOptions }, "Starting CodeNomad CLI server")
 
+  if (options.dangerouslySkipAuth) {
+    logger.warn(
+      "DANGEROUS: internal authentication is disabled (--dangerously-skip-auth / CODENOMAD_SKIP_AUTH).",
+    )
+  }
+
   const eventBus = new EventBus(eventLogger)
 
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
@@ -195,11 +217,12 @@ async function main() {
       username: options.authUsername,
       password: options.authPassword,
       generateToken: options.generateToken,
+      dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
     logger.child({ component: "auth" }),
   )
 
-  if (options.generateToken) {
+  if (options.generateToken && !options.dangerouslySkipAuth) {
     const token = authManager.issueBootstrapToken()
     if (token) {
       console.log(`${BOOTSTRAP_TOKEN_STDOUT_PREFIX}${token}`)

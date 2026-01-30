@@ -132,6 +132,13 @@
   color: var(--text-muted);
 }
 
+.session-sidebar-selector-hints {
+  @apply flex flex-wrap items-center w-full text-xs;
+  justify-content: space-evenly;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
 .session-header-hints {
   @apply flex-shrink-0;
 }
@@ -482,4 +489,3 @@
   border-color: var(--border-base);
   background-color: var(--surface-secondary);
 }
-

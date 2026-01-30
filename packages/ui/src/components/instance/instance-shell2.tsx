@@ -88,9 +88,9 @@ interface InstanceShellProps {
   tabBarOffset: number
 }
 
-const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
+const DEFAULT_SESSION_SIDEBAR_WIDTH = 340
 const MIN_SESSION_SIDEBAR_WIDTH = 220
-const MAX_SESSION_SIDEBAR_WIDTH = 360
+const MAX_SESSION_SIDEBAR_WIDTH = 400
 const RIGHT_DRAWER_WIDTH = 260
 const MIN_RIGHT_DRAWER_WIDTH = 200
 const MAX_RIGHT_DRAWER_WIDTH = 380
@@ -936,6 +936,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 />
 
                 <ThinkingSelector instanceId={props.instance.id} currentModel={activeSession().model} />
+
+                <div class="session-sidebar-selector-hints" aria-hidden="true">
+                  <Kbd shortcut="cmd+shift+a" />
+                  <Kbd shortcut="cmd+shift+m" />
+                  <Kbd shortcut="cmd+shift+t" />
+                </div>
               </div>
             </>
           )}

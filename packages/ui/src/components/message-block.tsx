@@ -172,21 +172,212 @@ messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
 interface ContentDisplayItem {
   type: "content"
   key: string
-  record: MessageRecord
-  parts: ClientPart[]
-  messageInfo?: MessageInfo
-  isQueued: boolean
-  showAgentMeta?: boolean
+  messageId: string
+  startPartId: string
 }
 
 interface ToolDisplayItem {
   type: "tool"
   key: string
-  toolPart: ToolCallPart
-  messageInfo?: MessageInfo
   messageId: string
-  messageVersion: number
-  partVersion: number
+  partId: string
+}
+
+interface MessageContentItemProps {
+  instanceId: string
+  sessionId: string
+  store: () => InstanceMessageStore
+  messageId: string
+  startPartId: string
+  messageIndex: number
+  lastAssistantIndex: () => number
+  onRevert?: (messageId: string) => void
+  onFork?: (messageId?: string) => void
+  onContentRendered?: () => void
+}
+
+function MessageContentItem(props: MessageContentItemProps) {
+  const record = createMemo(() => props.store().getMessage(props.messageId))
+  const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
+
+  const isQueued = createMemo(() => {
+    const current = record()
+    if (!current) return false
+    if (current.role !== "user") return false
+    const lastAssistant = props.lastAssistantIndex()
+    return lastAssistant === -1 || props.messageIndex > lastAssistant
+  })
+
+  const parts = createMemo<ClientPart[]>(() => {
+    const current = record()
+    if (!current) return []
+    const ids = current.partIds
+    const startIndex = ids.indexOf(props.startPartId)
+    if (startIndex === -1) return []
+
+    const resolved: ClientPart[] = []
+    for (let idx = startIndex; idx < ids.length; idx++) {
+      const partId = ids[idx]
+      const part = current.parts[partId]?.data
+      if (!part) continue
+      if (
+        part.type === "tool" ||
+        part.type === "reasoning" ||
+        part.type === "compaction" ||
+        part.type === "step-start" ||
+        part.type === "step-finish"
+      ) {
+        break
+      }
+      resolved.push(part)
+    }
+
+    return resolved
+  })
+
+  const showAgentMeta = createMemo(() => {
+    const current = record()
+    if (!current) return false
+    if (current.role !== "assistant") return false
+
+    const currentParts = parts()
+    if (!currentParts.some((part) => partHasRenderableText(part))) {
+      return false
+    }
+
+    const ids = current.partIds
+    const startIndex = ids.indexOf(props.startPartId)
+    if (startIndex === -1) return false
+
+    // Only show agent meta on the first content segment that contains renderable content.
+    for (let idx = 0; idx < startIndex; idx++) {
+      const partId = ids[idx]
+      const part = current.parts[partId]?.data
+      if (!part) continue
+      if (
+        part.type === "tool" ||
+        part.type === "reasoning" ||
+        part.type === "compaction" ||
+        part.type === "step-start" ||
+        part.type === "step-finish"
+      ) {
+        continue
+      }
+      if (partHasRenderableText(part)) {
+        return false
+      }
+    }
+
+    return true
+  })
+
+  return (
+    <Show when={record()}>
+      {(resolvedRecord) => (
+        <MessageItem
+          record={resolvedRecord()}
+          messageInfo={messageInfo()}
+          parts={parts()}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+          isQueued={isQueued()}
+          showAgentMeta={showAgentMeta()}
+          onRevert={props.onRevert}
+          onFork={props.onFork}
+          onContentRendered={props.onContentRendered}
+        />
+      )}
+    </Show>
+  )
+}
+
+interface ToolCallItemProps {
+  instanceId: string
+  sessionId: string
+  store: () => InstanceMessageStore
+  messageId: string
+  partId: string
+  onContentRendered?: () => void
+}
+
+function ToolCallItem(props: ToolCallItemProps) {
+  const { t } = useI18n()
+
+  const record = createMemo(() => props.store().getMessage(props.messageId))
+  const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
+  const partEntry = createMemo(() => record()?.parts?.[props.partId])
+
+  const toolPart = createMemo(() => {
+    const part = partEntry()?.data as ClientPart | undefined
+    if (!part || part.type !== "tool") return undefined
+    return part as ToolCallPart
+  })
+
+  const toolState = createMemo(() => toolPart()?.state as ToolState | undefined)
+  const toolName = createMemo(() => toolPart()?.tool || "")
+  const messageVersion = createMemo(() => record()?.revision ?? 0)
+  const partVersion = createMemo(() => partEntry()?.revision ?? 0)
+
+  const taskSessionId = createMemo(() => {
+    const state = toolState()
+    if (!state) return ""
+    if (!(isToolStateRunning(state) || isToolStateCompleted(state) || isToolStateError(state))) {
+      return ""
+    }
+    return extractTaskSessionId(state)
+  })
+
+  const taskLocation = createMemo(() => {
+    const id = taskSessionId()
+    if (!id) return null
+    return findTaskSessionLocation(id, props.instanceId)
+  })
+
+  const handleGoToTaskSession = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const location = taskLocation()
+    if (!location) return
+    navigateToTaskSession(location)
+  }
+
+  return (
+    <Show when={toolPart()}>
+      {(resolvedToolPart) => (
+        <>
+          <div class="tool-call-header-label">
+            <div class="tool-call-header-meta">
+              <span class="tool-call-icon">{TOOL_ICON}</span>
+              <span>{t("messageBlock.tool.header")}</span>
+              <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
+            </div>
+            <Show when={taskSessionId()}>
+              <button
+                class="tool-call-header-button"
+                type="button"
+                disabled={!taskLocation()}
+                onClick={handleGoToTaskSession}
+                title={!taskLocation() ? t("messageBlock.tool.goToSession.unavailableTitle") : t("messageBlock.tool.goToSession.title")}
+              >
+                {t("messageBlock.tool.goToSession.label")}
+              </button>
+            </Show>
+          </div>
+
+          <ToolCall
+            toolCall={resolvedToolPart()}
+            toolCallId={props.partId}
+            messageId={props.messageId}
+            messageVersion={messageVersion()}
+            partVersion={partVersion()}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            onContentRendered={props.onContentRendered}
+          />
+        </>
+      )}
+    </Show>
+  )
 }
 
 interface StepDisplayItem {
@@ -272,7 +463,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []
     const blockToolKeys: string[] = []
-    let segmentIndex = 0
     let pendingParts: ClientPart[] = []
     let agentMetaAttached = current.role !== "assistant"
     const defaultAccentColor = current.role === "user" ? USER_BORDER_COLOR : ASSISTANT_BORDER_COLOR
@@ -280,34 +470,28 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     const flushContent = () => {
       if (pendingParts.length === 0) return
-      const segmentKey = `${current.id}:segment:${segmentIndex}`
-      segmentIndex += 1
-      const shouldShowAgentMeta =
-        current.role === "assistant" &&
-        !agentMetaAttached &&
-        pendingParts.some((part) => partHasRenderableText(part))
+      const startPartId = typeof (pendingParts[0] as any)?.id === "string" ? ((pendingParts[0] as any).id as string) : ""
+      if (!startPartId) {
+        pendingParts = []
+        return
+      }
+
+      if (!agentMetaAttached && pendingParts.some((part) => partHasRenderableText(part))) {
+        agentMetaAttached = true
+      }
+
+      const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
       if (!cached) {
         cached = {
           type: "content",
           key: segmentKey,
-          record: current,
-          parts: pendingParts.slice(),
-          messageInfo: info,
-          isQueued,
-          showAgentMeta: shouldShowAgentMeta,
+          messageId: current.id,
+          startPartId,
         }
         sessionCache.messageItems.set(segmentKey, cached)
-      } else {
-        cached.record = current
-        cached.parts = pendingParts.slice()
-        cached.messageInfo = info
-        cached.isQueued = isQueued
-        cached.showAgentMeta = shouldShowAgentMeta
       }
-      if (shouldShowAgentMeta) {
-        agentMetaAttached = true
-      }
+
       items.push(cached)
       blockContentKeys.push(segmentKey)
       lastAccentColor = defaultAccentColor
@@ -317,28 +501,26 @@ export default function MessageBlock(props: MessageBlockProps) {
     orderedParts.forEach((part, partIndex) => {
       if (part.type === "tool") {
         flushContent()
-        const partVersion = typeof (part as any).revision === "number" ? (part as any).revision : 0
-        const messageVersion = current.revision
-        const key = `${current.id}:${part.id ?? partIndex}`
+        const partId = part.id
+        if (!partId) {
+          // Tool parts are required to have ids; if one slips through, skip rendering
+          // to avoid unstable keys and accidental remount cascades.
+          return
+        }
+        const key = `${current.id}:${partId}`
         let toolItem = sessionCache.toolItems.get(key)
         if (!toolItem) {
           toolItem = {
             type: "tool",
             key,
-            toolPart: part as ToolCallPart,
-            messageInfo: info,
             messageId: current.id,
-            messageVersion,
-            partVersion,
+            partId,
           }
           sessionCache.toolItems.set(key, toolItem)
         } else {
           toolItem.key = key
-          toolItem.toolPart = part as ToolCallPart
-          toolItem.messageInfo = info
           toolItem.messageId = current.id
-          toolItem.messageVersion = messageVersion
-          toolItem.partVersion = partVersion
+          toolItem.partId = partId
         }
         items.push(toolItem)
         blockToolKeys.push(key)
@@ -427,21 +609,21 @@ export default function MessageBlock(props: MessageBlockProps) {
   })
 
   return (
-    <Show when={block()} keyed>
+    <Show when={block()}>
       {(resolvedBlock) => (
-        <div class="message-stream-block" data-message-id={resolvedBlock.record.id}>
-          <For each={resolvedBlock.items}>
+        <div class="message-stream-block" data-message-id={resolvedBlock().record.id}>
+          <For each={resolvedBlock().items}>
             {(item) => (
               <Switch>
                 <Match when={item.type === "content"}>
-                  <MessageItem
-                    record={(item as ContentDisplayItem).record}
-                    messageInfo={(item as ContentDisplayItem).messageInfo}
-                    parts={(item as ContentDisplayItem).parts}
+                  <MessageContentItem
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
-                    isQueued={(item as ContentDisplayItem).isQueued}
-                    showAgentMeta={(item as ContentDisplayItem).showAgentMeta}
+                    store={props.store}
+                    messageId={(item as ContentDisplayItem).messageId}
+                    startPartId={(item as ContentDisplayItem).startPartId}
+                    messageIndex={props.messageIndex}
+                    lastAssistantIndex={props.lastAssistantIndex}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
@@ -450,46 +632,14 @@ export default function MessageBlock(props: MessageBlockProps) {
                 <Match when={item.type === "tool"}>
                   {(() => {
                     const toolItem = item as ToolDisplayItem
-                    const toolState = toolItem.toolPart.state as ToolState | undefined
-                    const hasToolState =
-                      Boolean(toolState) && (isToolStateRunning(toolState) || isToolStateCompleted(toolState) || isToolStateError(toolState))
-                    const taskSessionId = hasToolState ? extractTaskSessionId(toolState) : ""
-                    const taskLocation = taskSessionId ? findTaskSessionLocation(taskSessionId, props.instanceId) : null
-                    const handleGoToTaskSession = (event: MouseEvent) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      if (!taskLocation) return
-                      navigateToTaskSession(taskLocation)
-                    }
-
                     return (
                       <div class="tool-call-message" data-key={toolItem.key}>
-                        <div class="tool-call-header-label">
-                          <div class="tool-call-header-meta">
-                            <span class="tool-call-icon">{TOOL_ICON}</span>
-                            <span>{t("messageBlock.tool.header")}</span>
-                            <span class="tool-name">{toolItem.toolPart.tool || t("messageBlock.tool.unknown")}</span>
-                          </div>
-                          <Show when={taskSessionId}>
-                            <button
-                              class="tool-call-header-button"
-                              type="button"
-                              disabled={!taskLocation}
-                              onClick={handleGoToTaskSession}
-                              title={!taskLocation ? t("messageBlock.tool.goToSession.unavailableTitle") : t("messageBlock.tool.goToSession.title")}
-                            >
-                              {t("messageBlock.tool.goToSession.label")}
-                            </button>
-                          </Show>
-                        </div>
-                        <ToolCall
-                          toolCall={toolItem.toolPart}
-                          toolCallId={toolItem.toolPart.id}
-                          messageId={toolItem.messageId}
-                          messageVersion={toolItem.messageVersion}
-                          partVersion={toolItem.partVersion}
+                        <ToolCallItem
                           instanceId={props.instanceId}
                           sessionId={props.sessionId}
+                          store={props.store}
+                          messageId={toolItem.messageId}
+                          partId={toolItem.partId}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>

@@ -235,12 +235,16 @@ export default function ToolCall(props: ToolCallProps) {
     requestAnimationFrame(() => {
       restoreScrollPosition(autoScroll())
       if (!expanded()) return
-      scheduleAnchorScroll()
+      scheduleAnchorScroll(true)
     })
   }
 
   const initializeScrollContainer = (element: HTMLDivElement | null | undefined) => {
-    scrollContainerRef = element || undefined
+    const next = element || undefined
+    if (next === scrollContainerRef) {
+      return
+    }
+    scrollContainerRef = next
     setScrollContainer(scrollContainerRef)
     if (scrollContainerRef) {
       restoreScrollPosition(autoScroll())
@@ -593,7 +597,7 @@ export default function ToolCall(props: ToolCallProps) {
       return
     }
     previousPartVersion = version
-    scheduleAnchorScroll()
+    scheduleAnchorScroll(true)
   })
 
   createEffect(() => {

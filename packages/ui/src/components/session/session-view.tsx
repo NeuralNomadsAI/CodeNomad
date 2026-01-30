@@ -9,7 +9,7 @@ import PromptInput from "../prompt-input"
 import type { Attachment as PromptAttachment } from "../../types/attachment"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
 import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -217,9 +217,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const restoredText = getUserMessageText(messageId)
+    const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { messageId })
+
+      renameSession(props.instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
+        log.error("Failed to rename forked session", error)
+      })
 
       const parentToActivate = forkedSession.parentId ?? forkedSession.id
       setActiveParentSession(props.instanceId, parentToActivate)

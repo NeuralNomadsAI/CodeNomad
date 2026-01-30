@@ -5,7 +5,6 @@ import { ChevronDown } from "lucide-solid"
 import type { Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import Kbd from "./kbd"
 const log = getLogger("session")
 
 
@@ -113,9 +112,6 @@ export default function AgentSelector(props: AgentSelectorProps) {
               )}
             </Select.Value>
           </div>
-          <span class="selector-trigger-hint selector-trigger-hint--top" aria-hidden="true">
-            <Kbd shortcut="cmd+shift+a" />
-          </span>
           <Select.Icon class="selector-trigger-icon">
             <ChevronDown class="w-3 h-3" />
           </Select.Icon>

@@ -3,7 +3,7 @@
   "identifier": "main-window-native-dialogs",
   "description": "Grant the main window access to required core features and native dialog commands.",
   "remote": {
-    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+    "urls": ["http://127.0.0.1:*", "http://localhost:*", "http://tauri.localhost/*", "https://tauri.localhost/*"]
   },
   "windows": ["main"],
   "permissions": [

@@ -15,6 +15,14 @@ export function createMarkdownContentRenderer(params: {
   handleScrollRendered: () => void
   onContentRendered?: () => void
 }) {
+  const registerTracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element)
+  }
+
+  const registerUntracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element, { disableTracking: true })
+  }
+
   function renderMarkdownContent(options: MarkdownRenderOptions): JSXElement | null {
     if (!options.content) {
       return null
@@ -24,6 +32,7 @@ export function createMarkdownContentRenderer(params: {
     const disableHighlight = options.disableHighlight || false
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
     const disableScrollTracking = options.disableScrollTracking || false
+    const registerRef = disableScrollTracking ? registerUntracked : registerTracked
 
     const state = params.toolState()
     const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
@@ -31,7 +40,7 @@ export function createMarkdownContentRenderer(params: {
       return (
         <div
           class={messageClass}
-          ref={(element) => params.scrollHelpers.registerContainer(element, { disableTracking: disableScrollTracking })}
+          ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
         >
           <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
@@ -56,7 +65,7 @@ export function createMarkdownContentRenderer(params: {
     return (
       <div
         class={messageClass}
-        ref={(element) => params.scrollHelpers.registerContainer(element, { disableTracking: disableScrollTracking })}
+        ref={registerRef}
         onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
       >
         <Markdown
