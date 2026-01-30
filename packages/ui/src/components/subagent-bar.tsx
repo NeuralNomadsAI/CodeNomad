@@ -1,6 +1,7 @@
 import { Component, For, Show } from "solid-js"
 import type { Session } from "../types/session"
 import { Bot, GitFork, MessageSquare } from "lucide-solid"
+import { getSessionStatus } from "../stores/session-status"
 
 interface SubagentBarProps {
   instanceId: string
@@ -31,16 +32,18 @@ const SubagentBar: Component<SubagentBarProps> = (props) => {
   // Get status class for child button
   const getStatusClass = (session: Session) => {
     if (session.pendingPermission) return "subagent-tab-permission"
-    if (session.status === "working") return "subagent-tab-working"
-    if (session.status === "compacting") return "subagent-tab-compacting"
+    const computed = getSessionStatus(props.instanceId, session.id)
+    if (computed === "working") return "subagent-tab-working"
+    if (computed === "compacting") return "subagent-tab-compacting"
     return ""
   }
 
   // Get status indicator
   const getStatusIndicator = (session: Session) => {
     if (session.pendingPermission) return "🛡️"
-    if (session.status === "working") return "●"
-    if (session.status === "compacting") return "◐"
+    const computed = getSessionStatus(props.instanceId, session.id)
+    if (computed === "working") return "●"
+    if (computed === "compacting") return "◐"
     return null
   }
 

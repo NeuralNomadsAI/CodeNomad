@@ -10,6 +10,12 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
 
+/** Returns true when the session title contains a subagent marker like `(@coder subagent)`. */
+export function isSubagentTitle(title: string | undefined): boolean {
+  if (!title) return false
+  return /\(@\w+\s+subagent\)/.test(title)
+}
+
 export interface SessionInfo {
   cost: number
   contextWindow: number
@@ -45,6 +51,10 @@ interface SubagentArchiveState {
 }
 const [subagentArchiveState, setSubagentArchiveState] = createSignal<Map<string, SubagentArchiveState>>(new Map())
 const ARCHIVE_AFTER_MESSAGES = 2
+
+// Track which sessions have unread completions (agent finished but user hasn't viewed)
+// Key: instanceId, Value: set of sessionIds with unread completions
+const [unreadCompletions, setUnreadCompletions] = createSignal<Map<string, Set<string>>>(new Map())
 
 const [loading, setLoading] = createSignal({
   fetchingSessions: new Map<string, boolean>(),
@@ -147,6 +157,33 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
   })
 }
 
+function markSessionCompleted(instanceId: string, sessionId: string): void {
+  setUnreadCompletions((prev) => {
+    const next = new Map(prev)
+    const set = new Set(next.get(instanceId) ?? [])
+    set.add(sessionId)
+    next.set(instanceId, set)
+    return next
+  })
+}
+
+function clearSessionCompleted(instanceId: string, sessionId: string): void {
+  setUnreadCompletions((prev) => {
+    const next = new Map(prev)
+    const set = next.get(instanceId)
+    if (set) {
+      const updated = new Set(set)
+      updated.delete(sessionId)
+      next.set(instanceId, updated)
+    }
+    return next
+  })
+}
+
+function hasUnreadCompletion(instanceId: string, sessionId: string): boolean {
+  return unreadCompletions()?.get(instanceId)?.has(sessionId) ?? false
+}
+
 function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void) {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
@@ -206,6 +243,7 @@ function setActiveParentSession(instanceId: string, parentSessionId: string): vo
     return next
   })
 
+  clearSessionCompleted(instanceId, parentSessionId)
   setActiveSession(instanceId, parentSessionId)
 }
 
@@ -246,7 +284,7 @@ function getSessions(instanceId: string): Session[] {
 
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === null)
+  return allSessions.filter((s) => s.parentId === null && !isSubagentTitle(s.title))
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
@@ -271,13 +309,15 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   const childrenByParent = new Map<string, Session[]>()
 
   for (const session of instanceSessions.values()) {
-    if (session.parentId === null) {
+    if (session.parentId === null && !isSubagentTitle(session.title)) {
       parents.push(session)
     } else if (session.parentId) {
       const children = childrenByParent.get(session.parentId) || []
       children.push(session)
       childrenByParent.set(session.parentId, children)
     }
+    // Orphaned subagent-titled sessions with parentId === null are excluded
+    // from both parents and children — they won't appear in threads.
   }
 
   const threads: SessionThread[] = parents.map((parent) => {
@@ -546,6 +586,10 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  // Unread completion exports
+  markSessionCompleted,
+  clearSessionCompleted,
+  hasUnreadCompletion,
   // Archive exports
   isSubagentArchived,
   markSubagentComplete,

@@ -103,39 +103,6 @@
   ring-offset-color: var(--surface-base);
 }
 
-/* Session tabs */
-.session-tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md max-w-[150px] transition-colors text-sm;
-  font-family: var(--font-family-sans);
-  outline: none;
-  border-bottom: 2px solid transparent;
-}
-
-.session-tab-base:focus-visible {
-  @apply ring-2 ring-offset-1;
-  ring-color: var(--accent-primary);
-  ring-offset-color: var(--surface-base);
-}
-
-.session-tab-active {
-  background-color: var(--session-tab-active-bg);
-  border-bottom-color: var(--accent-primary);
-  color: var(--session-tab-active-text);
-  font-weight: var(--font-weight-medium);
-}
-
-.session-tab-inactive {
-  color: var(--session-tab-inactive-text);
-}
-
-.session-tab-inactive:hover {
-  background-color: var(--session-tab-hover-bg);
-}
-
-.session-tab-special {
-  color: var(--session-tab-inactive-text);
-}
-
 /* Project tab bar - browser-like tabs */
 .project-tab-bar {
   @apply flex items-center h-10 px-1;
@@ -196,7 +163,8 @@
 .project-tab-active {
   background-color: var(--surface-base);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  border-bottom: 2px solid var(--accent-primary);
 }
 
 .project-tab-inactive {
@@ -292,15 +260,21 @@
   box-shadow: 0 0 0 1.5px var(--surface-base);
 }
 
-/* Idle/ready status - green */
+/* Idle status - neutral gray */
 .project-status-dot-idle {
-  background-color: #22c55e;
+  background-color: #9ca3af;
 }
 
 /* Working/in-progress status - blue with animation */
 .project-status-dot-working {
   background-color: #3b82f6;
   animation: status-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* Completed/unread status - green with glow */
+.project-status-dot-completed {
+  background-color: #22c55e;
+  animation: status-dot-glow 2s ease-in-out infinite;
 }
 
 /* Error/permission status - red */
@@ -364,6 +338,8 @@
 .session-tab-active {
   background-color: var(--accent-primary);
   color: var(--accent-primary-text, white);
+  box-shadow: 0 0 0 1px rgba(0, 128, 255, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.4);
 }
 
 .session-tab-inactive {
@@ -443,47 +419,54 @@
   }
 }
 
-/* Session tab icon wrapper for status dot positioning */
-.session-tab-icon-wrapper {
-  @apply relative flex-shrink-0;
-  width: 14px;
-  height: 14px;
+/* Session tab icon color classes */
+.session-tab-icon-working {
+  color: #3b82f6;
 }
 
-.session-tab-icon-wrapper svg {
-  width: 100%;
-  height: 100%;
+.session-tab-icon-completed {
+  color: #22c55e;
+  animation: icon-attention-pulse 2s ease-in-out infinite;
 }
 
-/* Session status dots */
-.session-status-dot {
-  @apply absolute rounded-full;
-  width: 6px;
-  height: 6px;
-  bottom: -2px;
-  right: -2px;
-  box-shadow: 0 0 0 1.5px var(--surface-base);
+.session-tab-icon-permission {
+  color: #ef4444;
+  animation: icon-attention-pulse 1.5s ease-in-out infinite;
 }
 
-.session-tab-active .session-status-dot {
-  box-shadow: 0 0 0 1.5px var(--accent-primary);
+/* On active (blue bg) tab, icon colors become white */
+.session-tab-active .session-tab-icon-working,
+.session-tab-active .session-tab-icon-completed,
+.session-tab-active .session-tab-icon-permission {
+  color: white;
 }
 
-/* Idle/ready status - green */
-.session-status-dot-idle {
-  background-color: #22c55e;
+@keyframes icon-attention-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
-/* Working/in-progress status - blue with animation */
-.session-status-dot-working {
-  background-color: #3b82f6;
-  animation: status-dot-pulse 1.5s ease-in-out infinite;
+/* Tab background tinting for attention states */
+.session-tab-bg-completed {
+  background-color: rgba(34, 197, 94, 0.10);
 }
 
-/* Error/permission status - red */
-.session-status-dot-error {
-  background-color: #ef4444;
-  animation: status-dot-pulse 1s ease-in-out infinite;
+.session-tab-bg-completed:hover {
+  background-color: rgba(34, 197, 94, 0.18);
+}
+
+.session-tab-bg-permission {
+  background-color: rgba(239, 68, 68, 0.10);
+}
+
+.session-tab-bg-permission:hover {
+  background-color: rgba(239, 68, 68, 0.18);
+}
+
+/* Active tab keeps its accent bg, override tint */
+.session-tab-active.session-tab-bg-completed,
+.session-tab-active.session-tab-bg-permission {
+  background-color: var(--accent-primary);
 }
 
 @keyframes status-dot-pulse {
@@ -494,6 +477,17 @@
   50% {
     opacity: 0.6;
     transform: scale(0.85);
+  }
+}
+
+@keyframes status-dot-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    opacity: 0.85;
+    box-shadow: 0 0 6px 2px rgba(34, 197, 94, 0.3);
   }
 }
 

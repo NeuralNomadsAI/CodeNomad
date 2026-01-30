@@ -89,17 +89,19 @@
   min-height: 1.5rem;
   height: 1.5rem;
   flex-shrink: 0;
-  border-radius: 0;
+  border-radius: 6px;
   border: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 0.15rem;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-primary);
+  cursor: pointer;
   transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   /* Prevent layout thrashing */
   contain: layout style paint;
@@ -120,7 +122,7 @@
 .message-timeline-segment:hover,
 .message-timeline-segment:focus-visible {
   background-color: var(--surface-hover);
-  color: var(--accent-primary);
+  color: var(--text-primary);
   outline: none;
   transform: translateY(-1px);
 }
@@ -151,6 +153,16 @@
 .message-timeline-tool {
   border-color: var(--message-tool-border);
   background-color: var(--surface-secondary);
+}
+
+.message-timeline-assistant-turn {
+  border-color: var(--message-assistant-border);
+  background-color: var(--message-assistant-bg);
+}
+
+.message-timeline-assistant-turn .message-timeline-icon {
+  width: 0.8rem;
+  height: 0.8rem;
 }
 
 .message-timeline-segment-active {
@@ -188,9 +200,9 @@
 }
 
 .message-preview {
-  width: 360px;
-  max-height: 420px;
-  overflow: auto;
+  width: 520px;
+  max-height: 70vh;
+  overflow: hidden;
   border-radius: 8px;
   border: 1px solid var(--border-base);
   background-color: var(--surface-base);
@@ -200,4 +212,118 @@
 
 .message-preview .message-item-base {
   font-size: 0.85rem;
+}
+
+/* --- Collapsed timeline groups --- */
+
+.message-timeline-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Turn separation — user segments mark turn boundaries */
+.message-timeline-group:has(> .message-timeline-user) {
+  margin-top: 0.3rem;
+}
+
+.message-timeline-group:has(> .message-timeline-user):first-child {
+  margin-top: 0;
+}
+
+.message-timeline-group-hidden {
+  display: none !important;
+}
+
+.message-timeline-count-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  pointer-events: none;
+  line-height: 1;
+}
+
+.message-timeline-segment-active .message-timeline-count-badge {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.message-timeline-group-expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+
+.message-timeline-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 2px solid var(--border-muted);
+  margin-left: 0.5rem;
+}
+
+.message-timeline-child {
+  position: relative;
+  width: 100%;
+  min-height: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  border: none;
+  background-color: var(--surface-secondary);
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.message-timeline-child:last-child {
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.message-timeline-child:hover,
+.message-timeline-child:focus-visible {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.message-timeline-child.message-timeline-segment-active,
+.message-timeline-child.message-timeline-segment-active:hover {
+  background-color: #0f5b44 !important;
+  color: #fff !important;
+}
+
+.message-timeline-child.message-timeline-segment-hidden {
+  display: none !important;
+}
+
+.message-timeline-child-connector {
+  position: absolute;
+  left: -0.5rem;
+  top: 50%;
+  width: 0.4rem;
+  height: 1px;
+  background-color: var(--border-muted);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .message-timeline-group-children {
+    margin-left: 0.25rem;
+  }
+
+  .message-timeline-child-connector {
+    left: -0.25rem;
+    width: 0.2rem;
+  }
+
+  .message-timeline-count-badge {
+    font-size: 0.5rem;
+  }
 }

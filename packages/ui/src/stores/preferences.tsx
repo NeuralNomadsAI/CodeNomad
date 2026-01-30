@@ -114,6 +114,7 @@ export interface Preferences {
 
   // Sub-agent configuration
   maxSubagentIterations: number
+  agentAutonomy: "conservative" | "balanced" | "aggressive"
 
   // Tool routing configuration
   toolRouting: {
@@ -183,6 +184,7 @@ const defaultPreferences: Preferences = {
 
   // Sub-agent configuration
   maxSubagentIterations: 3,
+  agentAutonomy: "balanced",
 
   // Tool routing
   toolRouting: { globalDeny: [], profiles: {} },
@@ -261,6 +263,9 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
 
     // Sub-agent configuration
     maxSubagentIterations: Math.min(10, Math.max(1, sanitized.maxSubagentIterations ?? defaultPreferences.maxSubagentIterations)),
+    agentAutonomy: (["conservative", "balanced", "aggressive"].includes(sanitized.agentAutonomy as string)
+      ? sanitized.agentAutonomy
+      : defaultPreferences.agentAutonomy) as "conservative" | "balanced" | "aggressive",
 
     // Tool routing
     toolRouting: sanitized.toolRouting ?? defaultPreferences.toolRouting,
@@ -513,6 +518,11 @@ function setMaxSubagentIterations(value: number): void {
   const clamped = Math.min(10, Math.max(1, Math.round(value)))
   if (preferences().maxSubagentIterations === clamped) return
   updatePreferences({ maxSubagentIterations: clamped })
+}
+
+function setAgentAutonomy(value: "conservative" | "balanced" | "aggressive"): void {
+  if (preferences().agentAutonomy === value) return
+  updatePreferences({ agentAutonomy: value })
 }
 
 function setDefaultClonePath(path: string): void {
@@ -791,6 +801,7 @@ interface ConfigContextValue {
   setAgentModelPreference: typeof setAgentModelPreference
   getAgentModelPreference: typeof getAgentModelPreference
   setMaxSubagentIterations: typeof setMaxSubagentIterations
+  setAgentAutonomy: typeof setAgentAutonomy
   setDefaultClonePath: typeof setDefaultClonePath
   setDefaultModels: typeof setDefaultModels
   setModelThinkingMode: typeof setModelThinkingMode
@@ -844,6 +855,7 @@ const configContextValue: ConfigContextValue = {
   setAgentModelPreference,
   getAgentModelPreference,
   setMaxSubagentIterations,
+  setAgentAutonomy,
   setDefaultClonePath,
   setDefaultModels,
   setModelThinkingMode,
@@ -924,6 +936,7 @@ export {
   setThemePreference,
   recordWorkspaceLaunch,
   setMaxSubagentIterations,
+  setAgentAutonomy,
   setDefaultClonePath,
   setDefaultModels,
   setModelThinkingMode,

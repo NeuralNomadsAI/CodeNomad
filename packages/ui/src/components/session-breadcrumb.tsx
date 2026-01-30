@@ -1,6 +1,7 @@
 import { Component, Show, For } from "solid-js"
 import type { Session } from "../types/session"
 import { ChevronRight, ArrowLeft, MessageSquare, Bot, GitFork } from "lucide-solid"
+import { getSessionStatus } from "../stores/session-status"
 import { getChildSessions } from "../stores/session-state"
 
 interface SessionBreadcrumbProps {
@@ -40,8 +41,9 @@ const SessionBreadcrumb: Component<SessionBreadcrumbProps> = (props) => {
   // Get status display
   const getStatusDisplay = () => {
     if (props.currentSession.pendingPermission) return { text: "Permission", class: "text-warning" }
-    if (props.currentSession.status === "working") return { text: "Working", class: "text-accent animate-pulse" }
-    if (props.currentSession.status === "compacting") return { text: "Compacting", class: "text-muted" }
+    const computed = getSessionStatus(props.instanceId, props.currentSession.id)
+    if (computed === "working") return { text: "Working", class: "text-accent animate-pulse" }
+    if (computed === "compacting") return { text: "Compacting", class: "text-muted" }
     return { text: "Idle", class: "text-muted" }
   }
 
@@ -67,7 +69,8 @@ const SessionBreadcrumb: Component<SessionBreadcrumbProps> = (props) => {
             const isActive = () => sibling.id === props.currentSession.id
             const statusClass = () => {
               if (sibling.pendingPermission) return "session-sibling-tab-permission"
-              if (sibling.status === "working") return "session-sibling-tab-working"
+              const computed = getSessionStatus(props.instanceId, sibling.id)
+              if (computed === "working") return "session-sibling-tab-working"
               return ""
             }
 
@@ -79,7 +82,7 @@ const SessionBreadcrumb: Component<SessionBreadcrumbProps> = (props) => {
               >
                 {getSessionIcon(sibling)}
                 <span class="session-sibling-tab-label">{getShortTitle(sibling.title) || "Sub-agent"}</span>
-                <Show when={sibling.pendingPermission || sibling.status === "working"}>
+                <Show when={sibling.pendingPermission || getSessionStatus(props.instanceId, sibling.id) === "working"}>
                   <span class="session-sibling-tab-indicator">
                     {sibling.pendingPermission ? "🛡️" : "●"}
                   </span>

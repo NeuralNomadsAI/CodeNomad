@@ -91,39 +91,6 @@
   ring-offset-color: var(--surface-base);
 }
 
-/* Session tab specific styles */
-.session-tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md max-w-[150px] transition-colors text-sm;
-  font-family: var(--font-family-sans);
-  outline: none;
-  border-bottom: 2px solid transparent;
-}
-
-.session-tab-base:focus-visible {
-  @apply ring-2 ring-offset-1;
-  ring-color: var(--accent-primary);
-  ring-offset-color: var(--surface-base);
-}
-
-.session-tab-active {
-  background-color: var(--session-tab-active-bg);
-  border-bottom-color: var(--accent-primary);
-  color: var(--session-tab-active-text);
-  font-weight: var(--font-weight-medium);
-}
-
-.session-tab-inactive {
-  color: var(--session-tab-inactive-text);
-}
-
-.session-tab-inactive:hover {
-  background-color: var(--session-tab-hover-bg);
-}
-
-.session-tab-special {
-  color: var(--session-tab-inactive-text);
-}
-
 .connection-status-info {
   justify-self: start;
 }

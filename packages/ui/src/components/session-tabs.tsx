@@ -1,8 +1,8 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createMemo } from "solid-js"
 import type { Session, SessionStatus } from "../types/session"
 import { getSessionStatus } from "../stores/session-status"
-import { getChildSessions } from "../stores/session-state"
-import { MessageSquare, Plus, X, ChevronLeft, ChevronRight, ChevronDown, Bot, GitFork } from "lucide-solid"
+import { getChildSessions, hasUnreadCompletion } from "../stores/session-state"
+import { MessageSquare, Plus, X, ChevronLeft, ChevronRight, ChevronDown, Bot, GitFork, Loader2, CheckCircle2, AlertTriangle } from "lucide-solid"
 
 interface SessionTabsProps {
   instanceId: string
@@ -85,16 +85,24 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
   }
 
   // Get the highest priority status across a session and its children
-  const getThreadPriorityStatus = (sessionId: string): SessionStatus | "permission" => {
+  const getThreadPriorityStatus = (sessionId: string): SessionStatus | "permission" | "completed" => {
     const children = getChildren(sessionId)
     const allSessions = [props.sessions.get(sessionId), ...children].filter(Boolean) as Session[]
 
     // Check for permission first (highest priority)
     if (allSessions.some(s => s.pendingPermission)) return "permission"
-    // Then compacting
-    if (allSessions.some(s => s.status === "compacting")) return "compacting"
-    // Then working
-    if (allSessions.some(s => s.status === "working")) return "working"
+
+    let hasCompacting = false
+    let hasWorking = false
+    for (const s of allSessions) {
+      const computed = getSessionStatus(props.instanceId, s.id)
+      if (computed === "compacting") hasCompacting = true
+      if (computed === "working") hasWorking = true
+    }
+
+    if (hasCompacting) return "compacting"
+    if (hasWorking) return "working"
+    if (hasUnreadCompletion(props.instanceId, sessionId)) return "completed"
     return "idle"
   }
 
@@ -106,7 +114,8 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
     const status = getThreadPriorityStatus(sessionId)
     const statusCount = children.filter(c => {
       if (status === "permission") return c.pendingPermission
-      return c.status === status
+      const computed = getSessionStatus(props.instanceId, c.id)
+      return computed === status
     }).length
 
     return { count: statusCount > 0 ? statusCount : children.length, status }
@@ -155,11 +164,12 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
               const isExpanded = () => isSubagentsExpanded(id)
 
               // Get status indicator for badge
-              const getStatusIndicator = (status: SessionStatus | "permission") => {
+              const getStatusIndicator = (status: SessionStatus | "permission" | "completed") => {
                 switch (status) {
                   case "permission": return "🛡️"
                   case "working": return "●"
                   case "compacting": return "◐"
+                  case "completed": return "●"
                   default: return ""
                 }
               }
@@ -175,32 +185,46 @@ const SessionTabs: Component<SessionTabsProps> = (props) => {
               // Get status class for child row
               const getChildStatusClass = (child: Session) => {
                 if (child.pendingPermission) return "session-dropdown-item-permission"
-                if (child.status === "working") return "session-dropdown-item-working"
-                if (child.status === "compacting") return "session-dropdown-item-compacting"
+                const computed = getSessionStatus(props.instanceId, child.id)
+                if (computed === "working") return "session-dropdown-item-working"
+                if (computed === "compacting") return "session-dropdown-item-compacting"
                 return ""
               }
 
-              // Get status dot class for the session
-              const getStatusDotClass = () => {
+              // Dynamic icon based on thread status
+              const getTabIcon = () => {
                 const status = getThreadPriorityStatus(id)
-                if (status === "permission") return "session-status-dot session-status-dot-error"
-                if (status === "working" || status === "compacting") return "session-status-dot session-status-dot-working"
-                return "session-status-dot session-status-dot-idle"
+                switch (status) {
+                  case "working":
+                  case "compacting":
+                    return <Loader2 class="w-3.5 h-3.5 flex-shrink-0 animate-spin session-tab-icon-working" />
+                  case "completed":
+                    return <CheckCircle2 class="w-3.5 h-3.5 flex-shrink-0 session-tab-icon-completed" />
+                  case "permission":
+                    return <AlertTriangle class="w-3.5 h-3.5 flex-shrink-0 session-tab-icon-permission" />
+                  default:
+                    return <MessageSquare class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                }
+              }
+
+              // Tab background class based on status
+              const getTabStatusBgClass = () => {
+                const status = getThreadPriorityStatus(id)
+                if (status === "completed") return "session-tab-bg-completed"
+                if (status === "permission") return "session-tab-bg-permission"
+                return ""
               }
 
               return (
                 <div class="session-tab-dropdown-container relative">
                   <button
-                    class={`session-tab ${isActive() ? "session-tab-active" : "session-tab-inactive"} ${statusClass()} group`}
+                    class={`session-tab ${isActive() ? "session-tab-active" : "session-tab-inactive"} ${statusClass()} ${getTabStatusBgClass()} group`}
                     onClick={() => props.onSelect(id)}
                     title={session.title || id}
                     role="tab"
                     aria-selected={isActive()}
                   >
-                    <span class="session-tab-icon-wrapper">
-                      <MessageSquare class="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                      <span class={getStatusDotClass()} />
-                    </span>
+                    {getTabIcon()}
                     <span class="session-tab-label">{getShortTitle(session.title)}</span>
 
                     {/* Badge for sessions with children - toggles subagent bar */}

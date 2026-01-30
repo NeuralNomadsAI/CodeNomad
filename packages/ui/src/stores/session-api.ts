@@ -10,6 +10,7 @@ import {
   clearSessionDraftPrompt,
   getChildSessions,
   isBlankSession,
+  isSubagentTitle,
   messagesLoaded,
   pruneDraftPrompts,
   providers,
@@ -268,6 +269,27 @@ async function fetchSessions(instanceId: string): Promise<void> {
           : undefined,
         status: existingSession?.status ?? "idle",
       })
+    }
+
+    // Re-parent orphaned subagent sessions loaded from API/disk/cache
+    for (const [id, session] of sessionMap) {
+      if (session.parentId === null && isSubagentTitle(session.title)) {
+        // Find the most likely parent: a non-subagent session created most recently before this one
+        let bestParent: Session | null = null
+        for (const candidate of sessionMap.values()) {
+          if (candidate.id === id) continue
+          if (candidate.parentId !== null) continue
+          if (isSubagentTitle(candidate.title)) continue
+          if ((candidate.time.created ?? 0) > (session.time.created ?? 0)) continue
+          if (!bestParent || (candidate.time.created ?? 0) > (bestParent.time.created ?? 0)) {
+            bestParent = candidate
+          }
+        }
+        if (bestParent) {
+          session.parentId = bestParent.id
+          log.info(`[API] Re-parented subagent "${session.title}" under parent ${bestParent.id}`)
+        }
+      }
     }
 
     const validSessionIds = new Set(sessionMap.keys())

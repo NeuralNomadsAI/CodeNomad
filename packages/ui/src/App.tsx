@@ -579,7 +579,17 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      // Actually delete the session via API
+      // Delete child sessions first to avoid orphaned sub-agent tabs
+      const children = getChildSessions(instanceId, parentSessionId)
+      for (const child of children) {
+        try {
+          await deleteSession(instanceId, child.id)
+        } catch (childError) {
+          log.warn("Failed to delete child session", { sessionId: child.id, error: childError })
+        }
+      }
+
+      // Actually delete the parent session via API
       await deleteSession(instanceId, parentSessionId)
       log.info("Session deleted successfully", { instanceId, sessionId: parentSessionId })
     } catch (error) {
@@ -1121,6 +1131,7 @@ const App: Component = () => {
             onGovernanceClick={() => setGovernancePanelOpen(true)}
             onDirectivesClick={() => setDirectivesEditorOpen(true)}
             onMcpClick={() => setMcpSettingsOpen(true)}
+            onLspClick={() => setLspSettingsOpen(true)}
             onInstanceClick={() => setInstanceInfoModalOpen(true)}
             onSettingsClick={() => setSettingsPanelOpen(true)}
           />

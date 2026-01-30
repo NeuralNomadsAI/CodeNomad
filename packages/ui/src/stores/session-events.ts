@@ -19,7 +19,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { instances, addPermissionToQueue, removePermissionFromQueue, sendPermissionResponse } from "./instances"
 import { showAlertDialog } from "./alerts"
-import { sessions, setSessions, withSession, markSubagentComplete } from "./session-state"
+import { sessions, setSessions, withSession, markSubagentComplete, activeParentSessionId, markSessionCompleted, isSubagentTitle } from "./session-state"
 import { getEffectivePermissionState } from "./session-permissions"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -238,6 +238,15 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
           },
     } as any
 
+    // Re-parent subagent sessions that arrive without parentID
+    if (newSession.parentId === null && isSubagentTitle(newSession.title)) {
+      const activeParent = activeParentSessionId().get(instanceId)
+      if (activeParent && activeParent !== newSession.id) {
+        newSession.parentId = activeParent
+        log.info(`[SSE] Re-parented subagent "${newSession.title}" under parent ${activeParent}`)
+      }
+    }
+
     setSessions((prev) => {
       const next = new Map(prev)
       const updated = new Map(prev.get(instanceId))
@@ -315,6 +324,13 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   withSession(instanceId, sessionId, (s) => {
     s.status = "idle"
   })
+
+  // Mark as unread completion if not the currently active parent session
+  const parentId = session?.parentId ?? sessionId
+  const activeParent = activeParentSessionId().get(instanceId)
+  if (parentId !== activeParent) {
+    markSessionCompleted(instanceId, parentId)
+  }
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {

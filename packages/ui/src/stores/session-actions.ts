@@ -1,5 +1,5 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
-import { classifyPromptIntent } from "../lib/agent-intent"
+import { classifyPromptIntent, shouldEscalateAgent } from "../lib/agent-intent"
 import { instances } from "./instances"
 
 import { addRecentModelPreference, setAgentModelPreference, getEffectiveThinkingMode } from "./preferences"
@@ -119,6 +119,33 @@ async function sendMessage(
         }
         log.info("Auto-routed to agent", { suggestedAgent, sessionId })
       }
+    }
+  }
+
+  // Auto-escalate: if current agent is read-only (e.g. "plan") and the
+  // follow-up prompt signals execution intent, switch to a capable agent.
+  {
+    const instanceAgentList = agents().get(instanceId) || []
+    const availableNames = instanceAgentList
+      .filter((a) => a.mode !== "subagent")
+      .map((a) => a.name)
+    const escalateTarget = shouldEscalateAgent(prompt, session.agent, availableNames)
+
+    if (escalateTarget && escalateTarget !== session.agent) {
+      const nextModel = await getDefaultModel(instanceId, escalateTarget)
+      const shouldApplyModel = isModelValid(instanceId, nextModel)
+
+      withSession(instanceId, sessionId, (current) => {
+        current.agent = escalateTarget
+        if (shouldApplyModel) {
+          current.model = nextModel
+        }
+      })
+      session = sessions().get(instanceId)?.get(sessionId)
+      if (!session) {
+        throw new Error("Session lost after agent escalation")
+      }
+      log.info("Auto-escalated agent", { from: session.agent, to: escalateTarget, sessionId })
     }
   }
 

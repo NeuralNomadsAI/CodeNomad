@@ -445,7 +445,64 @@ export default function MessageBlock(props: MessageBlockProps) {
   const [sectionsExpanded, setSectionsExpanded] = createSignal(false)
 
   const displaySections = createMemo<RenderSection[]>(() => {
-    const all = renderSections()
+    const raw = renderSections()
+
+    // Pass 1: Merge nearby subagent-group sections that are separated only by
+    // text/content items.  The assistant often emits short text between
+    // consecutive Task tool calls, which splits them into many groups of 1.
+    const afterSubagentMerge: RenderSection[] = []
+    let subagentAccum: ToolDisplayItem[] = []
+
+    const flushSubagentAccum = () => {
+      if (subagentAccum.length > 0) {
+        afterSubagentMerge.push({ type: "subagent-group", tools: [...subagentAccum] })
+        subagentAccum = []
+      }
+    }
+
+    for (const section of raw) {
+      if (section.type === "subagent-group") {
+        subagentAccum.push(...section.tools)
+      } else if (section.type === "item" && subagentAccum.length > 0) {
+        // Text between sub-agents — skip it from rendering (it's usually
+        // just transitional filler like "Now let me…").  The sub-agent
+        // rows already show their own descriptions.
+        continue
+      } else {
+        flushSubagentAccum()
+        afterSubagentMerge.push(section)
+      }
+    }
+    flushSubagentAccum()
+
+    // Pass 2: Merge nearby tool-group sections that are separated only by
+    // text/content items.  The assistant often emits transitional text between
+    // consecutive tool calls (e.g., "Let me read this file"), which splits
+    // them into many groups of 1 instead of one collapsed group.
+    const all: RenderSection[] = []
+    let toolAccum: ToolDisplayItem[] = []
+
+    const flushToolAccum = () => {
+      if (toolAccum.length > 0) {
+        all.push({ type: "tool-group", tools: [...toolAccum] })
+        toolAccum = []
+      }
+    }
+
+    for (const section of afterSubagentMerge) {
+      if (section.type === "tool-group") {
+        toolAccum.push(...section.tools)
+      } else if (section.type === "item" && toolAccum.length > 0) {
+        // Text between tool groups — skip transitional filler.
+        // Tool rows already show their own file paths / summaries.
+        continue
+      } else {
+        flushToolAccum()
+        all.push(section)
+      }
+    }
+    flushToolAccum()
+
     if (sectionsExpanded()) return all
 
     // Find indices of tool-like sections

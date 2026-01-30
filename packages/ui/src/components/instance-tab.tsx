@@ -31,6 +31,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
     const status = getInstanceAggregateStatus(props.instance.id)
     if (status === "error") return "project-status-dot project-status-dot-error"
     if (status === "working") return "project-status-dot project-status-dot-working"
+    if (status === "completed") return "project-status-dot project-status-dot-completed"
     return "project-status-dot project-status-dot-idle"
   }
 

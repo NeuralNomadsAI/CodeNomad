@@ -2491,6 +2491,60 @@ const EraCodeSection: Component = () => {
 
         <div class="full-settings-section-divider" />
 
+        {/* Agent Autonomy */}
+        <div class="full-settings-subsection">
+          <h3 class="full-settings-subsection-title">Agent Autonomy</h3>
+          <div class="full-settings-list-item-subtitle" style={{ "margin-bottom": "8px" }}>
+            Controls how aggressively the orchestrator delegates to sub-agents and parallelizes work.
+          </div>
+          <div class="full-settings-radio-group">
+            <button
+              type="button"
+              class={`full-settings-radio-option ${prefs().agentAutonomy === "conservative" ? "selected" : ""}`}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("conservative")
+              }}
+            >
+              <div class="full-settings-radio-circle" />
+              <div>
+                <span class="full-settings-radio-label">Conservative</span>
+                <div class="full-settings-list-item-subtitle">Minimize sub-agent usage. Sequential execution. Lower token usage.</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              class={`full-settings-radio-option ${prefs().agentAutonomy === "balanced" ? "selected" : ""}`}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("balanced")
+              }}
+            >
+              <div class="full-settings-radio-circle" />
+              <div>
+                <span class="full-settings-radio-label">Balanced</span>
+                <div class="full-settings-list-item-subtitle">Use sub-agents for non-trivial work. Some parallelization. Default.</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              class={`full-settings-radio-option ${prefs().agentAutonomy === "aggressive" ? "selected" : ""}`}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("aggressive")
+              }}
+            >
+              <div class="full-settings-radio-circle" />
+              <div>
+                <span class="full-settings-radio-label">Aggressive</span>
+                <div class="full-settings-list-item-subtitle">Maximize parallelization. Spawn sub-agents liberally. Fastest execution.</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="full-settings-section-divider" />
+
         {/* Sub-Agent Configuration */}
         <div class="full-settings-subsection">
           <h3 class="full-settings-subsection-title">Sub-Agent Configuration</h3>

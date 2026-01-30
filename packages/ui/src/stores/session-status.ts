@@ -4,6 +4,7 @@ import type { MessageRecord } from "./message-v2/types"
 import { sessions } from "./sessions"
 import { isSessionCompactionActive } from "./session-compaction"
 import { messageStoreBus } from "./message-v2/bus"
+import { hasUnreadCompletion } from "./session-state"
 
 function getSession(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
@@ -167,7 +168,7 @@ export function isSessionBusy(instanceId: string, sessionId: string): boolean {
   return status === "working" || status === "compacting"
 }
 
-export type InstanceAggregateStatus = "idle" | "working" | "error"
+export type InstanceAggregateStatus = "idle" | "working" | "error" | "completed"
 
 /**
  * Get aggregate status for an instance based on all its sessions
@@ -181,6 +182,7 @@ export function getInstanceAggregateStatus(instanceId: string): InstanceAggregat
 
   let hasWorking = false
   let hasError = false
+  let hasCompleted = false
 
   for (const [sessionId, session] of instanceSessions.entries()) {
     // Check for pending permission (treated as error/attention needed)
@@ -193,9 +195,15 @@ export function getInstanceAggregateStatus(instanceId: string): InstanceAggregat
     if (status === "working" || status === "compacting") {
       hasWorking = true
     }
+
+    // Check for unread completions (only parent sessions)
+    if (session.parentId === null && hasUnreadCompletion(instanceId, sessionId)) {
+      hasCompleted = true
+    }
   }
 
   if (hasError) return "error"
   if (hasWorking) return "working"
+  if (hasCompleted) return "completed"
   return "idle"
 }

@@ -93,6 +93,7 @@ const PreferencesSchema = z.object({
 
   // Sub-agent configuration
   maxSubagentIterations: z.number().int().min(1).max(10).default(3),
+  agentAutonomy: z.enum(["conservative", "balanced", "aggressive"]).default("balanced"),
 
   // Tool routing configuration
   toolRouting: ToolRoutingSchema.default({}),

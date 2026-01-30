@@ -46,31 +46,26 @@ function getToolVisuals(toolName: string): { icon: typeof FileText; colorClass: 
   return { icon: FileText, colorClass: "tool-color-default" }
 }
 
-// Group consecutive tools by type
+// Group all tools by type (regardless of order)
 function groupTools(tools: ToolDisplayItem[]): ToolGroup[] {
-  const groups: ToolGroup[] = []
+  const groupMap = new Map<string, ToolGroup>()
+  const order: string[] = []
 
   for (const tool of tools) {
     const toolName = tool.toolPart.tool || "unknown"
-    const displayName = getToolName(toolName)
-    const { icon, colorClass } = getToolVisuals(toolName)
 
-    // Check if we can add to the last group (same tool type)
-    const lastGroup = groups[groups.length - 1]
-    if (lastGroup && lastGroup.toolName === toolName) {
-      lastGroup.items.push(tool)
-    } else {
-      groups.push({
-        toolName,
-        displayName,
-        items: [tool],
-        icon,
-        colorClass,
-      })
+    let group = groupMap.get(toolName)
+    if (!group) {
+      const displayName = getToolName(toolName)
+      const { icon, colorClass } = getToolVisuals(toolName)
+      group = { toolName, displayName, items: [], icon, colorClass }
+      groupMap.set(toolName, group)
+      order.push(toolName)
     }
+    group.items.push(tool)
   }
 
-  return groups
+  return order.map(name => groupMap.get(name)!)
 }
 
 // Get a summary for a single tool item
@@ -176,9 +171,9 @@ const ToolGroupDisplay: Component<{
         if (matchesMatch) totalMatches += parseInt(matchesMatch[1], 10)
       }
 
-      if (totalFiles > 0) return `${totalFiles} files`
-      if (totalLines > 0) return `${totalLines} lines`
-      if (totalMatches > 0) return `${totalMatches} matches`
+      if (totalFiles > 0) return `${totalFiles} file${totalFiles !== 1 ? "s" : ""}`
+      if (totalLines > 0) return `${totalLines} line${totalLines !== 1 ? "s" : ""}`
+      if (totalMatches > 0) return `${totalMatches} match${totalMatches !== 1 ? "es" : ""}`
       return "done"
     }
 
@@ -243,7 +238,9 @@ const ToolGroupDisplay: Component<{
         <Icon class="tool-group-icon" size={14} />
         <span class="tool-group-name">{props.group.displayName}</span>
         <span class="tool-group-count">× {count()}</span>
-        <span class="tool-group-summary">{aggregateSummary()}</span>
+        <Show when={aggregateSummary()}>
+          <span class="tool-group-summary">· {aggregateSummary()}</span>
+        </Show>
         <Show when={resultSummary()}>
           <span class="tool-group-result">{resultSummary()}</span>
         </Show>

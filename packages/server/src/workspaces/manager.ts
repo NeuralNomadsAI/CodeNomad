@@ -29,6 +29,7 @@ export function buildWorkspaceEnvironment(prefs: Record<string, unknown>): Recor
   return {
     ...((prefs.environmentVariables ?? {}) as Record<string, string>),
     ERA_MAX_SUBAGENT_ITERATIONS: String((prefs as any).maxSubagentIterations ?? 3),
+    ERA_AGENT_AUTONOMY: String((prefs as any).agentAutonomy ?? "balanced"),
   }
 }
 
