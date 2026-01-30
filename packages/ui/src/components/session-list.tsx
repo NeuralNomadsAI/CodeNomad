@@ -2,12 +2,13 @@ import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCl
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown } from "lucide-solid"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
+import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
   ensureSessionParentExpanded,
@@ -35,6 +36,7 @@ interface SessionListProps {
   showFooter?: boolean
   headerContent?: JSX.Element
   footerContent?: JSX.Element
+  enableFilterBar?: boolean
 }
 
 function formatSessionStatus(status: SessionStatus): string {
@@ -45,6 +47,70 @@ const SessionList: Component<SessionListProps> = (props) => {
   const { t } = useI18n()
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
+
+  const [filterQuery, setFilterQuery] = createSignal("")
+  const normalizedQuery = createMemo(() => filterQuery().trim().toLowerCase())
+
+  const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
+
+  const normalizeSessionLabel = (sessionId: string) => {
+    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
+    const title = (session?.title ?? "").trim()
+    return title || t("sessionList.session.untitled")
+  }
+
+  const sessionMatchesQuery = (sessionId: string, query: string) => {
+    if (!query) return true
+    const label = normalizeSessionLabel(sessionId).toLowerCase()
+    if (label.includes(query)) return true
+    return sessionId.toLowerCase().includes(query)
+  }
+
+  const filteredThreads = createMemo<SessionThread[]>(() => {
+    const query = normalizedQuery()
+    if (!query) return props.threads
+
+    const next: SessionThread[] = []
+    for (const thread of props.threads) {
+      const parentMatches = sessionMatchesQuery(thread.parent.id, query)
+      const matchingChildren = thread.children.filter((child) => sessionMatchesQuery(child.id, query))
+
+      if (!parentMatches && matchingChildren.length === 0) continue
+
+      next.push({
+        parent: thread.parent,
+        children: matchingChildren,
+        latestUpdated: thread.latestUpdated,
+      })
+    }
+
+    return next
+  })
+
+  const allMatchingSessionIds = createMemo<string[]>(() => {
+    const ids: string[] = []
+    for (const thread of filteredThreads()) {
+      ids.push(thread.parent.id)
+      for (const child of thread.children) ids.push(child.id)
+    }
+    return ids
+  })
+
+  const selectedCount = createMemo(() => selectedSessionIds().size)
+
+  const isAllSelected = createMemo(() => {
+    const ids = allMatchingSessionIds()
+    if (ids.length === 0) return false
+    const selected = selectedSessionIds()
+    return ids.every((id) => selected.has(id))
+  })
+  const isSelectAllIndeterminate = createMemo(() => {
+    const ids = allMatchingSessionIds()
+    const total = ids.length
+    if (total === 0) return false
+    const count = selectedCount()
+    return count > 0 && count < total
+  })
 
   const isSessionDeleting = (sessionId: string) => {
     const deleting = loading().deletingSession.get(props.instanceId)
@@ -81,6 +147,17 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleDeleteSession = async (event: MouseEvent, sessionId: string) => {
     event.stopPropagation()
     if (isSessionDeleting(sessionId)) return
+
+    const confirmed = await showConfirmDialog(
+      t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
+      {
+        title: t("sessionList.delete.title"),
+        variant: "warning",
+        confirmLabel: t("sessionList.delete.confirmLabel"),
+        cancelLabel: t("sessionList.delete.cancelLabel"),
+      },
+    )
+    if (!confirmed) return
 
     const shouldSelectFallback = props.activeSessionId === sessionId
     let fallbackSessionId: string | undefined
@@ -152,6 +229,115 @@ const SessionList: Component<SessionListProps> = (props) => {
       setIsRenaming(false)
     }
   }
+
+  const setSelectedMany = (sessionIds: string[], checked: boolean) => {
+    if (sessionIds.length === 0) return
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      sessionIds.forEach((id) => {
+        if (checked) next.add(id)
+        else next.delete(id)
+      })
+      return next
+    })
+  }
+
+  const getSelectableThreadIds = (parentId: string): string[] => {
+    const query = normalizedQuery()
+    const source = query ? filteredThreads() : props.threads
+    const thread = source.find((t) => t.parent.id === parentId)
+    if (!thread) return [parentId]
+    return [thread.parent.id, ...thread.children.map((c) => c.id)]
+  }
+
+  const getAllSessionIdsInOrder = (threads: SessionThread[]): string[] => {
+    const ids: string[] = []
+    threads.forEach((thread) => {
+      ids.push(thread.parent.id)
+      thread.children.forEach((child) => ids.push(child.id))
+    })
+    return ids
+  }
+
+  const handleToggleSelectAll = (checked: boolean) => {
+    const ids = allMatchingSessionIds()
+    setSelectedMany(ids, checked)
+  }
+
+  const toggleSelectAll = () => {
+    if (isAllSelected()) {
+      handleToggleSelectAll(false)
+      return
+    }
+    handleToggleSelectAll(true)
+  }
+
+  const handleBulkDelete = async () => {
+    const selected = Array.from(selectedSessionIds())
+    if (selected.length === 0) return
+
+    const confirmed = await showConfirmDialog(
+      t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
+      {
+        title: t("sessionList.bulkDelete.title"),
+        variant: "warning",
+        confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
+        cancelLabel: t("sessionList.bulkDelete.cancelLabel"),
+      },
+    )
+
+    if (!confirmed) return
+
+    const deletedSet = new Set(selected)
+    const currentActiveId = props.activeSessionId
+
+    let fallbackSessionId: string | undefined
+    if (currentActiveId && deletedSet.has(currentActiveId)) {
+      const ordered = getAllSessionIdsInOrder(props.threads)
+      const currentIndex = ordered.indexOf(currentActiveId)
+
+      for (let i = Math.max(0, currentIndex); i < ordered.length; i++) {
+        const candidate = ordered[i]
+        if (candidate && !deletedSet.has(candidate)) {
+          fallbackSessionId = candidate
+          break
+        }
+      }
+      if (!fallbackSessionId) {
+        for (let i = currentIndex - 1; i >= 0; i--) {
+          const candidate = ordered[i]
+          if (candidate && !deletedSet.has(candidate)) {
+            fallbackSessionId = candidate
+            break
+          }
+        }
+      }
+    }
+
+    let failed = 0
+    for (const sessionId of selected) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await deleteSession(props.instanceId, sessionId)
+      } catch (error) {
+        failed += 1
+        log.error(`Failed to delete session ${sessionId}:`, error)
+      }
+    }
+
+    setSelectedSessionIds(new Set<string>())
+
+    if (fallbackSessionId) {
+      setActiveSessionFromList(props.instanceId, fallbackSessionId)
+    }
+
+    if (failed > 0) {
+      showToastNotification({
+        message: t("sessionList.bulkDelete.error", { count: failed }),
+        variant: "error",
+      })
+    }
+  }
  
 
   const SessionRow: Component<{
@@ -190,9 +376,31 @@ const SessionList: Component<SessionListProps> = (props) => {
           ? t("sessionList.status.needsInput")
           : statusLabel()
  
-    return (
-       <div class="session-list-item group">
+    const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
 
+    const parentGroupState = createMemo(() => {
+      if (rowProps.isChild) {
+        return { checked: isSelected(), indeterminate: false, ids: [rowProps.sessionId] }
+      }
+
+      const ids = getSelectableThreadIds(rowProps.sessionId)
+      const selected = selectedSessionIds()
+      const selectedInGroup = ids.reduce((count, id) => (selected.has(id) ? count + 1 : count), 0)
+      return {
+        checked: selectedInGroup > 0 && selectedInGroup === ids.length,
+        indeterminate: selectedInGroup > 0 && selectedInGroup < ids.length,
+        ids,
+      }
+    })
+
+    let rowCheckboxEl: HTMLInputElement | null = null
+    createEffect(() => {
+      if (!rowCheckboxEl) return
+      rowCheckboxEl.indeterminate = parentGroupState().indeterminate
+    })
+
+    return (
+      <div class="session-list-item group">
         <button
           class={`session-item-base ${rowProps.isChild ? `session-item-child${rowProps.isLastChild ? " session-item-child-last" : ""} session-item-border-assistant session-item-kind-assistant` : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
           data-session-id={rowProps.sessionId}
@@ -204,11 +412,23 @@ const SessionList: Component<SessionListProps> = (props) => {
         >
           <div class="session-item-row session-item-header">
             <div class="session-item-title-row">
-              {rowProps.isChild ? (
-                <Bot class="w-4 h-4 flex-shrink-0" />
-              ) : (
-                <User class="w-4 h-4 flex-shrink-0" />
-              )}
+              <Show when={props.enableFilterBar}>
+                <input
+                  ref={(el) => {
+                    rowCheckboxEl = el
+                  }}
+                  type="checkbox"
+                  checked={parentGroupState().checked}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    setSelectedMany(parentGroupState().ids, event.currentTarget.checked)
+                  }}
+                  aria-label={t("sessionList.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
+              {rowProps.isChild ? <Bot class="w-4 h-4 flex-shrink-0" /> : <User class="w-4 h-4 flex-shrink-0" />}
               <span class="session-item-title session-item-title--clamp">{title()}</span>
             </div>
           </div>
@@ -216,9 +436,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             <div class="flex items-center gap-2 min-w-0">
               <Show
                 when={rowProps.hasChildren && !rowProps.isChild}
-                fallback={
-                  rowProps.isChild ? null : <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />
-                }
+                fallback={rowProps.isChild ? null : <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
               >
                 <span
                   class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
@@ -228,18 +446,16 @@ const SessionList: Component<SessionListProps> = (props) => {
                   }}
                   role="button"
                   tabIndex={0}
-                  aria-label={rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")}
+                  aria-label={
+                    rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
+                  }
                   title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
                 >
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
               </Show>
               <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-                {needsInput() ? (
-                  <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
-                ) : (
-                  <span class="status-dot" />
-                )}
+                {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
                 {statusText()}
               </span>
             </div>
@@ -365,6 +581,63 @@ const SessionList: Component<SessionListProps> = (props) => {
     <div
       class="session-list-container bg-surface-secondary border-r border-base flex flex-col w-full"
     >
+      <Show when={props.enableFilterBar}>
+        <div class="p-3 border-b border-base">
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 min-w-0">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
+                <Search class="w-4 h-4" />
+              </span>
+              <input
+                type="text"
+                class="form-input pl-9"
+                value={filterQuery()}
+                onInput={(e) => setFilterQuery(e.currentTarget.value)}
+                placeholder={t("sessionList.filter.placeholder")}
+                aria-label={t("sessionList.filter.ariaLabel")}
+              />
+            </div>
+
+            <button
+              type="button"
+              class="button-tertiary p-2 inline-flex items-center justify-center"
+              onClick={toggleSelectAll}
+              disabled={allMatchingSessionIds().length === 0}
+              aria-label={t("sessionList.selection.selectAllAriaLabel")}
+              title={t("sessionList.selection.selectAllLabel")}
+            >
+              <Show
+                when={isSelectAllIndeterminate()}
+                fallback={isAllSelected() ? <CheckSquare class="w-4 h-4" /> : <Square class="w-4 h-4" />}
+              >
+                <MinusSquare class="w-4 h-4" />
+              </Show>
+            </button>
+          </div>
+
+          <Show when={selectedCount() > 0}>
+            <div class="mt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                class="button-tertiary"
+                onClick={handleBulkDelete}
+                aria-label={t("sessionList.bulkDelete.ariaLabel", { count: selectedCount() })}
+              >
+                {t("sessionList.bulkDelete.button", { count: selectedCount() })}
+              </button>
+              <button
+                type="button"
+                class="button-tertiary"
+                onClick={() => setSelectedSessionIds(new Set<string>())}
+                aria-label={t("sessionList.selection.clearAriaLabel")}
+              >
+                {t("sessionList.selection.clearLabel")}
+              </button>
+            </div>
+          </Show>
+        </div>
+      </Show>
+
       <Show when={props.showHeader !== false}>
         <div class="session-list-header p-3 border-b border-base">
           {props.headerContent ?? (
@@ -378,33 +651,33 @@ const SessionList: Component<SessionListProps> = (props) => {
         </div>
       </Show>
 
-      <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
+       <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
 
-         <Show when={props.threads.length > 0}>
-           <div class="session-section">
-             <For each={props.threads}>
+          <Show when={filteredThreads().length > 0}>
+            <div class="session-section">
+              <For each={filteredThreads()}>
 
-              {(thread) => {
-                const expanded = () => isSessionParentExpanded(props.instanceId, thread.parent.id)
-                return (
-                  <>
-                      <SessionRow
-                        sessionId={thread.parent.id}
-                        hasChildren={thread.children.length > 0}
-                        expanded={expanded()}
-                        onToggleExpand={() => toggleSessionParentExpanded(props.instanceId, thread.parent.id)}
-                      />
+               {(thread) => {
+                 const expanded = () => (normalizedQuery() ? true : isSessionParentExpanded(props.instanceId, thread.parent.id))
+                 return (
+                   <>
+                       <SessionRow
+                         sessionId={thread.parent.id}
+                         hasChildren={thread.children.length > 0}
+                         expanded={expanded()}
+                         onToggleExpand={() => toggleSessionParentExpanded(props.instanceId, thread.parent.id)}
+                       />
 
-                    <Show when={expanded() && thread.children.length > 0}>
-                      <For each={thread.children}>
-                        {(child, index) => (
-                          <SessionRow sessionId={child.id} isChild isLastChild={index() === thread.children.length - 1} />
-                        )}
-                      </For>
-                    </Show>
-                  </>
-                )
-              }}
+                     <Show when={expanded() && thread.children.length > 0}>
+                       <For each={thread.children}>
+                         {(child, index) => (
+                           <SessionRow sessionId={child.id} isChild isLastChild={index() === thread.children.length - 1} />
+                         )}
+                       </For>
+                     </Show>
+                   </>
+                 )
+               }}
             </For>
           </div>
         </Show>

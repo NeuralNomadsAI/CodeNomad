@@ -911,6 +911,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               void result.catch((error) => log.error("Failed to create session:", error))
             }
           }}
+          enableFilterBar
           showHeader={false}
           showFooter={false}
         />
