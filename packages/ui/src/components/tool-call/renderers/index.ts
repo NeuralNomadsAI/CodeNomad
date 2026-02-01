@@ -9,6 +9,7 @@ import { todoRenderer } from "./todo"
 import { webfetchRenderer } from "./webfetch"
 import { writeRenderer } from "./write"
 import { invalidRenderer } from "./invalid"
+import { questionRenderer } from "./question"
 
 const TOOL_RENDERERS: ToolRenderer[] = [
   bashRenderer,
@@ -19,6 +20,7 @@ const TOOL_RENDERERS: ToolRenderer[] = [
   webfetchRenderer,
   todoRenderer,
   taskRenderer,
+  questionRenderer,
   invalidRenderer,
 ]
 

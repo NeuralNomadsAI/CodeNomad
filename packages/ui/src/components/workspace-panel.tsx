@@ -25,6 +25,7 @@ import {
   type GitStatus,
   type FileOperationType,
 } from "../stores/workspace-state"
+import { cn } from "../lib/cn"
 
 interface WorkspacePanelProps {
   instanceId: string
@@ -61,17 +62,17 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
   const getOperationClass = (op: FileOperationType) => {
     switch (op) {
       case "read":
-        return "workspace-op-read"
+        return "text-info"
       case "edit":
-        return "workspace-op-edit"
+        return "text-warning"
       case "write":
-        return "workspace-op-write"
+        return "text-success"
       case "create":
-        return "workspace-op-create"
+        return "text-success"
       case "delete":
-        return "workspace-op-delete"
+        return "text-destructive"
       default:
-        return ""
+        return "text-muted-foreground"
     }
   }
 
@@ -89,11 +90,11 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
   const getStatusClass = (status: RecentAction["status"]) => {
     switch (status) {
       case "running":
-        return "workspace-action-running"
+        return "text-info"
       case "complete":
-        return "workspace-action-complete"
+        return "text-success"
       case "error":
-        return "workspace-action-error"
+        return "text-destructive"
     }
   }
 
@@ -123,16 +124,16 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
   }
 
   return (
-    <div class="workspace-panel">
+    <div class="flex flex-col">
       {/* Files Touched Section */}
-      <section class="workspace-section">
+      <section class="border-b border-border">
         <button
           type="button"
-          class="workspace-section-header"
+          class="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wide transition-colors text-muted-foreground hover:bg-accent hover:text-foreground outline-none"
           onClick={() => setFilesTouchedExpanded((prev) => !prev)}
           aria-expanded={filesTouchedExpanded()}
         >
-          <span class="workspace-section-title">
+          <span class="flex items-center gap-2">
             {filesTouchedExpanded() ? (
               <ChevronDown class="w-4 h-4" />
             ) : (
@@ -141,34 +142,34 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
             <FileText class="w-4 h-4" />
             Files Touched
           </span>
-          <span class="workspace-section-count">{filesTouched().length}</span>
+          <span class="text-xs font-medium px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">{filesTouched().length}</span>
         </button>
 
         <Show when={filesTouchedExpanded()}>
-          <div class="workspace-section-content">
+          <div class="px-4 pb-3">
             <Show
               when={filesTouched().length > 0}
               fallback={
-                <p class="workspace-empty-message">No files touched yet</p>
+                <p class="text-xs text-muted-foreground italic py-2">No files touched yet</p>
               }
             >
-              <ul class="workspace-file-list">
+              <ul class="space-y-0.5">
                 <For each={filesTouched().slice(0, 20)}>
                   {(file) => (
-                    <li class="workspace-file-item">
+                    <li>
                       <button
                         type="button"
-                        class="workspace-file-button"
+                        class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-accent text-left"
                         onClick={() => props.onFileClick?.(file.path)}
                         title={file.path}
                       >
-                        <span class={`workspace-op-badge ${getOperationClass(file.operation)}`}>
+                        <span class={cn("flex-shrink-0", getOperationClass(file.operation))}>
                           {getOperationIcon(file.operation)}
                         </span>
-                        <span class="workspace-file-name">
+                        <span class="font-medium text-foreground truncate">
                           {getFileName(file.path)}
                         </span>
-                        <span class="workspace-file-path" title={file.path}>
+                        <span class="text-muted-foreground truncate ml-auto" title={file.path}>
                           {getRelativePath(file.path)}
                         </span>
                       </button>
@@ -177,7 +178,7 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
                 </For>
               </ul>
               <Show when={filesTouched().length > 20}>
-                <p class="workspace-more-indicator">
+                <p class="text-xs text-muted-foreground mt-2 text-center">
                   +{filesTouched().length - 20} more files
                 </p>
               </Show>
@@ -187,14 +188,14 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
       </section>
 
       {/* Recent Actions Section */}
-      <section class="workspace-section">
+      <section class="border-b border-border">
         <button
           type="button"
-          class="workspace-section-header"
+          class="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wide transition-colors text-muted-foreground hover:bg-accent hover:text-foreground outline-none"
           onClick={() => setRecentActionsExpanded((prev) => !prev)}
           aria-expanded={recentActionsExpanded()}
         >
-          <span class="workspace-section-title">
+          <span class="flex items-center gap-2">
             {recentActionsExpanded() ? (
               <ChevronDown class="w-4 h-4" />
             ) : (
@@ -203,28 +204,28 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
             <Clock class="w-4 h-4" />
             Recent Actions
           </span>
-          <span class="workspace-section-count">{recentActions().length}</span>
+          <span class="text-xs font-medium px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">{recentActions().length}</span>
         </button>
 
         <Show when={recentActionsExpanded()}>
-          <div class="workspace-section-content">
+          <div class="px-4 pb-3">
             <Show
               when={recentActions().length > 0}
               fallback={
-                <p class="workspace-empty-message">No recent actions</p>
+                <p class="text-xs text-muted-foreground italic py-2">No recent actions</p>
               }
             >
-              <ul class="workspace-action-list">
+              <ul class="space-y-0.5">
                 <For each={recentActions().slice(0, 15)}>
                   {(action) => (
-                    <li class={`workspace-action-item ${getStatusClass(action.status)}`}>
-                      <span class="workspace-action-status">
+                    <li class={cn("flex items-center gap-2 px-2 py-1.5 rounded text-xs", getStatusClass(action.status))}>
+                      <span class="flex-shrink-0">
                         {getStatusIcon(action.status)}
                       </span>
-                      <span class="workspace-action-summary" title={action.summary}>
+                      <span class="truncate text-foreground" title={action.summary}>
                         {action.summary}
                       </span>
-                      <span class="workspace-action-time">
+                      <span class="ml-auto text-muted-foreground flex-shrink-0">
                         {formatRelativeTime(action.timestamp)}
                       </span>
                     </li>
@@ -237,14 +238,14 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
       </section>
 
       {/* Git Status Section */}
-      <section class="workspace-section">
+      <section class="border-b border-border">
         <button
           type="button"
-          class="workspace-section-header"
+          class="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm font-semibold uppercase tracking-wide transition-colors text-muted-foreground hover:bg-accent hover:text-foreground outline-none"
           onClick={() => setGitStatusExpanded((prev) => !prev)}
           aria-expanded={gitStatusExpanded()}
         >
-          <span class="workspace-section-title">
+          <span class="flex items-center gap-2">
             {gitStatusExpanded() ? (
               <ChevronDown class="w-4 h-4" />
             ) : (
@@ -256,26 +257,26 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
         </button>
 
         <Show when={gitStatusExpanded()}>
-          <div class="workspace-section-content">
+          <div class="px-4 pb-3">
             <Show
               when={gitStatus()}
               fallback={
-                <p class="workspace-empty-message">Git status not available</p>
+                <p class="text-xs text-muted-foreground italic py-2">Git status not available</p>
               }
             >
               {(status) => (
-                <div class="workspace-git-status">
+                <div class="space-y-3">
                   {/* Branch info */}
-                  <div class="workspace-git-branch">
-                    <GitBranch class="w-4 h-4" />
-                    <span class="workspace-git-branch-name">{status().branch}</span>
+                  <div class="flex items-center gap-2 text-sm">
+                    <GitBranch class="w-4 h-4 text-info" />
+                    <span class="font-medium text-foreground">{status().branch}</span>
                     <Show when={status().ahead > 0 || status().behind > 0}>
-                      <span class="workspace-git-sync">
+                      <span class="flex items-center gap-1 text-xs">
                         <Show when={status().ahead > 0}>
-                          <span class="workspace-git-ahead">+{status().ahead}</span>
+                          <span class="text-success">+{status().ahead}</span>
                         </Show>
                         <Show when={status().behind > 0}>
-                          <span class="workspace-git-behind">-{status().behind}</span>
+                          <span class="text-destructive">-{status().behind}</span>
                         </Show>
                       </span>
                     </Show>
@@ -283,20 +284,20 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
 
                   {/* Staged changes */}
                   <Show when={status().staged.length > 0}>
-                    <div class="workspace-git-section">
-                      <span class="workspace-git-label workspace-git-staged">
+                    <div class="space-y-1">
+                      <span class="text-xs font-medium text-success">
                         Staged ({status().staged.length})
                       </span>
-                      <ul class="workspace-git-files">
+                      <ul class="space-y-0.5">
                         <For each={status().staged.slice(0, 5)}>
                           {(file) => (
-                            <li class="workspace-git-file" title={file}>
+                            <li class="text-xs text-muted-foreground truncate pl-2" title={file}>
                               {getFileName(file)}
                             </li>
                           )}
                         </For>
                         <Show when={status().staged.length > 5}>
-                          <li class="workspace-git-more">
+                          <li class="text-xs text-muted-foreground italic pl-2">
                             +{status().staged.length - 5} more
                           </li>
                         </Show>
@@ -306,20 +307,20 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
 
                   {/* Modified changes */}
                   <Show when={status().modified.length > 0}>
-                    <div class="workspace-git-section">
-                      <span class="workspace-git-label workspace-git-modified">
+                    <div class="space-y-1">
+                      <span class="text-xs font-medium text-warning">
                         Modified ({status().modified.length})
                       </span>
-                      <ul class="workspace-git-files">
+                      <ul class="space-y-0.5">
                         <For each={status().modified.slice(0, 5)}>
                           {(file) => (
-                            <li class="workspace-git-file" title={file}>
+                            <li class="text-xs text-muted-foreground truncate pl-2" title={file}>
                               {getFileName(file)}
                             </li>
                           )}
                         </For>
                         <Show when={status().modified.length > 5}>
-                          <li class="workspace-git-more">
+                          <li class="text-xs text-muted-foreground italic pl-2">
                             +{status().modified.length - 5} more
                           </li>
                         </Show>
@@ -329,20 +330,20 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
 
                   {/* Untracked files */}
                   <Show when={status().untracked.length > 0}>
-                    <div class="workspace-git-section">
-                      <span class="workspace-git-label workspace-git-untracked">
+                    <div class="space-y-1">
+                      <span class="text-xs font-medium text-muted-foreground">
                         Untracked ({status().untracked.length})
                       </span>
-                      <ul class="workspace-git-files">
+                      <ul class="space-y-0.5">
                         <For each={status().untracked.slice(0, 5)}>
                           {(file) => (
-                            <li class="workspace-git-file" title={file}>
+                            <li class="text-xs text-muted-foreground truncate pl-2" title={file}>
                               {getFileName(file)}
                             </li>
                           )}
                         </For>
                         <Show when={status().untracked.length > 5}>
-                          <li class="workspace-git-more">
+                          <li class="text-xs text-muted-foreground italic pl-2">
                             +{status().untracked.length - 5} more
                           </li>
                         </Show>
@@ -352,7 +353,7 @@ const WorkspacePanel: Component<WorkspacePanelProps> = (props) => {
 
                   {/* No changes */}
                   <Show when={status().staged.length === 0 && status().modified.length === 0 && status().untracked.length === 0}>
-                    <p class="workspace-git-clean">Working tree clean</p>
+                    <p class="text-xs text-success italic">Working tree clean</p>
                   </Show>
                 </div>
               )}

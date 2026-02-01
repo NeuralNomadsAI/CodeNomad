@@ -1,4 +1,3 @@
-import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createEffect, createMemo, createSignal, type Component } from "solid-js"
 import { Plus, Search, RefreshCw, Power, Trash2, Key, CheckCircle2, XCircle } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
@@ -6,6 +5,21 @@ import { instances, stopInstance, createInstance } from "../stores/instances"
 import { providers, fetchProviders } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
 import { getProviderLogoUrl } from "../lib/models-api"
+import { cn } from "../lib/cn"
+import {
+  Card,
+  Button,
+  Input,
+  Label,
+  Badge,
+  Separator,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "./ui"
 
 const log = getLogger("actions")
 
@@ -204,18 +218,22 @@ const ProviderSettingsPanel: Component = () => {
   }
 
   return (
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">Providers</h3>
-        <p class="panel-subtitle">Show enabled providers, add more via a focused flow</p>
+    <Card>
+      <div class="flex flex-col space-y-1.5 px-4 py-3 border-b border-border bg-secondary">
+        <h3 class="text-base font-semibold text-foreground">Providers</h3>
+        <p class="text-xs text-muted-foreground">Show enabled providers, add more via a focused flow</p>
       </div>
 
-      <div class="panel-body" style={{ gap: "var(--space-md)" }}>
-        <div class="flex items-end flex-wrap" style={{ gap: "var(--space-sm)" }}>
-          <div class="flex flex-col" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Reference Instance</label>
+      <div class="p-4 space-y-4">
+        <div class="flex items-end flex-wrap gap-2">
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Reference Instance</Label>
             <select
-              class="modal-input min-w-[240px]"
+              class={cn(
+                "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "min-w-[240px]"
+              )}
               value={referenceInstanceId() ?? ""}
               onChange={(event) => setReferenceInstanceId(event.currentTarget.value)}
               disabled={instanceOptions().length === 0}
@@ -230,105 +248,110 @@ const ProviderSettingsPanel: Component = () => {
             </select>
           </div>
 
-          <button
-            type="button"
-            class="modal-button modal-button--secondary"
+          <Button
+            variant="secondary"
+            size="sm"
             disabled={!referenceInstanceId() || loadingCatalog()}
             onClick={() => referenceInstanceId() && void loadCatalog(referenceInstanceId()!)}
           >
             <RefreshCw class="w-3.5 h-3.5" />
             {loadingCatalog() ? "Refreshing..." : "Refresh"}
-          </button>
+          </Button>
 
-          <button type="button" class="modal-button modal-button--primary" disabled={!referenceInstanceId()} onClick={() => void restartReferenceInstance()}>
+          <Button
+            size="sm"
+            disabled={!referenceInstanceId()}
+            onClick={() => void restartReferenceInstance()}
+          >
             <Power class="w-3.5 h-3.5" />
             Restart to Apply
-          </button>
+          </Button>
         </div>
 
         <Show
           when={referenceInstanceId()}
-          fallback={<p class="text-xs text-secondary italic">Start an instance first to manage providers.</p>}
+          fallback={<p class="text-xs text-muted-foreground italic">Start an instance first to manage providers.</p>}
         >
-          <div class="flex flex-col" style={{ gap: "var(--space-sm)" }}>
-            <div class="flex items-center justify-between" style={{ gap: "var(--space-sm)" }}>
-              <div class="text-xs font-medium text-muted uppercase tracking-wide">Enabled providers</div>
-              <button type="button" class="modal-button modal-button--primary" onClick={() => openProviderModal()}>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Enabled providers</div>
+              <Button size="sm" onClick={() => openProviderModal()}>
                 <Plus class="w-3.5 h-3.5" />
                 Add Provider
-              </button>
+              </Button>
             </div>
 
             <Show
               when={activeProviders().length > 0}
-              fallback={<p class="text-xs text-secondary italic">No providers loaded yet. Add a provider and restart.</p>}
+              fallback={<p class="text-xs text-muted-foreground italic">No providers loaded yet. Add a provider and restart.</p>}
             >
-              <div class="provider-cards-grid">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <For each={activeProviders()}>
                   {(provider) => {
                     const isConfigured = () => configuredProviderIds().has(provider.id)
                     const isConnected = () => connectedProviderIds().has(provider.id)
 
                     return (
-                      <div class="provider-card">
-                        <div class="provider-card-header">
-                          <div class="provider-card-logo">
+                      <Card class="flex flex-col p-3 gap-3">
+                        <div class="flex items-start justify-between">
+                          <div class="w-8 h-8 rounded-md bg-secondary flex items-center justify-center overflow-hidden">
                             <img
                               src={getProviderLogoUrl(provider.id)}
                               alt={provider.name}
-                              class="provider-logo-img"
+                              class="w-6 h-6 object-contain"
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
                               }}
                             />
                           </div>
-                          <div class="provider-card-status">
+                          <div>
                             <Show when={isConnected()}>
-                              <span class="provider-status-badge provider-status-connected">
+                              <Badge variant="success" class="text-[10px]">
                                 <CheckCircle2 class="w-3 h-3" />
                                 Connected
-                              </span>
+                              </Badge>
                             </Show>
                             <Show when={!isConnected() && isConfigured()}>
-                              <span class="provider-status-badge provider-status-configured">
+                              <Badge variant="secondary" class="text-[10px]">
                                 Configured
-                              </span>
+                              </Badge>
                             </Show>
                             <Show when={!isConnected() && !isConfigured()}>
-                              <span class="provider-status-badge provider-status-none">
+                              <Badge variant="destructive" class="text-[10px]">
                                 <XCircle class="w-3 h-3" />
                                 Not configured
-                              </span>
+                              </Badge>
                             </Show>
                           </div>
                         </div>
-                        <div class="provider-card-info">
-                          <div class="provider-card-name">{provider.name}</div>
-                          <div class="provider-card-details">
+                        <div>
+                          <div class="text-sm font-medium text-foreground">{provider.name}</div>
+                          <div class="text-xs text-muted-foreground">
                             {provider.modelCount} model{provider.modelCount !== 1 ? 's' : ''} available
                           </div>
                         </div>
-                        <div class="provider-card-actions">
-                          <button
-                            type="button"
-                            class="modal-button modal-button--secondary"
+                        <div class="flex items-center gap-2 mt-auto">
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             onClick={() => openProviderModal(provider.id)}
                           >
                             <Key class="w-3.5 h-3.5" />
                             Configure
-                          </button>
+                          </Button>
                           <Show when={isConfigured()}>
-                            <button
-                              type="button"
-                              class="modal-button modal-button--danger"
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              class="h-8 w-8"
                               onClick={() => removeProviderKeys(provider.id)}
                               title="Remove stored keys"
                             >
                               <Trash2 class="w-3.5 h-3.5" />
-                            </button>
+                            </Button>
                           </Show>
                         </div>
-                      </div>
+                      </Card>
                     )
                   }}
                 </For>
@@ -336,119 +359,117 @@ const ProviderSettingsPanel: Component = () => {
             </Show>
           </div>
 
-          <div class="text-xs text-secondary">
+          <p class="text-xs text-muted-foreground">
             Adding provider keys updates global environment variables. Restart is required because OpenCode reads env vars at process start.
-          </div>
+          </p>
         </Show>
       </div>
 
       <Dialog open={modalOpen()} onOpenChange={(open) => (open ? setModalOpen(true) : closeProviderModal())}>
-        <Dialog.Portal>
-          <Dialog.Overlay class="modal-overlay" />
-          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Dialog.Content class="modal-surface w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
-              <header class="px-6 py-4 border-b" style={{ "border-color": "var(--border-base)" }}>
-                <Dialog.Title class="text-lg font-semibold text-primary">
-                  {selectedProviderId() ? `Configure ${providerSummaryLabel(selectedProviderId()!)}` : "Add Provider"}
-                </Dialog.Title>
-                <div class="text-[11px] text-secondary mt-1">Pick a provider, enter only the keys it needs.</div>
-              </header>
+        <DialogContent class="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden rounded-xl shadow-xl">
+          <DialogHeader class="px-6 py-4 border-b border-border">
+            <DialogTitle>
+              {selectedProviderId() ? `Configure ${providerSummaryLabel(selectedProviderId()!)}` : "Add Provider"}
+            </DialogTitle>
+            <DialogDescription class="text-xs mt-1">Pick a provider, enter only the keys it needs.</DialogDescription>
+          </DialogHeader>
 
-              <div class="p-6 flex flex-col gap-4 overflow-y-auto">
-                <Show when={!selectedProviderId()}>
-                  <div class="flex items-center gap-2">
-                    <Search class="w-4 h-4 icon-muted" />
-                    <input
-                      class="selector-search-input flex-1"
-                      value={providerSearch()}
-                      onInput={(event) => setProviderSearch(event.currentTarget.value)}
-                      placeholder="Search providers (openai, anthropic, openrouter...)"
-                    />
-                  </div>
+          <div class="p-6 flex flex-col gap-4 overflow-y-auto">
+            <Show when={!selectedProviderId()}>
+              <div class="flex items-center gap-2">
+                <Search class="w-4 h-4 text-muted-foreground" />
+                <Input
+                  class="flex-1"
+                  value={providerSearch()}
+                  onInput={(event) => setProviderSearch(event.currentTarget.value)}
+                  placeholder="Search providers (openai, anthropic, openrouter...)"
+                />
+              </div>
 
-                  <div class="provider-list-grid">
-                    <For each={filteredProviders()}>
-                      {(entry) => (
-                        <button
-                          type="button"
-                          class="provider-list-item"
-                          onClick={() => openProviderModal(entry.id)}
-                        >
-                          <div class="provider-list-item-logo">
-                            <img
-                              src={getProviderLogoUrl(entry.id)}
-                              alt={entry.name}
-                              class="provider-logo-img-sm"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                              }}
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[400px] overflow-y-auto">
+                <For each={filteredProviders()}>
+                  {(entry) => (
+                    <button
+                      type="button"
+                      class={cn(
+                        "flex items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors",
+                        "hover:bg-secondary/80 cursor-pointer"
+                      )}
+                      onClick={() => openProviderModal(entry.id)}
+                    >
+                      <div class="w-8 h-8 rounded-md bg-secondary flex items-center justify-center overflow-hidden shrink-0">
+                        <img
+                          src={getProviderLogoUrl(entry.id)}
+                          alt={entry.name}
+                          class="w-5 h-5 object-contain"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-foreground">{entry.name}</div>
+                        <div class="text-xs text-muted-foreground">
+                          requires {entry.env?.length ?? 0} key{(entry.env?.length ?? 0) === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+
+            <Show when={selectedProvider()}>
+              {(entry) => (
+                <div class="space-y-3">
+                  <Card class="px-3 py-2">
+                    <div class="text-sm font-medium text-foreground">{entry().name}</div>
+                    <div class="text-xs text-muted-foreground">{entry().id}</div>
+                  </Card>
+
+                  <Show
+                    when={(entry().env?.length ?? 0) > 0}
+                    fallback={<p class="text-xs text-muted-foreground italic">No environment variables required for this provider.</p>}
+                  >
+                    <div class="space-y-2">
+                      <For each={entry().env}>
+                        {(key) => (
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <Label class="text-xs text-muted-foreground min-w-[220px]">{key}</Label>
+                            <Input
+                              type="password"
+                              class="flex-1 min-w-[240px]"
+                              value={draftKeys()[key] ?? ""}
+                              placeholder={envVars()[key] ? "(set)" : "Enter value"}
+                              onInput={(event) => setDraftKeys((prev) => ({ ...prev, [key]: event.currentTarget.value }))}
                             />
                           </div>
-                          <div class="provider-list-item-info">
-                            <div class="text-sm font-medium text-primary">{entry.name}</div>
-                            <div class="text-[11px] text-secondary">
-                              requires {entry.env?.length ?? 0} key{(entry.env?.length ?? 0) === 1 ? "" : "s"}
-                            </div>
-                          </div>
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-
-                <Show when={selectedProvider()}>
-                  {(entry) => (
-                    <div class="space-y-3">
-                      <div class="px-3 py-2 rounded-lg border bg-surface-secondary border-base">
-                        <div class="text-sm font-medium text-primary">{entry().name}</div>
-                        <div class="text-[11px] text-secondary">{entry().id}</div>
-                      </div>
-
-                      <Show
-                        when={(entry().env?.length ?? 0) > 0}
-                        fallback={<p class="text-[11px] text-secondary italic">No environment variables required for this provider.</p>}
-                      >
-                        <div class="space-y-2">
-                          <For each={entry().env}>
-                            {(key) => (
-                              <div class="flex items-center gap-2 flex-wrap">
-                                <div class="text-xs text-secondary min-w-[220px]">{key}</div>
-                                <input
-                                  type="password"
-                                  class="selector-search-input flex-1 min-w-[240px]"
-                                  value={draftKeys()[key] ?? ""}
-                                  placeholder={envVars()[key] ? "(set)" : "Enter value"}
-                                  onInput={(event) => setDraftKeys((prev) => ({ ...prev, [key]: event.currentTarget.value }))}
-                                />
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-
-                      <div class="text-[11px] text-secondary">
-                        Restart the instance after saving keys to load provider models.
-                      </div>
+                        )}
+                      </For>
                     </div>
-                  )}
-                </Show>
-              </div>
+                  </Show>
 
-              <div class="px-6 py-4 border-t flex items-center justify-end gap-2" style={{ "border-color": "var(--border-base)" }}>
-                <button type="button" class="selector-button selector-button-secondary" onClick={closeProviderModal}>
-                  Close
-                </button>
-                <Show when={selectedProviderId()}>
-                  <button type="button" class="selector-button" onClick={saveProviderKeys}>
-                    Save Keys
-                  </button>
-                </Show>
-              </div>
-            </Dialog.Content>
+                  <p class="text-xs text-muted-foreground">
+                    Restart the instance after saving keys to load provider models.
+                  </p>
+                </div>
+              )}
+            </Show>
           </div>
-        </Dialog.Portal>
+
+          <DialogFooter class="px-6 py-4 border-t border-border gap-2">
+            <Button variant="secondary" onClick={closeProviderModal}>
+              Close
+            </Button>
+            <Show when={selectedProviderId()}>
+              <Button onClick={saveProviderKeys}>
+                Save Keys
+              </Button>
+            </Show>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
-    </div>
+    </Card>
   )
 }
 

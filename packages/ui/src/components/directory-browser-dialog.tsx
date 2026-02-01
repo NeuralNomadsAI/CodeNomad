@@ -3,6 +3,9 @@ import { ArrowUpLeft, Eye, EyeOff, Folder as FolderIcon, Loader2, X } from "luci
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
+import { ScrollArea } from "./ui"
 
 function normalizePathKey(input?: string | null) {
   if (!input || input === "." || input === "./") {
@@ -274,44 +277,76 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={handleOverlayClick}>
-        <div class="modal-surface directory-browser-modal" role="dialog" aria-modal="true">
-          <div class="panel directory-browser-panel">
-            <div class="directory-browser-header">
-              <div class="directory-browser-heading">
-                <h3 class="directory-browser-title">{props.title}</h3>
-                <p class="directory-browser-description">
+      <div
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-6"
+        onClick={handleOverlayClick}
+      >
+        <div
+          class={cn(
+            "w-[min(960px,90vw)] h-[min(85vh,900px)] max-h-[90vh]",
+            "rounded-xl border bg-background shadow-2xl overflow-hidden"
+          )}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div class="flex flex-col h-full">
+            {/* Header */}
+            <div class={cn(
+              "flex items-start justify-between gap-5 p-6",
+              "border-b border-border bg-secondary"
+            )}>
+              <div class="flex flex-col gap-1.5">
+                <h3 class="text-2xl leading-tight font-semibold text-foreground">
+                  {props.title}
+                </h3>
+                <p class="text-lg leading-relaxed text-muted-foreground">
                   {props.description || "Browse folders under the configured workspace root."}
                 </p>
               </div>
               <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  class="selector-button selector-button-secondary flex items-center gap-1.5 text-xs"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleToggleHidden}
                   title={showHidden() ? "Hide hidden folders" : "Show hidden folders"}
+                  class="flex items-center gap-1.5 text-xs"
                 >
                   <Show when={showHidden()} fallback={<Eye class="w-3.5 h-3.5" />}>
                     <EyeOff class="w-3.5 h-3.5" />
                   </Show>
                   <span>{showHidden() ? "Hide ." : "Show ."}</span>
-                </button>
-                <button type="button" class="directory-browser-close" aria-label="Close" onClick={props.onClose}>
+                </Button>
+                <button
+                  type="button"
+                  class={cn(
+                    "inline-flex items-center justify-center w-10 h-10",
+                    "rounded-full border border-border bg-background text-foreground",
+                    "transition-colors hover:bg-accent"
+                  )}
+                  aria-label="Close"
+                  onClick={props.onClose}
+                >
                   <X class="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            <div class="panel-body directory-browser-body">
+            {/* Body */}
+            <div class="flex-1 min-h-0 p-6 flex flex-col gap-4 bg-background">
+              {/* Current path display */}
               <Show when={rootPath()}>
-                <div class="directory-browser-current">
-                  <div class="directory-browser-current-meta">
-                    <span class="directory-browser-current-label">Current folder</span>
-                    <span class="directory-browser-current-path">{currentAbsolutePath()}</span>
+                <div class="flex items-center justify-between gap-4 w-full">
+                  <div class="flex flex-col gap-0.5">
+                    <span class="text-sm uppercase tracking-[0.04em] text-muted-foreground">
+                      Current folder
+                    </span>
+                    <span class="font-mono text-base text-foreground">
+                      {currentAbsolutePath()}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={!canSelectCurrent()}
                     onClick={() => {
                       const absolute = currentAbsolutePath()
@@ -321,17 +356,19 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     }}
                   >
                     Select Current
-                  </button>
+                  </Button>
                 </div>
               </Show>
+
+              {/* Directory listing */}
               <Show
                 when={!loading() && !error()}
                 fallback={
-                  <div class="panel-empty-state flex-1">
-                    <Show when={loading()} fallback={<span class="text-red-500">{error()}</span>}>
-                      <div class="directory-browser-loading">
+                  <div class="flex-1 flex items-center justify-center p-6 text-center">
+                    <Show when={loading()} fallback={<span class="text-destructive">{error()}</span>}>
+                      <div class="inline-flex items-center gap-2 text-muted-foreground">
                         <Loader2 class="w-5 h-5 animate-spin" />
-                        <span>Loading folders…</span>
+                        <span>Loading folders...</span>
                       </div>
                     </Show>
                   </div>
@@ -339,48 +376,58 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
               >
                 <Show
                   when={folderRows().length > 0}
-                  fallback={<div class="panel-empty-state flex-1">No folders available.</div>}
+                  fallback={
+                    <div class="flex-1 flex items-center justify-center p-6 text-center text-muted-foreground">
+                      No folders available.
+                    </div>
+                  }
                 >
-                  <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto directory-browser-list" role="listbox">
+                  <ScrollArea class="flex-1 min-h-0" role="listbox">
                     <For each={folderRows()}>
                       {(item) => {
                         const isFolder = item.type === "folder"
                         const label = isFolder ? item.entry.name || item.entry.path : "Up one level"
                         const navigate = () => (isFolder ? handleNavigateTo(item.entry.path) : handleNavigateUp())
                         return (
-                          <div class="panel-list-item" role="option">
-                            <div class="panel-list-item-content directory-browser-row">
-                              <button type="button" class="directory-browser-row-main" onClick={navigate}>
-                                <div class="directory-browser-row-icon">
+                          <div class="border-b border-border last:border-b-0 transition-colors hover:bg-accent/50" role="option">
+                            <div class="flex items-center gap-4 px-4 py-3">
+                              <button
+                                type="button"
+                                class="flex flex-1 items-center gap-4 text-left bg-transparent border-none text-foreground p-0 cursor-pointer"
+                                onClick={navigate}
+                              >
+                                <div class={cn(
+                                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+                                  "bg-secondary text-muted-foreground"
+                                )}>
                                   <Show when={!isFolder} fallback={<FolderIcon class="w-4 h-4" />}>
                                     <ArrowUpLeft class="w-4 h-4" />
                                   </Show>
                                 </div>
-                                <div class="directory-browser-row-text">
-                                  <span class="directory-browser-row-name">{label}</span>
-                                </div>
+                                <span class="text-lg font-medium">{label}</span>
                                 <Show when={isFolder && isPathLoading(item.entry.path)}>
-                                  <Loader2 class="directory-browser-row-spinner animate-spin" />
+                                  <Loader2 class="w-[18px] h-[18px] text-muted-foreground animate-spin" />
                                 </Show>
                               </button>
                               {isFolder ? (
-                                <button
-                                  type="button"
-                                  class="selector-button selector-button-secondary directory-browser-select"
-                                  onClick={(event) => {
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  class="min-w-[90px]"
+                                  onClick={(event: MouseEvent) => {
                                     event.stopPropagation()
                                     handleEntrySelect(item.entry)
                                   }}
                                 >
                                   Select
-                                </button>
+                                </Button>
                               ) : null}
                             </div>
                           </div>
                         )
                       }}
                     </For>
-                  </div>
+                  </ScrollArea>
                 </Show>
               </Show>
             </div>

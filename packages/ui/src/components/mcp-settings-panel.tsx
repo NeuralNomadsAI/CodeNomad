@@ -23,6 +23,8 @@ import {
 } from "../stores/project-mcp"
 import { Settings, Globe, FolderCog, Plus } from "lucide-solid"
 import AddToGlobalModal from "./add-to-global-modal"
+import { cn } from "../lib/cn"
+import { Card, Badge, Button, Input, Switch, Label, Separator } from "./ui"
 
 const log = getLogger("actions")
 
@@ -226,19 +228,24 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
   }
 
   return (
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">MCP Servers</h3>
-        <p class="panel-subtitle">Registry stored in Era Code and applied to all instances</p>
+    <Card>
+      <div class="flex flex-col space-y-1.5 px-4 py-3 border-b border-border bg-secondary">
+        <h3 class="text-base font-semibold text-foreground">MCP Servers</h3>
+        <p class="text-xs text-muted-foreground">Registry stored in Era Code and applied to all instances</p>
       </div>
 
-      <div class="panel-body" style={{ gap: "var(--space-md)" }}>
+      <div class="p-4 space-y-4">
         {/* Scope selector */}
         <Show when={props.folder}>
-          <div class="mcp-scope-selector">
+          <div class="flex items-center gap-1 rounded-lg border border-border bg-secondary p-1">
             <button
               type="button"
-              class={`mcp-scope-btn ${scope() === "global" ? "active" : ""}`}
+              class={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                scope() === "global"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
               onClick={() => setScope("global")}
             >
               <Globe class="w-4 h-4" />
@@ -246,7 +253,12 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
             </button>
             <button
               type="button"
-              class={`mcp-scope-btn ${scope() === "project" ? "active" : ""}`}
+              class={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                scope() === "project"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
               onClick={() => setScope("project")}
             >
               <FolderCog class="w-4 h-4" />
@@ -255,30 +267,32 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
           </div>
         </Show>
 
-        <label class="text-xs text-secondary flex items-center" style={{ gap: "var(--space-sm)" }}>
-          <input
-            type="checkbox"
-            checked={preferences().mcpAutoApply}
-            onChange={(event) => updatePreferences({ mcpAutoApply: event.currentTarget.checked })}
-          />
-          Auto-apply MCP registry on instance start
-        </label>
+        <Switch
+          checked={preferences().mcpAutoApply}
+          onChange={(checked) => updatePreferences({ mcpAutoApply: checked })}
+          label="Auto-apply MCP registry on instance start"
+          class="text-xs"
+        />
 
-        <div class="flex items-end flex-wrap" style={{ gap: "var(--space-sm)" }}>
-          <div class="flex flex-col" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Name</label>
-            <input
-              class="modal-input min-w-[180px]"
+        <div class="flex items-end flex-wrap gap-2">
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Name</Label>
+            <Input
+              class="min-w-[180px]"
               value={newName()}
               onInput={(event) => setNewName(event.currentTarget.value)}
               placeholder="e.g. context7"
             />
           </div>
 
-          <div class="flex flex-col" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Type</label>
+          <div class="flex flex-col gap-1">
+            <Label class="text-xs text-muted-foreground">Type</Label>
             <select
-              class="modal-input min-w-[120px]"
+              class={cn(
+                "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "min-w-[120px]"
+              )}
               value={newType()}
               onChange={(event) => setNewType(event.currentTarget.value as McpServerConfig["type"])}
             >
@@ -288,10 +302,9 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
           </div>
 
           <Show when={newType() === "local"}>
-            <div class="flex flex-col flex-1 min-w-[280px]" style={{ gap: "var(--space-xs)" }}>
-              <label class="text-xs text-secondary">Command</label>
-              <input
-                class="modal-input"
+            <div class="flex flex-col flex-1 min-w-[280px] gap-1">
+              <Label class="text-xs text-muted-foreground">Command</Label>
+              <Input
                 value={newCommand()}
                 onInput={(event) => setNewCommand(event.currentTarget.value)}
                 placeholder='npx -y @modelcontextprotocol/server-everything'
@@ -300,10 +313,9 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
           </Show>
 
           <Show when={newType() === "remote"}>
-            <div class="flex flex-col flex-1 min-w-[280px]" style={{ gap: "var(--space-xs)" }}>
-              <label class="text-xs text-secondary">URL</label>
-              <input
-                class="modal-input"
+            <div class="flex flex-col flex-1 min-w-[280px] gap-1">
+              <Label class="text-xs text-muted-foreground">URL</Label>
+              <Input
                 value={newUrl()}
                 onInput={(event) => setNewUrl(event.currentTarget.value)}
                 placeholder="https://mcp.example.com/mcp"
@@ -311,95 +323,89 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
             </div>
           </Show>
 
-          <button type="button" class="modal-button modal-button--primary" onClick={createNewServer}>
+          <Button onClick={createNewServer}>
             Add
-          </button>
+          </Button>
 
-          <button type="button" class="modal-button modal-button--secondary" onClick={() => void applyAll()}>
+          <Button variant="secondary" onClick={() => void applyAll()}>
             Apply to Running Instances
-          </button>
+          </Button>
 
-          <button
-            type="button"
-            class="modal-button modal-button--primary"
-            onClick={() => props.onAddServer?.()}
-            title="Add a new MCP server with scope selection"
-          >
+          <Button onClick={() => props.onAddServer?.()} title="Add a new MCP server with scope selection">
             <Plus class="w-4 h-4" />
             Add Server
-          </button>
+          </Button>
         </div>
 
-        <div class="flex flex-col" style={{ gap: "var(--space-sm)" }}>
+        <div class="space-y-3">
           <For each={entries()}>
             {(entry) => (
-              <div class={`px-3 py-2 rounded-md border bg-surface-secondary border-base ${entry.builtIn ? "mcp-builtin-server" : ""}`}>
-                <div class="flex items-center justify-between" style={{ gap: "var(--space-sm)" }}>
+              <Card class={cn("px-3 py-2", entry.builtIn && "border-info/20")}>
+                <div class="flex items-center justify-between gap-2">
                   <div class="flex flex-col min-w-0 flex-1">
-                    <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
-                      <span class="text-sm text-primary font-medium truncate">{entry.name}</span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm text-foreground font-medium truncate">{entry.name}</span>
                       <Show when={entry.source === "era-code"}>
-                        <span class="mcp-badge mcp-badge-builtin">Era Code</span>
+                        <Badge variant="info" class="text-[10px] px-1.5 py-0">Era Code</Badge>
                       </Show>
                       <Show when={entry.source === "global" && scope() === "project"}>
-                        <span class="mcp-badge mcp-badge-global">Global</span>
+                        <Badge variant="secondary" class="text-[10px] px-1.5 py-0">Global</Badge>
                       </Show>
                       <Show when={entry.source === "project"}>
-                        <span class="mcp-badge mcp-badge-project">Project</span>
+                        <Badge variant="success" class="text-[10px] px-1.5 py-0">Project</Badge>
                       </Show>
                       <Show when={entry.hasProjectOverride}>
-                        <span class="mcp-badge mcp-badge-override">Override</span>
+                        <Badge variant="warning" class="text-[10px] px-1.5 py-0">Override</Badge>
                       </Show>
                     </div>
-                    <div class="text-xs text-secondary truncate">
+                    <div class="text-xs text-muted-foreground truncate">
                       {entry.builtInServer?.description ?? (entry.config.type === "local" ? entry.config.command.join(" ") : entry.config.url)}
                     </div>
                   </div>
-                  <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
+                  <div class="flex items-center gap-2">
                     <Show when={entry.builtIn && entry.builtInServer?.configurable}>
-                      <button
-                        type="button"
-                        class="modal-button modal-button--secondary"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => setConfiguringServer(configuringServer() === entry.name ? null : entry.name)}
                         title="Configure"
                       >
                         <Settings class="w-4 h-4" />
-                      </button>
+                      </Button>
                     </Show>
-                    <label class="text-xs text-secondary flex items-center" style={{ gap: "var(--space-xs)" }}>
-                      <input
-                        type="checkbox"
-                        checked={entry.desiredEnabled}
-                        onChange={(event) => {
-                          saveEntry(entry.name, entry.config, event.currentTarget.checked)
-                          void applyAll()
-                        }}
-                      />
-                      Enabled
-                    </label>
+                    <Switch
+                      checked={entry.desiredEnabled}
+                      onChange={(checked) => {
+                        saveEntry(entry.name, entry.config, checked)
+                        void applyAll()
+                      }}
+                      label="Enabled"
+                      class="text-xs"
+                    />
                     <Show when={!entry.builtIn}>
-                      <button
-                        type="button"
-                        class="modal-button modal-button--danger"
+                      <Button
+                        variant="destructive"
+                        size="sm"
                         onClick={() => removeEntry(entry.name)}
                       >
                         Remove
-                      </button>
+                      </Button>
                     </Show>
                   </div>
                 </div>
 
                 {/* Configurable options panel */}
                 <Show when={entry.builtIn && entry.builtInServer?.configurable && configuringServer() === entry.name}>
-                  <div class="mcp-config-panel">
+                  <Separator class="my-2" />
+                  <div class="space-y-2 pt-1">
                     <For each={Object.entries(entry.builtInServer!.configurable!)}>
                       {([key, option]) => (
-                        <div class="mcp-config-option">
-                          <label class="text-xs text-secondary">{option.label}</label>
+                        <div class="flex items-center gap-3">
+                          <Label class="text-xs text-muted-foreground min-w-[120px]">{option.label}</Label>
                           <Show when={option.type === "number"}>
-                            <input
+                            <Input
                               type="number"
-                              class="modal-input mcp-config-input"
+                              class="w-24"
                               value={getBuiltInMcpOptionValue(entry.name, key) as number}
                               onInput={(e) => {
                                 updateBuiltInMcpOption(entry.name, key, Number(e.currentTarget.value))
@@ -407,9 +413,9 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
                             />
                           </Show>
                           <Show when={option.type === "string"}>
-                            <input
+                            <Input
                               type="text"
-                              class="modal-input mcp-config-input"
+                              class="flex-1"
                               value={getBuiltInMcpOptionValue(entry.name, key) as string}
                               onInput={(e) => {
                                 updateBuiltInMcpOption(entry.name, key, e.currentTarget.value)
@@ -417,11 +423,10 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
                             />
                           </Show>
                           <Show when={option.type === "boolean"}>
-                            <input
-                              type="checkbox"
+                            <Switch
                               checked={getBuiltInMcpOptionValue(entry.name, key) as boolean}
-                              onChange={(e) => {
-                                updateBuiltInMcpOption(entry.name, key, e.currentTarget.checked)
+                              onChange={(checked) => {
+                                updateBuiltInMcpOption(entry.name, key, checked)
                               }}
                             />
                           </Show>
@@ -430,7 +435,7 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
                     </For>
                   </div>
                 </Show>
-              </div>
+              </Card>
             )}
           </For>
         </div>
@@ -452,7 +457,7 @@ const McpSettingsPanel: Component<McpSettingsPanelProps> = (props) => {
         </Show>
 
       </div>
-    </div>
+    </Card>
   )
 }
 

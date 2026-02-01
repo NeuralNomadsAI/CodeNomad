@@ -1,5 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onMount, Show, For } from "solid-js"
 import { Folder, RefreshCw, AlertTriangle, Plus, Save, Check, FolderOpen, ChevronDown } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 import DirectiveCardList from "./directive-card-list"
 import AddDirectiveModal from "./add-directive-modal"
 import type { ViewMode } from "./directive-card-list"
@@ -168,22 +170,22 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
   const currentProjectName = currentFolder ? getProjectName(currentFolder) : null
 
   return (
-    <div class="directives-panel">
+    <div class={cn("flex flex-col gap-6")}>
       {/* Header */}
-      <div class="directives-panel-header">
+      <div class={cn("flex items-center justify-between gap-4 flex-wrap")}>
         <div>
-          <h2 class="flex items-center gap-2">
-            <Folder class="w-5 h-5 text-green-400" />
+          <h2 class={cn("flex items-center gap-2 text-lg font-semibold text-foreground")}>
+            <Folder class="w-5 h-5 text-success" />
             Project Directives
           </h2>
-          <p>Conventions and rules specific to this codebase</p>
+          <p class={cn("text-sm mt-1 text-muted-foreground")}>Conventions and rules specific to this codebase</p>
         </div>
         <Show when={currentFolder}>
-          <div class="directives-panel-actions">
+          <div class={cn("flex items-center gap-3")}>
             <Show when={hasChanges()}>
-              <button
-                type="button"
-                class="directives-add-btn"
+              <Button
+                variant="default"
+                size="sm"
                 onClick={handleSave}
                 disabled={isSaving()}
               >
@@ -193,10 +195,13 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
                   <Save class="w-4 h-4" />
                 )}
                 Save Changes
-              </button>
+              </Button>
             </Show>
             <Show when={saveStatus()}>
-              <span class={`directives-save-status ${saveStatus()?.type}`}>
+              <span class={cn(
+                "flex items-center gap-2 text-sm",
+                saveStatus()?.type === "success" ? "text-success" : "text-destructive"
+              )}>
                 <Show when={saveStatus()?.type === "success"}>
                   <Check class="w-4 h-4" />
                 </Show>
@@ -206,33 +211,38 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
                 {saveStatus()?.message}
               </span>
             </Show>
-            <button
-              type="button"
-              class="directives-add-btn"
+            <Button
+              variant="default"
+              size="sm"
               onClick={() => openAddModal()}
             >
               <Plus class="w-4 h-4" />
               Add Directive
-            </button>
+            </Button>
           </div>
         </Show>
       </div>
 
       {/* Project Selector */}
       <Show when={openProjects().length > 0}>
-        <div class="project-selector">
-          <label class="project-selector-label">Project:</label>
+        <div class={cn("flex flex-wrap items-center gap-2 p-3 rounded-lg mb-4 bg-secondary border border-border")}>
+          <label class={cn("text-sm font-medium text-muted-foreground")}>Project:</label>
           <Show when={openProjects().length === 1}>
-            <div class="project-selector-single">
-              <Folder class="w-4 h-4 text-green-400" />
-              <span class="project-selector-name">{currentProjectName}</span>
-              <span class="project-selector-path" title={currentFolder}>{currentFolder}</span>
+            <div class={cn("flex items-center gap-2")}>
+              <Folder class="w-4 h-4 text-success" />
+              <span class={cn("text-sm font-semibold text-foreground")}>{currentProjectName}</span>
+              <span class={cn("text-xs truncate max-w-md font-mono text-muted-foreground")} title={currentFolder}>{currentFolder}</span>
             </div>
           </Show>
           <Show when={openProjects().length > 1}>
-            <div class="project-selector-dropdown">
+            <div class={cn("relative flex items-center")}>
               <select
-                class="project-selector-select"
+                class={cn(
+                  "pl-3 pr-8 py-1.5 rounded-md text-sm font-medium appearance-none cursor-pointer min-w-[150px]",
+                  "bg-background border border-border text-foreground",
+                  "hover:border-info",
+                  "focus:outline-none focus:border-info focus:shadow-[0_0_0_2px_rgba(59,130,246,0.2)]"
+                )}
                 value={currentFolder}
                 onChange={(e) => {
                   const newFolder = e.currentTarget.value
@@ -247,19 +257,19 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
                   )}
                 </For>
               </select>
-              <ChevronDown class="w-4 h-4 project-selector-chevron" />
+              <ChevronDown class={cn("w-4 h-4 absolute right-2 pointer-events-none text-muted-foreground")} />
             </div>
-            <span class="project-selector-path" title={currentFolder}>{currentFolder}</span>
+            <span class={cn("text-xs truncate max-w-md font-mono text-muted-foreground")} title={currentFolder}>{currentFolder}</span>
           </Show>
         </div>
       </Show>
 
       {/* No project open */}
       <Show when={!currentFolder && openProjects().length === 0}>
-        <div class="directives-empty">
-          <FolderOpen class="directives-empty-icon w-12 h-12" />
-          <p class="directives-empty-title">No Project Open</p>
-          <p class="directives-empty-description">
+        <div class={cn("flex flex-col items-center justify-center py-12 text-center text-muted-foreground")}>
+          <FolderOpen class={cn("w-12 h-12 mb-4 opacity-30")} />
+          <p class={cn("text-sm font-medium mb-1 text-foreground")}>No Project Open</p>
+          <p class={cn("text-xs max-w-sm mb-4 text-muted-foreground")}>
             Open a project to manage its directives. Project directives define
             coding conventions and rules specific to each codebase.
           </p>
@@ -268,7 +278,7 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
 
       <Show when={currentFolder}>
         <Show when={!isEraInstalled()}>
-          <div class="governance-notice governance-notice-warning">
+          <div class={cn("flex items-center gap-2 p-4 rounded-md bg-warning/10 text-warning")}>
             <AlertTriangle class="w-5 h-5" />
             <div>
               <strong>Era Code Not Installed</strong>
@@ -278,7 +288,7 @@ const ProjectDirectivesPanel: Component<ProjectDirectivesPanelProps> = (props) =
         </Show>
 
         <Show when={isDirectivesLoading()}>
-          <div class="directives-loading">
+          <div class={cn("flex items-center justify-center gap-2 py-8 text-muted-foreground")}>
             <RefreshCw class="w-5 h-5 animate-spin" />
             <span>Loading directives...</span>
           </div>

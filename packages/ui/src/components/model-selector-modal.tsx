@@ -2,6 +2,8 @@ import { Component, createSignal, createMemo, createEffect, For, Show, onMount }
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Search, X, ChevronDown, Loader2, Zap, Brain, Wrench } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 import {
   fetchModelsData,
   getAllProviders,
@@ -94,24 +96,27 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && handleCancel()} modal>
       <Dialog.Portal>
-        <Dialog.Overlay class="model-selector-overlay" />
+        <Dialog.Overlay class="fixed inset-0 z-40 bg-black/50" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="model-selector-modal">
+          <Dialog.Content class="w-full max-w-lg rounded-lg flex flex-col bg-background border border-border shadow-xl max-h-[80vh]">
             {/* Header */}
-            <div class="model-selector-header">
-              <Dialog.Title class="model-selector-title">Select Model</Dialog.Title>
-              <Dialog.CloseButton class="model-selector-close" onClick={handleCancel}>
+            <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+              <Dialog.Title class="text-base font-semibold text-foreground">Select Model</Dialog.Title>
+              <Dialog.CloseButton
+                class="p-1 rounded transition-colors text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={handleCancel}
+              >
                 <X class="w-4 h-4" />
               </Dialog.CloseButton>
             </div>
 
             {/* Search */}
-            <div class="model-selector-search">
-              <Search class="model-selector-search-icon" />
+            <div class="relative flex items-center px-4 py-3 border-b border-border">
+              <Search class="absolute left-7 w-4 h-4 text-muted-foreground" />
               <input
                 ref={searchInputRef}
                 type="text"
-                class="model-selector-search-input"
+                class="w-full pl-8 pr-8 py-2 text-sm rounded-md border border-border bg-secondary text-foreground outline-none placeholder:text-muted-foreground focus:border-info"
                 placeholder="Search models..."
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
@@ -119,7 +124,7 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
               <Show when={searchQuery()}>
                 <button
                   type="button"
-                  class="model-selector-search-clear"
+                  class="absolute right-7 p-1 rounded transition-colors text-muted-foreground hover:bg-accent hover:text-foreground"
                   onClick={() => setSearchQuery("")}
                 >
                   <X class="w-4 h-4" />
@@ -129,36 +134,36 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
 
             {/* Search Results */}
             <Show when={searchQuery().trim()}>
-              <div class="model-selector-search-results">
+              <div class="flex flex-col overflow-y-auto max-h-[300px] border-b border-border">
                 <Show when={isModelsLoading()}>
-                  <div class="model-selector-loading">
+                  <div class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                     <Loader2 class="w-5 h-5 animate-spin" />
                     <span>Loading models...</span>
                   </div>
                 </Show>
                 <Show when={!isModelsLoading() && searchResults().length === 0}>
-                  <div class="model-selector-empty">No models found</div>
+                  <div class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">No models found</div>
                 </Show>
                 <For each={searchResults()}>
                   {(result) => (
                     <button
                       type="button"
-                      class="model-selector-result"
+                      class="flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-border last:border-b-0 hover:bg-accent"
                       onClick={() => handleSearchResultSelect(result)}
                     >
                       <img
                         src={getProviderLogoUrl(result.provider.id)}
                         alt={result.provider.name}
-                        class="model-selector-result-logo"
+                        class="w-6 h-6 rounded flex-shrink-0 brightness-0 invert"
                         onError={(e) => {
                           e.currentTarget.style.display = "none"
                         }}
                       />
-                      <div class="model-selector-result-info">
-                        <span class="model-selector-result-name">{result.model.name}</span>
-                        <span class="model-selector-result-provider">{result.provider.name}</span>
+                      <div class="flex flex-col flex-1 min-w-0">
+                        <span class="text-sm font-medium truncate text-foreground">{result.model.name}</span>
+                        <span class="text-xs truncate text-muted-foreground">{result.provider.name}</span>
                       </div>
-                      <span class="model-selector-result-cost">
+                      <span class="text-xs font-mono flex-shrink-0 text-muted-foreground">
                         {formatModelCost(result.model.cost)}
                       </span>
                     </button>
@@ -169,10 +174,10 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
 
             {/* Provider/Model Selection */}
             <Show when={!searchQuery().trim()}>
-              <div class="model-selector-body">
+              <div class="flex flex-col gap-4 p-4">
                 {/* Provider Select */}
-                <div class="model-selector-field">
-                  <label class="model-selector-label">Provider</label>
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider</label>
                   <Select
                     value={selectedProviderId()}
                     onChange={(value) => {
@@ -186,14 +191,17 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
                     itemComponent={(itemProps) => {
                       const provider = providers().find(p => p.id === itemProps.item.rawValue)
                       return (
-                        <Select.Item item={itemProps.item} class="model-selector-option">
-                          <Select.ItemIndicator class="model-selector-option-indicator">
+                        <Select.Item
+                          item={itemProps.item}
+                          class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors text-foreground hover:bg-accent data-[highlighted]:bg-accent data-[selected]:bg-accent"
+                        >
+                          <Select.ItemIndicator class="w-4 text-center flex-shrink-0 text-info">
                             ✓
                           </Select.ItemIndicator>
                           <img
                             src={getProviderLogoUrl(itemProps.item.rawValue)}
                             alt=""
-                            class="model-selector-option-logo"
+                            class="w-5 h-5 rounded flex-shrink-0 brightness-0 invert"
                             onError={(e) => {
                               e.currentTarget.style.display = "none"
                             }}
@@ -203,17 +211,17 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
                       )
                     }}
                   >
-                    <Select.Trigger class="model-selector-trigger">
+                    <Select.Trigger class="flex items-center justify-between w-full px-3 py-2 text-sm rounded-md border border-border bg-secondary text-foreground transition-colors hover:border-info disabled:opacity-50 disabled:cursor-not-allowed">
                       <Select.Value<string>>
                         {(state) => {
                           const provider = providers().find(p => p.id === state.selectedOption())
                           return (
-                            <div class="model-selector-trigger-content">
+                            <div class="flex items-center gap-2">
                               <Show when={provider}>
                                 <img
                                   src={getProviderLogoUrl(provider!.id)}
                                   alt=""
-                                  class="model-selector-trigger-logo"
+                                  class="w-5 h-5 rounded brightness-0 invert"
                                   onError={(e) => {
                                     e.currentTarget.style.display = "none"
                                   }}
@@ -224,21 +232,21 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
                           )
                         }}
                       </Select.Value>
-                      <Select.Icon class="model-selector-trigger-icon">
+                      <Select.Icon class="text-muted-foreground">
                         <ChevronDown class="w-4 h-4" />
                       </Select.Icon>
                     </Select.Trigger>
                     <Select.Portal>
-                      <Select.Content class="model-selector-dropdown">
-                        <Select.Listbox class="model-selector-listbox" />
+                      <Select.Content class="rounded-md border border-border overflow-hidden z-50 bg-background shadow-lg">
+                        <Select.Listbox class="max-h-60 overflow-y-auto py-1" />
                       </Select.Content>
                     </Select.Portal>
                   </Select>
                 </div>
 
                 {/* Model Select */}
-                <div class="model-selector-field">
-                  <label class="model-selector-label">Model</label>
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Model</label>
                   <Select
                     value={selectedModelId()}
                     onChange={(value) => value && setSelectedModelId(value)}
@@ -248,13 +256,16 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
                     itemComponent={(itemProps) => {
                       const model = currentProviderModels().find(m => m.id === itemProps.item.rawValue)
                       return (
-                        <Select.Item item={itemProps.item} class="model-selector-option">
-                          <Select.ItemIndicator class="model-selector-option-indicator">
+                        <Select.Item
+                          item={itemProps.item}
+                          class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors text-foreground hover:bg-accent data-[highlighted]:bg-accent data-[selected]:bg-accent"
+                        >
+                          <Select.ItemIndicator class="w-4 text-center flex-shrink-0 text-info">
                             ✓
                           </Select.ItemIndicator>
-                          <div class="model-selector-option-content">
-                            <span class="model-selector-option-name">{model?.name || itemProps.item.rawValue}</span>
-                            <span class="model-selector-option-meta">
+                          <div class="flex items-center justify-between flex-1 gap-2">
+                            <span class="truncate">{model?.name || itemProps.item.rawValue}</span>
+                            <span class="text-xs font-mono flex-shrink-0 text-muted-foreground">
                               {formatModelCost(model?.cost)}
                             </span>
                           </div>
@@ -262,20 +273,23 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
                       )
                     }}
                   >
-                    <Select.Trigger class="model-selector-trigger" disabled={!selectedProviderId()}>
+                    <Select.Trigger
+                      class="flex items-center justify-between w-full px-3 py-2 text-sm rounded-md border border-border bg-secondary text-foreground transition-colors hover:border-info disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!selectedProviderId()}
+                    >
                       <Select.Value<string>>
                         {(state) => {
                           const model = currentProviderModels().find(m => m.id === state.selectedOption())
                           return model?.name || "Select model..."
                         }}
                       </Select.Value>
-                      <Select.Icon class="model-selector-trigger-icon">
+                      <Select.Icon class="text-muted-foreground">
                         <ChevronDown class="w-4 h-4" />
                       </Select.Icon>
                     </Select.Trigger>
                     <Select.Portal>
-                      <Select.Content class="model-selector-dropdown">
-                        <Select.Listbox class="model-selector-listbox" />
+                      <Select.Content class="rounded-md border border-border overflow-hidden z-50 bg-background shadow-lg">
+                        <Select.Listbox class="max-h-60 overflow-y-auto py-1" />
                       </Select.Content>
                     </Select.Portal>
                   </Select>
@@ -283,32 +297,32 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
 
                 {/* Model Info */}
                 <Show when={selectedModel()}>
-                  <div class="model-selector-info">
-                    <div class="model-selector-info-row">
-                      <span class="model-selector-info-label">Context / Output</span>
-                      <span class="model-selector-info-value">
+                  <div class="p-3 rounded-lg bg-secondary">
+                    <div class="flex items-center justify-between py-1.5 border-b border-border">
+                      <span class="text-xs text-muted-foreground">Context / Output</span>
+                      <span class="text-xs font-mono text-muted-foreground">
                         {formatModelLimit(selectedModel()?.limit)}
                       </span>
                     </div>
-                    <div class="model-selector-info-row">
-                      <span class="model-selector-info-label">Pricing (per 1M tokens)</span>
-                      <span class="model-selector-info-value">
+                    <div class="flex items-center justify-between py-1.5">
+                      <span class="text-xs text-muted-foreground">Pricing (per 1M tokens)</span>
+                      <span class="text-xs font-mono text-muted-foreground">
                         {formatModelCost(selectedModel()?.cost)}
                       </span>
                     </div>
-                    <div class="model-selector-info-features">
+                    <div class="flex items-center gap-2 pt-2 mt-2 border-t border-border">
                       <Show when={selectedModel()?.reasoning}>
-                        <span class="model-selector-feature" title="Reasoning">
+                        <span class="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-background text-muted-foreground" title="Reasoning">
                           <Brain class="w-3.5 h-3.5" /> Reasoning
                         </span>
                       </Show>
                       <Show when={selectedModel()?.tool_call}>
-                        <span class="model-selector-feature" title="Tool Use">
+                        <span class="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-background text-muted-foreground" title="Tool Use">
                           <Wrench class="w-3.5 h-3.5" /> Tools
                         </span>
                       </Show>
                       <Show when={selectedModel()?.attachment}>
-                        <span class="model-selector-feature" title="Attachments">
+                        <span class="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-background text-muted-foreground" title="Attachments">
                           <Zap class="w-3.5 h-3.5" /> Vision
                         </span>
                       </Show>
@@ -318,7 +332,7 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
 
                 {/* Error state */}
                 <Show when={getModelsFetchError()}>
-                  <div class="model-selector-error">
+                  <div class="text-xs p-2 rounded bg-destructive/10 text-destructive">
                     Failed to load models. Using cached data if available.
                   </div>
                 </Show>
@@ -326,22 +340,19 @@ const ModelSelectorModal: Component<ModelSelectorModalProps> = (props) => {
             </Show>
 
             {/* Footer */}
-            <div class="model-selector-footer">
-              <button
-                type="button"
-                class="model-selector-button model-selector-button-secondary"
+            <div class="flex justify-end gap-2 px-4 py-3 border-t border-border">
+              <Button
+                variant="secondary"
                 onClick={handleCancel}
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                class="model-selector-button model-selector-button-primary"
+              </Button>
+              <Button
                 onClick={handleConfirm}
                 disabled={!selectedProviderId() || !selectedModelId()}
               >
                 Select
-              </button>
+              </Button>
             </div>
           </Dialog.Content>
         </div>

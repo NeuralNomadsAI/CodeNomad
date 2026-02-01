@@ -7,7 +7,7 @@ interface ContextUsagePanelProps {
   sessionId: string
 }
 
-const chipClass = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
+const chipClass = "inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-primary"
 const chipLabelClass = "uppercase text-[10px] tracking-wide text-primary/70"
 const headingClass = "text-xs font-semibold text-primary/70 uppercase tracking-wide"
 
@@ -37,7 +37,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const costDisplay = createMemo(() => `$${costValue().toFixed(2)}`)
 
   return (
-    <div class="session-context-panel border-r border-base border-b px-3 py-3">
+    <div class="flex flex-col gap-2 p-3 bg-background border-t border-border border-r border-border border-b">
       <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
         <div class={headingClass}>Tokens</div>
         <div class={chipClass}>

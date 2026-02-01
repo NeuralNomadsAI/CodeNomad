@@ -4,7 +4,7 @@ test.describe("EC-040 Governance UI Enhancement", () => {
   test.setTimeout(120000) // 2 minute timeout
 
   test.beforeEach(async ({ page }) => {
-    await page.goto("http://localhost:3003/")
+    await page.goto("http://localhost:3000/")
     await page.waitForLoadState("domcontentloaded")
     // Wait for app to fully load
     await page.waitForTimeout(2000)

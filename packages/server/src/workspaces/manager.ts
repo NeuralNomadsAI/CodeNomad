@@ -9,6 +9,7 @@ import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { WorkspaceRuntime } from "./runtime"
 import { Logger } from "../logger"
+import { ToolRegistry } from "../tools/tool-registry"
 
 interface WorkspaceManagerOptions {
   rootDir: string
@@ -20,12 +21,30 @@ interface WorkspaceManagerOptions {
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
 
+/**
+ * Build the environment variables for a workspace process.
+ * Extracted as a standalone function for testability.
+ */
+export function buildWorkspaceEnvironment(prefs: Record<string, unknown>): Record<string, string> {
+  return {
+    ...((prefs.environmentVariables ?? {}) as Record<string, string>),
+    ERA_MAX_SUBAGENT_ITERATIONS: String((prefs as any).maxSubagentIterations ?? 3),
+    ERA_AGENT_AUTONOMY: String((prefs as any).agentAutonomy ?? "balanced"),
+  }
+}
+
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly toolRegistries = new Map<string, ToolRegistry>()
   private readonly runtime: WorkspaceRuntime
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
+  }
+
+  /** Get the ToolRegistry for a workspace, if one exists */
+  getToolRegistry(workspaceId: string): ToolRegistry | undefined {
+    return this.toolRegistries.get(workspaceId)
   }
 
   list(): WorkspaceDescriptor[] {
@@ -127,7 +146,13 @@ export class WorkspaceManager {
 
     this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
 
-    const environment = this.options.configStore.get().preferences.environmentVariables ?? {}
+    const prefs = this.options.configStore.get().preferences
+    const environment = buildWorkspaceEnvironment(prefs as unknown as Record<string, unknown>)
+
+    // Create a ToolRegistry for this workspace (populated with built-in tools;
+    // MCP tools will be registered as MCP servers connect via event bus)
+    const toolRegistry = new ToolRegistry()
+    this.toolRegistries.set(id, toolRegistry)
 
     try {
       const { pid, port } = await this.runtime.launch({
@@ -187,6 +212,7 @@ export class WorkspaceManager {
     }
 
     this.workspaces.delete(id)
+    this.toolRegistries.delete(id)
     clearWorkspaceSearchCache(workspace.path)
 
     // Always publish stopped event after successful deletion

@@ -53,8 +53,16 @@ export type McpServerConfig = McpLocalServerConfig | McpRemoteServerConfig
 
 export type BinaryPreferenceSource = "user" | "auto"
 
-/** Thinking mode for extended thinking feature */
-export type ThinkingMode = "auto" | "enabled" | "disabled"
+/** Extended thinking mode (Anthropic-style) */
+export type ThinkingModeExtended = "auto" | "enabled" | "disabled"
+/** Budget-based reasoning mode (OpenAI-style) */
+export type ThinkingModeBudget = "low" | "medium" | "high"
+/** Simple boolean reasoning mode (generic) */
+export type ThinkingModeBoolean = "on" | "off"
+/** Union of all thinking mode values */
+export type ThinkingMode = ThinkingModeExtended | ThinkingModeBudget | ThinkingModeBoolean
+/** Reasoning flavor determines which option set to show */
+export type ReasoningFlavor = "extended" | "budget" | "boolean"
 
 /** Per-model thinking mode selections */
 export type ModelThinkingSelections = Record<string, ThinkingMode>
@@ -97,9 +105,27 @@ export interface Preferences {
   /** Favorite model identifiers (e.g., "providerId/modelId") */
   modelFavorites: string[]
 
+  // GitHub
+  defaultClonePath?: string
+
   // Update checking preferences (synced from server)
   lastUpdateCheckTime?: number
   autoCheckForUpdates: boolean
+
+  // Sub-agent configuration
+  maxSubagentIterations: number
+  agentAutonomy: "conservative" | "balanced" | "aggressive"
+
+  // Tool routing configuration
+  toolRouting: {
+    globalDeny: string[]
+    profiles: Record<string, {
+      addCategories?: string[]
+      removeCategories?: string[]
+      addTools?: string[]
+      denyTools?: string[]
+    } | undefined>
+  }
 }
 
 
@@ -155,6 +181,13 @@ const defaultPreferences: Preferences = {
 
   // Update checking
   autoCheckForUpdates: true,
+
+  // Sub-agent configuration
+  maxSubagentIterations: 3,
+  agentAutonomy: "balanced",
+
+  // Tool routing
+  toolRouting: { globalDeny: [], profiles: {} },
 }
 
 
@@ -221,9 +254,21 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     modelThinkingSelections,
     modelFavorites,
 
+    // GitHub
+    defaultClonePath: sanitized.defaultClonePath,
+
     // Update checking
     lastUpdateCheckTime: sanitized.lastUpdateCheckTime,
     autoCheckForUpdates: sanitized.autoCheckForUpdates ?? defaultPreferences.autoCheckForUpdates,
+
+    // Sub-agent configuration
+    maxSubagentIterations: Math.min(10, Math.max(1, sanitized.maxSubagentIterations ?? defaultPreferences.maxSubagentIterations)),
+    agentAutonomy: (["conservative", "balanced", "aggressive"].includes(sanitized.agentAutonomy as string)
+      ? sanitized.agentAutonomy
+      : defaultPreferences.agentAutonomy) as "conservative" | "balanced" | "aggressive",
+
+    // Tool routing
+    toolRouting: sanitized.toolRouting ?? defaultPreferences.toolRouting,
   }
 }
 
@@ -469,6 +514,21 @@ function toggleAutoApprovePermissions(): void {
   updatePreferences({ autoApprovePermissions: nextValue })
 }
 
+function setMaxSubagentIterations(value: number): void {
+  const clamped = Math.min(10, Math.max(1, Math.round(value)))
+  if (preferences().maxSubagentIterations === clamped) return
+  updatePreferences({ maxSubagentIterations: clamped })
+}
+
+function setAgentAutonomy(value: "conservative" | "balanced" | "aggressive"): void {
+  if (preferences().agentAutonomy === value) return
+  updatePreferences({ agentAutonomy: value })
+}
+
+function setDefaultClonePath(path: string): void {
+  updatePreferences({ defaultClonePath: path || undefined })
+}
+
 function addRecentFolder(path: string): void {
   updateConfig((draft) => {
     draft.recentFolders = buildRecentFolderList(path, draft.recentFolders)
@@ -561,6 +621,70 @@ function setDefaultModels(models: Record<string, ModelPreference>): void {
 }
 
 /**
+ * Determine the reasoning flavor for a given provider.
+ * - Anthropic / Bedrock / Vertex → extended (auto/enabled/disabled)
+ * - OpenAI / Azure → budget (low/medium/high)
+ * - Everything else → boolean (on/off)
+ */
+function getReasoningFlavor(providerId: string): ReasoningFlavor {
+  const id = providerId.toLowerCase()
+  if (id.includes("anthropic") || id.includes("bedrock") || id.includes("vertex")) {
+    return "extended"
+  }
+  if (id.includes("openai") || id.includes("azure")) {
+    return "budget"
+  }
+  return "boolean"
+}
+
+/**
+ * Get the default thinking mode for a given flavor.
+ */
+function getDefaultThinkingMode(flavor: ReasoningFlavor): ThinkingMode {
+  switch (flavor) {
+    case "extended":
+      return "auto"
+    case "budget":
+      return "medium"
+    case "boolean":
+      return "off"
+  }
+}
+
+const EXTENDED_MODES: ThinkingMode[] = ["auto", "enabled", "disabled"]
+const BUDGET_MODES: ThinkingMode[] = ["low", "medium", "high"]
+const BOOLEAN_MODES: ThinkingMode[] = ["on", "off"]
+
+/**
+ * Get the valid modes for a flavor.
+ */
+function getModesForFlavor(flavor: ReasoningFlavor): ThinkingMode[] {
+  switch (flavor) {
+    case "extended":
+      return EXTENDED_MODES
+    case "budget":
+      return BUDGET_MODES
+    case "boolean":
+      return BOOLEAN_MODES
+  }
+}
+
+/**
+ * Get the effective thinking mode for a model, falling back to the flavor default
+ * if the stored mode doesn't match the current flavor.
+ */
+function getEffectiveThinkingMode(modelKey: string, providerId: string): ThinkingMode {
+  if (!modelKey) return "auto"
+  const stored = preferences().modelThinkingSelections?.[modelKey]
+  const flavor = getReasoningFlavor(providerId)
+  const validModes = getModesForFlavor(flavor)
+  if (stored && validModes.includes(stored)) {
+    return stored
+  }
+  return getDefaultThinkingMode(flavor)
+}
+
+/**
  * Set the thinking mode for a specific model.
  * @param modelKey - The model identifier (e.g., "claude-sonnet-4" or "providerId/modelId")
  * @param mode - The thinking mode to set
@@ -568,15 +692,8 @@ function setDefaultModels(models: Record<string, ModelPreference>): void {
 function setModelThinkingMode(modelKey: string, mode: ThinkingMode): void {
   if (!modelKey) return
   const current = preferences().modelThinkingSelections ?? {}
-  // Skip update if mode is the same
   if (current[modelKey] === mode) return
-  // If mode is "auto", remove the entry (auto is the default)
-  if (mode === "auto") {
-    const { [modelKey]: removed, ...rest } = current
-    updatePreferences({ modelThinkingSelections: rest })
-  } else {
-    updatePreferences({ modelThinkingSelections: { ...current, [modelKey]: mode } })
-  }
+  updatePreferences({ modelThinkingSelections: { ...current, [modelKey]: mode } })
 }
 
 /**
@@ -683,9 +800,16 @@ interface ConfigContextValue {
   addRecentModelPreference: typeof addRecentModelPreference
   setAgentModelPreference: typeof setAgentModelPreference
   getAgentModelPreference: typeof getAgentModelPreference
+  setMaxSubagentIterations: typeof setMaxSubagentIterations
+  setAgentAutonomy: typeof setAgentAutonomy
+  setDefaultClonePath: typeof setDefaultClonePath
   setDefaultModels: typeof setDefaultModels
   setModelThinkingMode: typeof setModelThinkingMode
   getModelThinkingMode: typeof getModelThinkingMode
+  getReasoningFlavor: typeof getReasoningFlavor
+  getDefaultThinkingMode: typeof getDefaultThinkingMode
+  getEffectiveThinkingMode: typeof getEffectiveThinkingMode
+  getModesForFlavor: typeof getModesForFlavor
   addModelFavorite: typeof addModelFavorite
   removeModelFavorite: typeof removeModelFavorite
   toggleModelFavorite: typeof toggleModelFavorite
@@ -730,9 +854,16 @@ const configContextValue: ConfigContextValue = {
   addRecentModelPreference,
   setAgentModelPreference,
   getAgentModelPreference,
+  setMaxSubagentIterations,
+  setAgentAutonomy,
+  setDefaultClonePath,
   setDefaultModels,
   setModelThinkingMode,
   getModelThinkingMode,
+  getReasoningFlavor,
+  getDefaultThinkingMode,
+  getEffectiveThinkingMode,
+  getModesForFlavor,
   addModelFavorite,
   removeModelFavorite,
   toggleModelFavorite,
@@ -804,15 +935,22 @@ export {
   themePreference,
   setThemePreference,
   recordWorkspaceLaunch,
+  setMaxSubagentIterations,
+  setAgentAutonomy,
+  setDefaultClonePath,
   setDefaultModels,
   setModelThinkingMode,
   getModelThinkingMode,
+  getReasoningFlavor,
+  getDefaultThinkingMode,
+  getEffectiveThinkingMode,
+  getModesForFlavor,
   addModelFavorite,
   removeModelFavorite,
   toggleModelFavorite,
   isModelFavorite,
   getModelFavorites,
 }
- 
+
 
 

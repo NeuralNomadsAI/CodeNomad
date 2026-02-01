@@ -19,7 +19,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
 import { instances, addPermissionToQueue, removePermissionFromQueue, sendPermissionResponse } from "./instances"
 import { showAlertDialog } from "./alerts"
-import { sessions, setSessions, withSession, markSubagentComplete } from "./session-state"
+import { sessions, setSessions, withSession, markSubagentComplete, activeParentSessionId, markSessionCompleted, isSubagentTitle } from "./session-state"
 import { getEffectivePermissionState } from "./session-permissions"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -29,6 +29,10 @@ import { loadMessages } from "./session-api"
 import { setSessionCompactionState } from "./session-compaction"
 import { scheduleChildCleanup, updateSessionActivity, cancelScheduledCleanup } from "./session-cleanup"
 import { processToolCallForWorkspace } from "./workspace-state"
+import { retrieveToolInstructions, flushSession } from "./instruction-retrieval"
+import { recordFirstToken, addDeltaChars, setCompleted } from "./streaming-metrics"
+import { addQuestionRequest, removeQuestionRequest } from "./question-store"
+import type { QuestionRequest } from "./question-store"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
@@ -126,6 +130,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
  
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
 
+    // Track streaming metrics for text parts
+    if (part.type === "text" && typeof (part as any).text === "string") {
+      recordFirstToken(instanceId, sessionId)
+      const textLen = ((part as any).text as string).length
+      addDeltaChars(instanceId, sessionId, textLen)
+    }
+
     // Track tool calls for workspace panel
     if (part.type === "tool" && typeof part.tool === "string") {
       const toolState = (part as any).state
@@ -140,6 +151,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
         input,
         toolStatus
       )
+
+      // Fire-and-forget: retrieve tool-specific instructions when a tool starts running
+      if (toolStatus === "running") {
+        const folder = instances().get(instanceId)?.folder
+        const projectName = folder?.split("/").pop() ?? undefined
+        retrieveToolInstructions(instanceId, sessionId, part.tool, { projectName }).catch(() => {})
+      }
     }
 
     updateSessionInfo(instanceId, sessionId)
@@ -183,6 +201,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
 
+    // Record completion metrics for assistant messages
+    if (info.role === "assistant") {
+      const completedAt = (info.time as { completed?: number })?.completed ?? Date.now()
+      const outputTokens = (info as any).tokens?.output ?? 0
+      setCompleted(instanceId, sessionId, outputTokens, completedAt)
+    }
+
     updateSessionInfo(instanceId, sessionId)
   }
 }
@@ -220,6 +245,15 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
             updated: Date.now(),
           },
     } as any
+
+    // Re-parent subagent sessions that arrive without parentID
+    if (newSession.parentId === null && isSubagentTitle(newSession.title)) {
+      const activeParent = activeParentSessionId().get(instanceId)
+      if (activeParent && activeParent !== newSession.id) {
+        newSession.parentId = activeParent
+        log.info(`[SSE] Re-parented subagent "${newSession.title}" under parent ${activeParent}`)
+      }
+    }
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -294,10 +328,20 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
     log.info(`Marked subagent ${sessionId} as complete at parent message count ${parentMessageCount}`)
   }
 
+  // Flush retrieval access counts to server
+  flushSession(instanceId, sessionId).catch(() => {})
+
   // Update session status to idle
   withSession(instanceId, sessionId, (s) => {
     s.status = "idle"
   })
+
+  // Mark as unread completion if not the currently active parent session
+  const parentId = session?.parentId ?? sessionId
+  const activeParent = activeParentSessionId().get(instanceId)
+  if (parentId !== activeParent) {
+    markSessionCompleted(instanceId, parentId)
+  }
 }
 
 function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
@@ -423,12 +467,47 @@ function handlePermissionReplied(instanceId: string, event: EventPermissionRepli
   removePermissionV2(instanceId, permissionID)
 }
 
+function handleQuestionEvent(instanceId: string, event: { type: string; properties: Record<string, unknown> }): void {
+  const props = event.properties
+  if (!props) return
+
+  switch (event.type) {
+    case "question.asked": {
+      const request = props as unknown as QuestionRequest
+      if (!request.id || !request.sessionID) {
+        log.warn("[SSE] Malformed question.asked event", props)
+        return
+      }
+      log.info(`[SSE] Question asked: ${request.id} for session ${request.sessionID}`)
+      addQuestionRequest(instanceId, request)
+      break
+    }
+    case "question.replied": {
+      const sessionID = props.sessionID as string
+      const requestID = props.requestID as string
+      if (!sessionID || !requestID) return
+      log.info(`[SSE] Question replied: ${requestID}`)
+      removeQuestionRequest(instanceId, sessionID, requestID)
+      break
+    }
+    case "question.rejected": {
+      const sessionID = props.sessionID as string
+      const requestID = props.requestID as string
+      if (!sessionID || !requestID) return
+      log.info(`[SSE] Question rejected: ${requestID}`)
+      removeQuestionRequest(instanceId, sessionID, requestID)
+      break
+    }
+  }
+}
+
 export {
   handleMessagePartRemoved,
   handleMessageRemoved,
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,
+  handleQuestionEvent,
   handleSessionCompacted,
   handleSessionError,
   handleSessionIdle,

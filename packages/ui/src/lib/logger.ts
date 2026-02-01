@@ -1,6 +1,6 @@
 import debug from "debug"
 
-export type LoggerNamespace = "sse" | "api" | "session" | "actions" | "models-api" | "commands-settings" | "session-cleanup" | "era-status" | "era-governance" | "era-directives" | "governance-advanced" | "directives-editor" | "constitution-viewer" | "github-auth" | "workspace" | "mcp-settings" | "file-conflicts" | "process-manager" | "update-checker"
+export type LoggerNamespace = "sse" | "api" | "session" | "actions" | "models-api" | "commands-settings" | "session-cleanup" | "era-status" | "era-governance" | "era-directives" | "governance-advanced" | "directives-editor" | "constitution-viewer" | "github-auth" | "github-repos" | "workspace" | "mcp-settings" | "file-conflicts" | "process-manager" | "update-checker" | "activity-monitor" | "question-store" | "instruction-capture" | "instruction-retrieval"
 
 interface Logger {
   log: (...args: unknown[]) => void
@@ -22,7 +22,7 @@ export interface LoggerControls {
   disableAllLoggers: () => void
 }
 
-const KNOWN_NAMESPACES: LoggerNamespace[] = ["sse", "api", "session", "actions", "models-api", "commands-settings", "session-cleanup", "era-status", "era-governance", "era-directives", "governance-advanced", "directives-editor", "constitution-viewer", "github-auth", "workspace", "mcp-settings", "file-conflicts", "process-manager", "update-checker"]
+const KNOWN_NAMESPACES: LoggerNamespace[] = ["sse", "api", "session", "actions", "models-api", "commands-settings", "session-cleanup", "era-status", "era-governance", "era-directives", "governance-advanced", "directives-editor", "constitution-viewer", "github-auth", "github-repos", "workspace", "mcp-settings", "file-conflicts", "process-manager", "update-checker", "activity-monitor", "question-store", "instruction-capture", "instruction-retrieval"]
 const STORAGE_KEY = "opencode:logger:namespaces"
 
 const namespaceLoggers = new Map<LoggerNamespace, Logger>()

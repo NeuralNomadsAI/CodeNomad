@@ -10,6 +10,7 @@ import { keyboardRegistry, type KeyboardShortcut } from "../lib/keyboard-registr
 import { isMac } from "../lib/keyboard-utils"
 import { showToastNotification } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
+import { cn } from "../lib/cn"
 const log = getLogger("actions")
 
 
@@ -82,7 +83,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     if (typeof document !== "undefined") {
       activeElement = document.activeElement as HTMLElement | null
     }
-    const insideModal = activeElement?.closest(".modal-surface") || activeElement?.closest("[role='dialog']")
+    const insideModal = activeElement?.closest("[data-modal-surface]") || activeElement?.closest("[role='dialog']")
     const isEditingField =
       activeElement &&
       (["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName) ||
@@ -313,7 +314,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
   }
 
   return (
-    <div class="flex-1 flex flex-col overflow-hidden bg-surface-secondary">
+    <div class="flex-1 flex flex-col overflow-hidden bg-secondary">
       <div class="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-auto min-w-0">
         <div class="flex-1 flex flex-col gap-4 min-h-0 min-w-0">
           <Show
@@ -322,8 +323,8 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
               <Show
                 when={isFetchingSessions()}
                 fallback={
-                  <div class="panel panel-empty-state flex-1 flex flex-col justify-center">
-                    <div class="panel-empty-state-icon">
+                  <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground p-6 text-center flex-1 flex flex-col justify-center">
+                    <div class="text-muted-foreground mb-2">
                       <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path
                           stroke-linecap="round"
@@ -333,39 +334,39 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                         />
                       </svg>
                     </div>
-                    <p class="panel-empty-state-title">No Previous Sessions</p>
-                    <p class="panel-empty-state-description">Create a new session below to get started</p>
+                    <p class="font-medium text-sm mb-1 text-muted-foreground">No Previous Sessions</p>
+                    <p class="text-xs text-muted-foreground">Create a new session below to get started</p>
                     <Show when={!isDesktopLayout() && !showInstanceInfoOverlay()}>
-                      <button type="button" class="button-tertiary mt-4 lg:hidden" onClick={openInstanceInfoOverlay}>
+                      <button type="button" class="inline-flex items-center justify-center gap-2 font-medium px-3 py-1.5 rounded-md text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed mt-4 lg:hidden" onClick={openInstanceInfoOverlay}>
                         View Instance Info
                       </button>
                     </Show>
                   </div>
                 }
               >
-                <div class="panel panel-empty-state flex-1 flex flex-col justify-center">
-                  <div class="panel-empty-state-icon">
-                    <Loader2 class="w-12 h-12 mx-auto animate-spin text-muted" />
+                <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground p-6 text-center flex-1 flex flex-col justify-center">
+                  <div class="text-muted-foreground mb-2">
+                    <Loader2 class="w-12 h-12 mx-auto animate-spin text-muted-foreground" />
                   </div>
-                  <p class="panel-empty-state-title">Loading Sessions</p>
-                  <p class="panel-empty-state-description">Fetching your previous sessions...</p>
+                  <p class="font-medium text-sm mb-1 text-muted-foreground">Loading Sessions</p>
+                  <p class="text-xs text-muted-foreground">Fetching your previous sessions...</p>
                 </div>
               </Show>
             }
           >
-            <div class="panel flex flex-col flex-1 min-h-0">
-              <div class="panel-header">
+            <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground flex flex-col flex-1 min-h-0">
+              <div class="px-4 py-3 border-b border-border bg-secondary">
                 <div class="flex flex-row flex-wrap items-center gap-2 justify-between">
                   <div>
-                    <h2 class="panel-title">Resume Session</h2>
-                    <p class="panel-subtitle">
+                    <h2 class="text-base font-semibold text-foreground">Resume Session</h2>
+                    <p class="text-xs mt-0.5 text-muted-foreground">
                       {parentSessions().length} {parentSessions().length === 1 ? "session" : "sessions"} available
                     </p>
                   </div>
                   <Show when={!isDesktopLayout() && !showInstanceInfoOverlay()}>
                     <button
                       type="button"
-                      class="button-tertiary lg:hidden flex-shrink-0"
+                      class="inline-flex items-center justify-center gap-2 font-medium px-3 py-1.5 rounded-md text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed lg:hidden flex-shrink-0"
                       onClick={openInstanceInfoOverlay}
                     >
                       View Instance Info
@@ -373,22 +374,22 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                   </Show>
                 </div>
               </div>
-              <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto">
+              <div class="max-h-none h-full overflow-y-auto w-full min-w-0 overflow-x-hidden flex-1 min-h-0 overflow-auto">
                 <For each={parentSessions()}>
                   {(session, index) => {
                     const isFocused = () => focusMode() === "sessions" && selectedIndex() === index()
                     return (
                       <div
-                        class="panel-list-item"
-                        classList={{
-                          "panel-list-item-highlight": isFocused(),
-                        }}
+                        class={cn(
+                          "border-b last:border-b-0 transition-colors w-full border-border hover:bg-accent",
+                          isFocused() && "bg-accent shadow-[inset_0_0_0_1px_hsl(var(--border))]",
+                        )}
                       >
                         <div class="flex items-center gap-2 w-full px-1">
                           <button
                             type="button"
                             data-session-index={index()}
-                            class="panel-list-item-content group flex-1"
+                            class="flex-1 text-left px-4 py-3 flex items-center justify-between gap-3 outline-none transition-colors w-full min-w-0 group"
                             onClick={() => handleSessionSelect(session.id)}
                             onMouseEnter={() => {
                               setFocusMode("sessions")
@@ -407,7 +408,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                                     {session.title || "Untitled Session"}
                                   </span>
                                 </div>
-                                <div class="flex items-center gap-3 text-xs text-muted mt-0.5">
+                                <div class="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
                                   <span>{session.agent}</span>
                                   <span>•</span>
                                   <span>{formatRelativeTime(session.time.updated)}</span>
@@ -420,7 +421,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                               <kbd class="kbd flex-shrink-0">↵</kbd>
                               <button
                                 type="button"
-                                class="p-1.5 rounded transition-colors text-muted hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                class="p-1.5 rounded transition-colors text-muted-foreground hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 title="Rename session"
                                 onClick={(event) => {
                                   event.preventDefault()
@@ -432,7 +433,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                               </button>
                               <button
                                 type="button"
-                                class="p-1.5 rounded transition-colors text-muted hover:text-red-500 dark:hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                class="p-1.5 rounded transition-colors text-muted-foreground hover:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 title="Delete session"
                                 disabled={isSessionDeleting(session.id)}
                                 onClick={(event) => {
@@ -468,16 +469,16 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
             </div>
           </Show>
 
-          <div class="panel flex-shrink-0">
-            <div class="panel-header">
-              <h2 class="panel-title">Start New Session</h2>
-              <p class="panel-subtitle">We’ll reuse your last agent/model automatically</p>
+          <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground flex-shrink-0">
+            <div class="px-4 py-3 border-b border-border bg-secondary">
+              <h2 class="text-base font-semibold text-foreground">Start New Session</h2>
+              <p class="text-xs mt-0.5 text-muted-foreground">We'll reuse your last agent/model automatically</p>
             </div>
-            <div class="panel-body">
+            <div class="p-4 bg-background">
               <div class="space-y-3">
                 <button
                   type="button"
-                  class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                  class="inline-flex items-center justify-center gap-2 font-medium px-4 py-2 rounded-md transition-colors bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed w-full flex items-center justify-center text-sm"
                   onClick={handleNewSession}
                   disabled={isCreating()}
                 >
@@ -523,7 +524,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
               onClick={(event) => event.stopPropagation()}
             >
               <div class="flex justify-end">
-                <button type="button" class="button-tertiary" onClick={closeInstanceInfoOverlay}>
+                <button type="button" class="inline-flex items-center justify-center gap-2 font-medium px-3 py-1.5 rounded-md text-sm transition-colors text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed" onClick={closeInstanceInfoOverlay}>
                   Close
                 </button>
               </div>
@@ -535,9 +536,9 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
         </div>
       </Show>
 
-      <div class="panel-footer hidden sm:block">
+      <div class="px-4 py-3 border-t border-border bg-secondary hidden sm:block">
 
-        <div class="panel-footer-hints">
+        <div class="flex items-center justify-center flex-wrap gap-3 text-xs text-muted-foreground">
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">↑</kbd>
             <kbd class="kbd">↓</kbd>

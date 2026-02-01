@@ -3,6 +3,7 @@ import type { Agent } from "../types/session"
 import type { OpencodeClient } from "@opencode-ai/sdk/client"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
+import { cn } from "../lib/cn"
 const log = getLogger("actions")
 
 
@@ -88,7 +89,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   const [allFiles, setAllFiles] = createSignal<FileItem[]>([])
   const [isInitialized, setIsInitialized] = createSignal(false)
   const [cachedWorkspaceId, setCachedWorkspaceId] = createSignal<string | null>(null)
- 
+
   let containerRef: HTMLDivElement | undefined
   let scrollContainerRef: HTMLDivElement | undefined
   let lastWorkspaceId: string | null = null
@@ -97,7 +98,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   let inflightSnapshotPromise: Promise<FileItem[]> | null = null
   let activeRequestId = 0
   let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
- 
+
   function resetScrollPosition() {
     setTimeout(() => {
       if (scrollContainerRef) {
@@ -105,18 +106,18 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       }
     }, 0)
   }
- 
+
   function applyFileResults(nextFiles: FileItem[]) {
     setFiles(nextFiles)
     setSelectedIndex(0)
     resetScrollPosition()
   }
- 
+
   async function fetchWorkspaceSnapshot(workspaceId: string): Promise<FileItem[]> {
     if (inflightWorkspaceId === workspaceId && inflightSnapshotPromise) {
       return inflightSnapshotPromise
     }
- 
+
     inflightWorkspaceId = workspaceId
     inflightSnapshotPromise = serverApi
       .listWorkspaceFiles(workspaceId)
@@ -138,18 +139,18 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           inflightSnapshotPromise = null
         }
       })
- 
+
     return inflightSnapshotPromise
   }
- 
+
   async function ensureWorkspaceSnapshot(workspaceId: string) {
     if (cachedWorkspaceId() === workspaceId && allFiles().length > 0) {
       return allFiles()
     }
- 
+
     return fetchWorkspaceSnapshot(workspaceId)
   }
- 
+
   async function loadFilesForQuery(rawQuery: string, workspaceId: string) {
     const normalizedQuery = normalizeQuery(rawQuery)
     const requestId = ++activeRequestId
@@ -218,11 +219,11 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     return props.open && workspaceId === props.workspaceId && requestId === activeRequestId
   }
 
- 
+
   function shouldFinalizeRequest(requestId: number, workspaceId: string) {
     return workspaceId === props.workspaceId && requestId === activeRequestId
   }
- 
+
   function resetPickerState() {
     clearQueryDebounce()
     setFiles([])
@@ -341,16 +342,16 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     }
     return ""
   }
- 
+
   return (
 
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="dropdown-surface bottom-full left-0 mb-1 max-w-md"
+        class="absolute w-full rounded-md shadow-lg z-50 bg-background border border-border bottom-full left-0 mb-1 max-w-md"
       >
-        <div class="dropdown-header">
-          <div class="dropdown-header-title">
+        <div class="px-3 py-2 border-b border-border bg-secondary">
+          <div class="text-xs font-medium text-muted-foreground">
             Select Agent or File
             <Show when={isLoading()}>
               <span class="ml-2">{loadingMessage()}</span>
@@ -358,13 +359,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </div>
         </div>
 
-        <div ref={scrollContainerRef} class="dropdown-content max-h-60">
+        <div ref={scrollContainerRef} class="overflow-y-auto max-h-60">
           <Show when={agentCount() === 0 && fileCount() === 0}>
-            <div class="dropdown-empty">No results found</div>
+            <div class="px-3 py-4 text-center text-sm text-muted-foreground">No results found</div>
           </Show>
 
           <Show when={agentCount() > 0}>
-            <div class="dropdown-section-header">
+            <div class="px-3 py-1.5 text-xs font-semibold text-muted-foreground bg-secondary">
               AGENTS
             </div>
             <For each={filteredAgents()}>
@@ -374,15 +375,16 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                 )
                 return (
                   <div
-                    class={`dropdown-item ${
-                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
-                    }`}
+                    class={cn(
+                      "cursor-pointer px-3 py-2 transition-colors text-foreground",
+                      itemIndex === selectedIndex() ? "bg-accent" : "hover:bg-accent"
+                    )}
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => handleSelect({ type: "agent", agent })}
                   >
                     <div class="flex items-start gap-2">
                       <svg
-                        class="dropdown-icon-accent h-4 w-4 mt-0.5"
+                        class="h-4 w-4 mt-0.5 text-info"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -398,13 +400,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                         <div class="flex items-center gap-2">
                           <span class="text-sm font-medium">{agent.name}</span>
                           <Show when={agent.mode === "subagent"}>
-                            <span class="dropdown-badge">
+                            <span class="rounded px-1.5 py-0.5 text-xs font-normal bg-primary text-primary-foreground">
                               subagent
                             </span>
                           </Show>
                         </div>
                         <Show when={agent.description}>
-                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                          <div class="mt-0.5 text-xs text-muted-foreground">
                             {agent.description && agent.description.length > 80
                               ? agent.description.slice(0, 80) + "..."
                               : agent.description}
@@ -419,7 +421,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </Show>
 
           <Show when={fileCount() > 0}>
-            <div class="dropdown-section-header">
+            <div class="px-3 py-1.5 text-xs font-semibold text-muted-foreground bg-secondary">
               FILES
             </div>
             <For each={files()}>
@@ -430,9 +432,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                 const isFolder = file.isDirectory
                 return (
                   <div
-                    class={`dropdown-item py-1.5 ${
-                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
-                    }`}
+                    class={cn(
+                      "cursor-pointer px-3 py-1.5 transition-colors text-foreground",
+                      itemIndex === selectedIndex() ? "bg-accent" : "hover:bg-accent"
+                    )}
                     data-picker-selected={itemIndex === selectedIndex()}
                     onClick={() => handleSelect({ type: "file", file })}
                   >
@@ -440,7 +443,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       <Show
                         when={isFolder}
                         fallback={
-                          <svg class="dropdown-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg class="flex-shrink-0 text-muted-foreground h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path
                               stroke-linecap="round"
                               stroke-linejoin="round"
@@ -450,7 +453,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                           </svg>
                         }
                       >
-                        <svg class="dropdown-icon-accent h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg class="flex-shrink-0 text-info h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path
                             stroke-linecap="round"
                             stroke-linejoin="round"
@@ -468,9 +471,9 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           </Show>
         </div>
 
-        <div class="dropdown-footer">
+        <div class="border-t border-border px-3 py-2 text-xs text-muted-foreground">
           <div>
-            <span class="font-medium">↑↓</span> navigate • <span class="font-medium">Tab/Enter</span> select •{" "}
+            <span class="font-medium">&#8593;&#8595;</span> navigate &#8226; <span class="font-medium">Tab/Enter</span> select &#8226;{" "}
             <span class="font-medium">Esc</span> close
           </div>
         </div>

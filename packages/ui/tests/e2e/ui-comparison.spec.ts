@@ -12,7 +12,7 @@ test.describe("UI Layout Comparison", () => {
 
   test("capture message flow for comparison", async ({ page }) => {
     // Connect to the running instance
-    await page.goto("http://localhost:63233")
+    await page.goto("http://localhost:3000")
     await page.waitForLoadState("domcontentloaded")
     await page.waitForTimeout(2000)
 

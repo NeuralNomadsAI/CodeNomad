@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Check, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { getLogger } from "../lib/logger"
 import { isModelFavorite, toggleModelFavorite, getModelFavorites } from "../stores/preferences"
+import { cn } from "../lib/cn"
 const log = getLogger("session")
 
 
@@ -148,55 +149,55 @@ export default function ModelSelector(props: ModelSelectorProps) {
   // Guard against rendering before data is loaded
   if (allModels().length === 0) {
     return (
-      <div class="sidebar-selector">
-        <label class="selector-label">Model</label>
-        <div class="selector-trigger">
-          <span class="selector-trigger-primary">Loading...</span>
+      <div class="flex flex-col gap-1 w-full">
+        <label class="text-xs font-semibold uppercase tracking-wide mb-1.5 block text-muted-foreground">Model</label>
+        <div class="inline-flex items-center justify-between gap-2 px-2 py-1 border rounded outline-none transition-colors text-xs min-w-[180px] bg-background border-border text-foreground">
+          <span class="text-sm font-medium truncate text-foreground">Loading...</span>
         </div>
       </div>
     )
   }
 
   return (
-    <div class="sidebar-selector">
-      <label class="selector-label">Model</label>
+    <div class="flex flex-col gap-1.5 w-full">
+      <label class="text-xs font-semibold uppercase tracking-wide block text-muted-foreground">Model</label>
       <Popover open={isOpen()} onOpenChange={setIsOpen}>
-        <Popover.Trigger class="selector-trigger">
-          <div class="selector-trigger-label selector-trigger-label--stacked">
-            <span class="selector-trigger-primary selector-trigger-primary--align-left">
+        <Popover.Trigger class="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 border rounded outline-none transition-colors text-xs bg-background border-border text-foreground hover:bg-accent focus:ring-2 focus:ring-info">
+          <div class="flex flex-col min-w-0 items-start">
+            <span class="text-sm font-medium truncate text-foreground text-left w-full">
               {currentModelValue()?.name ?? "Select model"}
             </span>
             {currentModelValue() && (
-              <span class="selector-trigger-secondary">
+              <span class="text-xs text-left truncate text-muted-foreground">
                 {currentModelValue()!.providerId}/{currentModelValue()!.id}
               </span>
             )}
           </div>
-          <ChevronDown class="w-3 h-3 selector-trigger-icon" />
+          <ChevronDown class="w-3 h-3 flex-shrink-0 text-muted-foreground" />
         </Popover.Trigger>
 
         <Popover.Portal>
-          <Popover.Content class="selector-popover model-selector-popover">
-            <div class="selector-search-container">
+          <Popover.Content class="rounded-md shadow-lg overflow-hidden min-w-[320px] max-w-[400px] bg-background border border-border z-[2200]">
+            <div class="p-2 border-b border-border">
               <input
                 ref={searchInputRef}
                 type="text"
-                class="selector-search-input"
+                class="w-full px-3 py-1.5 text-xs border rounded outline-none transition-colors bg-background border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-info"
                 placeholder="Search providers or models..."
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
               />
             </div>
 
-            <div class="model-selector-groups">
+            <div class="max-h-80 overflow-auto p-1">
               {/* Favorites section */}
               <Show when={favoriteModels().length > 0 && !searchQuery().trim()}>
-                <div class="model-selector-favorites">
-                  <div class="model-selector-favorites-header">
-                    <Star class="w-3 h-3" />
+                <div class="mb-2 pb-2 border-b border-border">
+                  <div class="flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-warning">
+                    <Star class="w-3 h-3 fill-current" />
                     <span>Favorites</span>
                   </div>
-                  <div class="model-selector-favorites-list">
+                  <div class="space-y-0.5">
                     <For each={favoriteModels()}>
                       {(model) => {
                         const isSelected = () =>
@@ -204,31 +205,33 @@ export default function ModelSelector(props: ModelSelectorProps) {
                           model.id === props.currentModel.modelId
 
                         return (
-                          <div class="model-selector-favorite-row">
+                          <div class="flex items-center gap-1">
                             <button
                               type="button"
-                              class="model-selector-model model-selector-favorite-model"
-                              classList={{ "model-selector-model--selected": isSelected() }}
+                              class={cn(
+                                "flex-1 w-full flex items-center gap-2 px-2 py-1.5 text-left rounded cursor-pointer transition-colors text-foreground hover:bg-accent",
+                                isSelected() && "bg-accent"
+                              )}
                               onClick={() => handleModelSelect(model)}
                             >
-                              <div class="model-selector-model-content">
-                                <span class="model-selector-model-name">{model.name}</span>
-                                <span class="model-selector-model-id">{model.providerName}</span>
+                              <div class="flex-1 min-w-0 flex flex-col">
+                                <span class="text-sm truncate text-foreground">{model.name}</span>
+                                <span class="text-xs truncate text-muted-foreground">{model.providerName}</span>
                               </div>
                               <Show when={isSelected()}>
-                                <Check class="w-4 h-4 text-green-400" />
+                                <Check class="w-4 h-4 text-success" />
                               </Show>
                             </button>
                             <button
                               type="button"
-                              class="model-selector-star model-selector-star--active"
+                              class="p-1.5 rounded transition-all flex-shrink-0 text-warning"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 toggleModelFavorite(model.key)
                               }}
                               title="Remove from favorites"
                             >
-                              <Star class="w-3.5 h-3.5" />
+                              <Star class="w-3.5 h-3.5 fill-current" />
                             </button>
                           </div>
                         )
@@ -246,28 +249,28 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   )
 
                   return (
-                    <div class="model-selector-group">
+                    <div class="mb-0.5">
                       <button
                         type="button"
-                        class="model-selector-provider"
-                        classList={{
-                          "model-selector-provider--expanded": isExpanded(),
-                          "model-selector-provider--has-selection": hasCurrentModel() && !isExpanded()
-                        }}
+                        class={cn(
+                          "w-full flex items-center gap-2 px-2 py-2 text-left rounded cursor-pointer transition-colors text-foreground hover:bg-accent",
+                          isExpanded() && "bg-secondary",
+                          hasCurrentModel() && !isExpanded() && "bg-accent"
+                        )}
                         onClick={() => toggleProvider(group.provider)}
                       >
-                        <span class="model-selector-provider-icon">
+                        <span class="flex-shrink-0 flex items-center justify-center w-4 h-4 text-muted-foreground">
                           {isExpanded() ? <ChevronDown class="w-3 h-3" /> : <ChevronRight class="w-3 h-3" />}
                         </span>
-                        <span class="model-selector-provider-name">{group.providerName}</span>
-                        <span class="model-selector-provider-count">{group.options.length}</span>
+                        <span class="flex-1 font-medium text-sm truncate text-foreground">{group.providerName}</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{group.options.length}</span>
                         <Show when={hasCurrentModel() && !isExpanded()}>
-                          <Check class="w-3 h-3 text-green-400" />
+                          <Check class="w-3 h-3 text-success" />
                         </Show>
                       </button>
 
                       <Show when={isExpanded()}>
-                        <div class="model-selector-models">
+                        <div class="ml-4 pl-2 border-l border-border/50 py-1">
                           <For each={group.options}>
                             {(model) => {
                               const isSelected = () =>
@@ -276,32 +279,37 @@ export default function ModelSelector(props: ModelSelectorProps) {
                               const isFavorite = () => isModelFavorite(model.key)
 
                               return (
-                                <div class="model-selector-model-row">
+                                <div class="flex items-center gap-1">
                                   <button
                                     type="button"
-                                    class="model-selector-model"
-                                    classList={{ "model-selector-model--selected": isSelected() }}
+                                    class={cn(
+                                      "w-full flex items-center gap-2 px-2 py-1.5 text-left rounded cursor-pointer transition-colors text-foreground hover:bg-accent",
+                                      isSelected() && "bg-accent"
+                                    )}
                                     onClick={() => handleModelSelect(model)}
                                   >
-                                    <div class="model-selector-model-content">
-                                      <span class="model-selector-model-name">{model.name}</span>
-                                      <span class="model-selector-model-id">{model.id}</span>
+                                    <div class="flex-1 min-w-0 flex flex-col">
+                                      <span class="text-sm truncate text-foreground">{model.name}</span>
+                                      <span class="text-xs truncate text-muted-foreground">{model.id}</span>
                                     </div>
                                     <Show when={isSelected()}>
-                                      <Check class="w-4 h-4 text-green-400" />
+                                      <Check class="w-4 h-4 text-success" />
                                     </Show>
                                   </button>
                                   <button
                                     type="button"
-                                    class="model-selector-star"
-                                    classList={{ "model-selector-star--active": isFavorite() }}
+                                    class={cn(
+                                      "p-1.5 rounded transition-all flex-shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-warning hover:bg-accent",
+                                      isFavorite() && "opacity-100 text-warning"
+                                    )}
+                                    style={{ opacity: isFavorite() ? 1 : undefined }}
                                     onClick={(e) => {
                                       e.stopPropagation()
                                       toggleModelFavorite(model.key)
                                     }}
                                     title={isFavorite() ? "Remove from favorites" : "Add to favorites"}
                                   >
-                                    <Star class="w-3.5 h-3.5" />
+                                    <Star class={cn("w-3.5 h-3.5", isFavorite() && "fill-current")} />
                                   </button>
                                 </div>
                               )
@@ -315,7 +323,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
               </For>
 
               <Show when={filteredGroups().length === 0}>
-                <div class="model-selector-empty">
+                <div class="p-4 text-center text-sm text-muted-foreground">
                   No models found matching "{searchQuery()}"
                 </div>
               </Show>

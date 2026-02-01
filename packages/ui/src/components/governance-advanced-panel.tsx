@@ -1,6 +1,8 @@
 import { Component, Show, createSignal, createEffect, onMount } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { X, FileCode, Save, RefreshCw, AlertTriangle, Check, ChevronDown } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 import { getLogger } from "../lib/logger"
 import { ERA_CODE_API_BASE } from "../lib/api-client"
 
@@ -127,9 +129,9 @@ const GovernanceAdvancedPanel: Component<GovernanceAdvancedPanelProps> = (props)
       <Dialog.Portal>
         <Dialog.Overlay class="settings-panel-overlay" />
         <div class="fixed inset-y-0 right-0 z-50 flex">
-          <Dialog.Content class="settings-panel governance-advanced-panel">
-            <div class="settings-panel-header">
-              <Dialog.Title class="settings-panel-title">
+          <Dialog.Content class={cn("settings-panel w-[500px]")}>
+            <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+              <Dialog.Title class="text-sm font-semibold text-foreground">
                 <FileCode class="w-5 h-5" />
                 <span>Advanced Governance</span>
               </Dialog.Title>
@@ -140,17 +142,29 @@ const GovernanceAdvancedPanel: Component<GovernanceAdvancedPanelProps> = (props)
 
             <div class="settings-panel-content">
               {/* File Selector */}
-              <div class="governance-advanced-tabs">
+              <div class={cn("flex gap-2 mb-4")}>
                 <button
                   type="button"
-                  class={`governance-advanced-tab ${activeFile() === "local" ? "active" : ""}`}
+                  class={cn(
+                    "flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    "border",
+                    activeFile() === "local"
+                      ? "bg-info text-white border-info"
+                      : "bg-secondary text-muted-foreground border-border hover:bg-accent"
+                  )}
                   onClick={() => handleFileChange("local")}
                 >
                   Local Overrides
                 </button>
                 <button
                   type="button"
-                  class={`governance-advanced-tab ${activeFile() === "project" ? "active" : ""}`}
+                  class={cn(
+                    "flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    "border",
+                    activeFile() === "project"
+                      ? "bg-info text-white border-info"
+                      : "bg-secondary text-muted-foreground border-border hover:bg-accent"
+                  )}
                   onClick={() => handleFileChange("project")}
                 >
                   Project Config
@@ -159,17 +173,17 @@ const GovernanceAdvancedPanel: Component<GovernanceAdvancedPanelProps> = (props)
 
               {/* File Path */}
               <Show when={filePath()}>
-                <div class="governance-advanced-path">
-                  <code>{filePath()}</code>
+                <div class={cn("flex items-center gap-2 mb-4 text-xs text-muted-foreground")}>
+                  <code class={cn("px-2 py-1 rounded font-mono bg-secondary")}>{filePath()}</code>
                   <Show when={!fileExists()}>
-                    <span class="governance-advanced-new">(New file)</span>
+                    <span class={cn("text-xs text-warning")}>(New file)</span>
                   </Show>
                 </div>
               </Show>
 
               {/* Error State */}
               <Show when={error()}>
-                <div class="governance-error">
+                <div class={cn("flex items-center gap-2 p-4 rounded-md bg-destructive/10 text-destructive")}>
                   <AlertTriangle class="w-5 h-5" />
                   <span>{error()}</span>
                 </div>
@@ -177,7 +191,7 @@ const GovernanceAdvancedPanel: Component<GovernanceAdvancedPanelProps> = (props)
 
               {/* Success State */}
               <Show when={success()}>
-                <div class="governance-success">
+                <div class={cn("flex items-center gap-2 p-4 rounded-md bg-success/10 text-success")}>
                   <Check class="w-5 h-5" />
                   <span>File saved successfully</span>
                 </div>
@@ -185,17 +199,22 @@ const GovernanceAdvancedPanel: Component<GovernanceAdvancedPanelProps> = (props)
 
               {/* Loading State */}
               <Show when={loading()}>
-                <div class="governance-loading">
-                  <div class="governance-loading-spinner" />
+                <div class={cn("flex items-center justify-center gap-3 py-8 text-muted-foreground")}>
+                  <div class={cn("w-5 h-5 animate-spin rounded-full border-2 border-border border-t-info")} />
                   <span>Loading file...</span>
                 </div>
               </Show>
 
               {/* YAML Editor */}
               <Show when={!loading()}>
-                <div class="governance-advanced-editor-wrapper">
+                <div class={cn("mb-4")}>
                   <textarea
-                    class="governance-advanced-editor"
+                    class={cn(
+                      "w-full h-80 px-3 py-2 rounded-md text-sm font-mono resize-none leading-relaxed",
+                      "bg-secondary border border-border text-foreground",
+                      "placeholder:text-muted-foreground",
+                      "focus:outline-none focus:border-info"
+                    )}
                     value={content()}
                     onInput={(e) => setContent(e.currentTarget.value)}
                     placeholder={`# Era Code Governance Configuration
@@ -219,33 +238,33 @@ custom:
               </Show>
 
               {/* Actions */}
-              <div class="governance-advanced-actions">
-                <button
-                  type="button"
-                  class="governance-advanced-btn governance-advanced-btn-secondary"
+              <div class={cn("flex items-center justify-end gap-2 mb-4")}>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => loadFile(activeFile())}
                   disabled={loading() || saving()}
                 >
-                  <RefreshCw class={`w-4 h-4 ${loading() ? "animate-spin" : ""}`} />
+                  <RefreshCw class={cn("w-4 h-4", loading() && "animate-spin")} />
                   <span>Reload</span>
-                </button>
-                <button
-                  type="button"
-                  class="governance-advanced-btn governance-advanced-btn-primary"
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
                   onClick={saveFile}
                   disabled={loading() || saving() || !hasChanges()}
                 >
                   <Save class="w-4 h-4" />
                   <span>{saving() ? "Saving..." : "Save"}</span>
-                </button>
+                </Button>
               </div>
 
               {/* Help Text */}
-              <div class="governance-advanced-help">
-                <p>
+              <div class={cn("space-y-2 text-xs text-muted-foreground")}>
+                <p class={cn("leading-relaxed")}>
                   <strong>Local Overrides</strong> (.era/governance.local.yaml) - Personal overrides that apply only to this machine.
                 </p>
-                <p>
+                <p class={cn("leading-relaxed")}>
                   <strong>Project Config</strong> (.era/governance.yaml) - Shared configuration committed to the repository.
                 </p>
               </div>

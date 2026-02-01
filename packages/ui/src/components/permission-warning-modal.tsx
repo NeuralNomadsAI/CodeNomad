@@ -1,6 +1,15 @@
 import { Component } from "solid-js"
-import { Dialog } from "@kobalte/core/dialog"
-import { AlertTriangle, X, ShieldCheck, ShieldOff } from "lucide-solid"
+import { AlertTriangle, ShieldCheck, ShieldOff } from "lucide-solid"
+import { cn } from "../lib/cn"
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "./ui"
+import { Button } from "./ui"
 
 interface PermissionWarningModalProps {
   open: boolean
@@ -24,64 +33,51 @@ const PermissionWarningModal: Component<PermissionWarningModalProps> = (props) =
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(open) => !open && handleDismiss()} modal>
-      <Dialog.Portal>
-        <Dialog.Overlay class="permission-modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="permission-modal">
-            <div class="permission-modal-header">
-              <div class="permission-modal-icon">
-                <AlertTriangle class="w-6 h-6" />
-              </div>
-              <div class="permission-modal-title-group">
-                <Dialog.Title class="permission-modal-title">
-                  Auto-approve is enabled
-                </Dialog.Title>
-                <Dialog.Description class="permission-modal-description">
-                  Opening "{props.projectName}"
-                </Dialog.Description>
-              </div>
-              <Dialog.CloseButton class="permission-modal-close" onClick={handleDismiss}>
-                <X class="w-4 h-4" />
-              </Dialog.CloseButton>
+    <AlertDialog open={props.open} onOpenChange={(open) => !open && handleDismiss()}>
+      <AlertDialogContent class="max-w-md">
+        <AlertDialogHeader>
+          <div class="flex items-start gap-3">
+            <div class={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+              "bg-warning/10 text-warning"
+            )}>
+              <AlertTriangle class="h-6 w-6" />
             </div>
+            <div class="flex-1">
+              <AlertDialogTitle>Auto-approve is enabled</AlertDialogTitle>
+              <AlertDialogDescription class="mt-1">
+                Opening "{props.projectName}"
+              </AlertDialogDescription>
+            </div>
+          </div>
+        </AlertDialogHeader>
 
-            <div class="permission-modal-body">
-              <p class="permission-modal-text">
-                This project will run with <strong>auto-approve permissions</strong> enabled, which means:
-              </p>
-              <ul class="permission-modal-list">
-                <li>File edits will be applied without confirmation</li>
-                <li>Shell commands will execute without prompts</li>
-                <li>Potentially destructive operations won't require approval</li>
-              </ul>
-              <p class="permission-modal-hint">
-                You can change this at any time in the session sidebar or global settings.
-              </p>
-            </div>
-
-            <div class="permission-modal-footer">
-              <button
-                type="button"
-                class="permission-modal-button permission-modal-button-secondary"
-                onClick={handleDisable}
-              >
-                <ShieldOff class="w-4 h-4" />
-                <span>Disable for this project</span>
-              </button>
-              <button
-                type="button"
-                class="permission-modal-button permission-modal-button-primary"
-                onClick={handleProceed}
-              >
-                <ShieldCheck class="w-4 h-4" />
-                <span>Proceed with auto-approve</span>
-              </button>
-            </div>
-          </Dialog.Content>
+        <div class="space-y-3 text-sm text-muted-foreground">
+          <p>
+            This project will run with <strong class="text-foreground">auto-approve permissions</strong> enabled, which means:
+          </p>
+          <ul class="list-disc pl-5 space-y-1">
+            <li>File edits will be applied without confirmation</li>
+            <li>Shell commands will execute without prompts</li>
+            <li>Potentially destructive operations won't require approval</li>
+          </ul>
+          <p class="text-xs text-muted-foreground">
+            You can change this at any time in the session sidebar or global settings.
+          </p>
         </div>
-      </Dialog.Portal>
-    </Dialog>
+
+        <AlertDialogFooter>
+          <Button variant="outline" onClick={handleDisable}>
+            <ShieldOff class="w-4 h-4 mr-1.5" />
+            <span>Disable for this project</span>
+          </Button>
+          <Button onClick={handleProceed}>
+            <ShieldCheck class="w-4 h-4 mr-1.5" />
+            <span>Proceed with auto-approve</span>
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

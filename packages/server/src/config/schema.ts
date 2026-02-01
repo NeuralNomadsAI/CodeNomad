@@ -27,6 +27,23 @@ const McpRemoteServerConfigSchema = z.object({
 
 const McpServerConfigSchema = z.union([McpLocalServerConfigSchema, McpRemoteServerConfigSchema])
 
+const ToolCategorySchema = z.enum([
+  "file-read", "file-write", "execution", "web",
+  "planning", "delegation", "search", "navigation",
+])
+
+const AgentToolOverrideSchema = z.object({
+  addCategories: z.array(ToolCategorySchema).optional(),
+  removeCategories: z.array(ToolCategorySchema).optional(),
+  addTools: z.array(z.string()).optional(),
+  denyTools: z.array(z.string()).optional(),
+}).optional()
+
+const ToolRoutingSchema = z.object({
+  globalDeny: z.array(z.string()).default([]),
+  profiles: z.record(z.string(), AgentToolOverrideSchema).default({}),
+})
+
 const PreferencesSchema = z.object({
   showThinkingBlocks: z.boolean().default(false),
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
@@ -67,9 +84,19 @@ const PreferencesSchema = z.object({
   mcpDesiredState: z.record(z.boolean()).default({}),
   mcpAutoApply: z.boolean().default(true),
 
+  // GitHub
+  defaultClonePath: z.string().optional(),
+
   // Update checking preferences
   lastUpdateCheckTime: z.number().nonnegative().optional(),
   autoCheckForUpdates: z.boolean().default(true),
+
+  // Sub-agent configuration
+  maxSubagentIterations: z.number().int().min(1).max(10).default(3),
+  agentAutonomy: z.enum(["conservative", "balanced", "aggressive"]).default("balanced"),
+
+  // Tool routing configuration
+  toolRouting: ToolRoutingSchema.default({}),
 })
 
 const RecentFolderSchema = z.object({
@@ -100,6 +127,9 @@ export {
   McpLocalServerConfigSchema,
   McpRemoteServerConfigSchema,
   McpServerConfigSchema,
+  ToolCategorySchema,
+  AgentToolOverrideSchema,
+  ToolRoutingSchema,
   PreferencesSchema,
   RecentFolderSchema,
   OpenCodeBinarySchema,
@@ -113,6 +143,7 @@ export type AgentModelSelections = z.infer<typeof AgentModelSelectionsSchema>
 export type McpLocalServerConfig = z.infer<typeof McpLocalServerConfigSchema>
 export type McpRemoteServerConfig = z.infer<typeof McpRemoteServerConfigSchema>
 export type McpServerConfig = z.infer<typeof McpServerConfigSchema>
+export type ToolRouting = z.infer<typeof ToolRoutingSchema>
 export type Preferences = z.infer<typeof PreferencesSchema>
 export type RecentFolder = z.infer<typeof RecentFolderSchema>
 export type OpenCodeBinary = z.infer<typeof OpenCodeBinarySchema>

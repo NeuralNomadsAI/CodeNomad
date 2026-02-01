@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test"
 
 test.describe("EC-042: Project Directives Markdown Analysis", () => {
   test("should analyze project directives after entering a session", async ({ page }) => {
-    await page.goto("http://localhost:5556")
+    await page.goto("http://localhost:3000")
     await page.waitForLoadState("domcontentloaded")
     await page.waitForTimeout(2000)
 

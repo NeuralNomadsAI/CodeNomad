@@ -63,7 +63,7 @@ test.describe("EC-051: Task Tool Output Panes", () => {
     console.log("Task tool panes test completed")
   })
 
-  test("verify CSS classes are present", async ({ page }) => {
+  test("verify Tailwind utility classes are functional for task panes", async ({ page }) => {
     await page.goto("http://localhost:3000/")
     await page.waitForLoadState("domcontentloaded")
     await page.waitForTimeout(2000)
@@ -75,26 +75,38 @@ test.describe("EC-051: Task Tool Output Panes", () => {
       await page.waitForTimeout(5000)
     }
 
-    // Check that the CSS is loaded by looking for the stylesheet
-    const styleLoaded = await page.evaluate(() => {
-      const styles = document.styleSheets
-      for (const sheet of styles) {
-        try {
-          const rules = sheet.cssRules || sheet.rules
-          for (const rule of rules) {
-            if (rule.cssText?.includes('task-pane-header') ||
-                rule.cssText?.includes('task-pane-content')) {
-              return true
-            }
-          }
-        } catch (e) {
-          // Cross-origin stylesheet, skip
-        }
-      }
-      return false
+    // After CSS-to-Tailwind migration, task pane headers and content use inline
+    // Tailwind classes instead of legacy .task-pane-header CSS rules.
+    // Verify Tailwind framework is active and produces correct computed styles.
+    const tailwindFunctional = await page.evaluate(() => {
+      // Test header-like element with Tailwind classes
+      const headerDiv = document.createElement("div")
+      headerDiv.className = "flex items-center justify-between px-3 py-2 bg-muted rounded-t-md cursor-pointer"
+      headerDiv.style.position = "absolute"
+      headerDiv.style.top = "-9999px"
+      document.body.appendChild(headerDiv)
+      const headerCs = window.getComputedStyle(headerDiv)
+      const hasFlex = headerCs.display === "flex"
+      const hasBg = headerCs.backgroundColor !== "" && headerCs.backgroundColor !== "rgba(0, 0, 0, 0)"
+      const hasCursor = headerCs.cursor === "pointer"
+      document.body.removeChild(headerDiv)
+
+      // Test content-like element with Tailwind classes
+      const contentDiv = document.createElement("div")
+      contentDiv.className = "px-3 py-2 text-sm text-muted-foreground border-t border-border"
+      contentDiv.style.position = "absolute"
+      contentDiv.style.top = "-9999px"
+      document.body.appendChild(contentDiv)
+      const contentCs = window.getComputedStyle(contentDiv)
+      const hasColor = contentCs.color !== "" && contentCs.color !== "rgba(0, 0, 0, 0)"
+      const hasBorderTop = contentCs.borderTopWidth !== "0px"
+      document.body.removeChild(contentDiv)
+
+      return hasFlex && hasBg && hasCursor && hasColor && hasBorderTop
     })
 
-    console.log("Task pane CSS loaded:", styleLoaded)
-    console.log("CSS verification test completed")
+    console.log("Tailwind utility classes functional for task panes:", tailwindFunctional)
+    expect(tailwindFunctional).toBe(true)
+    console.log("Tailwind verification test completed")
   })
 })

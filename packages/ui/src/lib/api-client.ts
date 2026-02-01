@@ -58,7 +58,7 @@ function logHttp(message: string, context?: Record<string, unknown>) {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
   const headers: HeadersInit = {
-    "Content-Type": "application/json",
+    ...(init?.body ? { "Content-Type": "application/json" } : {}),
     ...(init?.headers ?? {}),
   }
 
@@ -238,6 +238,17 @@ export const serverApi = {
     return source
   },
 
+  // Session Stats & Cleanup APIs
+  fetchSessionStats(): Promise<SessionStatsResponse> {
+    return request<SessionStatsResponse>("/api/sessions/stats")
+  },
+  purgeStaleSession(): Promise<SessionDeleteResponse> {
+    return request<SessionDeleteResponse>("/api/sessions/stale", { method: "DELETE" })
+  },
+  cleanBlankSessions(): Promise<SessionDeleteResponse> {
+    return request<SessionDeleteResponse>("/api/sessions/blank", { method: "DELETE" })
+  },
+
   // Process Management APIs
   fetchProcesses(): Promise<ProcessInfo> {
     return request<ProcessInfo>("/api/system/processes")
@@ -262,6 +273,20 @@ export const serverApi = {
   getUpdateStatus(): Promise<UpdateCheckResult | { lastChecked: null }> {
     return request<UpdateCheckResult | { lastChecked: null }>("/api/updates/status")
   },
+}
+
+// Session stats types
+export interface SessionStatsResponse {
+  total: number
+  projectCount: number
+  staleCount: number
+  blankCount: number
+}
+
+export interface SessionDeleteResponse {
+  success: boolean
+  deleted: number
+  errors?: string[]
 }
 
 // Process management types

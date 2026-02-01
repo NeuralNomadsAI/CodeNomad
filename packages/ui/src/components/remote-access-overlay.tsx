@@ -8,6 +8,7 @@ import { serverApi } from "../lib/api-client"
 import { restartCli } from "../lib/native/cli"
 import { preferences, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
+import { cn } from "../lib/cn"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")
 
@@ -119,109 +120,131 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay remote-overlay-backdrop" />
-        <div class="remote-overlay">
-          <Dialog.Content class="modal-surface remote-panel" tabIndex={-1}>
-            <header class="remote-header">
+        <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50 backdrop-blur-md" />
+        <div class="fixed inset-0 z-[41] flex items-center justify-center p-6">
+          <Dialog.Content class="rounded-lg shadow-2xl flex flex-col bg-background text-foreground w-full max-w-[960px] max-h-[90vh] overflow-hidden" tabIndex={-1}>
+            <header class="flex items-start justify-between gap-3 px-6 py-5 border-b border-border">
               <div>
-                <p class="remote-eyebrow">Remote handover</p>
-                <h2 class="remote-title">Connect to Era Code remotely</h2>
-                <p class="remote-subtitle">Use the addresses below to open Era Code from another device.</p>
+                <p class="uppercase tracking-widest text-xs text-muted-foreground mb-1">Remote handover</p>
+                <h2 class="text-xl font-semibold text-foreground">Connect to Era Code remotely</h2>
+                <p class="mt-1 text-sm text-muted-foreground">Use the addresses below to open Era Code from another device.</p>
               </div>
-              <button type="button" class="remote-close" onClick={props.onClose} aria-label="Close remote access">
-                ×
+              <button
+                type="button"
+                class="border border-border bg-secondary text-foreground rounded-full px-2.5 py-1.5 cursor-pointer text-lg leading-none"
+                onClick={props.onClose}
+                aria-label="Close remote access"
+              >
+                x
               </button>
             </header>
 
-            <div class="remote-body">
-              <section class="remote-section">
-                <div class="remote-section-heading">
-                  <div class="remote-section-title">
-                    <Shield class="remote-icon" />
+            <div class="px-6 py-4 overflow-y-auto flex flex-col gap-4">
+              <section class="border border-border rounded-xl bg-secondary p-4">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <Shield class="w-[18px] h-[18px]" />
                     <div>
-                      <p class="remote-label">Listening mode</p>
-                      <p class="remote-help">Allow or limit remote handovers by binding to all interfaces or just localhost.</p>
+                      <p class="font-semibold text-foreground">Listening mode</p>
+                      <p class="text-[13px] text-muted-foreground">Allow or limit remote handovers by binding to all interfaces or just localhost.</p>
                     </div>
                   </div>
-                  <button class="remote-refresh" type="button" onClick={() => void refreshMeta()} disabled={loading()}>
-                    <RefreshCw class={`remote-icon ${loading() ? "remote-spin" : ""}`} />
-                    <span class="remote-refresh-label">Refresh</span>
+                  <button
+                    class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-border bg-background text-foreground cursor-pointer"
+                    type="button"
+                    onClick={() => void refreshMeta()}
+                    disabled={loading()}
+                  >
+                    <RefreshCw class={cn("w-[18px] h-[18px]", loading() && "animate-spin")} />
+                    <span class="hidden sm:inline">Refresh</span>
                   </button>
                 </div>
 
                 <Switch
-                  class="remote-toggle"
+                  class="relative flex items-center gap-3 p-3 rounded-xl border border-border bg-background cursor-pointer"
                   checked={allowExternalConnections()}
                   onChange={(nextChecked) => {
                     void handleAllowConnectionsChange(nextChecked)
                   }}
                 >
                   <Switch.Input />
-                  <Switch.Control class="remote-toggle-switch" data-checked={allowExternalConnections()}>
-                    <span class="remote-toggle-state">{allowExternalConnections() ? "On" : "Off"}</span>
-                    <Switch.Thumb class="remote-toggle-thumb" />
+                  <Switch.Control
+                    class={cn(
+                      "w-[58px] h-7 rounded-full border inline-flex items-center justify-between px-2 transition-colors text-xs font-semibold uppercase tracking-wide",
+                      allowExternalConnections()
+                        ? "bg-info border-info text-primary-foreground"
+                        : "bg-secondary border-border text-muted-foreground",
+                    )}
+                    data-checked={allowExternalConnections()}
+                  >
+                    <span class="pointer-events-none whitespace-nowrap">{allowExternalConnections() ? "On" : "Off"}</span>
+                    <Switch.Thumb class="w-[18px] h-[18px] rounded-full bg-background transition-transform" />
                   </Switch.Control>
-                  <div class="remote-toggle-copy">
-                    <span class="remote-toggle-title">Allow connections from other IPs</span>
-                    <span class="remote-toggle-caption">
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-semibold text-foreground">Allow connections from other IPs</span>
+                    <span class="text-[13px] text-muted-foreground">
                       {allowExternalConnections() ? "Binding to 0.0.0.0" : "Binding to 127.0.0.1"}
                     </span>
                   </div>
                 </Switch>
-                <p class="remote-toggle-note">
+                <p class="mt-3 text-[13px] text-muted-foreground">
                   Changing this requires a restart and temporarily stops all active instances. Share the addresses below once the
                   server restarts.
                 </p>
               </section>
 
-              <section class="remote-section">
-                <div class="remote-section-heading">
-                  <div class="remote-section-title">
-                    <Wifi class="remote-icon" />
+              <section class="border border-border rounded-xl bg-secondary p-4">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                  <div class="flex items-center gap-2.5">
+                    <Wifi class="w-[18px] h-[18px]" />
                     <div>
-                      <p class="remote-label">Reachable addresses</p>
-                      <p class="remote-help">Launch or scan from another machine to hand over control.</p>
+                      <p class="font-semibold text-foreground">Reachable addresses</p>
+                      <p class="text-[13px] text-muted-foreground">Launch or scan from another machine to hand over control.</p>
                     </div>
                   </div>
                 </div>
 
-                <Show when={!loading()} fallback={<div class="remote-card">Loading addresses…</div>}>
-                  <Show when={!error()} fallback={<div class="remote-error">{error()}</div>}>
-                    <Show when={displayAddresses().length > 0} fallback={<div class="remote-card">No addresses available yet.</div>}>
-                      <div class="remote-address-list">
+                <Show when={!loading()} fallback={<div class="border border-dashed border-border rounded-lg p-3 text-muted-foreground">Loading addresses...</div>}>
+                  <Show when={!error()} fallback={<div class="border border-destructive rounded-lg p-3 bg-destructive/10 text-foreground">{error()}</div>}>
+                    <Show when={displayAddresses().length > 0} fallback={<div class="border border-dashed border-border rounded-lg p-3 text-muted-foreground">No addresses available yet.</div>}>
+                      <div class="flex flex-col gap-2.5">
                         <For each={displayAddresses()}>
                           {(address) => {
                             const expandedState = () => expandedUrl() === address.url
                             const qr = () => qrCodes()[address.url]
                             return (
-                              <div class="remote-address">
-                                <div class="remote-address-main">
+                              <div class="border border-border rounded-xl p-3 bg-background">
+                                <div class="flex items-center justify-between gap-3 flex-wrap">
                                   <div>
-                                    <p class="remote-address-url">{address.url}</p>
-                                    <p class="remote-address-meta">
-                                      {address.family.toUpperCase()} • {address.scope === "external" ? "Network" : address.scope === "loopback" ? "Loopback" : "Internal"} • {address.ip}
+                                    <p class="font-semibold text-foreground">{address.url}</p>
+                                    <p class="mt-1 text-xs text-muted-foreground">
+                                      {address.family.toUpperCase()} -- {address.scope === "external" ? "Network" : address.scope === "loopback" ? "Loopback" : "Internal"} -- {address.ip}
                                     </p>
                                   </div>
-                                  <div class="remote-actions">
-                                    <button class="remote-pill" type="button" onClick={() => handleOpenUrl(address.url)}>
-                                      <ExternalLink class="remote-icon" />
+                                  <div class="flex gap-2">
+                                    <button
+                                      class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-border bg-secondary text-foreground cursor-pointer"
+                                      type="button"
+                                      onClick={() => handleOpenUrl(address.url)}
+                                    >
+                                      <ExternalLink class="w-[18px] h-[18px]" />
                                       Open
                                     </button>
                                     <button
-                                      class="remote-pill"
+                                      class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-border bg-secondary text-foreground cursor-pointer"
                                       type="button"
                                       onClick={() => void toggleExpanded(address.url)}
                                       aria-expanded={expandedState()}
                                     >
-                                      <Link2 class="remote-icon" />
+                                      <Link2 class="w-[18px] h-[18px]" />
                                       {expandedState() ? "Hide QR" : "Show QR"}
                                     </button>
                                   </div>
                                 </div>
                                 <Show when={expandedState()}>
-                                  <div class="remote-qr">
-                                    <Show when={qr()} fallback={<Loader2 class="remote-icon remote-spin" aria-hidden="true" />}>
-                                      {(dataUrl) => <img src={dataUrl()} alt={`QR for ${address.url}`} class="remote-qr-img" />}
+                                  <div class="mt-3 flex items-center justify-center p-3 border border-dashed border-border rounded-lg bg-secondary">
+                                    <Show when={qr()} fallback={<Loader2 class="w-[18px] h-[18px] animate-spin" aria-hidden="true" />}>
+                                      {(dataUrl) => <img src={dataUrl()} alt={`QR for ${address.url}`} class="w-40 h-40" style={{ "image-rendering": "pixelated" }} />}
                                     </Show>
                                   </div>
                                 </Show>

@@ -1,5 +1,6 @@
 import type { Instance } from "../types/instance"
 import type { McpServerConfig } from "../stores/preferences"
+import type { QuestionAnswer, QuestionRequest } from "../stores/question-store"
 import { ERA_CODE_API_BASE } from "./api-client"
 
 /**
@@ -115,8 +116,32 @@ async function disconnectMcp(instance: Instance, name: string) {
   await requestInstance(instance, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" })
 }
 
+async function listQuestions(instance: Instance): Promise<QuestionRequest[]> {
+  return requestInstance<QuestionRequest[]>(instance, "/question")
+}
+
+async function replyToQuestion(
+  instance: Instance,
+  requestId: string,
+  answers: QuestionAnswer[],
+): Promise<void> {
+  await requestInstance(instance, `/question/${encodeURIComponent(requestId)}/reply`, {
+    method: "POST",
+    body: JSON.stringify({ answers }),
+  })
+}
+
+async function rejectQuestion(instance: Instance, requestId: string): Promise<void> {
+  await requestInstance(instance, `/question/${encodeURIComponent(requestId)}/reject`, {
+    method: "POST",
+  })
+}
+
 export const instanceApi = {
   upsertMcp,
   connectMcp,
   disconnectMcp,
+  listQuestions,
+  replyToQuestion,
+  rejectQuestion,
 }

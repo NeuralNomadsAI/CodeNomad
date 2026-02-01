@@ -16,6 +16,8 @@ import {
   Server,
   Eye,
 } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Badge } from "./ui"
 import {
   governanceRules,
   governanceSummary,
@@ -63,11 +65,11 @@ function categorizeRule(rule: GovernanceRule): RuleCategory {
 }
 
 const categoryConfig: Record<RuleCategory, { label: string; icon: typeof Shield; color: string }> = {
-  security: { label: "Security", icon: ShieldAlert, color: "text-red-400" },
-  git: { label: "Git", icon: GitBranch, color: "text-purple-400" },
-  code: { label: "Code", icon: Code2, color: "text-blue-400" },
-  system: { label: "System", icon: Terminal, color: "text-orange-400" },
-  other: { label: "Other", icon: Server, color: "text-gray-400" },
+  security: { label: "Security", icon: ShieldAlert, color: "text-destructive" },
+  git: { label: "Git", icon: GitBranch, color: "text-info" },
+  code: { label: "Code", icon: Code2, color: "text-info" },
+  system: { label: "System", icon: Terminal, color: "text-warning" },
+  other: { label: "Other", icon: Server, color: "text-muted-foreground" },
 }
 
 const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
@@ -157,42 +159,42 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
   const overrideCount = () => defaultRules().filter(r => r.action === "allow").length
 
   return (
-    <div class="active-rules-panel">
+    <div class={cn("flex flex-col gap-4")}>
       {/* Header */}
-      <div class="directives-panel-header">
+      <div class={cn("flex items-center justify-between gap-4 flex-wrap")}>
         <div>
-          <h2 class="flex items-center gap-2">
+          <h2 class={cn("flex items-center gap-2 text-lg font-semibold text-foreground")}>
             <ShieldCheck class="w-5 h-5 text-accent" />
             Active Rules
           </h2>
-          <p>Runtime rules that control what actions the AI can perform</p>
+          <p class={cn("text-sm mt-1 text-muted-foreground")}>Runtime rules that control what actions the AI can perform</p>
         </div>
 
         <Show when={!isGovernanceLoading() && !governanceError()}>
-          <div class="governance-stats">
-            <div class="governance-stat">
-              <span class="governance-stat-value">{totalRules()}</span>
-              <span class="governance-stat-label">Rules</span>
+          <div class={cn("flex items-center gap-3")}>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-foreground")}>{totalRules()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Rules</span>
             </div>
-            <div class="governance-stat">
-              <span class="governance-stat-value text-red-400">{activeBlocks()}</span>
-              <span class="governance-stat-label">Blocking</span>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-destructive")}>{activeBlocks()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Blocking</span>
             </div>
-            <div class="governance-stat">
-              <span class="governance-stat-value text-green-400">{overrideCount()}</span>
-              <span class="governance-stat-label">Overrides</span>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-success")}>{overrideCount()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Overrides</span>
             </div>
             <Show when={isAuditMode()}>
-              <span class="governance-audit-badge">
+              <Badge variant="outline" class="text-warning">
                 <Eye class="w-3 h-3" /> Audit Mode
-              </span>
+              </Badge>
             </Show>
           </div>
         </Show>
       </div>
 
       <Show when={!isEraInstalled()}>
-        <div class="governance-notice governance-notice-warning">
+        <div class={cn("flex items-center gap-2 p-4 rounded-md bg-warning/10 text-warning")}>
           <AlertTriangle class="w-5 h-5" />
           <div>
             <strong>Era Code Not Installed</strong>
@@ -203,12 +205,13 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
 
       <Show when={isEraInstalled()}>
         {/* Filters */}
-        <div class="governance-rules-filters mb-4">
+        <div class={cn("flex items-center gap-3 flex-wrap mb-4")}>
           {/* Search */}
-          <div class="governance-search">
-            <Search class="w-4 h-4 text-muted" />
+          <div class={cn("flex items-center gap-2 px-3 py-1.5 rounded-lg flex-1 max-w-xs bg-secondary border border-border")}>
+            <Search class="w-4 h-4 text-muted-foreground" />
             <input
               type="text"
+              class={cn("flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground")}
               placeholder="Search rules..."
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
@@ -222,7 +225,7 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
 
           {/* Category Filter */}
           <select
-            class="governance-filter-select"
+            class={cn("px-3 py-1.5 rounded-md text-sm bg-secondary border border-border text-foreground")}
             value={selectedCategory()}
             onChange={(e) => setSelectedCategory(e.currentTarget.value as RuleCategory | "all")}
           >
@@ -236,7 +239,7 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
 
           {/* Source Filter */}
           <select
-            class="governance-filter-select"
+            class={cn("px-3 py-1.5 rounded-md text-sm bg-secondary border border-border text-foreground")}
             value={selectedSource()}
             onChange={(e) => setSelectedSource(e.currentTarget.value as "all" | "hardcoded" | "default" | "project")}
           >
@@ -248,14 +251,14 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
         </div>
 
         <Show when={isGovernanceLoading()}>
-          <div class="governance-loading">
+          <div class={cn("flex items-center justify-center gap-3 py-8 text-muted-foreground")}>
             <RefreshCw class="w-5 h-5 animate-spin" />
             <span>Loading rules...</span>
           </div>
         </Show>
 
         <Show when={governanceError()}>
-          <div class="governance-notice governance-notice-error">
+          <div class={cn("flex items-center gap-2 p-4 rounded-md bg-destructive/10 text-destructive")}>
             <AlertTriangle class="w-5 h-5" />
             <span>{governanceError()}</span>
           </div>
@@ -263,53 +266,62 @@ const ActiveRulesPanel: Component<ActiveRulesPanelProps> = (props) => {
 
         <Show when={!isGovernanceLoading() && !governanceError()}>
           <Show when={filteredRules().length === 0}>
-            <div class="governance-empty">
-              <Shield class="w-8 h-8 text-muted" />
+            <div class={cn("flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground")}>
+              <Shield class="w-8 h-8 opacity-50" />
               <p>No rules match your filters</p>
             </div>
           </Show>
 
-          <div class="governance-rules-list">
+          <div class={cn("space-y-4")}>
             <For each={Object.entries(groupedFilteredRules()).filter(([_, rules]) => rules.length > 0)}>
               {([category, rules]) => {
                 const config = categoryConfig[category as RuleCategory]
                 const CategoryIcon = config.icon
                 return (
-                  <div class="governance-rule-group">
-                    <div class="governance-rule-group-header">
-                      <CategoryIcon class={`w-4 h-4 ${config.color}`} />
-                      <span>{config.label}</span>
-                      <span class="governance-rule-count">{rules.length}</span>
+                  <div class={cn("rounded-lg border border-border overflow-hidden")}>
+                    <div class={cn("flex items-center gap-2 px-3 py-2 bg-secondary")}>
+                      <CategoryIcon class={cn("w-4 h-4", config.color)} />
+                      <span class={cn("text-sm font-medium text-foreground")}>{config.label}</span>
+                      <Badge variant="secondary" class="ml-auto">{rules.length}</Badge>
                     </div>
-                    <div class="governance-rule-items">
+                    <div class={cn("divide-y divide-border")}>
                       <For each={rules}>
                         {(rule) => {
                           const isToggling = () => togglingRules().has(rule.id)
                           const isBlocking = () => rule.action === "deny"
 
                           return (
-                            <div class={`governance-rule-item ${!isBlocking() ? "governance-rule-allowed" : ""}`}>
-                              <div class="governance-rule-main">
-                                <div class="governance-rule-info">
-                                  <div class="governance-rule-name">
-                                    <span class="font-mono text-xs">{rule.id}</span>
+                            <div class={cn(
+                              "p-3",
+                              !isBlocking() && "bg-success/5"
+                            )}>
+                              <div class={cn("flex items-start justify-between gap-3")}>
+                                <div class={cn("flex-1 min-w-0")}>
+                                  <div class={cn("flex items-center gap-2 mb-1")}>
+                                    <span class={cn("font-mono text-xs text-foreground")}>{rule.id}</span>
                                     <Show when={rule.source === "hardcoded"}>
                                       <span title="Cannot be overridden">
-                                        <Lock class="w-3 h-3 text-red-400" />
+                                        <Lock class="w-3 h-3 text-destructive" />
                                       </span>
                                     </Show>
                                   </div>
-                                  <p class="governance-rule-reason">{rule.reason}</p>
-                                  <code class="governance-rule-pattern">{rule.pattern}</code>
+                                  <p class={cn("text-sm mb-1 text-muted-foreground")}>{rule.reason}</p>
+                                  <code class={cn("text-xs px-2 py-1 rounded font-mono bg-accent text-muted-foreground break-all")}>{rule.pattern}</code>
                                 </div>
-                                <div class="governance-rule-controls">
-                                  <span class={`governance-rule-status ${isBlocking() ? "governance-rule-status-deny" : "governance-rule-status-allow"}`}>
+                                <div class={cn("flex items-center gap-2 flex-shrink-0")}>
+                                  <Badge variant={isBlocking() ? "destructive" : "default"}>
                                     {isBlocking() ? "Block" : "Allow"}
-                                  </span>
+                                  </Badge>
                                   <Show when={rule.overridable && props.folder}>
                                     <button
                                       type="button"
-                                      class={`governance-rule-toggle ${!isBlocking() ? "governance-rule-toggle-on" : ""}`}
+                                      class={cn(
+                                        "flex items-center justify-center w-8 h-8 rounded transition-colors",
+                                        !isBlocking()
+                                          ? "text-success hover:opacity-80"
+                                          : "text-muted-foreground hover:text-foreground",
+                                        "disabled:opacity-50 disabled:cursor-not-allowed"
+                                      )}
                                       onClick={() => handleRuleToggle(rule)}
                                       disabled={isToggling()}
                                       title={isBlocking() ? "Click to allow" : "Click to block"}

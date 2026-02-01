@@ -1,6 +1,7 @@
 import { Component, Show, For, createSignal, createEffect, onMount, createMemo } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { X, Shield, ShieldAlert, ShieldCheck, ShieldOff, AlertTriangle, Info, ChevronDown, ChevronRight, FileCode, FileText, Book, ExternalLink, ToggleLeft, ToggleRight } from "lucide-solid"
+import { cn } from "../lib/cn"
 import {
   governanceRules,
   governanceSummary,
@@ -128,8 +129,8 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
         <Dialog.Overlay class="settings-panel-overlay" />
         <div class="fixed inset-y-0 right-0 z-50 flex">
           <Dialog.Content class="settings-panel governance-panel">
-            <div class="settings-panel-header">
-              <Dialog.Title class="settings-panel-title">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+              <Dialog.Title class="text-sm font-semibold text-foreground">
                 <Shield class="w-5 h-5" />
                 <span>Governance Rules</span>
               </Dialog.Title>
@@ -141,15 +142,15 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
             <div class="settings-panel-content">
               {/* Loading State */}
               <Show when={isGovernanceLoading()}>
-                <div class="governance-loading">
-                  <div class="governance-loading-spinner" />
+                <div class={cn("flex items-center justify-center gap-3 py-8 text-muted-foreground")}>
+                  <div class={cn("w-5 h-5 border-2 border-t-transparent border-muted-foreground rounded-full animate-spin")} />
                   <span>Loading governance rules...</span>
                 </div>
               </Show>
 
               {/* Error State */}
               <Show when={governanceError()}>
-                <div class="governance-error">
+                <div class={cn("flex items-center gap-2 p-4 rounded-md bg-destructive/10 text-destructive")}>
                   <AlertTriangle class="w-5 h-5" />
                   <span>{governanceError()}</span>
                 </div>
@@ -157,17 +158,17 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Summary */}
               <Show when={!isGovernanceLoading() && governanceSummary()}>
-                <div class="governance-summary">
-                  <div class="governance-summary-row">
-                    <span class="governance-summary-label">Total Rules</span>
-                    <span class="governance-summary-value">{governanceSummary()!.totalRules}</span>
+                <div class={cn("flex flex-col gap-2 p-4 rounded-lg bg-secondary border border-border")}>
+                  <div class={cn("flex items-center justify-between")}>
+                    <span class={cn("text-sm text-muted-foreground")}>Total Rules</span>
+                    <span class={cn("text-sm font-semibold text-foreground")}>{governanceSummary()!.totalRules}</span>
                   </div>
-                  <div class="governance-summary-row">
-                    <span class="governance-summary-label">Active Overrides</span>
-                    <span class="governance-summary-value">{activeOverridesCount()}</span>
+                  <div class={cn("flex items-center justify-between")}>
+                    <span class={cn("text-sm text-muted-foreground")}>Active Overrides</span>
+                    <span class={cn("text-sm font-semibold text-foreground")}>{activeOverridesCount()}</span>
                   </div>
                   <Show when={isAuditMode()}>
-                    <div class="governance-audit-mode">
+                    <div class={cn("flex items-center gap-2 mt-1 text-sm text-warning")}>
                       <Info class="w-4 h-4" />
                       <span>Audit Mode Active</span>
                     </div>
@@ -177,10 +178,14 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Quick Actions */}
               <Show when={!isGovernanceLoading()}>
-                <div class="governance-quick-actions">
+                <div class={cn("flex items-center gap-2 mt-4")}>
                   <button
                     type="button"
-                    class="governance-quick-action"
+                    class={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "bg-secondary border border-border text-foreground",
+                      "hover:bg-accent"
+                    )}
                     onClick={() => setAdvancedPanelOpen(true)}
                   >
                     <FileCode class="w-4 h-4" />
@@ -188,7 +193,11 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                   </button>
                   <button
                     type="button"
-                    class="governance-quick-action"
+                    class={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "bg-secondary border border-border text-foreground",
+                      "hover:bg-accent"
+                    )}
                     onClick={() => setDirectivesPanelOpen(true)}
                   >
                     <FileText class="w-4 h-4" />
@@ -196,7 +205,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                   </button>
                   <button
                     type="button"
-                    class="governance-quick-action"
+                    class={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      "bg-secondary border border-border text-foreground",
+                      "hover:bg-accent",
+                      "disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
                     onClick={() => setConstitutionPanelOpen(true)}
                     disabled={!props.folder}
                   >
@@ -208,9 +222,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Hardcoded Rules Section */}
               <Show when={!isGovernanceLoading() && hardcodedRules().length > 0}>
-                <div class="governance-section">
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
                   <button
-                    class="governance-section-header"
+                    class={cn(
+                      "flex items-center gap-2 w-full px-4 py-3 text-left transition-colors",
+                      "bg-secondary hover:bg-accent"
+                    )}
                     onClick={() => toggleSection("hardcoded")}
                   >
                     {expandedSections().hardcoded ? (
@@ -218,31 +235,31 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                     ) : (
                       <ChevronRight class="w-4 h-4" />
                     )}
-                    <ShieldAlert class="w-4 h-4 text-red-400" />
-                    <span>Hardcoded Rules</span>
-                    <span class="governance-section-count">{hardcodedRules().length}</span>
+                    <ShieldAlert class="w-4 h-4 text-destructive" />
+                    <span class={cn("text-sm font-medium text-foreground")}>Hardcoded Rules</span>
+                    <span class={cn("ml-auto text-xs px-2 py-0.5 rounded-full bg-accent text-muted-foreground")}>{hardcodedRules().length}</span>
                   </button>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Safety rules that cannot be overridden
                   </p>
                   <Show when={expandedSections().hardcoded}>
-                    <div class="governance-rules-list">
+                    <div class={cn("divide-y divide-border")}>
                       <For each={hardcodedRules()}>
                         {(rule) => (
-                          <div class="governance-rule">
-                            <div class="governance-rule-header">
-                              <span class="governance-rule-id">{rule.id}</span>
-                              <span class="governance-action-badge governance-action-deny">Deny</span>
-                              <span class="governance-rule-locked" title="Cannot be overridden">
+                          <div class={cn("p-4")}>
+                            <div class={cn("flex items-center gap-2 mb-1")}>
+                              <span class={cn("font-mono text-xs text-foreground")}>{rule.id}</span>
+                              <span class={cn("text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium")}>Deny</span>
+                              <span class={cn("text-destructive")} title="Cannot be overridden">
                                 <ShieldOff class="w-3 h-3" />
                               </span>
                             </div>
-                            <div class="governance-rule-pattern">
-                              <code>{rule.pattern}</code>
+                            <div class={cn("mb-1")}>
+                              <code class={cn("text-xs px-2 py-1 rounded font-mono bg-accent text-muted-foreground break-all")}>{rule.pattern}</code>
                             </div>
-                            <div class="governance-rule-reason">{rule.reason}</div>
+                            <div class={cn("text-sm text-muted-foreground")}>{rule.reason}</div>
                             <Show when={rule.suggestion}>
-                              <div class="governance-rule-suggestion">
+                              <div class={cn("flex items-center gap-2 mt-2 text-xs text-info")}>
                                 <Info class="w-3 h-3" />
                                 <span>{rule.suggestion}</span>
                               </div>
@@ -257,9 +274,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Default Rules Section */}
               <Show when={!isGovernanceLoading() && defaultRules().length > 0}>
-                <div class="governance-section">
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
                   <button
-                    class="governance-section-header"
+                    class={cn(
+                      "flex items-center gap-2 w-full px-4 py-3 text-left transition-colors",
+                      "bg-secondary hover:bg-accent"
+                    )}
                     onClick={() => toggleSection("default")}
                   >
                     {expandedSections().default ? (
@@ -267,40 +287,46 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                     ) : (
                       <ChevronRight class="w-4 h-4" />
                     )}
-                    <Shield class="w-4 h-4 text-yellow-400" />
-                    <span>Default Rules</span>
-                    <span class="governance-section-count">{defaultRules().length}</span>
+                    <Shield class="w-4 h-4 text-warning" />
+                    <span class={cn("text-sm font-medium text-foreground")}>Default Rules</span>
+                    <span class={cn("ml-auto text-xs px-2 py-0.5 rounded-full bg-accent text-muted-foreground")}>{defaultRules().length}</span>
                   </button>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Can be overridden in project governance config
                   </p>
                   <Show when={expandedSections().default}>
-                    <div class="governance-rules-list">
+                    <div class={cn("divide-y divide-border")}>
                       <For each={defaultRules()}>
                         {(rule) => {
                           const isOverridden = () => rule.action === "allow"
                           const isToggling = () => togglingRules().has(rule.id)
 
                           return (
-                            <div class={`governance-rule ${isOverridden() ? "governance-rule-overridden" : ""}`}>
-                              <div class="governance-rule-header">
-                                <span class="governance-rule-id">{rule.id}</span>
+                            <div class={cn("p-4", isOverridden() && "bg-success/5")}>
+                              <div class={cn("flex items-center gap-2 mb-1")}>
+                                <span class={cn("font-mono text-xs text-foreground")}>{rule.id}</span>
                                 <Show when={isOverridden()}>
-                                  <span class="governance-action-badge governance-action-allow">Allow</span>
+                                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-success/10 text-success font-medium")}>Allow</span>
                                 </Show>
                                 <Show when={!isOverridden()}>
-                                  <span class="governance-action-badge governance-action-deny">Deny</span>
+                                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium")}>Deny</span>
                                 </Show>
                                 {/* Toggle Switch */}
                                 <button
                                   type="button"
-                                  class={`governance-rule-toggle ${isOverridden() ? "governance-rule-toggle-on" : "governance-rule-toggle-off"}`}
+                                  class={cn(
+                                    "flex items-center justify-center w-8 h-8 rounded transition-colors ml-auto",
+                                    isOverridden()
+                                      ? "text-success hover:opacity-80"
+                                      : "text-muted-foreground hover:text-foreground",
+                                    "disabled:opacity-50 disabled:cursor-not-allowed"
+                                  )}
                                   onClick={() => handleRuleToggle(rule)}
                                   disabled={isToggling() || !props.folder}
                                   title={!props.folder ? "Open a project to toggle rules" : isOverridden() ? "Click to deny (remove override)" : "Click to allow (add override)"}
                                 >
                                   <Show when={isToggling()}>
-                                    <div class="governance-rule-toggle-spinner" />
+                                    <div class={cn("w-5 h-5 border-2 border-t-transparent border-current rounded-full animate-spin")} />
                                   </Show>
                                   <Show when={!isToggling()}>
                                     <Show when={isOverridden()}>
@@ -312,12 +338,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                                   </Show>
                                 </button>
                               </div>
-                              <div class="governance-rule-pattern">
-                                <code>{rule.pattern}</code>
+                              <div class={cn("mb-1")}>
+                                <code class={cn("text-xs px-2 py-1 rounded font-mono bg-accent text-muted-foreground break-all")}>{rule.pattern}</code>
                               </div>
-                              <div class="governance-rule-reason">{rule.reason}</div>
+                              <div class={cn("text-sm text-muted-foreground")}>{rule.reason}</div>
                               <Show when={rule.suggestion}>
-                                <div class="governance-rule-suggestion">
+                                <div class={cn("flex items-center gap-2 mt-2 text-xs text-info")}>
                                   <Info class="w-3 h-3" />
                                   <span>{rule.suggestion}</span>
                                 </div>
@@ -333,9 +359,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Project Rules Section */}
               <Show when={!isGovernanceLoading() && projectRules().length > 0}>
-                <div class="governance-section">
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
                   <button
-                    class="governance-section-header"
+                    class={cn(
+                      "flex items-center gap-2 w-full px-4 py-3 text-left transition-colors",
+                      "bg-secondary hover:bg-accent"
+                    )}
                     onClick={() => toggleSection("project")}
                   >
                     {expandedSections().project ? (
@@ -343,40 +372,46 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                     ) : (
                       <ChevronRight class="w-4 h-4" />
                     )}
-                    <ShieldCheck class="w-4 h-4 text-blue-400" />
-                    <span>Project Rules</span>
-                    <span class="governance-section-count">{projectRules().length}</span>
+                    <ShieldCheck class="w-4 h-4 text-info" />
+                    <span class={cn("text-sm font-medium text-foreground")}>Project Rules</span>
+                    <span class={cn("ml-auto text-xs px-2 py-0.5 rounded-full bg-accent text-muted-foreground")}>{projectRules().length}</span>
                   </button>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Custom rules defined in this project
                   </p>
                   <Show when={expandedSections().project}>
-                    <div class="governance-rules-list">
+                    <div class={cn("divide-y divide-border")}>
                       <For each={projectRules()}>
                         {(rule) => {
                           const isOverridden = () => rule.action === "allow"
                           const isToggling = () => togglingRules().has(rule.id)
 
                           return (
-                            <div class={`governance-rule ${isOverridden() ? "governance-rule-overridden" : ""}`}>
-                              <div class="governance-rule-header">
-                                <span class="governance-rule-id">{rule.id}</span>
+                            <div class={cn("p-4", isOverridden() && "bg-success/5")}>
+                              <div class={cn("flex items-center gap-2 mb-1")}>
+                                <span class={cn("font-mono text-xs text-foreground")}>{rule.id}</span>
                                 <Show when={rule.action === "allow"}>
-                                  <span class="governance-action-badge governance-action-allow">Allow</span>
+                                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-success/10 text-success font-medium")}>Allow</span>
                                 </Show>
                                 <Show when={rule.action === "deny"}>
-                                  <span class="governance-action-badge governance-action-deny">Deny</span>
+                                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium")}>Deny</span>
                                 </Show>
                                 {/* Toggle Switch for project rules */}
                                 <button
                                   type="button"
-                                  class={`governance-rule-toggle ${isOverridden() ? "governance-rule-toggle-on" : "governance-rule-toggle-off"}`}
+                                  class={cn(
+                                    "flex items-center justify-center w-8 h-8 rounded transition-colors ml-auto",
+                                    isOverridden()
+                                      ? "text-success hover:opacity-80"
+                                      : "text-muted-foreground hover:text-foreground",
+                                    "disabled:opacity-50 disabled:cursor-not-allowed"
+                                  )}
                                   onClick={() => handleRuleToggle(rule)}
                                   disabled={isToggling() || !props.folder}
                                   title={!props.folder ? "Open a project to toggle rules" : isOverridden() ? "Click to deny (remove override)" : "Click to allow (add override)"}
                                 >
                                   <Show when={isToggling()}>
-                                    <div class="governance-rule-toggle-spinner" />
+                                    <div class={cn("w-5 h-5 border-2 border-t-transparent border-current rounded-full animate-spin")} />
                                   </Show>
                                   <Show when={!isToggling()}>
                                     <Show when={isOverridden()}>
@@ -388,10 +423,10 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                                   </Show>
                                 </button>
                               </div>
-                              <div class="governance-rule-pattern">
-                                <code>{rule.pattern}</code>
+                              <div class={cn("mb-1")}>
+                                <code class={cn("text-xs px-2 py-1 rounded font-mono bg-accent text-muted-foreground break-all")}>{rule.pattern}</code>
                               </div>
-                              <div class="governance-rule-reason">{rule.reason}</div>
+                              <div class={cn("text-sm text-muted-foreground")}>{rule.reason}</div>
                             </div>
                           )
                         }}
@@ -403,9 +438,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Project Directives Section */}
               <Show when={!isDirectivesLoading()}>
-                <div class="governance-section">
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
                   <button
-                    class="governance-section-header"
+                    class={cn(
+                      "flex items-center gap-2 w-full px-4 py-3 text-left transition-colors",
+                      "bg-secondary hover:bg-accent"
+                    )}
                     onClick={() => toggleSection("projectDirectives")}
                   >
                     {expandedSections().projectDirectives ? (
@@ -413,35 +451,41 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                     ) : (
                       <ChevronRight class="w-4 h-4" />
                     )}
-                    <FileText class="w-4 h-4 text-purple-400" />
-                    <span>Project Directives</span>
+                    <FileText class="w-4 h-4 text-info" />
+                    <span class={cn("text-sm font-medium text-foreground")}>Project Directives</span>
                     <Show when={projectDirectives()?.exists}>
-                      <span class="governance-section-count">1</span>
+                      <span class={cn("ml-auto text-xs px-2 py-0.5 rounded-full bg-accent text-muted-foreground")}>1</span>
                     </Show>
                   </button>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Project-specific development guidelines
                   </p>
                   <Show when={expandedSections().projectDirectives}>
-                    <div class="governance-directives-content">
+                    <div class={cn("p-4")}>
                       <Show when={projectDirectives()?.exists && projectDirectives()?.content}>
-                        <div class="governance-directive-preview">
-                          <pre>{projectDirectives()!.content.slice(0, 500)}{projectDirectives()!.content.length > 500 ? "..." : ""}</pre>
+                        <div class={cn("mb-3")}>
+                          <pre class={cn("p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all bg-accent text-muted-foreground overflow-auto max-h-[200px]")}>{projectDirectives()!.content.slice(0, 500)}{projectDirectives()!.content.length > 500 ? "..." : ""}</pre>
                         </div>
                         <button
                           type="button"
-                          class="governance-directive-edit-btn"
+                          class={cn(
+                            "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                            "bg-info/10 text-info hover:bg-info/20"
+                          )}
                           onClick={() => setDirectivesPanelOpen(true)}
                         >
                           Edit Directives
                         </button>
                       </Show>
                       <Show when={!projectDirectives()?.exists}>
-                        <div class="governance-directives-empty">
-                          <p>No project directives configured.</p>
+                        <div class={cn("text-center py-4")}>
+                          <p class={cn("text-sm text-muted-foreground mb-3")}>No project directives configured.</p>
                           <button
                             type="button"
-                            class="governance-directive-create-btn"
+                            class={cn(
+                              "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                              "bg-info/10 text-info hover:bg-info/20"
+                            )}
                             onClick={() => setDirectivesPanelOpen(true)}
                           >
                             Create Directives
@@ -455,9 +499,12 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Global Directives Section */}
               <Show when={!isDirectivesLoading()}>
-                <div class="governance-section">
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
                   <button
-                    class="governance-section-header"
+                    class={cn(
+                      "flex items-center gap-2 w-full px-4 py-3 text-left transition-colors",
+                      "bg-secondary hover:bg-accent"
+                    )}
                     onClick={() => toggleSection("globalDirectives")}
                   >
                     {expandedSections().globalDirectives ? (
@@ -465,35 +512,41 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
                     ) : (
                       <ChevronRight class="w-4 h-4" />
                     )}
-                    <FileText class="w-4 h-4 text-green-400" />
-                    <span>Global Directives</span>
+                    <FileText class="w-4 h-4 text-success" />
+                    <span class={cn("text-sm font-medium text-foreground")}>Global Directives</span>
                     <Show when={globalDirectives()?.exists}>
-                      <span class="governance-section-count">1</span>
+                      <span class={cn("ml-auto text-xs px-2 py-0.5 rounded-full bg-accent text-muted-foreground")}>1</span>
                     </Show>
                   </button>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Guidelines that apply across all projects
                   </p>
                   <Show when={expandedSections().globalDirectives}>
-                    <div class="governance-directives-content">
+                    <div class={cn("p-4")}>
                       <Show when={globalDirectives()?.exists && globalDirectives()?.content}>
-                        <div class="governance-directive-preview">
-                          <pre>{globalDirectives()!.content.slice(0, 500)}{globalDirectives()!.content.length > 500 ? "..." : ""}</pre>
+                        <div class={cn("mb-3")}>
+                          <pre class={cn("p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all bg-accent text-muted-foreground overflow-auto max-h-[200px]")}>{globalDirectives()!.content.slice(0, 500)}{globalDirectives()!.content.length > 500 ? "..." : ""}</pre>
                         </div>
                         <button
                           type="button"
-                          class="governance-directive-edit-btn"
+                          class={cn(
+                            "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                            "bg-info/10 text-info hover:bg-info/20"
+                          )}
                           onClick={() => setDirectivesPanelOpen(true)}
                         >
                           Edit Directives
                         </button>
                       </Show>
                       <Show when={!globalDirectives()?.exists}>
-                        <div class="governance-directives-empty">
-                          <p>No global directives configured.</p>
+                        <div class={cn("text-center py-4")}>
+                          <p class={cn("text-sm text-muted-foreground mb-3")}>No global directives configured.</p>
                           <button
                             type="button"
-                            class="governance-directive-create-btn"
+                            class={cn(
+                              "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                              "bg-info/10 text-info hover:bg-info/20"
+                            )}
                             onClick={() => setDirectivesPanelOpen(true)}
                           >
                             Create Directives
@@ -507,39 +560,49 @@ const GovernancePanel: Component<GovernancePanelProps> = (props) => {
 
               {/* Constitution Section with GitHub Issue Button */}
               <Show when={!isGovernanceLoading()}>
-                <div class="governance-section governance-section-constitution">
-                  <div class="governance-constitution-header">
-                    <div class="governance-constitution-info">
-                      <Book class="w-4 h-4 text-blue-400" />
-                      <span>Constitution</span>
+                <div class={cn("mt-4 rounded-lg border border-border overflow-hidden")}>
+                  <div class={cn("flex items-center justify-between px-4 py-3 bg-secondary")}>
+                    <div class={cn("flex items-center gap-2")}>
+                      <Book class="w-4 h-4 text-info" />
+                      <span class={cn("text-sm font-medium text-foreground")}>Constitution</span>
                     </div>
                     <button
                       type="button"
-                      class="governance-constitution-view-btn"
+                      class={cn(
+                        "px-3 py-1 rounded-md text-xs font-medium transition-colors",
+                        "bg-accent text-foreground hover:bg-accent/80",
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
                       onClick={() => setConstitutionPanelOpen(true)}
                       disabled={!props.folder}
                     >
                       View
                     </button>
                   </div>
-                  <p class="governance-section-description">
+                  <p class={cn("px-4 py-1 text-xs text-muted-foreground bg-secondary border-t border-border")}>
                     Immutable architectural constraints for this project
                   </p>
-                  <button
-                    type="button"
-                    class="governance-request-change-btn"
-                    onClick={openGitHubIssue}
-                  >
-                    <ExternalLink class="w-4 h-4" />
-                    <span>Request Governance Change</span>
-                  </button>
+                  <div class={cn("px-4 py-3 border-t border-border")}>
+                    <button
+                      type="button"
+                      class={cn(
+                        "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full justify-center",
+                        "bg-secondary border border-dashed border-border text-muted-foreground",
+                        "hover:border-info hover:text-info"
+                      )}
+                      onClick={openGitHubIssue}
+                    >
+                      <ExternalLink class="w-4 h-4" />
+                      <span>Request Governance Change</span>
+                    </button>
+                  </div>
                 </div>
               </Show>
 
               {/* No Rules State */}
               <Show when={!isGovernanceLoading() && !governanceError() && governanceRules().length === 0}>
-                <div class="governance-empty">
-                  <Shield class="w-8 h-8" />
+                <div class={cn("flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground")}>
+                  <Shield class="w-8 h-8 opacity-50" />
                   <span>No governance rules found</span>
                 </div>
               </Show>

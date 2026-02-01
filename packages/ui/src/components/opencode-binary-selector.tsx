@@ -5,6 +5,7 @@ import { serverApi } from "../lib/api-client"
 import FileSystemBrowserDialog from "./filesystem-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogs } from "../lib/native/native-functions"
 import { getLogger } from "../lib/logger"
+import { cn } from "../lib/cn"
 const log = getLogger("actions")
 
 
@@ -317,21 +318,21 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
   return (
     <>
-      <div class="panel">
-        <div class="panel-header flex items-center justify-between" style={{ gap: "var(--space-md)" }}>
+      <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground">
+        <div class="px-4 py-3 border-b border-border bg-secondary flex items-center justify-between" style={{ gap: "var(--space-md)" }}>
           <div>
-            <h3 class="panel-title">OpenCode Binary</h3>
-            <p class="panel-subtitle">Choose which executable OpenCode should run</p>
+            <h3 class="text-base font-semibold text-foreground">OpenCode Binary</h3>
+            <p class="text-xs mt-0.5 text-muted-foreground">Choose which executable OpenCode should run</p>
           </div>
           <Show when={validating()}>
-            <div class="flex items-center text-xs text-muted" style={{ gap: "var(--space-sm)" }}>
+            <div class="flex items-center text-xs text-muted-foreground" style={{ gap: "var(--space-sm)" }}>
               <Loader2 class="w-4 h-4 animate-spin text-accent" />
               <span>Checking versions…</span>
             </div>
           </Show>
         </div>
 
-        <div class="panel-body" style={{ gap: "var(--space-md)" }}>
+        <div class="p-4 bg-background" style={{ gap: "var(--space-md)" }}>
           <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
             <input
               type="text"
@@ -345,13 +346,13 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
               }}
               disabled={props.disabled}
               placeholder="Enter path to opencode binary…"
-              class="modal-input flex-1"
+              class="w-full bg-transparent border border-border rounded-md px-3 py-2 text-sm text-foreground outline-none focus:border-primary placeholder:text-muted-foreground flex-1"
             />
             <button
               type="button"
               onClick={handleCustomPathSubmit}
               disabled={props.disabled || !customPath().trim()}
-              class="modal-button modal-button--primary"
+              class="inline-flex items-center justify-center gap-2 font-medium px-4 py-2 rounded-md transition-colors bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Plus class="w-4 h-4" />
               Add
@@ -362,14 +363,14 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
             type="button"
             onClick={() => void handleBrowseBinary()}
             disabled={props.disabled}
-            class="modal-button modal-button--secondary w-full"
+            class="inline-flex items-center justify-center gap-2 font-medium px-4 py-2 rounded-md transition-colors border border-border bg-background text-foreground hover:bg-accent w-full"
           >
             <FolderOpen class="w-4 h-4" />
             Browse for Binary…
           </button>
 
           <Show when={validationError()}>
-            <div class="px-3 py-2 rounded-md bg-danger-soft-bg border border-base">
+            <div class="px-3 py-2 rounded-md bg-danger-soft-bg border border-border">
               <div class="flex items-center" style={{ gap: "var(--space-sm)" }}>
                 <AlertCircle class="w-4 h-4 text-status-error flex-shrink-0" />
                 <span class="text-sm text-status-error">{validationError()}</span>
@@ -378,7 +379,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
           </Show>
         </div>
 
-        <div class="panel-list panel-list--fill max-h-80 overflow-y-auto">
+        <div class="max-h-none h-full overflow-y-auto w-full min-w-0 overflow-x-hidden max-h-80">
           <For each={binaryOptions()}>
             {(binary) => {
               const isDefault = binary.isDefault || isAutoDetected(binary.path)
@@ -386,12 +387,14 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
               return (
                 <div
-                  class="panel-list-item flex items-center"
-                  classList={{ "panel-list-item-highlight": currentSelectionPath() === binary.path }}
+                  class={cn(
+                    "border-b last:border-b-0 transition-colors w-full border-border hover:bg-accent flex items-center",
+                    currentSelectionPath() === binary.path && "bg-accent shadow-[inset_0_0_0_1px_hsl(var(--border))]",
+                  )}
                 >
                   <button
                     type="button"
-                    class="panel-list-item-content flex-1"
+                    class="flex-1 text-left px-4 py-3 flex items-center justify-between gap-3 outline-none transition-colors w-full min-w-0"
                     onClick={() => handleSelectBinary(binary.path)}
                     disabled={props.disabled}
                   >
@@ -403,20 +406,20 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                         <span class="text-sm font-medium truncate text-primary">{getDisplayName(binary.path)}</span>
                       </div>
                       <Show when={!isDefault}>
-                        <div class="text-xs font-mono truncate pl-6 text-muted">{binary.path}</div>
+                        <div class="text-xs font-mono truncate pl-6 text-muted-foreground">{binary.path}</div>
                       </Show>
-                      <div class="flex items-center gap-2 text-xs text-muted pl-6 flex-wrap">
+                      <div class="flex items-center gap-2 text-xs text-muted-foreground pl-6 flex-wrap">
                         <Show when={versionLabel()}>
-                          <span class="selector-badge-version">v{versionLabel()}</span>
+                          <span class="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-accent-foreground">v{versionLabel()}</span>
                         </Show>
                         <Show when={isPathValidating(binary.path)}>
-                          <span class="selector-badge-time">Checking…</span>
+                          <span class="inline-flex items-center px-1.5 py-0.5 text-[10px] text-muted-foreground">Checking…</span>
                         </Show>
                         <Show when={!isDefault && binary.lastUsed}>
-                          <span class="selector-badge-time">{formatRelativeTime(binary.lastUsed)}</span>
+                          <span class="inline-flex items-center px-1.5 py-0.5 text-[10px] text-muted-foreground">{formatRelativeTime(binary.lastUsed)}</span>
                         </Show>
                         <Show when={isDefault}>
-                          <span class="selector-badge-time">Use binary from system PATH</span>
+                          <span class="inline-flex items-center px-1.5 py-0.5 text-[10px] text-muted-foreground">Use binary from system PATH</span>
                         </Show>
                       </div>
                     </div>
@@ -424,7 +427,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                   <Show when={!isDefault}>
                     <button
                       type="button"
-                      class="p-2 text-muted hover:text-primary"
+                      class="p-2 text-muted-foreground hover:text-primary"
                       onClick={(event) => handleRemoveBinary(binary.path, event)}
                       disabled={props.disabled}
                       title="Remove binary"

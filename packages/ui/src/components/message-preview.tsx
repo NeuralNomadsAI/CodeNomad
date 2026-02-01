@@ -13,7 +13,7 @@ const MessagePreview: Component<MessagePreviewProps> = (props) => {
   const lastAssistantIndex = () => 0
 
   return (
-    <div class="message-preview message-stream">
+    <div class="w-[520px] max-h-[70vh] overflow-hidden rounded-lg border border-border bg-background shadow-[0_12px_32px_rgba(0,0,0,0.25)] p-3 text-sm flex flex-col gap-4">
       <MessageBlock
         messageId={props.messageId}
         instanceId={props.instanceId}

@@ -1,5 +1,7 @@
 import { Component, createSignal, createMemo, Show, For } from "solid-js"
 import { X, Sparkles, RefreshCw, Plus, ChevronDown } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 import {
   formatDirectiveRuleBased,
   validateDirective,
@@ -108,38 +110,50 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
 
   return (
     <Show when={props.open}>
-      <div class="add-directive-modal-overlay" onClick={props.onClose} onKeyDown={handleKeyDown}>
-        <div class="add-directive-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        class={cn("fixed inset-0 flex items-center justify-center p-4 bg-black/60 z-[100]")}
+        onClick={props.onClose}
+        onKeyDown={handleKeyDown}
+      >
+        <div
+          class={cn("w-full max-w-lg rounded-xl overflow-hidden bg-background border border-border shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)]")}
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Header */}
-          <div class="add-directive-modal-header">
-            <h3>
+          <div class={cn("flex items-center justify-between px-6 py-4 border-b border-border")}>
+            <h3 class={cn("text-lg font-semibold text-foreground")}>
               {props.type === "project" ? "Add Project Directive" : "Add Global Directive"}
             </h3>
-            <button type="button" class="add-directive-modal-close" onClick={props.onClose}>
+            <button type="button" class={cn("p-1 rounded transition-colors text-muted-foreground hover:text-foreground")} onClick={props.onClose}>
               <X class="w-5 h-5" />
             </button>
           </div>
 
           {/* Body */}
-          <div class="add-directive-modal-body">
+          <div class={cn("p-6 space-y-4")}>
             {/* Input */}
-            <div class="add-directive-field">
-              <label class="add-directive-label">Directive</label>
+            <div class={cn("space-y-2")}>
+              <label class={cn("block text-sm font-medium text-foreground")}>Directive</label>
               <textarea
-                class="add-directive-input"
+                class={cn(
+                  "w-full p-3 rounded-lg text-sm resize-none min-h-[80px]",
+                  "bg-secondary border border-border text-foreground",
+                  "placeholder:text-muted-foreground",
+                  "focus:outline-none focus:border-info"
+                )}
                 value={input()}
                 onInput={(e) => handleInputChange(e.currentTarget.value)}
                 placeholder="Describe your directive in natural language, e.g., 'Always use TypeScript for new files' or 'Never commit API keys to the repository'"
                 autofocus
               />
-              <p class="add-directive-hint">
+              <p class={cn("text-xs text-muted-foreground")}>
                 Type your directive in natural language. It will be formatted automatically.
               </p>
             </div>
 
             {/* Validation Error */}
             <Show when={validationError()}>
-              <div class="governance-notice governance-notice-error text-sm">
+              <div class={cn("p-3 rounded-md text-sm bg-destructive/10 text-destructive")}>
                 {validationError()}
               </div>
             </Show>
@@ -149,7 +163,12 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
               <div class="flex gap-2">
                 <button
                   type="button"
-                  class="add-directive-btn add-directive-btn-format flex-1"
+                  class={cn(
+                    "flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "bg-accent border border-border text-foreground",
+                    "hover:bg-accent/80",
+                    "disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
                   onClick={handleFormat}
                   disabled={isFormatting()}
                 >
@@ -166,28 +185,32 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
                   )}
                 </button>
               </div>
-              <p class="add-directive-hint text-center">
+              <p class={cn("text-xs text-muted-foreground text-center")}>
                 Or add directly to the default section
               </p>
             </Show>
 
             {/* Format Preview */}
             <Show when={formatResult()}>
-              <div class="add-directive-preview">
-                <div class="add-directive-preview-label">Formatted Directive</div>
-                <div class="add-directive-preview-content">{formatResult()?.formatted}</div>
-                <div class="add-directive-preview-section">
+              <div class={cn("p-4 rounded-lg bg-secondary border border-border")}>
+                <div class={cn("text-xs font-medium uppercase tracking-wide mb-2 text-muted-foreground")}>Formatted Directive</div>
+                <div class={cn("text-sm text-foreground")}>{formatResult()?.formatted}</div>
+                <div class={cn("text-xs mt-2 text-muted-foreground")}>
                   Suggested section: <strong>{formatResult()?.suggestedSection}</strong>
                 </div>
               </div>
 
               {/* Section Selection */}
-              <div class="add-directive-field">
-                <label class="add-directive-label">Section</label>
+              <div class={cn("space-y-2")}>
+                <label class={cn("block text-sm font-medium text-foreground")}>Section</label>
                 <Show when={!isNewSection()}>
                   <div class="flex gap-2">
                     <select
-                      class="add-directive-select flex-1"
+                      class={cn(
+                        "flex-1 w-full p-2 rounded-lg text-sm",
+                        "bg-secondary border border-border text-foreground",
+                        "focus:outline-none focus:border-info"
+                      )}
                       value={selectedSection()}
                       onChange={(e) => setSelectedSection(e.currentTarget.value)}
                     >
@@ -198,36 +221,40 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
                         )}
                       </For>
                     </select>
-                    <button
-                      type="button"
-                      class="add-directive-btn add-directive-btn-secondary"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setIsNewSection(true)}
                       title="Create new section"
                     >
                       <Plus class="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                 </Show>
                 <Show when={isNewSection()}>
                   <div class="flex gap-2">
                     <input
                       type="text"
-                      class="add-directive-select flex-1"
+                      class={cn(
+                        "flex-1 w-full p-2 rounded-lg text-sm",
+                        "bg-secondary border border-border text-foreground",
+                        "focus:outline-none focus:border-info"
+                      )}
                       value={newSectionName()}
                       onInput={(e) => setNewSectionName(e.currentTarget.value)}
                       placeholder="Enter new section name..."
                       autofocus
                     />
-                    <button
-                      type="button"
-                      class="add-directive-btn add-directive-btn-secondary"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
                         setIsNewSection(false)
                         setNewSectionName("")
                       }}
                     >
                       <ChevronDown class="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                 </Show>
               </div>
@@ -235,17 +262,13 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
           </div>
 
           {/* Footer */}
-          <div class="add-directive-modal-footer">
-            <button
-              type="button"
-              class="add-directive-btn add-directive-btn-secondary"
-              onClick={props.onClose}
-            >
+          <div class={cn("flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary")}>
+            <Button variant="outline" size="sm" onClick={props.onClose}>
               Cancel
-            </button>
-            <button
-              type="button"
-              class="add-directive-btn add-directive-btn-primary"
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
               onClick={() => {
                 // Auto-format if not already formatted
                 if (!formatResult() && input().trim().length >= 5) {
@@ -261,7 +284,7 @@ const AddDirectiveModal: Component<AddDirectiveModalProps> = (props) => {
             >
               <Plus class="w-4 h-4" />
               Add Directive
-            </button>
+            </Button>
           </div>
         </div>
       </div>

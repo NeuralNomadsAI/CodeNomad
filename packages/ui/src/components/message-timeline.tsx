@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type Component } from "solid-js"
+import { Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
@@ -6,6 +7,7 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon } from "lucide-solid"
+import { cn } from "../lib/cn"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool"
 
@@ -16,6 +18,13 @@ export interface TimelineSegment {
   label: string
   tooltip: string
   shortLabel?: string
+}
+
+interface TurnGroup {
+  id: string
+  type: "user" | "assistant-turn"
+  segments: TimelineSegment[]
+  count: number
 }
 
 interface MessageTimelineProps {
@@ -169,7 +178,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
           [...pending.texts, ...pending.reasoningTexts],
           pending.type === "user" ? "User message" : "Assistant response",
         )
- 
+
     result.push({
       id: `${record.id}:${segmentIndex}`,
       messageId: record.id,
@@ -181,7 +190,7 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
     segmentIndex += 1
     pending = null
   }
- 
+
   const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
     if (!pending || pending.type !== type) {
       flushPending()
@@ -214,11 +223,11 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
       }
       continue
     }
- 
+
     if (part.type === "step-start" || part.type === "step-finish") {
       continue
     }
- 
+
     const text = collectTextFromPart(part)
     if (text.trim().length === 0) continue
     const target = ensureSegment(defaultContentType)
@@ -230,8 +239,51 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord)
 
 
   flushPending()
- 
+
   return result
+}
+
+function shortLabelForSegment(segment: TimelineSegment) {
+  if (segment.type === "tool") {
+    return segment.shortLabel ?? getToolIcon("tool")
+  }
+  if (segment.type === "user") {
+    return <UserIcon class="size-4" aria-hidden="true" />
+  }
+  return <BotIcon class="size-4" aria-hidden="true" />
+}
+
+function groupByTurns(segments: TimelineSegment[]): TurnGroup[] {
+  const turns: TurnGroup[] = []
+  let currentAssistantSegments: TimelineSegment[] = []
+
+  const flushAssistantTurn = () => {
+    if (currentAssistantSegments.length === 0) return
+    turns.push({
+      id: `turn-${currentAssistantSegments[0].id}`,
+      type: "assistant-turn",
+      segments: currentAssistantSegments,
+      count: currentAssistantSegments.length,
+    })
+    currentAssistantSegments = []
+  }
+
+  for (const segment of segments) {
+    if (segment.type === "user") {
+      flushAssistantTurn()
+      turns.push({
+        id: `turn-${segment.id}`,
+        type: "user",
+        segments: [segment],
+        count: 1,
+      })
+    } else {
+      currentAssistantSegments.push(segment)
+    }
+  }
+  flushAssistantTurn()
+
+  return turns
 }
 
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
@@ -240,11 +292,50 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
   const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
-  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 420 })
+  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 520, height: 600 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
- 
+
+  const [expandedGroups, setExpandedGroups] = createSignal<Set<string>>(new Set())
+
+  const groupedSegments = createMemo(() => groupByTurns(props.segments))
+
+  // Auto-expand the turn containing the active message whenever activeMessageId changes.
+  // Uses `on()` so only activeMessageId is tracked — reading expandedGroups/groupedSegments
+  // inside won't re-trigger the effect (allows manual collapse to stick).
+  createEffect(
+    on(
+      () => props.activeMessageId,
+      (activeId) => {
+        if (!activeId) return
+        const turns = groupedSegments()
+        const activeTurn = turns.find(
+          (t) => t.type === "assistant-turn" && t.segments.some((s) => s.messageId === activeId),
+        )
+        if (activeTurn && !expandedGroups().has(activeTurn.id)) {
+          setExpandedGroups((prev) => {
+            const next = new Set(prev)
+            next.add(activeTurn.id)
+            return next
+          })
+        }
+      },
+    ),
+  )
+
+  const toggleGroup = (groupId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) {
+        next.delete(groupId)
+      } else {
+        next.add(groupId)
+      }
+      return next
+    })
+  }
+
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
     if (element) {
       buttonRefs.set(segmentId, element)
@@ -252,14 +343,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       buttonRefs.delete(segmentId)
     }
   }
- 
+
   const clearHoverTimer = () => {
     if (hoverTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(hoverTimer)
       hoverTimer = null
     }
   }
- 
+
   const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
     if (typeof window === "undefined") return
     clearHoverTimer()
@@ -276,7 +367,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     setHoveredSegment(null)
     setHoverAnchorRect(null)
   }
- 
+
   createEffect(() => {
     if (typeof window === "undefined") return
     const anchor = hoverAnchorRect()
@@ -301,10 +392,18 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (!activeId) return
     const targetSegment = props.segments.find((segment) => segment.messageId === activeId)
     if (!targetSegment) return
-    const element = buttonRefs.get(targetSegment.id)
+    let element = buttonRefs.get(targetSegment.id)
+    // Fall back to group header when segment button is not rendered (collapsed)
+    if (!element) {
+      const groups = groupedSegments()
+      const parentGroup = groups.find((g) => g.segments.some((s) => s.id === targetSegment.id))
+      if (parentGroup) {
+        element = buttonRefs.get(parentGroup.id)
+      }
+    }
     if (!element) return
     const timer = typeof window !== "undefined" ? window.setTimeout(() => {
-      element.scrollIntoView({ block: "nearest", behavior: "smooth" })
+      element!.scrollIntoView({ block: "nearest", behavior: "smooth" })
     }, 120) : null
     onCleanup(() => {
       if (timer !== null && typeof window !== "undefined") {
@@ -335,62 +434,169 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (!record) return null
     return { messageId: segment.messageId }
   })
- 
+
   return (
-    <div class="message-timeline" role="navigation" aria-label="Message timeline">
-      <For each={props.segments}>
-        {(segment) => {
-          onCleanup(() => buttonRefs.delete(segment.id))
-          const isActive = () => props.activeMessageId === segment.messageId
-          const isHidden = () => segment.type === "tool" && !(showTools() || isActive())
-          const shortLabelContent = () => {
-            if (segment.type === "tool") {
-              return segment.shortLabel ?? getToolIcon("tool")
+    <div
+      class="flex flex-1 flex-col gap-1.5 p-1 overflow-y-auto overflow-x-hidden rounded-lg bg-background shadow-lg [contain:layout_style]"
+      role="navigation"
+      aria-label="Message timeline"
+    >
+      <For each={groupedSegments()}>
+        {(turn) => {
+          const firstSegment = () => turn.segments[0]
+          const isTurnExpanded = () => expandedGroups().has(turn.id)
+          const turnContainsActive = () =>
+            turn.segments.some((s) => s.messageId === props.activeMessageId)
+
+          onCleanup(() => {
+            buttonRefs.delete(turn.id)
+            for (const s of turn.segments) {
+              buttonRefs.delete(s.id)
             }
-            if (segment.type === "user") {
-              return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-            }
-            return <BotIcon class="message-timeline-icon" aria-hidden="true" />
+          })
+
+          // User turns: render as a single segment button
+          if (turn.type === "user") {
+            const segment = firstSegment()
+            const isActive = () => props.activeMessageId === segment.messageId
+            return (
+              <div class="flex flex-col first:mt-0 mt-1">
+                <button
+                  ref={(el) => {
+                    registerButtonRef(turn.id, el)
+                    registerButtonRef(segment.id, el)
+                  }}
+                  type="button"
+                  class={cn(
+                    "w-full min-h-6 h-6 shrink-0 rounded-md border border-primary/30 bg-primary/5 flex items-center justify-center gap-0.5 text-[0.65rem] font-semibold tracking-wide uppercase text-foreground cursor-pointer transition-all duration-150 [contain:layout_style_paint]",
+                    isActive() && "!border-transparent !bg-success !text-success-foreground font-bold shadow-[inset_0_0_0_1px_rgba(0,0,0,0.35)]",
+                    !isActive() && "hover:bg-accent hover:text-foreground hover:-translate-y-px focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  )}
+                  aria-current={isActive() ? "true" : undefined}
+                  onClick={() => props.onSegmentClick?.(segment)}
+                  onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <span class="pointer-events-none inline-flex leading-none items-center justify-center">
+                    <UserIcon class="size-4" aria-hidden="true" />
+                  </span>
+                </button>
+              </div>
+            )
           }
+
+          // Assistant turns: collapsible header with expandable children
+          const expanded = isTurnExpanded
+          const visibleCount = () =>
+            showTools()
+              ? turn.count
+              : turn.segments.filter((s) => s.type !== "tool").length
+          const isSingle = () => visibleCount() <= 1
+
+          const handleHeaderClick = () => {
+            if (isSingle()) {
+              props.onSegmentClick?.(firstSegment())
+              return
+            }
+            if (!expanded()) {
+              props.onSegmentClick?.(firstSegment())
+            }
+            toggleGroup(turn.id)
+          }
+
           return (
-            <button
-              ref={(el) => registerButtonRef(segment.id, el)}
-              type="button"
-              class={`message-timeline-segment message-timeline-${segment.type} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
-              aria-current={isActive() ? "true" : undefined}
-              aria-hidden={isHidden() ? "true" : undefined}
-              onClick={() => props.onSegmentClick?.(segment)}
-              onMouseEnter={(event) => handleMouseEnter(segment, event)}
-              onMouseLeave={handleMouseLeave}
-            >
-              <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
-              <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
-            </button>
-          )
-        }}
-      </For>
-      <Show when={previewData()}>
-        {(data) => {
-          onCleanup(() => setTooltipElement(null))
-          return (
-            <div
-              ref={(element) => setTooltipElement(element)}
-              class="message-timeline-tooltip"
-              style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
-            >
-              <MessagePreview
-                messageId={data().messageId}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                store={store}
-              />
+            <div class="flex flex-col first:mt-0 mt-1">
+              {/* Turn header */}
+              <button
+                ref={(el) => {
+                  registerButtonRef(turn.id, el)
+                  if (isSingle()) registerButtonRef(firstSegment().id, el)
+                }}
+                type="button"
+                class={cn(
+                  "w-full min-h-6 h-6 shrink-0 rounded-md border border-muted bg-muted/30 flex items-center justify-center gap-0.5 text-[0.65rem] font-semibold tracking-wide uppercase text-foreground cursor-pointer transition-all duration-150 [contain:layout_style_paint]",
+                  turnContainsActive() && "!border-transparent !bg-success !text-success-foreground font-bold shadow-[inset_0_0_0_1px_rgba(0,0,0,0.35)]",
+                  !turnContainsActive() && "hover:bg-accent hover:text-foreground hover:-translate-y-px focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  !isSingle() && expanded() && "rounded-b-none border-b-transparent"
+                )}
+                aria-current={turnContainsActive() ? "true" : undefined}
+                onClick={handleHeaderClick}
+                onMouseEnter={(event) => handleMouseEnter(firstSegment(), event)}
+                onMouseLeave={handleMouseLeave}
+              >
+                <span class="pointer-events-none inline-flex leading-none items-center justify-center">
+                  <BotIcon class="size-3.5" aria-hidden="true" />
+                </span>
+                <Show when={visibleCount() > 1}>
+                  <span class={cn(
+                    "text-[0.6rem] font-bold text-muted-foreground pointer-events-none leading-none",
+                    turnContainsActive() && "text-white/85"
+                  )}>({visibleCount()})</span>
+                </Show>
+              </button>
+
+              {/* Expanded children */}
+              <Show when={expanded() && turn.count > 1}>
+                <div class="flex flex-col gap-px border-l-2 border-border/50 ml-2 max-sm:ml-1">
+                  <For each={turn.segments}>
+                    {(segment) => {
+                      const isChildActive = () => props.activeMessageId === segment.messageId
+                      const isChildHidden = () =>
+                        segment.type === "tool" && !(showTools() || isChildActive())
+                      onCleanup(() => buttonRefs.delete(segment.id))
+                      return (
+                        <button
+                          ref={(el) => registerButtonRef(segment.id, el)}
+                          type="button"
+                          class={cn(
+                            "relative w-full min-h-5 h-5 shrink-0 text-[0.6rem] font-semibold tracking-wide uppercase text-foreground border-none bg-secondary rounded-none flex items-center justify-center cursor-pointer transition-colors duration-150 last:rounded-b-md",
+                            isChildActive() && "!bg-success !text-success-foreground",
+                            !isChildActive() && "hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none",
+                            isChildHidden() && "!hidden"
+                          )}
+                          aria-current={isChildActive() ? "true" : undefined}
+                          aria-hidden={isChildHidden() ? "true" : undefined}
+                          onClick={() => props.onSegmentClick?.(segment)}
+                          onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                          onMouseLeave={handleMouseLeave}
+                        >
+                          <span class="absolute -left-2 top-1/2 w-1.5 h-px bg-border/50 pointer-events-none max-sm:-left-1 max-sm:w-0.5" />
+                          <span class="pointer-events-none inline-flex leading-none items-center justify-center">
+                            {shortLabelForSegment(segment)}
+                          </span>
+                        </button>
+                      )
+                    }}
+                  </For>
+                </div>
+              </Show>
             </div>
           )
         }}
-      </Show>
+      </For>
+      <Portal>
+        <Show when={previewData()}>
+          {(data) => {
+            onCleanup(() => setTooltipElement(null))
+            return (
+              <div
+                ref={(element) => setTooltipElement(element)}
+                class="fixed z-[1000] pointer-events-none"
+                style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
+              >
+                <MessagePreview
+                  messageId={data().messageId}
+                  instanceId={props.instanceId}
+                  sessionId={props.sessionId}
+                  store={store}
+                />
+              </div>
+            )
+          }}
+        </Show>
+      </Portal>
     </div>
   )
 }
- 
-export default MessageTimeline
 
+export default MessageTimeline

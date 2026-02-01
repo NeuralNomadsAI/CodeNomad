@@ -39,17 +39,22 @@ import {
   FileCode,
   FolderCog,
   Folder,
-  History,
   Activity,
+  Sun,
+  Moon,
+  Monitor,
+  BookmarkPlus,
 } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button, Input, Switch, Separator } from "./ui"
 import UnifiedGovernancePanel from "./unified-governance-panel"
 import ConstitutionPanel from "./constitution-panel"
-import SessionManagerSection from "./session-manager-section"
+import ActivityMonitor from "./activity-monitor"
 import OpenCodeBinarySelector from "./opencode-binary-selector"
 import GlobalDirectivesPanel from "./global-directives-panel"
 import ProjectDirectivesPanel from "./project-directives-panel"
 import ActiveRulesPanel from "./active-rules-panel"
-import ProcessManagerPanel from "./process-manager-panel"
+import SavedInstructionsPanel from "./saved-instructions-panel"
 import type { Instance } from "../types/instance"
 import {
   preferences,
@@ -120,6 +125,7 @@ import {
 import ModelCatalogPanel from "./model-catalog-panel"
 import ProviderConfigModal from "./provider-config-modal"
 import { providers as instanceProviders } from "../stores/sessions"
+import { serverApi } from "../lib/api-client"
 import {
   isGCloudAuthenticated,
   isGCloudExpired,
@@ -155,10 +161,10 @@ type SettingsSection =
   | "governance-global"
   | "governance-project"
   | "governance-rules"
+  | "saved-instructions"
   | "environment"
   | "accounts"
-  | "sessions"
-  | "processes"
+  | "activity-monitor"
   | "era-code"
   | "about"
 
@@ -203,12 +209,7 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
         { id: "governance-global" as const, label: "Global Directives", icon: Globe },
         { id: "governance-project" as const, label: "Project Directives", icon: FolderCog },
         { id: "governance-rules" as const, label: "Active Rules", icon: ShieldCheck },
-      ],
-    },
-    {
-      title: "Data",
-      items: [
-        { id: "sessions" as const, label: "All Sessions", icon: History },
+        { id: "saved-instructions" as const, label: "Saved Instructions", icon: BookmarkPlus },
       ],
     },
     {
@@ -216,7 +217,7 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
       items: [
         { id: "environment" as const, label: "Environment", icon: Terminal },
         { id: "accounts" as const, label: "Accounts", icon: User },
-        { id: "processes" as const, label: "Processes", icon: Activity },
+        { id: "activity-monitor" as const, label: "Activity Monitor", icon: Activity },
         { id: "era-code" as const, label: "Era Code", icon: Sparkles },
         { id: "about" as const, label: "About", icon: Info },
       ],
@@ -243,14 +244,14 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
         return <ProjectDirectivesPanel folder={props.instance?.folder} />
       case "governance-rules":
         return <ActiveRulesPanel folder={props.instance?.folder} />
+      case "saved-instructions":
+        return <SavedInstructionsPanel folder={props.instance?.folder} />
       case "environment":
         return <EnvironmentSection instance={props.instance} />
       case "accounts":
         return <AccountsSection onOpenGCloudModal={props.onOpenGCloudModal} />
-      case "sessions":
-        return <SessionManagerSection />
-      case "processes":
-        return <ProcessManagerPanel />
+      case "activity-monitor":
+        return <ActivityMonitor />
       case "era-code":
         return <EraCodeSection />
       case "about":
@@ -263,25 +264,25 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()} modal>
       <Dialog.Portal>
-        <div class="full-settings-overlay">
-          <div class="full-settings-container">
+        <div class="fixed inset-0 z-50 flex flex-col bg-background">
+          <div class="flex flex-col h-full w-full bg-background">
             {/* Header */}
-            <header class="full-settings-header">
-              <div class="full-settings-header-left">
+            <header class="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary shrink-0">
+              <div class="flex items-center gap-3">
                 <button
                   type="button"
-                  class="full-settings-back-btn"
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-transparent border-none text-muted-foreground text-sm cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
                   onClick={props.onClose}
                 >
                   <ArrowLeft class="w-4 h-4" />
                   <span>Back</span>
                 </button>
-                <h1 class="full-settings-title">Settings</h1>
+                <h1 class="text-lg font-semibold text-foreground">Settings</h1>
               </div>
-              <div class="full-settings-header-right">
+              <div class="flex items-center">
                 <button
                   type="button"
-                  class="full-settings-close-btn"
+                  class="flex items-center justify-center w-8 h-8 rounded-md bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
                   onClick={props.onClose}
                 >
                   <X class="w-5 h-5" />
@@ -290,21 +291,24 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
             </header>
 
             {/* Main content */}
-            <div class="full-settings-main">
+            <div class="flex flex-1 overflow-hidden">
               {/* Navigation */}
-              <nav class="full-settings-nav">
+              <nav class="w-[220px] shrink-0 p-4 px-3 border-r border-border bg-secondary overflow-y-auto">
                 <For each={navSections}>
                   {(section) => (
-                    <div class="full-settings-nav-section">
-                      <div class="full-settings-nav-section-title">{section.title}</div>
+                    <div class="mb-5 last:mb-0">
+                      <div class="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-2 mb-1.5">{section.title}</div>
                       <For each={section.items}>
                         {(item) => (
                           <button
                             type="button"
-                            class={`full-settings-nav-item ${activeSection() === item.id ? "active" : ""}`}
+                            class={cn(
+                              "flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md bg-transparent border-none text-sm text-left cursor-pointer transition-colors text-muted-foreground hover:bg-accent hover:text-foreground",
+                              activeSection() === item.id && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
+                            )}
                             onClick={() => setActiveSection(item.id)}
                           >
-                            <item.icon />
+                            <item.icon class="w-4 h-4 shrink-0" />
                             <span>{item.label}</span>
                           </button>
                         )}
@@ -315,8 +319,8 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
               </nav>
 
               {/* Content */}
-              <div class="full-settings-content">
-                <div class={`full-settings-content-inner ${activeSection() === "models" ? "wide" : ""}`}>
+              <div class="flex-1 overflow-y-auto px-8 py-6">
+                <div class={cn("max-w-[720px] mx-auto", activeSection() === "models" && "max-w-[1200px]")}>
                   {renderSection()}
                 </div>
               </div>
@@ -333,93 +337,148 @@ const FullSettingsPane: Component<FullSettingsPaneProps> = (props) => {
 // ============================================
 
 const GeneralSection: Component = () => {
-  const { preferences: prefs, setDiffViewMode, setThinkingBlocksExpansion, setToolOutputExpansion, setDiagnosticsExpansion } = useConfig()
+  const { preferences: prefs, setDiffViewMode, setThinkingBlocksExpansion, setToolOutputExpansion, setDiagnosticsExpansion, setDefaultClonePath, themePreference, setThemePreference } = useConfig()
+  const [clonePathInput, setClonePathInput] = createSignal(prefs().defaultClonePath ?? "")
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">General</h2>
-      <p class="full-settings-section-subtitle">Display and interface settings</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">General</h2>
+      <p class="text-sm text-muted-foreground mb-6">Display and interface settings</p>
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Display Options</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Display Options</h3>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Show thinking blocks</div>
-            <div class="full-settings-toggle-description">Display Claude's reasoning process</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Show thinking blocks</div>
+            <div class="text-xs text-muted-foreground">Display Claude's reasoning process</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().showThinkingBlocks ? "active" : ""}`}
-            onClick={toggleShowThinkingBlocks}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().showThinkingBlocks}
+            onChange={toggleShowThinkingBlocks}
+            class="ml-4"
+          />
         </div>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Show timeline tools</div>
-            <div class="full-settings-toggle-description">Display tool timeline in session view</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Show timeline tools</div>
+            <div class="text-xs text-muted-foreground">Display tool timeline in session view</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().showTimelineTools ? "active" : ""}`}
-            onClick={toggleShowTimelineTools}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().showTimelineTools}
+            onChange={toggleShowTimelineTools}
+            class="ml-4"
+          />
         </div>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Show usage metrics</div>
-            <div class="full-settings-toggle-description">Display token and cost information</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Show usage metrics</div>
+            <div class="text-xs text-muted-foreground">Display token and cost information</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().showUsageMetrics ? "active" : ""}`}
-            onClick={toggleUsageMetrics}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().showUsageMetrics}
+            onChange={toggleUsageMetrics}
+            class="ml-4"
+          />
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <Separator class="my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Diff View</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Theme</h3>
 
-        <div class="full-settings-radio-group">
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Appearance</div>
+            <div class="text-xs text-muted-foreground">Choose light, dark, or follow your system preference</div>
+          </div>
+          <div class="flex rounded-lg border border-border overflow-hidden ml-4">
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
+                themePreference() === "light" ? "bg-info text-info-foreground" : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+              onClick={() => setThemePreference("light")}
+            >
+              <Sun class="w-3.5 h-3.5" />
+              Light
+            </button>
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-x border-border",
+                themePreference() === "dark" ? "bg-info text-info-foreground" : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+              onClick={() => setThemePreference("dark")}
+            >
+              <Moon class="w-3.5 h-3.5" />
+              Dark
+            </button>
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
+                themePreference() === "system" ? "bg-info text-info-foreground" : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              )}
+              onClick={() => setThemePreference("system")}
+            >
+              <Monitor class="w-3.5 h-3.5" />
+              System
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Separator class="my-6" />
+
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Diff View</h3>
+
+        <div class="flex flex-col gap-2">
           <button
             type="button"
-            class={`full-settings-radio-option ${prefs().diffViewMode === "split" ? "selected" : ""}`}
+            class={cn(
+              "flex items-center gap-2.5 px-3 py-2.5 rounded-md border border-border bg-secondary cursor-pointer transition-colors hover:bg-accent",
+              prefs().diffViewMode === "split" && "border-primary bg-primary/10"
+            )}
             onClick={() => setDiffViewMode("split")}
           >
-            <div class="full-settings-radio-circle" />
-            <span class="full-settings-radio-label">Split View</span>
+            <div class={cn(
+              "w-[18px] h-[18px] rounded-full border-2 border-border flex items-center justify-center shrink-0",
+              prefs().diffViewMode === "split" && "border-primary after:content-[''] after:w-2.5 after:h-2.5 after:rounded-full after:bg-primary"
+            )} />
+            <span class="text-sm">Split View</span>
           </button>
           <button
             type="button"
-            class={`full-settings-radio-option ${prefs().diffViewMode === "unified" ? "selected" : ""}`}
+            class={cn(
+              "flex items-center gap-2.5 px-3 py-2.5 rounded-md border border-border bg-secondary cursor-pointer transition-colors hover:bg-accent",
+              prefs().diffViewMode === "unified" && "border-primary bg-primary/10"
+            )}
             onClick={() => setDiffViewMode("unified")}
           >
-            <div class="full-settings-radio-circle" />
-            <span class="full-settings-radio-label">Unified View</span>
+            <div class={cn(
+              "w-[18px] h-[18px] rounded-full border-2 border-border flex items-center justify-center shrink-0",
+              prefs().diffViewMode === "unified" && "border-primary after:content-[''] after:w-2.5 after:h-2.5 after:rounded-full after:bg-primary"
+            )} />
+            <span class="text-sm">Unified View</span>
           </button>
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <Separator class="my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Default Expansions</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Default Expansions</h3>
 
-        <div class="full-settings-field">
-          <label class="full-settings-field-label">Thinking blocks</label>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-foreground mb-1.5">Thinking blocks</label>
           <select
-            class="full-settings-select"
+            class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-sm min-w-[180px] cursor-pointer focus:outline-none focus:border-primary"
             value={prefs().thinkingBlocksExpansion ?? "expanded"}
             onChange={(e) => setThinkingBlocksExpansion(e.currentTarget.value as "expanded" | "collapsed")}
           >
@@ -428,10 +487,10 @@ const GeneralSection: Component = () => {
           </select>
         </div>
 
-        <div class="full-settings-field">
-          <label class="full-settings-field-label">Tool output</label>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-foreground mb-1.5">Tool output</label>
           <select
-            class="full-settings-select"
+            class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-sm min-w-[180px] cursor-pointer focus:outline-none focus:border-primary"
             value={prefs().toolOutputExpansion ?? "collapsed"}
             onChange={(e) => setToolOutputExpansion(e.currentTarget.value as "expanded" | "collapsed")}
           >
@@ -440,16 +499,67 @@ const GeneralSection: Component = () => {
           </select>
         </div>
 
-        <div class="full-settings-field">
-          <label class="full-settings-field-label">Diagnostics</label>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-foreground mb-1.5">Diagnostics</label>
           <select
-            class="full-settings-select"
+            class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-sm min-w-[180px] cursor-pointer focus:outline-none focus:border-primary"
             value={prefs().diagnosticsExpansion ?? "collapsed"}
             onChange={(e) => setDiagnosticsExpansion(e.currentTarget.value as "expanded" | "collapsed")}
           >
             <option value="expanded">Expanded</option>
             <option value="collapsed">Collapsed</option>
           </select>
+        </div>
+      </div>
+
+      <Separator class="my-6" />
+
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">GitHub</h3>
+
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-foreground mb-1.5">Default clone path</label>
+          <div class="flex gap-2 items-center">
+            <Input
+              type="text"
+              class="flex-1"
+              value={clonePathInput()}
+              placeholder="~/Projects"
+              onInput={(e) => setClonePathInput(e.currentTarget.value)}
+              onBlur={() => setDefaultClonePath(clonePathInput())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setDefaultClonePath(clonePathInput())
+                  e.currentTarget.blur()
+                }
+              }}
+            />
+            <Button
+              variant="outline"
+              type="button"
+              onClick={async () => {
+                try {
+                  const result = await serverApi.pickFolder({
+                    title: "Select Default Clone Directory",
+                    defaultPath: clonePathInput() || undefined,
+                  })
+                  if (result.path) {
+                    setClonePathInput(result.path)
+                    setDefaultClonePath(result.path)
+                  }
+                } catch {
+                  // Fallback: user can type path manually
+                }
+              }}
+              class="whitespace-nowrap"
+            >
+              <Folder class="w-4 h-4" />
+              Browse
+            </Button>
+          </div>
+          <div class="text-xs text-muted-foreground mt-1">
+            Where new repos are cloned. Defaults to ~/Projects when not set.
+          </div>
         </div>
       </div>
     </div>
@@ -460,109 +570,108 @@ const SessionSection: Component = () => {
   const { preferences: prefs } = useConfig()
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Session</h2>
-      <p class="full-settings-section-subtitle">Session behavior and permissions</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Session</h2>
+      <p class="text-sm text-muted-foreground mb-6">Session behavior and permissions</p>
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Permissions</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Permissions</h3>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Auto-approve permissions</div>
-            <div class="full-settings-toggle-description">
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Auto-approve permissions</div>
+            <div class="text-xs text-muted-foreground">
               Skip permission prompts for file edits and commands
               (equivalent to --dangerously-skip-permissions)
             </div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().autoApprovePermissions ? "active" : ""}`}
-            onClick={toggleAutoApprovePermissions}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().autoApprovePermissions}
+            onChange={toggleAutoApprovePermissions}
+            class="ml-4"
+          />
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <Separator class="my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Session Behavior</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Session Behavior</h3>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Auto-cleanup blank sessions</div>
-            <div class="full-settings-toggle-description">Remove sessions with no messages on close</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Auto-cleanup blank sessions</div>
+            <div class="text-xs text-muted-foreground">Remove sessions with no messages on close</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().autoCleanupBlankSessions ? "active" : ""}`}
-            onClick={toggleAutoCleanupBlankSessions}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().autoCleanupBlankSessions}
+            onChange={toggleAutoCleanupBlankSessions}
+            class="ml-4"
+          />
         </div>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Stop instance on last session delete</div>
-            <div class="full-settings-toggle-description">Terminate instance when all sessions are closed</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Stop instance on last session delete</div>
+            <div class="text-xs text-muted-foreground">Terminate instance when all sessions are closed</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().stopInstanceOnLastSessionDelete ? "active" : ""}`}
-            onClick={toggleStopInstanceOnLastSessionDelete}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().stopInstanceOnLastSessionDelete}
+            onChange={toggleStopInstanceOnLastSessionDelete}
+            class="ml-4"
+          />
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <Separator class="my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Chat Window</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Chat Window</h3>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Collapse tool calls by default</div>
-            <div class="full-settings-toggle-description">Tool call sections start collapsed in messages</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Collapse tool calls by default</div>
+            <div class="text-xs text-muted-foreground">Tool call sections start collapsed in messages</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().defaultToolCallsCollapsed ? "active" : ""}`}
-            onClick={toggleDefaultToolCallsCollapsed}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().defaultToolCallsCollapsed}
+            onChange={toggleDefaultToolCallsCollapsed}
+            class="ml-4"
+          />
         </div>
 
-        <div class="full-settings-toggle-row">
-          <div class="full-settings-toggle-info">
-            <div class="full-settings-toggle-title">Show verbose output</div>
-            <div class="full-settings-toggle-description">Display real-time streaming text while generating</div>
+        <div class="flex items-center justify-between py-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-foreground mb-0.5">Show verbose output</div>
+            <div class="text-xs text-muted-foreground">Display real-time streaming text while generating</div>
           </div>
-          <button
-            type="button"
-            class={`full-settings-toggle-switch ${prefs().showVerboseOutput ? "active" : ""}`}
-            onClick={toggleShowVerboseOutput}
-          >
-            <span class="full-settings-toggle-switch-handle" />
-          </button>
+          <Switch
+            checked={prefs().showVerboseOutput}
+            onChange={toggleShowVerboseOutput}
+            class="ml-4"
+          />
         </div>
       </div>
     </div>
   )
 }
 
-type AgentType = "main" | "plan" | "explore"
+type AgentType = "main" | "plan" | "explore" | "coder" | "test-writer" | "reviewer"
 
-interface DefaultModels {
-  main: { providerId: string; modelId: string }
-  plan: { providerId: string; modelId: string }
-  explore: { providerId: string; modelId: string }
+/** All agent types as a typed array — ensures exhaustiveness with AGENT_META */
+const ALL_AGENT_TYPES: AgentType[] = ["main", "plan", "explore", "coder", "test-writer", "reviewer"]
+
+/** Metadata for each agent type. Record<AgentType, ...> enforces exhaustive coverage. */
+const AGENT_META: Record<AgentType, { label: string; icon: string; desc: string }> = {
+  main:          { label: "Main Agent",     icon: "🤖", desc: "Primary coding assistant" },
+  plan:          { label: "Plan Agent",     icon: "📋", desc: "Architecture & planning" },
+  explore:       { label: "Explore Agent",  icon: "🔍", desc: "Quick searches" },
+  coder:         { label: "Coder Agent",    icon: "🔨", desc: "Implementation specialist" },
+  "test-writer": { label: "Test Writer",    icon: "🧪", desc: "Test generation & execution" },
+  reviewer:      { label: "Reviewer Agent", icon: "📝", desc: "Code review & quality" },
 }
+
+type DefaultModels = Record<AgentType, { providerId: string; modelId: string }>
 
 const ModelsSection: Component = () => {
   const { preferences, setDefaultModels } = useConfig()
@@ -577,6 +686,9 @@ const ModelsSection: Component = () => {
       main: saved?.main ?? { providerId: "anthropic", modelId: "claude-sonnet-4-20250514" },
       plan: saved?.plan ?? { providerId: "anthropic", modelId: "claude-sonnet-4-20250514" },
       explore: saved?.explore ?? { providerId: "anthropic", modelId: "claude-3-5-haiku-20241022" },
+      coder: saved?.coder ?? { providerId: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      "test-writer": saved?.["test-writer"] ?? { providerId: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      reviewer: saved?.reviewer ?? { providerId: "anthropic", modelId: "claude-sonnet-4-20250514" },
     }
   })
 
@@ -658,45 +770,32 @@ const ModelsSection: Component = () => {
     setConfigureProviderId(providerId)
   }
 
-  const agentLabels: Record<AgentType, string> = {
-    main: "Main Agent",
-    plan: "Plan Agent",
-    explore: "Explore Agent",
-  }
-
-  const agentIcons: Record<AgentType, string> = {
-    main: "🤖",
-    plan: "📋",
-    explore: "🔍",
-  }
-
-  const agentDescriptions: Record<AgentType, string> = {
-    main: "Primary coding assistant",
-    plan: "Architecture & planning",
-    explore: "Quick searches",
-  }
+  // Agent display metadata is derived from the module-level AGENT_META constant
+  const agentLabels = Object.fromEntries(ALL_AGENT_TYPES.map(t => [t, AGENT_META[t].label])) as Record<AgentType, string>
+  const agentIcons = Object.fromEntries(ALL_AGENT_TYPES.map(t => [t, AGENT_META[t].icon])) as Record<AgentType, string>
+  const agentDescriptions = Object.fromEntries(ALL_AGENT_TYPES.map(t => [t, AGENT_META[t].desc])) as Record<AgentType, string>
 
   // Get price class for color coding
   const getPriceClass = (model: ModelsDevModel | undefined) => {
     if (!model?.cost) return ""
     const avgCost = (model.cost.input + model.cost.output) / 2
-    if (avgCost === 0) return "text-green-500"
-    if (avgCost < 1) return "text-green-400"
-    if (avgCost < 10) return "text-yellow-500"
-    return "text-red-400"
+    if (avgCost === 0) return "text-success"
+    if (avgCost < 1) return "text-success"
+    if (avgCost < 10) return "text-warning"
+    return "text-destructive"
   }
 
   return (
-    <div class="full-settings-section">
+    <div class="mb-8">
       {/* Header with sync button */}
       <div class="flex items-start justify-between mb-4">
         <div>
-          <h2 class="full-settings-section-title">Models</h2>
-          <p class="full-settings-section-subtitle">Browse models, compare pricing, and configure defaults</p>
+          <h2 class="text-xl font-semibold text-foreground mb-1">Models</h2>
+          <p class="text-sm text-muted-foreground mb-6">Browse models, compare pricing, and configure defaults</p>
         </div>
         <button
           type="button"
-          class="full-settings-btn full-settings-btn-ghost text-xs"
+          class="inline-flex items-center gap-1.5 p-1.5 rounded text-xs bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           onClick={handleSync}
           disabled={isModelsSyncing()}
           title={`Prices last synced: ${formatLastUpdated(lastUpdated())}`}
@@ -707,47 +806,47 @@ const ModelsSection: Component = () => {
       </div>
 
       {/* Quick Access Cards - Agent Defaults with Pricing */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Quick Access</h3>
-        <p class="text-xs text-secondary mb-3">Default models for each agent type</p>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Quick Access</h3>
+        <p class="text-xs text-muted-foreground mb-3">Default models for each agent type</p>
 
-        <div class="models-quick-access-grid">
-          <For each={(["main", "plan", "explore"] as AgentType[])}>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <For each={ALL_AGENT_TYPES}>
             {(agent) => {
               const model = () => defaultModels()[agent]
               const modelData = () => getAgentModelData(agent)
 
               return (
-                <div class="models-quick-access-card">
-                  <div class="models-quick-access-header">
-                    <span class="models-quick-access-icon">{agentIcons[agent]}</span>
-                    <div class="models-quick-access-agent">
-                      <span class="models-quick-access-agent-name">{agentLabels[agent]}</span>
-                      <span class="models-quick-access-agent-desc">{agentDescriptions[agent]}</span>
+                <div class="flex flex-col gap-2.5 p-3.5 bg-secondary border border-border rounded-lg transition-all hover:border-border/80 hover:shadow-md">
+                  <div class="flex items-start gap-2">
+                    <span class="text-xl leading-none shrink-0">{agentIcons[agent]}</span>
+                    <div class="flex flex-col min-w-0">
+                      <span class="text-[0.8125rem] font-semibold text-foreground">{agentLabels[agent]}</span>
+                      <span class="text-[0.6875rem] text-muted-foreground">{agentDescriptions[agent]}</span>
                     </div>
                   </div>
 
-                  <div class="models-quick-access-model">
-                    <div class="models-quick-access-model-name">
+                  <div class="px-2.5 py-2 bg-background rounded-md min-w-0">
+                    <div class="text-xs font-medium text-foreground truncate">
                       {modelData()?.name || model().modelId}
                     </div>
-                    <div class="models-quick-access-model-provider">
+                    <div class="text-[0.6875rem] text-muted-foreground">
                       {model().providerId}
                     </div>
                   </div>
 
-                  <div class="models-quick-access-pricing">
-                    <Show when={modelData()?.cost} fallback={<span class="text-muted">—</span>}>
-                      <span class={`models-quick-access-price ${getPriceClass(modelData())}`}>
+                  <div class="flex items-baseline gap-1.5">
+                    <Show when={modelData()?.cost} fallback={<span class="text-muted-foreground">—</span>}>
+                      <span class={`text-sm font-semibold font-mono ${getPriceClass(modelData())}`}>
                         ${modelData()!.cost!.input}/${modelData()!.cost!.output}
                       </span>
-                      <span class="models-quick-access-price-label">per 1M tokens</span>
+                      <span class="text-[0.625rem] text-muted-foreground">per 1M tokens</span>
                     </Show>
                   </div>
 
                   <button
                     type="button"
-                    class="models-quick-access-change"
+                    class="self-start px-3 py-1.5 text-xs font-medium text-info bg-transparent border border-info rounded-md cursor-pointer transition-all hover:bg-info/10"
                     onClick={() => handleEditAgent(agent)}
                   >
                     Change
@@ -759,12 +858,12 @@ const ModelsSection: Component = () => {
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
       {/* Model Catalog - Browsable list with pricing */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Model Catalog</h3>
-        <p class="text-xs text-secondary mb-3">Browse all available models with pricing and capabilities</p>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Model Catalog</h3>
+        <p class="text-xs text-muted-foreground mb-3">Browse all available models with pricing and capabilities</p>
 
         <ModelCatalogPanel
           connectedProviderIds={connectedProviderIds()}
@@ -898,7 +997,8 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
         />
         {/* Modal Content */}
         <div
-          class="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 modal-surface w-full max-w-lg p-6 flex flex-col gap-4"
+          class="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background/95 backdrop-blur-sm rounded-xl border border-border shadow-xl w-full max-w-lg p-6 flex flex-col gap-4"
+          data-modal-surface
           style={{ "z-index": 101 }}
         >
         <h2 class="text-lg font-semibold text-primary">
@@ -908,10 +1008,10 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
         <div class="flex flex-col gap-4">
           {/* Provider Selector */}
           <div class="relative">
-            <label class="text-xs text-secondary mb-2 block">Provider</label>
+            <label class="text-xs text-muted-foreground mb-2 block">Provider</label>
             <button
               type="button"
-              class="w-full px-3 py-2.5 rounded-lg border border-base bg-surface-secondary hover:bg-surface-tertiary transition-colors flex items-center gap-3 text-left"
+              class="w-full px-3 py-2.5 rounded-lg border border-border bg-secondary hover:bg-accent transition-colors flex items-center gap-3 text-left"
               onClick={() => {
                 setShowProviderList(!showProviderList())
                 setShowModelList(false)
@@ -919,7 +1019,7 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
             >
               <Show
                 when={selectedProviderData()}
-                fallback={<span class="text-muted">Select provider...</span>}
+                fallback={<span class="text-muted-foreground">Select provider...</span>}
               >
                 {(provider) => (
                   <>
@@ -935,15 +1035,15 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
                   </>
                 )}
               </Show>
-              <ChevronDown class="w-4 h-4 text-muted flex-shrink-0" />
+              <ChevronDown class="w-4 h-4 text-muted-foreground flex-shrink-0" />
             </button>
 
             <Show when={showProviderList()}>
-              <div class="absolute top-full left-0 right-0 mt-1 bg-surface-secondary border border-base rounded-lg shadow-lg z-10 max-h-64 overflow-hidden flex flex-col">
-                <div class="p-2 border-b border-base">
+              <div class="absolute top-full left-0 right-0 mt-1 bg-secondary border border-border rounded-lg shadow-lg z-10 max-h-64 overflow-hidden flex flex-col">
+                <div class="p-2 border-b border-border">
                   <input
                     type="text"
-                    class="w-full px-2 py-1.5 text-sm bg-surface-primary rounded border border-base focus:border-accent-primary outline-none text-primary"
+                    class="w-full px-2 py-1.5 text-sm bg-background rounded border border-border focus:border-info outline-none text-primary"
                     placeholder="Search providers..."
                     value={providerSearch()}
                     onInput={(e) => setProviderSearch(e.currentTarget.value)}
@@ -954,8 +1054,8 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
                     {(provider) => (
                       <button
                         type="button"
-                        class={`w-full px-3 py-2 flex items-center gap-3 hover:bg-surface-tertiary transition-colors text-left ${
-                          selectedProvider() === provider.id ? "bg-surface-tertiary" : ""
+                        class={`w-full px-3 py-2 flex items-center gap-3 hover:bg-accent transition-colors text-left ${
+                          selectedProvider() === provider.id ? "bg-accent" : ""
                         }`}
                         onClick={() => handleSelectProvider(provider.id)}
                       >
@@ -979,10 +1079,10 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
           {/* Model Selector */}
           <Show when={selectedProvider()}>
             <div class="relative">
-              <label class="text-xs text-secondary mb-2 block">Model</label>
+              <label class="text-xs text-muted-foreground mb-2 block">Model</label>
               <button
                 type="button"
-                class="w-full px-3 py-2.5 rounded-lg border border-base bg-surface-secondary hover:bg-surface-tertiary transition-colors flex items-center gap-3 text-left"
+                class="w-full px-3 py-2.5 rounded-lg border border-border bg-secondary hover:bg-accent transition-colors flex items-center gap-3 text-left"
                 onClick={() => {
                   setShowModelList(!showModelList())
                   setShowProviderList(false)
@@ -990,21 +1090,21 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
               >
                 <Show
                   when={selectedModelData()}
-                  fallback={<span class="text-muted">Select model...</span>}
+                  fallback={<span class="text-muted-foreground">Select model...</span>}
                 >
                   {(model) => (
                     <span class="text-primary flex-1">{model().name || model().id}</span>
                   )}
                 </Show>
-                <ChevronDown class="w-4 h-4 text-muted flex-shrink-0" />
+                <ChevronDown class="w-4 h-4 text-muted-foreground flex-shrink-0" />
               </button>
 
               <Show when={showModelList()}>
-                <div class="absolute top-full left-0 right-0 mt-1 bg-surface-secondary border border-base rounded-lg shadow-lg z-10 max-h-64 overflow-hidden flex flex-col">
-                  <div class="p-2 border-b border-base">
+                <div class="absolute top-full left-0 right-0 mt-1 bg-secondary border border-border rounded-lg shadow-lg z-10 max-h-64 overflow-hidden flex flex-col">
+                  <div class="p-2 border-b border-border">
                     <input
                       type="text"
-                      class="w-full px-2 py-1.5 text-sm bg-surface-primary rounded border border-base focus:border-accent-primary outline-none text-primary"
+                      class="w-full px-2 py-1.5 text-sm bg-background rounded border border-border focus:border-info outline-none text-primary"
                       placeholder="Search models..."
                       value={modelSearch()}
                       onInput={(e) => setModelSearch(e.currentTarget.value)}
@@ -1015,13 +1115,13 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
                       {(model) => (
                         <button
                           type="button"
-                          class={`w-full px-3 py-2 hover:bg-surface-tertiary transition-colors text-left ${
-                            selectedModel() === model.id ? "bg-surface-tertiary" : ""
+                          class={`w-full px-3 py-2 hover:bg-accent transition-colors text-left ${
+                            selectedModel() === model.id ? "bg-accent" : ""
                           }`}
                           onClick={() => handleSelectModel(model.id)}
                         >
                           <div class="text-sm text-primary">{model.name || model.id}</div>
-                          <div class="text-[11px] text-muted">{model.id}</div>
+                          <div class="text-xs text-muted-foreground">{model.id}</div>
                         </button>
                       )}
                     </For>
@@ -1035,14 +1135,14 @@ const ModelSelectorInline: Component<ModelSelectorInlineProps> = (props) => {
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
-            class="selector-button selector-button-secondary"
+            class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-secondary text-secondary-foreground hover:bg-secondary/80"
             onClick={props.onCancel}
           >
             Cancel
           </button>
           <button
             type="button"
-            class="selector-button selector-button-primary"
+            class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={handleSave}
             disabled={!selectedProvider() || !selectedModel()}
           >
@@ -1061,9 +1161,9 @@ interface McpSectionProps {
 
 const McpSection: Component<McpSectionProps> = (props) => {
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">MCP Servers</h2>
-      <p class="full-settings-section-subtitle">Model Context Protocol server configuration</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">MCP Servers</h2>
+      <p class="text-sm text-muted-foreground mb-6">Model Context Protocol server configuration</p>
 
       <McpSettingsPanel folder={props.folder} />
     </div>
@@ -1227,14 +1327,14 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
   const isEditing = () => isAddingCommand() || editingCommand() !== null
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Slash Commands</h2>
-      <p class="full-settings-section-subtitle">Built-in and custom commands</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Slash Commands</h2>
+      <p class="text-sm text-muted-foreground mb-6">Built-in and custom commands</p>
 
       {/* Success/Error Messages */}
       <Show when={saveSuccess()}>
-        <div class="full-settings-card" style="background-color: rgba(34, 197, 94, 0.1); border-color: #22c55e;">
-          <div class="flex items-center gap-2 text-green-500 text-sm">
+        <div class="rounded-lg border bg-card p-4 mb-3" style="background-color: hsl(var(--success) / 0.1); border-color: hsl(var(--success));">
+          <div class="flex items-center gap-2 text-success text-sm">
             <Check class="w-4 h-4" />
             Command saved successfully
           </div>
@@ -1242,8 +1342,8 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
       </Show>
 
       <Show when={saveError()}>
-        <div class="full-settings-card" style="background-color: rgba(239, 68, 68, 0.1); border-color: #ef4444;">
-          <div class="flex items-center gap-2 text-red-500 text-sm">
+        <div class="rounded-lg border bg-card p-4 mb-3" style="background-color: hsl(var(--destructive) / 0.1); border-color: hsl(var(--destructive));">
+          <div class="flex items-center gap-2 text-destructive text-sm">
             <AlertCircle class="w-4 h-4" />
             {saveError()}
           </div>
@@ -1252,30 +1352,30 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
 
       {/* Add/Edit Form */}
       <Show when={isEditing()}>
-        <div class="full-settings-card">
-          <div class="full-settings-card-header">
-            <span class="full-settings-card-title">
+        <div class="rounded-lg border bg-card p-4 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-base font-medium text-foreground">
               {isAddingCommand() ? "Add Custom Command" : `Edit /${editingCommand()}`}
             </span>
           </div>
           <div class="flex flex-col gap-3 mt-3">
-            <div class="full-settings-field">
-              <label class="full-settings-field-label">Command Name *</label>
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-foreground mb-1.5">Command Name *</label>
               <input
                 type="text"
-                class="full-settings-input"
+                class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-primary"
                 placeholder="e.g., test, deploy, review"
                 value={formName()}
                 onInput={(e) => setFormName(e.currentTarget.value)}
                 disabled={editingCommand() !== null}
               />
-              <span class="text-xs text-muted">Used as /{formName() || "command"}</span>
+              <span class="text-xs text-muted-foreground">Used as /{formName() || "command"}</span>
             </div>
 
-            <div class="full-settings-field">
-              <label class="full-settings-field-label">Template *</label>
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-foreground mb-1.5">Template *</label>
               <textarea
-                class="full-settings-input"
+                class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-primary"
                 placeholder="The prompt sent to the LLM. Use $ARGUMENTS for user input."
                 value={formTemplate()}
                 onInput={(e) => setFormTemplate(e.currentTarget.value)}
@@ -1284,11 +1384,11 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
               />
             </div>
 
-            <div class="full-settings-field">
-              <label class="full-settings-field-label">Description</label>
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-foreground mb-1.5">Description</label>
               <input
                 type="text"
-                class="full-settings-input"
+                class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-primary"
                 placeholder="Brief explanation shown in the picker"
                 value={formDescription()}
                 onInput={(e) => setFormDescription(e.currentTarget.value)}
@@ -1296,21 +1396,21 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
             </div>
 
             <div class="flex gap-3">
-              <div class="full-settings-field flex-1">
-                <label class="full-settings-field-label">Agent</label>
+              <div class="mb-4 flex-1">
+                <label class="block text-sm font-medium text-foreground mb-1.5">Agent</label>
                 <input
                   type="text"
-                  class="full-settings-input"
+                  class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-primary"
                   placeholder="e.g., build, code"
                   value={formAgent()}
                   onInput={(e) => setFormAgent(e.currentTarget.value)}
                 />
               </div>
-              <div class="full-settings-field flex-1">
-                <label class="full-settings-field-label">Model</label>
+              <div class="mb-4 flex-1">
+                <label class="block text-sm font-medium text-foreground mb-1.5">Model</label>
                 <input
                   type="text"
-                  class="full-settings-input"
+                  class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm focus:outline-none focus:border-primary"
                   placeholder="e.g., anthropic/claude-sonnet"
                   value={formModel()}
                   onInput={(e) => setFormModel(e.currentTarget.value)}
@@ -1328,10 +1428,10 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
             </label>
 
             <div class="flex justify-end gap-2 mt-2">
-              <button type="button" class="full-settings-btn full-settings-btn-secondary" onClick={cancelEdit}>
+              <button type="button" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed" onClick={cancelEdit}>
                 Cancel
               </button>
-              <button type="button" class="full-settings-btn full-settings-btn-primary" onClick={saveCommand}>
+              <button type="button" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed" onClick={saveCommand}>
                 <Save class="w-4 h-4" />
                 Save Command
               </button>
@@ -1343,21 +1443,21 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
       {/* Main Content (when not editing) */}
       <Show when={!isEditing()}>
         {/* Custom Commands Section */}
-        <div class="full-settings-subsection">
+        <div class="mb-6">
           <div class="flex items-center justify-between">
             <button
               type="button"
-              class="flex items-center gap-2 text-sm font-medium text-secondary hover:text-primary"
+              class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary"
               onClick={() => setShowCustom(!showCustom())}
             >
               {showCustom() ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
               <span>Custom Commands</span>
-              <span class="text-xs text-muted">({customCommands().length})</span>
+              <span class="text-xs text-muted-foreground">({customCommands().length})</span>
             </button>
             <Show when={props.instanceId}>
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-ghost text-xs"
+                class="inline-flex items-center gap-1.5 p-1.5 rounded text-xs bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                 onClick={startAddCommand}
               >
                 <Plus class="w-3 h-3" />
@@ -1368,45 +1468,45 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
 
           <Show when={showCustom()}>
             <Show when={!props.instanceId}>
-              <div class="full-settings-card mt-3">
-                <div class="flex items-center gap-2 text-sm text-muted">
+              <div class="rounded-lg border bg-card p-4 mt-3">
+                <div class="flex items-center gap-2 text-sm text-muted-foreground">
                   <AlertCircle class="w-4 h-4" />
                   Open a project to manage custom commands
                 </div>
               </div>
             </Show>
             <Show when={props.instanceId && customCommands().length === 0}>
-              <div class="full-settings-card mt-3">
-                <div class="text-sm text-muted">
+              <div class="rounded-lg border bg-card p-4 mt-3">
+                <div class="text-sm text-muted-foreground">
                   No custom commands defined. Click "Add Command" to create one.
                 </div>
               </div>
             </Show>
-            <div class="full-settings-list mt-2">
+            <div class="flex flex-col gap-2 mt-2">
               <For each={customCommands()}>
                 {(cmd) => (
-                  <div class="full-settings-list-item">
-                    <div class="full-settings-list-item-info flex-1">
-                      <div class="full-settings-list-item-title">/{cmd.name}</div>
+                  <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium text-foreground">/{cmd.name}</div>
                       <Show when={cmd.description}>
-                        <div class="full-settings-list-item-subtitle">{cmd.description}</div>
+                        <div class="text-xs text-muted-foreground">{cmd.description}</div>
                       </Show>
                       <div class="flex gap-2 mt-1">
                         <Show when={cmd.agent}>
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-surface-tertiary text-muted">agent: {cmd.agent}</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-accent text-muted-foreground">agent: {cmd.agent}</span>
                         </Show>
                         <Show when={cmd.model}>
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-surface-tertiary text-muted">model: {cmd.model}</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-accent text-muted-foreground">model: {cmd.model}</span>
                         </Show>
                         <Show when={cmd.subtask}>
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-surface-tertiary text-muted">subtask</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-accent text-muted-foreground">subtask</span>
                         </Show>
                       </div>
                     </div>
                     <div class="flex gap-1">
                       <button
                         type="button"
-                        class="p-1.5 rounded hover:bg-surface-tertiary transition-colors text-muted hover:text-primary"
+                        class="p-1.5 rounded hover:bg-accent transition-colors text-muted-foreground hover:text-primary"
                         onClick={() => startEditCommand(cmd)}
                         title="Edit command"
                       >
@@ -1414,7 +1514,7 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
                       </button>
                       <button
                         type="button"
-                        class="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted hover:text-red-500"
+                        class="p-1.5 rounded hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
                         onClick={() => deleteCommand(cmd.name)}
                         title="Delete command"
                       >
@@ -1428,38 +1528,38 @@ const CommandsSection: Component<CommandsSectionProps> = (props) => {
           </Show>
         </div>
 
-        <div class="full-settings-section-divider" />
+        <div class="h-px bg-border my-6" />
 
         {/* Built-in Commands Section */}
-        <div class="full-settings-subsection">
+        <div class="mb-6">
           <button
             type="button"
-            class="flex items-center gap-2 text-sm font-medium text-secondary hover:text-primary"
+            class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary"
             onClick={() => setShowBuiltIn(!showBuiltIn())}
           >
             {showBuiltIn() ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
             <span>Built-in Commands</span>
-            <span class="text-xs text-muted">({builtInCommands().length})</span>
+            <span class="text-xs text-muted-foreground">({builtInCommands().length})</span>
           </button>
 
           <Show when={showBuiltIn()}>
-            <div class="full-settings-list mt-2">
+            <div class="flex flex-col gap-2 mt-2">
               <For each={builtInCommands()}>
                 {(cmd) => (
-                  <div class="full-settings-list-item">
-                    <div class="full-settings-list-item-info">
-                      <div class="full-settings-list-item-title">/{cmd.name}</div>
+                  <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium text-foreground">/{cmd.name}</div>
                       <Show when={cmd.description}>
-                        <div class="full-settings-list-item-subtitle">{cmd.description}</div>
+                        <div class="text-xs text-muted-foreground">{cmd.description}</div>
                       </Show>
                     </div>
-                    <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500">built-in</span>
+                    <span class="text-xs px-1.5 py-0.5 rounded bg-info/10 text-info">built-in</span>
                   </div>
                 )}
               </For>
               <Show when={builtInCommands().length === 0}>
-                <div class="full-settings-list-item">
-                  <div class="text-sm text-muted">
+                <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+                  <div class="text-sm text-muted-foreground">
                     {props.instanceId ? "Loading commands..." : "Open a project to see built-in commands"}
                   </div>
                 </div>
@@ -1523,16 +1623,16 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
   )
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Governance</h2>
-      <p class="full-settings-section-subtitle">Era Code governance rules and enforcement</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Governance</h2>
+      <p class="text-sm text-muted-foreground mb-6">Era Code governance rules and enforcement</p>
 
       <Show when={!isEraInstalled()}>
-        <div class="full-settings-card">
-          <div class="full-settings-card-header">
-            <span class="full-settings-card-title">Era Code Not Installed</span>
+        <div class="rounded-lg border bg-card p-4 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-base font-medium text-foreground">Era Code Not Installed</span>
           </div>
-          <div class="full-settings-card-description">
+          <div class="text-sm text-muted-foreground leading-relaxed">
             Install Era Code to enable governance rules and enforcement.
           </div>
         </div>
@@ -1541,8 +1641,8 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
       <Show when={isEraInstalled()}>
         {/* Loading State */}
         <Show when={isGovernanceLoading()}>
-          <div class="full-settings-card">
-            <div class="flex items-center gap-2 text-sm text-muted">
+          <div class="rounded-lg border bg-card p-4 mb-3">
+            <div class="flex items-center gap-2 text-sm text-muted-foreground">
               <RefreshCw class="w-4 h-4 animate-spin" />
               Loading governance rules...
             </div>
@@ -1551,8 +1651,8 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* Error State */}
         <Show when={governanceError()}>
-          <div class="full-settings-card" style="background-color: rgba(239, 68, 68, 0.1); border-color: #ef4444;">
-            <div class="flex items-center gap-2 text-red-500 text-sm">
+          <div class="rounded-lg border bg-card p-4 mb-3" style="background-color: hsl(var(--destructive) / 0.1); border-color: hsl(var(--destructive));">
+            <div class="flex items-center gap-2 text-destructive text-sm">
               <AlertTriangle class="w-4 h-4" />
               {governanceError()}
             </div>
@@ -1561,20 +1661,20 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* Summary Card */}
         <Show when={!isGovernanceLoading() && governanceSummary()}>
-          <div class="full-settings-card">
+          <div class="rounded-lg border bg-card p-4 mb-3">
             <div class="flex items-center justify-between">
               <div class="flex gap-6 text-sm">
                 <div>
-                  <span class="text-muted">Total Rules: </span>
+                  <span class="text-muted-foreground">Total Rules: </span>
                   <span class="font-medium">{governanceSummary()!.totalRules}</span>
                 </div>
                 <div>
-                  <span class="text-muted">Active Overrides: </span>
+                  <span class="text-muted-foreground">Active Overrides: </span>
                   <span class="font-medium">{activeOverridesCount()}</span>
                 </div>
               </div>
               <Show when={isAuditMode()}>
-                <span class="text-xs px-2 py-1 rounded bg-yellow-500/10 text-yellow-500">Audit Mode</span>
+                <span class="text-xs px-2 py-1 rounded bg-warning/10 text-warning">Audit Mode</span>
               </Show>
             </div>
           </div>
@@ -1582,31 +1682,31 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* Hardcoded Rules Section */}
         <Show when={!isGovernanceLoading() && hardcodedRules().length > 0}>
-          <div class="full-settings-subsection mt-4">
+          <div class="mb-6 mt-4">
             <button
               type="button"
-              class="flex items-center gap-2 text-sm font-medium text-secondary hover:text-primary w-full"
+              class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary w-full"
               onClick={() => toggleSection("hardcoded")}
             >
               {expandedSections().hardcoded ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
-              <ShieldAlert class="w-4 h-4 text-red-400" />
+              <ShieldAlert class="w-4 h-4 text-destructive" />
               <span>Hardcoded Rules</span>
-              <span class="text-xs text-muted">({hardcodedRules().length})</span>
+              <span class="text-xs text-muted-foreground">({hardcodedRules().length})</span>
             </button>
-            <p class="text-xs text-muted mt-1 ml-6">Safety rules that cannot be overridden</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Safety rules that cannot be overridden</p>
 
             <Show when={expandedSections().hardcoded}>
-              <div class="full-settings-list mt-2">
+              <div class="flex flex-col gap-2 mt-2">
                 <For each={hardcodedRules()}>
                   {(rule) => (
-                    <div class="full-settings-list-item flex-col !items-start gap-1">
+                    <div class="flex flex-col items-start gap-1 p-3 rounded-lg border bg-secondary">
                       <div class="flex items-center gap-2">
                         <span class="font-mono text-xs text-primary">{rule.id}</span>
-                        <span class="text-xs px-1.5 py-0.5 rounded bg-red-500/10 text-red-500">Deny</span>
-                        <ShieldOff class="w-3 h-3 text-muted" title="Cannot be overridden" />
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-destructive/10 text-destructive">Deny</span>
+                        <ShieldOff class="w-3 h-3 text-muted-foreground" title="Cannot be overridden" />
                       </div>
-                      <code class="text-xs text-muted break-all">{rule.pattern}</code>
-                      <span class="text-xs text-secondary">{rule.reason}</span>
+                      <code class="text-xs text-muted-foreground break-all">{rule.pattern}</code>
+                      <span class="text-xs text-muted-foreground">{rule.reason}</span>
                     </div>
                   )}
                 </For>
@@ -1617,40 +1717,40 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* Default Rules Section */}
         <Show when={!isGovernanceLoading() && defaultRules().length > 0}>
-          <div class="full-settings-subsection mt-4">
+          <div class="mb-6 mt-4">
             <button
               type="button"
-              class="flex items-center gap-2 text-sm font-medium text-secondary hover:text-primary w-full"
+              class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary w-full"
               onClick={() => toggleSection("default")}
             >
               {expandedSections().default ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
-              <Shield class="w-4 h-4 text-yellow-400" />
+              <Shield class="w-4 h-4 text-warning" />
               <span>Default Rules</span>
-              <span class="text-xs text-muted">({defaultRules().length})</span>
+              <span class="text-xs text-muted-foreground">({defaultRules().length})</span>
             </button>
-            <p class="text-xs text-muted mt-1 ml-6">Can be overridden in project governance config</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Can be overridden in project governance config</p>
 
             <Show when={expandedSections().default}>
-              <div class="full-settings-list mt-2">
+              <div class="flex flex-col gap-2 mt-2">
                 <For each={defaultRules()}>
                   {(rule) => {
                     const isOverridden = () => rule.action === "allow"
                     const isToggling = () => togglingRules().has(rule.id)
 
                     return (
-                      <div class={`full-settings-list-item flex-col !items-start gap-1 ${isOverridden() ? "opacity-60" : ""}`}>
+                      <div class={cn("flex flex-col items-start gap-1 p-3 rounded-lg border bg-secondary", isOverridden() && "opacity-60")}>
                         <div class="flex items-center gap-2 w-full">
                           <span class="font-mono text-xs text-primary">{rule.id}</span>
                           <Show when={isOverridden()}>
-                            <span class="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-500">Allow</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded bg-success/10 text-success">Allow</span>
                           </Show>
                           <Show when={!isOverridden()}>
-                            <span class="text-xs px-1.5 py-0.5 rounded bg-red-500/10 text-red-500">Deny</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded bg-destructive/10 text-destructive">Deny</span>
                           </Show>
                           <div class="flex-1" />
                           <button
                             type="button"
-                            class={`p-1 rounded transition-colors ${isOverridden() ? "text-green-500 hover:text-green-400" : "text-muted hover:text-primary"}`}
+                            class={`p-1 rounded transition-colors ${isOverridden() ? "text-success hover:text-success" : "text-muted-foreground hover:text-primary"}`}
                             onClick={() => handleRuleToggle(rule)}
                             disabled={isToggling() || !props.folder}
                             title={!props.folder ? "Open a project to toggle rules" : isOverridden() ? "Click to deny" : "Click to allow"}
@@ -1663,8 +1763,8 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
                             </Show>
                           </button>
                         </div>
-                        <code class="text-xs text-muted break-all">{rule.pattern}</code>
-                        <span class="text-xs text-secondary">{rule.reason}</span>
+                        <code class="text-xs text-muted-foreground break-all">{rule.pattern}</code>
+                        <span class="text-xs text-muted-foreground">{rule.reason}</span>
                       </div>
                     )
                   }}
@@ -1676,35 +1776,35 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* Project Rules Section */}
         <Show when={!isGovernanceLoading() && projectRules().length > 0}>
-          <div class="full-settings-subsection mt-4">
+          <div class="mb-6 mt-4">
             <button
               type="button"
-              class="flex items-center gap-2 text-sm font-medium text-secondary hover:text-primary w-full"
+              class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary w-full"
               onClick={() => toggleSection("project")}
             >
               {expandedSections().project ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
-              <ShieldCheck class="w-4 h-4 text-blue-400" />
+              <ShieldCheck class="w-4 h-4 text-info" />
               <span>Project Rules</span>
-              <span class="text-xs text-muted">({projectRules().length})</span>
+              <span class="text-xs text-muted-foreground">({projectRules().length})</span>
             </button>
-            <p class="text-xs text-muted mt-1 ml-6">Custom rules defined in this project</p>
+            <p class="text-xs text-muted-foreground mt-1 ml-6">Custom rules defined in this project</p>
 
             <Show when={expandedSections().project}>
-              <div class="full-settings-list mt-2">
+              <div class="flex flex-col gap-2 mt-2">
                 <For each={projectRules()}>
                   {(rule) => (
-                    <div class="full-settings-list-item flex-col !items-start gap-1">
+                    <div class="flex flex-col items-start gap-1 p-3 rounded-lg border bg-secondary">
                       <div class="flex items-center gap-2">
                         <span class="font-mono text-xs text-primary">{rule.id}</span>
                         <Show when={rule.action === "allow"}>
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-500">Allow</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-success/10 text-success">Allow</span>
                         </Show>
                         <Show when={rule.action === "deny"}>
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-red-500/10 text-red-500">Deny</span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-destructive/10 text-destructive">Deny</span>
                         </Show>
                       </div>
-                      <code class="text-xs text-muted break-all">{rule.pattern}</code>
-                      <span class="text-xs text-secondary">{rule.reason}</span>
+                      <code class="text-xs text-muted-foreground break-all">{rule.pattern}</code>
+                      <span class="text-xs text-muted-foreground">{rule.reason}</span>
                     </div>
                   )}
                 </For>
@@ -1715,8 +1815,8 @@ const GovernanceSection: Component<GovernanceSectionProps> = (props) => {
 
         {/* No Rules State */}
         <Show when={!isGovernanceLoading() && !governanceError() && governanceRules().length === 0}>
-          <div class="full-settings-card mt-4">
-            <div class="flex items-center gap-2 text-sm text-muted">
+          <div class="rounded-lg border bg-card p-4 mt-4">
+            <div class="flex items-center gap-2 text-sm text-muted-foreground">
               <Shield class="w-4 h-4" />
               No governance rules found
             </div>
@@ -1815,14 +1915,14 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
   }
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Directives</h2>
-      <p class="full-settings-section-subtitle">Project and global directives</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Directives</h2>
+      <p class="text-sm text-muted-foreground mb-6">Project and global directives</p>
 
       {/* Success/Error Messages */}
       <Show when={saveSuccess()}>
-        <div class="full-settings-card" style="background-color: rgba(34, 197, 94, 0.1); border-color: #22c55e;">
-          <div class="flex items-center gap-2 text-green-500 text-sm">
+        <div class="rounded-lg border bg-card p-4 mb-3" style="background-color: hsl(var(--success) / 0.1); border-color: hsl(var(--success));">
+          <div class="flex items-center gap-2 text-success text-sm">
             <Check class="w-4 h-4" />
             Directives saved successfully
           </div>
@@ -1830,8 +1930,8 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
       </Show>
 
       <Show when={saveError()}>
-        <div class="full-settings-card" style="background-color: rgba(239, 68, 68, 0.1); border-color: #ef4444;">
-          <div class="flex items-center gap-2 text-red-500 text-sm">
+        <div class="rounded-lg border bg-card p-4 mb-3" style="background-color: hsl(var(--destructive) / 0.1); border-color: hsl(var(--destructive));">
+          <div class="flex items-center gap-2 text-destructive text-sm">
             <AlertCircle class="w-4 h-4" />
             {saveError()}
           </div>
@@ -1840,8 +1940,8 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
 
       {/* Loading State */}
       <Show when={isDirectivesLoading()}>
-        <div class="full-settings-card">
-          <div class="flex items-center gap-2 text-sm text-muted">
+        <div class="rounded-lg border bg-card p-4 mb-3">
+          <div class="flex items-center gap-2 text-sm text-muted-foreground">
             <RefreshCw class="w-4 h-4 animate-spin" />
             Loading directives...
           </div>
@@ -1850,23 +1950,23 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
 
       {/* Project Directives Section */}
       <Show when={!isDirectivesLoading()}>
-        <div class="full-settings-subsection">
+        <div class="mb-6">
           <div class="flex items-center justify-between">
-            <h3 class="full-settings-subsection-title">Project Directives</h3>
-            <span class="text-xs text-muted font-mono">.era/memory/directives.md</span>
+            <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Project Directives</h3>
+            <span class="text-xs text-muted-foreground font-mono">.era/memory/directives.md</span>
           </div>
 
           <Show when={!editingProject()}>
-            <div class="full-settings-card mt-2">
+            <div class="rounded-lg border bg-card p-4 mt-2">
               <Show when={projectDirectives()?.exists && projectDirectives()?.content}>
-                <pre class="text-xs text-secondary whitespace-pre-wrap font-mono max-h-32 overflow-y-auto">
+                <pre class="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-32 overflow-y-auto">
                   {projectDirectives()!.content.slice(0, 500)}
                   {projectDirectives()!.content.length > 500 ? "..." : ""}
                 </pre>
                 <div class="flex justify-end mt-3">
                   <button
                     type="button"
-                    class="full-settings-btn full-settings-btn-ghost text-xs"
+                    class="inline-flex items-center gap-1.5 p-1.5 rounded text-xs bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                     onClick={startEditProject}
                     disabled={!props.folder}
                   >
@@ -1876,13 +1976,13 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
                 </div>
               </Show>
               <Show when={!projectDirectives()?.exists}>
-                <div class="text-sm text-muted">
+                <div class="text-sm text-muted-foreground">
                   No project directives configured.
                 </div>
                 <div class="flex justify-end mt-3">
                   <button
                     type="button"
-                    class="full-settings-btn full-settings-btn-primary text-xs"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={startEditProject}
                     disabled={!props.folder}
                   >
@@ -1892,7 +1992,7 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
                 </div>
               </Show>
               <Show when={!props.folder}>
-                <div class="text-xs text-muted mt-2">
+                <div class="text-xs text-muted-foreground mt-2">
                   Open a project to edit project directives
                 </div>
               </Show>
@@ -1900,9 +2000,9 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
           </Show>
 
           <Show when={editingProject()}>
-            <div class="full-settings-card mt-2">
+            <div class="rounded-lg border bg-card p-4 mt-2">
               <textarea
-                class="full-settings-input font-mono text-xs"
+                class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm font-mono text-xs focus:outline-none focus:border-primary"
                 value={projectContent()}
                 onInput={(e) => setProjectContent(e.currentTarget.value)}
                 rows={12}
@@ -1910,12 +2010,12 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
                 placeholder="# Project Directives&#10;&#10;Enter your project-specific guidelines here..."
               />
               <div class="flex justify-end gap-2 mt-3">
-                <button type="button" class="full-settings-btn full-settings-btn-secondary text-xs" onClick={cancelEdit}>
+                <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed" onClick={cancelEdit}>
                   Cancel
                 </button>
                 <button
                   type="button"
-                  class="full-settings-btn full-settings-btn-primary text-xs"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={saveProjectDirectives}
                   disabled={isSaving()}
                 >
@@ -1929,26 +2029,26 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
           </Show>
         </div>
 
-        <div class="full-settings-section-divider" />
+        <div class="h-px bg-border my-6" />
 
         {/* Global Directives Section */}
-        <div class="full-settings-subsection">
+        <div class="mb-6">
           <div class="flex items-center justify-between">
-            <h3 class="full-settings-subsection-title">Global Directives</h3>
-            <span class="text-xs text-muted font-mono">~/.era/memory/directives.md</span>
+            <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Global Directives</h3>
+            <span class="text-xs text-muted-foreground font-mono">~/.era/memory/directives.md</span>
           </div>
 
           <Show when={!editingGlobal()}>
-            <div class="full-settings-card mt-2">
+            <div class="rounded-lg border bg-card p-4 mt-2">
               <Show when={globalDirectives()?.exists && globalDirectives()?.content}>
-                <pre class="text-xs text-secondary whitespace-pre-wrap font-mono max-h-32 overflow-y-auto">
+                <pre class="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-32 overflow-y-auto">
                   {globalDirectives()!.content.slice(0, 500)}
                   {globalDirectives()!.content.length > 500 ? "..." : ""}
                 </pre>
                 <div class="flex justify-end mt-3">
                   <button
                     type="button"
-                    class="full-settings-btn full-settings-btn-ghost text-xs"
+                    class="inline-flex items-center gap-1.5 p-1.5 rounded text-xs bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
                     onClick={startEditGlobal}
                   >
                     <Edit2 class="w-3 h-3" />
@@ -1957,13 +2057,13 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
                 </div>
               </Show>
               <Show when={!globalDirectives()?.exists}>
-                <div class="text-sm text-muted">
+                <div class="text-sm text-muted-foreground">
                   No global directives configured.
                 </div>
                 <div class="flex justify-end mt-3">
                   <button
                     type="button"
-                    class="full-settings-btn full-settings-btn-primary text-xs"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={startEditGlobal}
                   >
                     <Plus class="w-3 h-3" />
@@ -1975,9 +2075,9 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
           </Show>
 
           <Show when={editingGlobal()}>
-            <div class="full-settings-card mt-2">
+            <div class="rounded-lg border bg-card p-4 mt-2">
               <textarea
-                class="full-settings-input font-mono text-xs"
+                class="w-full px-3 py-2.5 rounded-md bg-secondary border border-border text-foreground text-sm font-mono text-xs focus:outline-none focus:border-primary"
                 value={globalContent()}
                 onInput={(e) => setGlobalContent(e.currentTarget.value)}
                 rows={12}
@@ -1985,12 +2085,12 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
                 placeholder="# Global Directives&#10;&#10;Enter guidelines that apply to all projects..."
               />
               <div class="flex justify-end gap-2 mt-3">
-                <button type="button" class="full-settings-btn full-settings-btn-secondary text-xs" onClick={cancelEdit}>
+                <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed" onClick={cancelEdit}>
                   Cancel
                 </button>
                 <button
                   type="button"
-                  class="full-settings-btn full-settings-btn-primary text-xs"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={saveGlobalDirectives}
                   disabled={isSaving()}
                 >
@@ -2004,19 +2104,19 @@ const DirectivesSection: Component<DirectivesSectionProps> = (props) => {
           </Show>
         </div>
 
-        <div class="full-settings-section-divider" />
+        <div class="h-px bg-border my-6" />
 
         {/* Constitution Section */}
-        <div class="full-settings-subsection">
+        <div class="mb-6">
           <div class="flex items-center gap-2">
-            <h3 class="full-settings-subsection-title">Constitution</h3>
-            <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 flex items-center gap-1">
+            <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Constitution</h3>
+            <span class="text-xs px-1.5 py-0.5 rounded bg-info/10 text-info flex items-center gap-1">
               <Lock class="w-3 h-3" />
               Read-only
             </span>
           </div>
-          <div class="full-settings-card mt-2">
-            <div class="text-sm text-muted">
+          <div class="rounded-lg border bg-card p-4 mt-2">
+            <div class="text-sm text-muted-foreground">
               Immutable architectural constraints. The constitution defines the foundational rules that cannot be overridden by directives or governance settings.
             </div>
           </div>
@@ -2032,34 +2132,34 @@ interface EnvironmentSectionProps {
 
 const EnvironmentSection: Component<EnvironmentSectionProps> = (props) => {
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Environment</h2>
-      <p class="full-settings-section-subtitle">Environment variables and instance details</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Environment</h2>
+      <p class="text-sm text-muted-foreground mb-6">Environment variables and instance details</p>
 
       <EnvironmentVariablesEditor />
 
       <Show when={props.instance}>
-        <div class="full-settings-section-divider" />
+        <div class="h-px bg-border my-6" />
 
-        <div class="full-settings-subsection">
-          <h3 class="full-settings-subsection-title">Current Instance</h3>
-          <div class="full-settings-card">
+        <div class="mb-6">
+          <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Current Instance</h3>
+          <div class="rounded-lg border bg-card p-4 mb-3">
             <table class="w-full text-sm">
               <tbody>
                 <tr>
-                  <td class="py-1 text-secondary">ID</td>
+                  <td class="py-1 text-muted-foreground">ID</td>
                   <td class="py-1 font-mono">{props.instance?.id.slice(0, 8)}...</td>
                 </tr>
                 <tr>
-                  <td class="py-1 text-secondary">Folder</td>
+                  <td class="py-1 text-muted-foreground">Folder</td>
                   <td class="py-1 font-mono truncate max-w-[300px]">{props.instance?.folder}</td>
                 </tr>
                 <tr>
-                  <td class="py-1 text-secondary">Port</td>
+                  <td class="py-1 text-muted-foreground">Port</td>
                   <td class="py-1 font-mono">{props.instance?.port}</td>
                 </tr>
                 <tr>
-                  <td class="py-1 text-secondary">Status</td>
+                  <td class="py-1 text-muted-foreground">Status</td>
                   <td class="py-1">{props.instance?.status}</td>
                 </tr>
               </tbody>
@@ -2102,12 +2202,10 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
   const handleGitHubLogin = async () => {
     setLoginMessage(null)
-    const result = await initiateGitHubLogin()
-    if (result.error && result.success) {
-      // This is the device code message
-      setLoginMessage(result.error)
-    } else if (!result.success) {
-      setLoginMessage(result.error || "Login failed")
+    try {
+      await initiateGitHubLogin()
+    } catch (error) {
+      setLoginMessage(error instanceof Error ? error.message : "Login failed")
     }
   }
 
@@ -2122,10 +2220,12 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
   const handleInstallGhCli = async () => {
     setGhInstalling(true)
     setGhInstallError(null)
-    const result = await installGhCli()
-    setGhInstalling(false)
-    if (!result.success) {
-      setGhInstallError(result.error || "Installation failed")
+    try {
+      await installGhCli()
+    } catch (error) {
+      setGhInstallError(error instanceof Error ? error.message : "Installation failed")
+    } finally {
+      setGhInstalling(false)
     }
   }
 
@@ -2133,28 +2233,28 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
   const isGCloudExpiredStatus = () => isGCloudAuthenticated() && isGCloudExpired()
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Accounts</h2>
-      <p class="full-settings-section-subtitle">Connect accounts for enhanced integrations</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Accounts</h2>
+      <p class="text-sm text-muted-foreground mb-6">Connect accounts for enhanced integrations</p>
 
       {/* GitHub Section */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">GitHub</h3>
-        <div class="full-settings-account-card">
-          <div class="full-settings-account-header">
-            <div class="full-settings-account-icon">
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">GitHub</h3>
+        <div class="rounded-lg border bg-card p-4">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-muted text-muted-foreground">
               <Github class="w-5 h-5" />
             </div>
-            <div class="full-settings-account-info">
-              <div class="full-settings-account-name">GitHub</div>
-              <div class={`full-settings-account-status ${isGitHubAuthenticated() ? "connected" : ""}`}>
+            <div class="flex-1 min-w-0">
+              <div class="text-base font-medium text-foreground">GitHub</div>
+              <div class={cn("text-sm text-muted-foreground", isGitHubAuthenticated() && "text-success")}>
                 {isGitHubAuthenticated() ? `Connected as ${githubUsername()}` : "Not connected"}
               </div>
             </div>
             <Show when={isGitHubAuthenticated()}>
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-ghost ml-auto"
+                class="inline-flex items-center gap-1.5 p-1.5 rounded bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground ml-auto disabled:opacity-50"
                 onClick={handleGitHubRefresh}
                 disabled={isGitHubLoading()}
                 title="Refresh status"
@@ -2166,7 +2266,7 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
           {/* Show loading state while checking CLI */}
           <Show when={!isGhCliChecked()}>
-            <div class="full-settings-card-description mt-3">
+            <div class="text-sm text-muted-foreground leading-relaxed mt-3">
               <RefreshCw class="w-4 h-4 animate-spin inline mr-2" />
               Checking GitHub CLI status...
             </div>
@@ -2174,19 +2274,19 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
           {/* Show CLI not installed warning (only after check completes) */}
           <Show when={isGhCliChecked() && !isGhCliInstalled()}>
-            <div class="full-settings-account-warning mt-3">
+            <div class="flex items-center gap-2 px-3 py-2.5 rounded-md bg-warning/10 text-warning text-sm mt-3">
               <AlertCircle class="w-4 h-4" />
               <span>GitHub CLI (gh) is not installed. Install it to enable GitHub authentication.</span>
             </div>
             <Show when={ghInstallError()}>
-              <div class="full-settings-account-error mt-2">
+              <div class="px-3 py-2 rounded-md bg-destructive/10 mt-2">
                 <span class="text-status-error text-xs">{ghInstallError()}</span>
               </div>
             </Show>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-primary"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleInstallGhCli}
                 disabled={ghInstalling()}
               >
@@ -2200,13 +2300,13 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
           {/* Show connected state */}
           <Show when={isGhCliChecked() && isGhCliInstalled() && isGitHubAuthenticated()}>
-            <div class="full-settings-card-description mt-3">
+            <div class="text-sm text-muted-foreground leading-relaxed mt-3">
               Connected for PR creation, issue management, and GitHub Copilot integration.
             </div>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-danger"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-transparent border border-destructive text-destructive cursor-pointer transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
                 onClick={handleGitHubLogout}
               >
                 <X class="w-4 h-4" />
@@ -2217,25 +2317,25 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
 
           {/* Show login state */}
           <Show when={isGhCliChecked() && isGhCliInstalled() && !isGitHubAuthenticated()}>
-            <div class="full-settings-card-description mt-3">
+            <div class="text-sm text-muted-foreground leading-relaxed mt-3">
               Connect for PR creation, issue management, and GitHub Copilot integration.
             </div>
             <Show when={loginMessage()}>
-              <div class="full-settings-account-info-box mt-2">
+              <div class="p-3 rounded-md bg-muted text-sm text-muted-foreground mt-2">
                 <Info class="w-4 h-4" />
                 <span>{loginMessage()}</span>
               </div>
             </Show>
             <Show when={githubError()}>
-              <div class="full-settings-account-error mt-2">
+              <div class="px-3 py-2 rounded-md bg-destructive/10 mt-2">
                 <AlertCircle class="w-4 h-4" />
                 <span class="text-status-error text-xs">{githubError()}</span>
               </div>
             </Show>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-primary"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleGitHubLogin}
                 disabled={isGitHubLoading()}
               >
@@ -2249,26 +2349,26 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
       {/* Google Cloud Section */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Google Cloud</h3>
-        <div class="full-settings-account-card">
-          <div class="full-settings-account-header">
-            <div class="full-settings-account-icon">
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Google Cloud</h3>
+        <div class="rounded-lg border bg-card p-4">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-muted text-muted-foreground">
               <Globe class="w-5 h-5" />
             </div>
-            <div class="full-settings-account-info">
-              <div class="full-settings-account-name">Google Cloud</div>
-              <div class={`full-settings-account-status ${isGCloudConnected() ? "connected" : isGCloudExpiredStatus() ? "expired" : ""}`}>
+            <div class="flex-1 min-w-0">
+              <div class="text-base font-medium text-foreground">Google Cloud</div>
+              <div class={cn("text-sm text-muted-foreground", isGCloudConnected() && "text-success", isGCloudExpiredStatus() && "text-warning")}>
                 {isGCloudConnected() ? "Connected" : isGCloudExpiredStatus() ? "Session Expired" : "Not connected"}
               </div>
             </div>
             <Show when={isGCloudAuthenticated()}>
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-ghost ml-auto"
+                class="inline-flex items-center gap-1.5 p-1.5 rounded bg-transparent border-none text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground ml-auto disabled:opacity-50"
                 onClick={handleGCloudRefresh}
                 disabled={isGCloudLoading()}
                 title="Refresh status"
@@ -2279,28 +2379,28 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
           </div>
 
           <Show when={isGCloudConnected()}>
-            <div class="full-settings-account-details mt-3">
-              <div class="full-settings-account-detail">
-                <span class="full-settings-account-detail-label">Account</span>
-                <span class="full-settings-account-detail-value">{gcloudAccount()}</span>
+            <div class="flex flex-col gap-2 mt-3 pt-3 border-t border-border">
+              <div class="flex justify-between items-center text-sm">
+                <span class="text-muted-foreground">Account</span>
+                <span class="text-foreground font-mono">{gcloudAccount()}</span>
               </div>
               <Show when={gcloudProject()}>
-                <div class="full-settings-account-detail">
-                  <span class="full-settings-account-detail-label">Project</span>
-                  <span class="full-settings-account-detail-value">{gcloudProject()}</span>
+                <div class="flex justify-between items-center text-sm">
+                  <span class="text-muted-foreground">Project</span>
+                  <span class="text-foreground font-mono">{gcloudProject()}</span>
                 </div>
               </Show>
-              <div class="full-settings-account-detail">
-                <span class="full-settings-account-detail-label">Token expires</span>
-                <span class="full-settings-account-detail-value">
+              <div class="flex justify-between items-center text-sm">
+                <span class="text-muted-foreground">Token expires</span>
+                <span class="text-foreground font-mono">
                   {formatTokenExpiry(gcloudTokenExpiry())}
                 </span>
               </div>
             </div>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-danger"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-transparent border border-destructive text-destructive cursor-pointer transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
                 onClick={handleGCloudLogout}
               >
                 <X class="w-4 h-4" />
@@ -2310,14 +2410,14 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
           </Show>
 
           <Show when={isGCloudExpiredStatus()}>
-            <div class="full-settings-account-warning mt-3">
+            <div class="flex items-center gap-2 px-3 py-2.5 rounded-md bg-warning/10 text-warning text-sm mt-3">
               <AlertCircle class="w-4 h-4" />
               <span>Your session has expired. Please reauthenticate to continue using Google Cloud features.</span>
             </div>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-primary"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => props.onOpenGCloudModal?.()}
               >
                 <Globe class="w-4 h-4" />
@@ -2327,13 +2427,13 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
           </Show>
 
           <Show when={!isGCloudAuthenticated()}>
-            <div class="full-settings-card-description mt-3">
+            <div class="text-sm text-muted-foreground leading-relaxed mt-3">
               Connect for cloud infrastructure, AI services, and Vertex AI integration.
             </div>
-            <div class="full-settings-card-actions">
+            <div class="flex gap-2 mt-3">
               <button
                 type="button"
-                class="full-settings-btn full-settings-btn-primary"
+                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => props.onOpenGCloudModal?.()}
               >
                 <Globe class="w-4 h-4" />
@@ -2344,32 +2444,32 @@ const AccountsSection: Component<AccountsSectionProps> = (props) => {
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
       {/* Coming Soon Section */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Coming Soon</h3>
-        <div class="full-settings-list">
-          <div class="full-settings-list-item">
-            <div class="full-settings-list-item-info">
-              <div class="full-settings-list-item-title">Linear</div>
-              <div class="full-settings-list-item-subtitle">Project and issue tracking</div>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Coming Soon</h3>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-foreground">Linear</div>
+              <div class="text-xs text-muted-foreground">Project and issue tracking</div>
             </div>
-            <span class="full-settings-coming-soon">Coming Soon</span>
+            <span class="inline-block px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-medium">Coming Soon</span>
           </div>
-          <div class="full-settings-list-item">
-            <div class="full-settings-list-item-info">
-              <div class="full-settings-list-item-title">Notion</div>
-              <div class="full-settings-list-item-subtitle">Documentation and knowledge base</div>
+          <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-foreground">Notion</div>
+              <div class="text-xs text-muted-foreground">Documentation and knowledge base</div>
             </div>
-            <span class="full-settings-coming-soon">Coming Soon</span>
+            <span class="inline-block px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-medium">Coming Soon</span>
           </div>
-          <div class="full-settings-list-item">
-            <div class="full-settings-list-item-info">
-              <div class="full-settings-list-item-title">Slack</div>
-              <div class="full-settings-list-item-subtitle">Team communication</div>
+          <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-foreground">Slack</div>
+              <div class="text-xs text-muted-foreground">Team communication</div>
             </div>
-            <span class="full-settings-coming-soon">Coming Soon</span>
+            <span class="inline-block px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs font-medium">Coming Soon</span>
           </div>
         </div>
       </div>
@@ -2388,12 +2488,12 @@ const EraCodeSection: Component = () => {
   }
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">Era Code</h2>
-      <p class="full-settings-section-subtitle">Era Code CLI status and installed assets</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">Era Code</h2>
+      <p class="text-sm text-muted-foreground mb-6">Era Code CLI status and installed assets</p>
 
       {/* OpenCode Binary Selector */}
-      <div class="full-settings-subsection">
+      <div class="mb-6">
         <OpenCodeBinarySelector
           selectedBinary={selectedBinary()}
           onBinaryChange={handleBinaryChange}
@@ -2401,72 +2501,176 @@ const EraCodeSection: Component = () => {
         />
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
       {/* Version and status */}
-      <div class="full-settings-era-version">
-        <div class="full-settings-era-status">
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-3 p-4 rounded-lg mb-4">
           <Show
             when={isEraInstalled()}
             fallback={
-              <span class="full-settings-era-not-installed">
+              <span class="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary border border-border text-muted-foreground">
                 <AlertCircle class="w-4 h-4" />
                 Not Installed
               </span>
             }
           >
-            <span class="full-settings-era-installed">
+            <span class="flex items-center gap-2 px-3 py-2 rounded-lg bg-success/10 border border-success text-success">
               <Check class="w-4 h-4" />
               Installed
             </span>
           </Show>
         </div>
         <Show when={eraVersion()}>
-          <div class="full-settings-era-version-value">v{eraVersion()}</div>
+          <div class="text-sm font-medium text-foreground font-mono">v{eraVersion()}</div>
         </Show>
       </div>
 
       <Show when={isEraInstalled()}>
         {/* Assets grid */}
         <Show when={areEraAssetsAvailable() && counts()}>
-          <div class="full-settings-assets-grid">
-            <div class="full-settings-asset-card">
-              <div class="full-settings-asset-count">{counts()!.agents}</div>
-              <div class="full-settings-asset-label">Agents</div>
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-3 mt-4">
+            <div class="flex flex-col items-center p-4 rounded-lg bg-secondary border border-border">
+              <div class="text-2xl font-bold text-foreground">{counts()!.agents}</div>
+              <div class="text-xs text-muted-foreground uppercase">Agents</div>
             </div>
-            <div class="full-settings-asset-card">
-              <div class="full-settings-asset-count">{counts()!.commands}</div>
-              <div class="full-settings-asset-label">Commands</div>
+            <div class="flex flex-col items-center p-4 rounded-lg bg-secondary border border-border">
+              <div class="text-2xl font-bold text-foreground">{counts()!.commands}</div>
+              <div class="text-xs text-muted-foreground uppercase">Commands</div>
             </div>
-            <div class="full-settings-asset-card">
-              <div class="full-settings-asset-count">{counts()!.skills}</div>
-              <div class="full-settings-asset-label">Skills</div>
+            <div class="flex flex-col items-center p-4 rounded-lg bg-secondary border border-border">
+              <div class="text-2xl font-bold text-foreground">{counts()!.skills}</div>
+              <div class="text-xs text-muted-foreground uppercase">Skills</div>
             </div>
-            <div class="full-settings-asset-card">
-              <div class="full-settings-asset-count">{counts()!.plugins}</div>
-              <div class="full-settings-asset-label">Plugins</div>
+            <div class="flex flex-col items-center p-4 rounded-lg bg-secondary border border-border">
+              <div class="text-2xl font-bold text-foreground">{counts()!.plugins}</div>
+              <div class="text-xs text-muted-foreground uppercase">Plugins</div>
             </div>
           </div>
         </Show>
 
-        <div class="full-settings-section-divider" />
+        <div class="h-px bg-border my-6" />
+
+        {/* Agent Autonomy */}
+        <div class="mb-6">
+          <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Agent Autonomy</h3>
+          <div class="text-xs text-muted-foreground" style={{ "margin-bottom": "8px" }}>
+            Controls how aggressively the orchestrator delegates to sub-agents and parallelizes work.
+          </div>
+          <div class="flex flex-col gap-2">
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-2.5 px-3 py-2.5 rounded-md border border-border bg-secondary cursor-pointer transition-colors hover:bg-accent",
+                prefs().agentAutonomy === "conservative" && "border-primary bg-primary/10"
+              )}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("conservative")
+              }}
+            >
+              <div class={cn(
+                "w-[18px] h-[18px] rounded-full border-2 border-border flex items-center justify-center shrink-0",
+                prefs().agentAutonomy === "conservative" && "border-primary after:content-[''] after:w-2.5 after:h-2.5 after:rounded-full after:bg-primary"
+              )} />
+              <div>
+                <span class="text-sm">Conservative</span>
+                <div class="text-xs text-muted-foreground">Minimize sub-agent usage. Sequential execution. Lower token usage.</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-2.5 px-3 py-2.5 rounded-md border border-border bg-secondary cursor-pointer transition-colors hover:bg-accent",
+                prefs().agentAutonomy === "balanced" && "border-primary bg-primary/10"
+              )}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("balanced")
+              }}
+            >
+              <div class={cn(
+                "w-[18px] h-[18px] rounded-full border-2 border-border flex items-center justify-center shrink-0",
+                prefs().agentAutonomy === "balanced" && "border-primary after:content-[''] after:w-2.5 after:h-2.5 after:rounded-full after:bg-primary"
+              )} />
+              <div>
+                <span class="text-sm">Balanced</span>
+                <div class="text-xs text-muted-foreground">Use sub-agents for non-trivial work. Some parallelization. Default.</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              class={cn(
+                "flex items-center gap-2.5 px-3 py-2.5 rounded-md border border-border bg-secondary cursor-pointer transition-colors hover:bg-accent",
+                prefs().agentAutonomy === "aggressive" && "border-primary bg-primary/10"
+              )}
+              onClick={() => {
+                const { setAgentAutonomy } = useConfig()
+                setAgentAutonomy("aggressive")
+              }}
+            >
+              <div class={cn(
+                "w-[18px] h-[18px] rounded-full border-2 border-border flex items-center justify-center shrink-0",
+                prefs().agentAutonomy === "aggressive" && "border-primary after:content-[''] after:w-2.5 after:h-2.5 after:rounded-full after:bg-primary"
+              )} />
+              <div>
+                <span class="text-sm">Aggressive</span>
+                <div class="text-xs text-muted-foreground">Maximize parallelization. Spawn sub-agents liberally. Fastest execution.</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="h-px bg-border my-6" />
+
+        {/* Sub-Agent Configuration */}
+        <div class="mb-6">
+          <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Sub-Agent Configuration</h3>
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-3 p-3 rounded-lg border bg-secondary">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-foreground">Max Iterations</div>
+                <div class="text-xs text-muted-foreground">
+                  Maximum retry cycles for sub-agent pipelines (1-10)
+                </div>
+              </div>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                value={prefs().maxSubagentIterations}
+                onInput={(e) => {
+                  const val = parseInt(e.currentTarget.value, 10)
+                  if (!isNaN(val)) {
+                    const { setMaxSubagentIterations } = useConfig()
+                    setMaxSubagentIterations(val)
+                  }
+                }}
+                class="w-16 px-2 py-1.5 rounded-md border border-border bg-secondary text-foreground text-sm font-mono text-center focus:outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="h-px bg-border my-6" />
 
         {/* Installation paths */}
-        <div class="full-settings-subsection">
-          <h3 class="full-settings-subsection-title">Installation</h3>
-          <div class="full-settings-card">
+        <div class="mb-6">
+          <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Installation</h3>
+          <div class="rounded-lg border bg-card p-4 mb-3">
             <table class="w-full text-sm">
               <tbody>
                 <tr>
-                  <td class="py-1 text-secondary">Binary Path</td>
+                  <td class="py-1 text-muted-foreground">Binary Path</td>
                   <td class="py-1 font-mono text-xs">~/.era/era-code/bin/era-start.sh</td>
                 </tr>
                 <tr>
-                  <td class="py-1 text-secondary">Assets Path</td>
+                  <td class="py-1 text-muted-foreground">Assets Path</td>
                   <td class="py-1 font-mono text-xs">~/.era/era-code/opencode/</td>
                 </tr>
                 <tr>
-                  <td class="py-1 text-secondary">Config Path</td>
+                  <td class="py-1 text-muted-foreground">Config Path</td>
                   <td class="py-1 font-mono text-xs">~/.era/credentials.json</td>
                 </tr>
               </tbody>
@@ -2474,8 +2678,8 @@ const EraCodeSection: Component = () => {
           </div>
         </div>
 
-        <div class="full-settings-card-actions mt-4">
-          <button type="button" class="full-settings-btn full-settings-btn-secondary">
+        <div class="flex gap-2 mt-4">
+          <button type="button" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed">
             <RefreshCw class="w-4 h-4" />
             Check for Updates
           </button>
@@ -2483,15 +2687,15 @@ const EraCodeSection: Component = () => {
       </Show>
 
       <Show when={!isEraInstalled()}>
-        <div class="full-settings-card">
-          <div class="full-settings-card-header">
-            <span class="full-settings-card-title">Era Code Not Installed</span>
+        <div class="rounded-lg border bg-card p-4 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-base font-medium text-foreground">Era Code Not Installed</span>
           </div>
-          <div class="full-settings-card-description">
+          <div class="text-sm text-muted-foreground leading-relaxed">
             Install Era Code for governance enforcement, custom agents, and enhanced development workflows.
           </div>
-          <div class="full-settings-card-actions">
-            <button type="button" class="full-settings-btn full-settings-btn-primary">
+          <div class="flex gap-2 mt-3">
+            <button type="button" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground border-none cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
               <ExternalLink class="w-4 h-4" />
               Install Era Code
             </button>
@@ -2517,39 +2721,39 @@ const AboutSection: Component = () => {
   }
 
   return (
-    <div class="full-settings-section">
-      <h2 class="full-settings-section-title">About</h2>
-      <p class="full-settings-section-subtitle">Version information and updates</p>
+    <div class="mb-8">
+      <h2 class="text-xl font-semibold text-foreground mb-1">About</h2>
+      <p class="text-sm text-muted-foreground mb-6">Version information and updates</p>
 
-      <div class="full-settings-era-version">
-        <div class="full-settings-era-version-label">Era Code</div>
-        <div class="full-settings-era-version-value">v{APP_VERSION}</div>
+      <div class="flex items-center gap-2">
+        <div class="text-sm text-muted-foreground">Era Code</div>
+        <div class="text-sm font-medium text-foreground font-mono">v{APP_VERSION}</div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
       {/* Updates Section */}
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Updates</h3>
-        <div class="full-settings-card">
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Updates</h3>
+        <div class="rounded-lg border bg-card p-4 mb-3">
           <table class="w-full text-sm">
             <tbody>
               {/* Era Code CLI Row */}
               <Show when={isEraInstalled()}>
                 <tr>
-                  <td class="py-2 text-secondary w-1/3">Era Code CLI</td>
+                  <td class="py-2 text-muted-foreground w-1/3">Era Code CLI</td>
                   <td class="py-2">
                     <div class="flex items-center gap-2">
                       <span>{eraVersion()}</span>
                       <Show
                         when={updateStatus()?.eraCode?.available}
                         fallback={
-                          <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
                             Up to date
                           </span>
                         }
                       >
-                        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-warning/10 text-warning">
                           {updateStatus()?.eraCode?.targetVersion} available
                         </span>
                         <button
@@ -2566,14 +2770,14 @@ const AboutSection: Component = () => {
               </Show>
               <Show when={!isEraInstalled()}>
                 <tr>
-                  <td class="py-2 text-secondary w-1/3">Era Code CLI</td>
-                  <td class="py-2 text-muted">Not installed</td>
+                  <td class="py-2 text-muted-foreground w-1/3">Era Code CLI</td>
+                  <td class="py-2 text-muted-foreground">Not installed</td>
                 </tr>
               </Show>
 
               {/* OpenCode Row */}
               <tr>
-                <td class="py-2 text-secondary w-1/3">OpenCode</td>
+                <td class="py-2 text-muted-foreground w-1/3">OpenCode</td>
                 <td class="py-2">
                   <div class="flex items-center gap-2">
                     <span>{updateStatus()?.openCode?.currentVersion ?? "Unknown"}</span>
@@ -2581,13 +2785,13 @@ const AboutSection: Component = () => {
                       when={updateStatus()?.openCode?.available}
                       fallback={
                         <Show when={updateStatus()?.openCode?.currentVersion}>
-                          <span class="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400">
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
                             Up to date
                           </span>
                         </Show>
                       }
                     >
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-warning/10 text-warning">
                         {updateStatus()?.openCode?.latestVersion} available
                       </span>
                       <button
@@ -2604,10 +2808,10 @@ const AboutSection: Component = () => {
             </tbody>
           </table>
 
-          <div class="mt-4 pt-4 border-t border-base flex items-center justify-between">
+          <div class="mt-4 pt-4 border-t border-border flex items-center justify-between">
             <button
               type="button"
-              class="full-settings-btn full-settings-btn-secondary"
+              class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={handleCheckForUpdates}
               disabled={isCheckingUpdates()}
             >
@@ -2615,7 +2819,7 @@ const AboutSection: Component = () => {
               {isCheckingUpdates() ? "Checking..." : "Check for Updates"}
             </button>
             <Show when={formatLastChecked()}>
-              <span class="text-xs text-muted">
+              <span class="text-xs text-muted-foreground">
                 Last checked: {formatLastChecked()}
               </span>
             </Show>
@@ -2623,19 +2827,19 @@ const AboutSection: Component = () => {
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Components</h3>
-        <div class="full-settings-card">
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Components</h3>
+        <div class="rounded-lg border bg-card p-4 mb-3">
           <table class="w-full text-sm">
             <tbody>
               <tr>
-                <td class="py-1 text-secondary">UI Version</td>
+                <td class="py-1 text-muted-foreground">UI Version</td>
                 <td class="py-1">{APP_VERSION}</td>
               </tr>
               <tr>
-                <td class="py-1 text-secondary">Server Version</td>
+                <td class="py-1 text-muted-foreground">Server Version</td>
                 <td class="py-1">{APP_VERSION}</td>
               </tr>
             </tbody>
@@ -2643,14 +2847,14 @@ const AboutSection: Component = () => {
         </div>
       </div>
 
-      <div class="full-settings-section-divider" />
+      <div class="h-px bg-border my-6" />
 
-      <div class="full-settings-subsection">
-        <h3 class="full-settings-subsection-title">Links</h3>
+      <div class="mb-6">
+        <h3 class="text-base font-medium text-foreground mb-3 pb-2 border-b border-border">Links</h3>
         <div class="flex gap-2 flex-wrap">
           <button
             type="button"
-            class="full-settings-btn full-settings-btn-secondary"
+            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => openLink("https://github.com/neural-nomads/era-code#readme")}
           >
             <ExternalLink class="w-4 h-4" />
@@ -2658,7 +2862,7 @@ const AboutSection: Component = () => {
           </button>
           <button
             type="button"
-            class="full-settings-btn full-settings-btn-secondary"
+            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => openLink("https://github.com/neural-nomads/era-code")}
           >
             <Github class="w-4 h-4" />
@@ -2666,7 +2870,7 @@ const AboutSection: Component = () => {
           </button>
           <button
             type="button"
-            class="full-settings-btn full-settings-btn-secondary"
+            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-secondary border border-border text-foreground cursor-pointer transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => openLink("https://github.com/neural-nomads/era-code/issues/new")}
           >
             <AlertCircle class="w-4 h-4" />

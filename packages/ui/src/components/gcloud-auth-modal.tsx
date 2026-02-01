@@ -1,6 +1,12 @@
 import { Component } from "solid-js"
-import { Dialog } from "@kobalte/core"
-import { X } from "lucide-solid"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "./ui"
+import { Button } from "./ui"
 
 interface GCloudAuthModalProps {
   open: boolean
@@ -10,33 +16,32 @@ interface GCloudAuthModalProps {
 
 const GCloudAuthModal: Component<GCloudAuthModalProps> = (props) => {
   return (
-    <Dialog.Root open={props.open} onOpenChange={(open) => !open && props.onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="dialog-content dialog-content-md">
-          <div class="dialog-header">
-            <Dialog.Title class="dialog-title">Google Cloud Authentication</Dialog.Title>
-            <Dialog.CloseButton class="dialog-close-button">
-              <X size={16} />
-            </Dialog.CloseButton>
-          </div>
-          <div class="dialog-body">
-            <div class="text-muted text-sm">
-              Google Cloud authentication coming soon.
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              onClick={props.onClose}
-            >
-              Close
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <DialogContent class="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Google Cloud Authentication</DialogTitle>
+        </DialogHeader>
+
+        <div class="space-y-2">
+          <p class="text-sm text-muted-foreground">
+            Google Cloud authentication is not yet available.
+          </p>
+          <p class="text-xs text-muted-foreground">
+            This feature will enable Vertex AI integration, cloud infrastructure management,
+            and other Google Cloud services. Check back in a future release.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={props.onClose}
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

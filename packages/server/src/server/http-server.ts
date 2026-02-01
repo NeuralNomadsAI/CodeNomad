@@ -24,6 +24,7 @@ import { registerSystemRoutes, registerProcessManagementRoutes } from "./routes/
 import { registerMcpRoutes } from "./routes/mcp"
 import { registerFileRoutes } from "./routes/files"
 import { registerSessionRoutes } from "./routes/sessions"
+import { registerGitHubRoutes } from "./routes/github"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { EraDetectionService } from "../era/detection"
@@ -171,6 +172,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   // Register Era routes
   registerEraRoutes(app, { eraDetection, eraGovernance, updateMonitor: deps.updateMonitor, logger: deps.logger })
+
+  // Register GitHub routes
+  registerGitHubRoutes(app, { logger: deps.logger })
 
   // Register Session management routes
   registerSessionRoutes(app, { logger: deps.logger })

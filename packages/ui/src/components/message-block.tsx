@@ -1,7 +1,10 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
 import MessageItem from "./message-item"
+import ToolCall from "./tool-call"
 import ToolCallGroup from "./tool-call-group"
 import SubAgentGroup from "./subagent-group"
+import PipelineGroup from "./pipeline-group"
+import { detectPipelinePattern } from "./pipeline-step"
 import type { ToolDisplayItem } from "./inline-tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
@@ -11,9 +14,9 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 
-const USER_BORDER_COLOR = "var(--message-user-border)"
-const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
-const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+const USER_BORDER_COLOR = "hsl(var(--primary) / 0.3)"
+const ASSISTANT_BORDER_COLOR = "hsl(var(--muted-foreground) / 0.2)"
+const TOOL_BORDER_COLOR = "hsl(var(--accent) / 0.5)"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -144,7 +147,6 @@ interface MessageBlockProps {
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   showUsageMetrics: () => boolean
-  isSessionReady?: boolean
   isLastMessage?: boolean
   isLastInAssistantTurn?: boolean
   turnMessageIds?: string[]
@@ -353,12 +355,19 @@ export default function MessageBlock(props: MessageBlockProps) {
     | { type: "item"; item: MessageBlockItem }
     | { type: "tool-group"; tools: ToolDisplayItem[] }
     | { type: "subagent-group"; tools: ToolDisplayItem[] }
+    | { type: "pipeline-group"; tools: ToolDisplayItem[]; patternName: string }
+    | { type: "standalone-tool"; tool: ToolDisplayItem }
+    | { type: "collapsed-tools"; hiddenCount: number; toolGroupCount: number }
 
   const renderSections = createMemo<RenderSection[]>(() => {
     const items = block()?.items ?? []
     const sections: RenderSection[] = []
     let pendingTools: ToolDisplayItem[] = []
     let pendingSubAgents: ToolDisplayItem[] = []
+    // Buffer for non-task tools that appear between sub-agent tasks.
+    // If a pipeline pattern is detected, these interstitial items are
+    // absorbed into the pipeline group; otherwise they're flushed normally.
+    let interstitialTools: ToolDisplayItem[] = []
 
     const flushTools = () => {
       if (pendingTools.length > 0) {
@@ -369,8 +378,19 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     const flushSubAgents = () => {
       if (pendingSubAgents.length > 0) {
-        sections.push({ type: "subagent-group", tools: [...pendingSubAgents] })
+        const pipelinePattern = detectPipelinePattern(pendingSubAgents)
+        if (pipelinePattern) {
+          // Pipeline detected -- interstitial tools are absorbed (not shown separately)
+          sections.push({ type: "pipeline-group", tools: [...pendingSubAgents], patternName: pipelinePattern })
+        } else {
+          // No pipeline -- flush interstitial tools before the subagent group
+          if (interstitialTools.length > 0) {
+            sections.push({ type: "tool-group", tools: [...interstitialTools] })
+          }
+          sections.push({ type: "subagent-group", tools: [...pendingSubAgents] })
+        }
         pendingSubAgents = []
+        interstitialTools = []
       }
     }
 
@@ -384,14 +404,25 @@ export default function MessageBlock(props: MessageBlockProps) {
         const toolItem = item as ToolDisplayItem
         const toolName = toolItem.toolPart.tool || "unknown"
         const isSubAgentTask = toolName === "task"
+        const isQuestionTool = toolName === "question"
 
-        if (isSubAgentTask) {
+        if (isQuestionTool) {
+          // Question tools render as standalone ToolCall components so the
+          // interactive question block can appear inline in the message stream
+          flushTools()
+          flushSubAgents()
+          sections.push({ type: "standalone-tool", tool: toolItem })
+        } else if (isSubAgentTask) {
           // Sub-agent tasks: flush pending regular tools, then batch sub-agents
           flushTools()
           pendingSubAgents.push(toolItem)
+        } else if (pendingSubAgents.length > 0) {
+          // Non-task tool while sub-agents are accumulating -- buffer as interstitial
+          // so we don't break pipeline detection across gaps like:
+          // task(coder) -> read(file) -> task(test-writer) -> task(reviewer)
+          interstitialTools.push(toolItem)
         } else {
-          // Regular tools: flush pending sub-agents, then batch regular tools
-          flushSubAgents()
+          // Regular tools with no sub-agents in flight
           pendingTools.push(toolItem)
         }
       } else {
@@ -409,6 +440,100 @@ export default function MessageBlock(props: MessageBlockProps) {
     return sections
   })
 
+  // Collapse excess tool-group sections behind a "Show more" toggle
+  const TOOL_SECTION_COLLAPSE_THRESHOLD = 4
+  const [sectionsExpanded, setSectionsExpanded] = createSignal(false)
+
+  const displaySections = createMemo<RenderSection[]>(() => {
+    const raw = renderSections()
+
+    // Pass 1: Merge nearby subagent-group sections that are separated only by
+    // text/content items.  The assistant often emits short text between
+    // consecutive Task tool calls, which splits them into many groups of 1.
+    const afterSubagentMerge: RenderSection[] = []
+    let subagentAccum: ToolDisplayItem[] = []
+
+    const flushSubagentAccum = () => {
+      if (subagentAccum.length > 0) {
+        afterSubagentMerge.push({ type: "subagent-group", tools: [...subagentAccum] })
+        subagentAccum = []
+      }
+    }
+
+    for (const section of raw) {
+      if (section.type === "subagent-group") {
+        subagentAccum.push(...section.tools)
+      } else if (section.type === "item" && subagentAccum.length > 0) {
+        // Text between sub-agents -- skip it from rendering (it's usually
+        // just transitional filler like "Now let me...").  The sub-agent
+        // rows already show their own descriptions.
+        continue
+      } else {
+        flushSubagentAccum()
+        afterSubagentMerge.push(section)
+      }
+    }
+    flushSubagentAccum()
+
+    // Pass 2: Merge nearby tool-group sections that are separated only by
+    // text/content items.  The assistant often emits transitional text between
+    // consecutive tool calls (e.g., "Let me read this file"), which splits
+    // them into many groups of 1 instead of one collapsed group.
+    const all: RenderSection[] = []
+    let toolAccum: ToolDisplayItem[] = []
+
+    const flushToolAccum = () => {
+      if (toolAccum.length > 0) {
+        all.push({ type: "tool-group", tools: [...toolAccum] })
+        toolAccum = []
+      }
+    }
+
+    for (const section of afterSubagentMerge) {
+      if (section.type === "tool-group") {
+        toolAccum.push(...section.tools)
+      } else if (section.type === "item" && toolAccum.length > 0) {
+        // Text between tool groups -- skip transitional filler.
+        // Tool rows already show their own file paths / summaries.
+        continue
+      } else {
+        flushToolAccum()
+        all.push(section)
+      }
+    }
+    flushToolAccum()
+
+    if (sectionsExpanded()) return all
+
+    // Find indices of tool-like sections
+    const toolIndices: number[] = []
+    for (let i = 0; i < all.length; i++) {
+      const t = all[i].type
+      if (t === "tool-group" || t === "subagent-group" || t === "pipeline-group") {
+        toolIndices.push(i)
+      }
+    }
+
+    if (toolIndices.length <= TOOL_SECTION_COLLAPSE_THRESHOLD) return all
+
+    // Keep sections up to and including the 3rd tool section,
+    // collapse middle, then show from the last tool section onward
+    const collapseStart = toolIndices[2] + 1
+    const resumeAt = toolIndices[toolIndices.length - 1]
+
+    if (resumeAt <= collapseStart) return all
+
+    const hiddenSlice = all.slice(collapseStart, resumeAt)
+    const hiddenToolGroups = hiddenSlice.filter(
+      (s) => s.type === "tool-group" || s.type === "subagent-group" || s.type === "pipeline-group"
+    ).length
+
+    return [
+      ...all.slice(0, collapseStart),
+      { type: "collapsed-tools" as const, hiddenCount: hiddenSlice.length, toolGroupCount: hiddenToolGroups },
+      ...all.slice(resumeAt),
+    ]
+  })
 
   // Render a single non-tool item
   const renderItem = (item: MessageBlockItem) => (
@@ -437,7 +562,7 @@ export default function MessageBlock(props: MessageBlockProps) {
           messageInfo={(item as StepDisplayItem).messageInfo}
           showUsage={props.showUsageMetrics()}
           borderColor={(item as StepDisplayItem).accentColor}
-          isSessionReady={props.isSessionReady && props.isLastMessage}
+
         />
       </Match>
       <Match when={item.type === "reasoning"}>
@@ -458,11 +583,46 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (section.type === "item") {
       return renderItem(section.item)
     }
+    if (section.type === "collapsed-tools") {
+      return (
+        <button
+          type="button"
+          class="tool-groups-collapsed-toggle"
+          onClick={() => setSectionsExpanded(true)}
+        >
+          Show {section.toolGroupCount} more tool group{section.toolGroupCount !== 1 ? "s" : ""}
+        </button>
+      )
+    }
+    if (section.type === "pipeline-group") {
+      return (
+        <PipelineGroup
+          tools={section.tools}
+          patternName={section.patternName}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+        />
+      )
+    }
     if (section.type === "subagent-group") {
       // Sub-agent group - render via SubAgentGroup with accordion behavior
       return (
         <SubAgentGroup
           tools={section.tools}
+          instanceId={props.instanceId}
+          sessionId={props.sessionId}
+        />
+      )
+    }
+    if (section.type === "standalone-tool") {
+      // Standalone tool - render as full ToolCall component (e.g., question tool)
+      return (
+        <ToolCall
+          toolCall={section.tool.toolPart}
+          toolCallId={section.tool.key}
+          messageId={section.tool.messageId}
+          messageVersion={section.tool.messageVersion}
+          partVersion={section.tool.partVersion}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
         />
@@ -482,9 +642,9 @@ export default function MessageBlock(props: MessageBlockProps) {
   return (
     <Show when={block()} keyed>
       {(resolvedBlock) => (
-        <div class="message-stream-block" data-message-id={resolvedBlock.record.id}>
+        <div class="flex flex-col gap-2 rounded-lg" data-message-id={resolvedBlock.record.id}>
           {/* Render sections: content, reasoning, and grouped tools in their original order */}
-          <For each={renderSections()}>{(section) => renderSection(section)}</For>
+          <For each={displaySections()}>{(section) => renderSection(section)}</For>
 
           {/* Step-finish (usage/summary bar) - only shown when session is ready for user input */}
           <Show when={props.showStepFinish && stepFinishItem()}>
@@ -495,7 +655,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 messageInfo={item().messageInfo}
                 showUsage={props.showUsageMetrics()}
                 borderColor={item().accentColor}
-                isSessionReady={props.isSessionReady && props.isLastMessage}
+
               />
             )}
           </Show>
@@ -512,7 +672,6 @@ interface StepCardProps {
   showAgentMeta?: boolean
   showUsage?: boolean
   borderColor?: string
-  isSessionReady?: boolean
 }
 
 function StepCard(props: StepCardProps) {
@@ -571,10 +730,13 @@ function StepCard(props: StepCardProps) {
     ]
 
     return (
-      <div class="message-step-usage">
+      <div class="flex flex-wrap items-center gap-1.5 text-[10px]">
         <For each={entries}>
           {(entry) => (
-            <span class="message-step-usage-chip" data-label={entry.label}>
+            <span
+              class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] bg-info/10 border-info/25 text-foreground font-semibold"
+              data-label={entry.label}
+            >
               {entry.formatter(entry.value)}
             </span>
           )}
@@ -589,31 +751,28 @@ function StepCard(props: StepCardProps) {
       return null
     }
     return (
-      <div class={`message-step-card message-step-finish message-step-finish-flush`} style={finishStyle()}>
+      <div
+        class="flex flex-col gap-2 px-3 py-2 mt-2 ml-6 rounded-lg border border-teal-500/20 border-l-4 bg-gradient-to-br from-teal-500/[0.08] to-teal-500/[0.04] dark:from-teal-500/[0.12] dark:to-teal-500/[0.06]"
+        style={finishStyle()}
+      >
         {renderUsageChips(usage)}
-        <Show when={props.isSessionReady}>
-          <span class="message-step-ready">
-            <span class="message-step-ready-dot" />
-            Ready
-          </span>
-        </Show>
       </div>
     )
   }
 
   return (
-    <div class={`message-step-card message-step-start`}>
-      <div class="message-step-heading">
-        <div class="message-step-title">
-          <div class="message-step-title-left">
+    <div class="flex flex-col gap-2 px-3 py-2 bg-muted border-l-4 border-l-warning/50">
+      <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div class="flex items-center justify-between w-full font-semibold text-foreground">
+          <div class="flex items-center gap-2 text-muted-foreground">
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
-              <span class="message-step-meta-inline">
+              <span class="inline-flex flex-wrap items-center gap-2 text-xs font-medium text-warning">
                 <Show when={agentIdentifier()}>{(value) => <span>Agent: {value()}</span>}</Show>
                 <Show when={modelIdentifier()}>{(value) => <span>Model: {value()}</span>}</Show>
               </span>
             </Show>
           </div>
-          <span class="message-step-time">{timestamp()}</span>
+          <span class="text-xs text-muted-foreground font-normal ml-auto">{timestamp()}</span>
         </div>
       </div>
     </div>
@@ -701,34 +860,41 @@ function ReasoningCard(props: ReasoningCardProps) {
   const toggle = () => setExpanded((prev) => !prev)
 
   return (
-    <div class="message-reasoning-card">
+    <div class="bg-muted border-l-4 border-l-warning/50 mt-0 mb-0 p-0 flex flex-col gap-0">
       <button
         type="button"
-        class="message-reasoning-toggle"
+        class="w-full flex items-center justify-between gap-2.5 bg-transparent border-none px-2.5 py-1 font-inherit text-inherit text-left cursor-pointer transition-colors duration-200 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
         onClick={toggle}
         aria-expanded={expanded()}
         aria-label={expanded() ? "Collapse thinking" : "Expand thinking"}
       >
-        <span class="message-reasoning-label flex flex-wrap items-center gap-2">
+        <span class="text-xs font-medium text-warning flex flex-wrap items-center gap-2">
           <span>Thinking</span>
           <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
-            <span class="message-step-meta-inline">
-              <Show when={agentIdentifier()}>{(value) => <span class="font-medium text-[var(--message-assistant-border)]">Agent: {value()}</span>}</Show>
-              <Show when={modelIdentifier()}>{(value) => <span class="font-medium text-[var(--message-assistant-border)]">Model: {value()}</span>}</Show>
+            <span class="inline-flex flex-wrap items-center gap-2 text-xs font-medium text-warning">
+              <Show when={agentIdentifier()}>{(value) => <span class="font-medium text-warning">Agent: {value()}</span>}</Show>
+              <Show when={modelIdentifier()}>{(value) => <span class="font-medium text-warning">Model: {value()}</span>}</Show>
             </span>
           </Show>
         </span>
-        <span class="message-reasoning-meta">
-          <span class="message-reasoning-indicator">{expanded() ? "Hide" : "View"}</span>
-          <span class="message-reasoning-time">{timestamp()}</span>
+        <span class="inline-flex items-center gap-2">
+          <span class="inline-flex items-center justify-center h-6 px-3 border border-border rounded-md bg-transparent text-muted-foreground font-semibold text-xs leading-none tracking-[0.01em] transition-all duration-200 hover:bg-accent hover:border-primary hover:text-primary active:scale-[0.97]">
+            {expanded() ? "Hide" : "View"}
+          </span>
+          <span class="text-xs text-muted-foreground">{timestamp()}</span>
         </span>
       </button>
 
       <Show when={expanded()}>
-        <div class="message-reasoning-expanded">
-          <div class="message-reasoning-body">
-            <div class="message-reasoning-output" role="region" aria-label="Reasoning details">
-              <pre class="message-reasoning-text">{reasoningText() || ""}</pre>
+        <div class="flex flex-col gap-1.5">
+          <div class="p-0 bg-muted m-3">
+            <div
+              class="flex flex-col m-0 p-3 max-h-[30rem] overflow-y-auto bg-muted"
+              style={{ "scrollbar-width": "thin", "scrollbar-gutter": "stable both-edges" }}
+              role="region"
+              aria-label="Reasoning details"
+            >
+              <pre class="font-mono text-xs leading-tight text-foreground whitespace-pre-wrap m-0">{reasoningText() || ""}</pre>
             </div>
           </div>
         </div>

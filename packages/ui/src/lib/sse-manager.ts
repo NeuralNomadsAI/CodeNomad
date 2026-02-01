@@ -37,6 +37,11 @@ interface TuiToastEvent {
   }
 }
 
+export interface QuestionSSEEvent {
+  type: "question.asked" | "question.replied" | "question.rejected"
+  properties: Record<string, unknown>
+}
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
@@ -133,6 +138,11 @@ class SSEManager {
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
         break
+      case "question.asked":
+      case "question.replied":
+      case "question.rejected":
+        this.onQuestionEvent?.(instanceId, event as QuestionSSEEvent)
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -172,6 +182,7 @@ class SSEManager {
   onPermissionUpdated?: (instanceId: string, event: EventPermissionUpdated) => void
   onPermissionReplied?: (instanceId: string, event: EventPermissionReplied) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
+  onQuestionEvent?: (instanceId: string, event: QuestionSSEEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
   onConnectionRestored?: (instanceId: string) => void | Promise<void>
   onInstanceActivity?: (instanceId: string) => void

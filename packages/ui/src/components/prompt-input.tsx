@@ -16,6 +16,8 @@ import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraft
 import { showAlertDialog } from "../stores/alerts"
 import { executeCustomCommand } from "../stores/session-actions"
 import { getLogger } from "../lib/logger"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 const log = getLogger("actions")
 
 
@@ -33,6 +35,7 @@ interface PromptInputProps {
   isSubAgentSession?: boolean  // If true, show read-only footer instead of input
   parentSessionTitle?: string  // Title of parent session for "return to" button
   onReturnToParent?: () => void  // Handler to return to parent session
+  hasActiveQuestion?: boolean  // If true, a Question tool is awaiting user input
 }
 
 export default function PromptInput(props: PromptInputProps) {
@@ -659,7 +662,7 @@ export default function PromptInput(props: PromptInputProps) {
       textareaRef?.focus()
     }
   }
- 
+
   function focusTextareaEnd() {
     if (!textareaRef) return
     setTimeout(() => {
@@ -669,7 +672,7 @@ export default function PromptInput(props: PromptInputProps) {
       textareaRef.focus()
     }, 0)
   }
- 
+
   function canUseHistory(force = false, direction: "up" | "down" = "up") {
     if (force) return true
     if (showPicker()) return false
@@ -680,29 +683,29 @@ export default function PromptInput(props: PromptInputProps) {
     if (direction === "down" && historyIndex() >= 0) return true
     return textarea.selectionStart === 0 && textarea.selectionEnd === 0
   }
- 
+
   function selectPreviousHistory(force = false) {
     const entries = history()
     if (entries.length === 0) return false
     if (!canUseHistory(force)) return false
- 
+
     if (historyIndex() === -1) {
       setHistoryDraft(prompt())
     }
- 
+
     const newIndex = historyIndex() === -1 ? 0 : Math.min(historyIndex() + 1, entries.length - 1)
     setHistoryIndex(newIndex)
     setPrompt(entries[newIndex])
     focusTextareaEnd()
     return true
   }
- 
+
   function selectNextHistory(force = false) {
     const entries = history()
     if (entries.length === 0) return false
     if (!canUseHistory(force, "down")) return false
     if (historyIndex() === -1) return false
- 
+
     const newIndex = historyIndex() - 1
     if (newIndex >= 0) {
       setHistoryIndex(newIndex)
@@ -716,7 +719,7 @@ export default function PromptInput(props: PromptInputProps) {
     focusTextareaEnd()
     return true
   }
- 
+
   function handleAbort() {
     if (!props.onAbortSession || !props.isSessionBusy) return
     void props.onAbortSession()
@@ -1065,18 +1068,18 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   const canStop = () => Boolean(props.isSessionBusy && props.onAbortSession)
- 
+
   const hasHistory = () => history().length > 0
   const canHistoryGoPrevious = () => hasHistory() && (historyIndex() === -1 || historyIndex() < history().length - 1)
   const canHistoryGoNext = () => historyIndex() >= 0
- 
+
   const canSend = () => {
     if (props.disabled) return false
     const hasText = prompt().trim().length > 0
     if (mode() === "shell") return hasText
     return hasText || attachments().length > 0
   }
- 
+
   const shellHint = () => (mode() === "shell" ? { key: "Esc", text: "to exit shell mode" } : { key: "!", text: "for shell mode" })
 
   const shouldShowOverlay = () => prompt().length === 0
@@ -1086,17 +1089,17 @@ export default function PromptInput(props: PromptInputProps) {
   // Show read-only footer for sub-agent sessions
   if (props.isSubAgentSession) {
     return (
-      <div class="prompt-input-container">
-        <div class="sub-agent-footer">
-          <div class="sub-agent-footer-message">
-            <span class="sub-agent-footer-icon">🤖</span>
-            <span class="sub-agent-footer-text">
+      <div class="flex flex-col border-t border-border bg-background">
+        <div class="flex items-center justify-between gap-4 px-4 py-3 bg-secondary border-t border-border">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">🤖</span>
+            <span class="text-sm text-muted-foreground">
               This is a sub-agent session. You cannot send messages to sub-agents directly.
             </span>
           </div>
           <Show when={props.onReturnToParent}>
             <button
-              class="sub-agent-footer-button"
+              class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-info text-primary-foreground hover:brightness-110 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-info"
               onClick={props.onReturnToParent}
               title={`Return to ${props.parentSessionTitle || "parent session"}`}
             >
@@ -1110,15 +1113,15 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   return (
-    <div class="prompt-input-container">
+    <div class="flex flex-col border-t border-border bg-background">
       <div
         ref={containerRef}
-        class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
-        style={
-          isDragging()
-            ? "border-color: var(--accent-primary); background-color: rgba(0, 102, 255, 0.05);"
-            : ""
-        }
+        class={cn(
+          "grid items-stretch relative",
+          isDragging() && "border-2 border-info bg-info/5",
+          props.hasActiveQuestion && "animate-question-glow"
+        )}
+        style={{ "grid-template-columns": "minmax(0, 1fr) 64px" }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1149,7 +1152,7 @@ export default function PromptInput(props: PromptInputProps) {
 
         <div class="flex flex-1 flex-col">
           <Show when={attachments().length > 0}>
-            <div class="flex flex-wrap gap-1.5 border-b pb-2" style="border-color: var(--border-base);">
+            <div class="flex flex-wrap gap-1.5 border-b border-border pb-2">
               <For each={attachments()}>
                 {(attachment) => {
                   const isImage = attachment.mediaType.startsWith("image/")
@@ -1157,7 +1160,10 @@ export default function PromptInput(props: PromptInputProps) {
                   const isTextAttachment = typeof textValue === "string"
                   return (
                     <div
-                      class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
+                      class={cn(
+                        "inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium ring-1 ring-inset bg-info/10 text-info ring-info/10 rounded-md",
+                        isImage && "relative"
+                      )}
                       title={textValue}
                     >
                       <Show
@@ -1207,7 +1213,7 @@ export default function PromptInput(props: PromptInputProps) {
                       <Show when={isTextAttachment}>
                         <button
                           onClick={() => handleExpandTextAttachment(attachment)}
-                          class="attachment-expand"
+                          class="ml-0.5 flex h-4 w-4 items-center justify-center rounded transition-colors hover:bg-info/10"
                           aria-label="Expand pasted text"
                           title="Insert pasted text"
                         >
@@ -1219,7 +1225,7 @@ export default function PromptInput(props: PromptInputProps) {
                       </Show>
                       <button
                         onClick={() => handleRemoveAttachment(attachment.id)}
-                        class="attachment-remove"
+                        class="ml-0.5 flex h-4 w-4 items-center justify-center rounded transition-colors hover:bg-info/10"
                         aria-label="Remove attachment"
                       >
                         <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1232,8 +1238,8 @@ export default function PromptInput(props: PromptInputProps) {
                         </svg>
                       </button>
                       <Show when={isImage}>
-                        <div class="attachment-chip-preview">
-                          <img src={attachment.url} alt={attachment.filename} />
+                        <div class="hidden absolute bottom-[calc(100%+6px)] left-0 p-2 bg-background border border-border rounded-[10px] shadow-[0_16px_40px_rgba(15,23,42,0.25)] z-20 group-hover:block peer-hover:block [.relative:hover_&]:block">
+                          <img src={attachment.url} alt={attachment.filename} class="block max-w-[320px] max-h-[320px] rounded-lg object-contain" />
                         </div>
                       </Show>
                     </div>
@@ -1242,15 +1248,30 @@ export default function PromptInput(props: PromptInputProps) {
               </For>
             </div>
           </Show>
-          <div class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}>
-            <div class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}>
+          <div class={cn(
+            "relative w-full min-h-[56px] flex-1 h-full min-w-0",
+            expandState() === "expanded" && "h-auto"
+          )}>
+            <div class={cn(
+              "relative w-full h-full",
+              expandState() === "expanded" && "h-auto"
+            )}>
               <textarea
                 ref={textareaRef}
-                class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""} ${expandState() === "expanded" ? "is-expanded" : ""}`}
+                class={cn(
+                  "w-full pl-3 pr-10 pt-2.5 border text-sm resize-none outline-none transition-colors bg-background text-foreground border-border rounded-none pb-0 h-full min-h-full font-[inherit] leading-normal",
+                  mode() === "shell" && "border-success shadow-[inset_0_0_0_1px_hsl(var(--success)/0.4)]",
+                  expandState() === "expanded" && "h-auto min-h-0 overflow-y-auto",
+                  "focus:border-info focus:shadow-none",
+                  mode() === "shell" && "focus:border-success focus:shadow-[inset_0_0_0_1px_hsl(var(--success)/0.4)]",
+                  "placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
+                )}
                 placeholder={
                   mode() === "shell"
                     ? "Run a shell command (Esc to exit)..."
-                    : "Type your message, @file, @agent, or paste images and text..."
+                    : props.hasActiveQuestion
+                      ? "Type your answer here..."
+                      : "Type your message, @file, @agent, or paste images and text..."
                 }
                 value={prompt()}
                 onInput={handleInput}
@@ -1266,53 +1287,60 @@ export default function PromptInput(props: PromptInputProps) {
                 autoCapitalize="off"
                 autocomplete="off"
               />
-              <div class="prompt-nav-buttons">
+              <div class="absolute top-1 right-1 bottom-1 flex flex-col justify-start gap-0.5 z-[2]">
                 <ExpandButton
                   expandState={expandState}
                   onToggleExpand={handleExpandToggle}
                 />
                 <Show when={hasHistory()}>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     type="button"
-                    class="prompt-history-button"
+                    class="w-7 h-7 flex-shrink-0 text-muted-foreground bg-black/[0.04] hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                     onClick={() => selectPreviousHistory(true)}
                     disabled={!canHistoryGoPrevious()}
                     aria-label="Previous prompt"
                   >
                     <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     type="button"
-                    class="prompt-history-button"
+                    class="w-7 h-7 flex-shrink-0 text-muted-foreground bg-black/[0.04] hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                     onClick={() => selectNextHistory(true)}
                     disabled={!canHistoryGoNext()}
                     aria-label="Next prompt"
                   >
                     <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
-                  </button>
+                  </Button>
                 </Show>
               </div>
             <Show when={shouldShowOverlay()}>
-              <div class={`prompt-input-overlay ${mode() === "shell" ? "shell-mode" : ""}`}>
+              <div class={cn(
+                "absolute bottom-4 left-3 right-3 flex flex-wrap gap-2 text-xs leading-tight text-muted-foreground pointer-events-none z-[1]",
+                mode() === "shell" && "text-foreground"
+              )}>
                 <Show
                   when={props.escapeInDebounce}
                   fallback={
                     <>
                       <Show when={attachments().length > 0}>
-                        <span class="prompt-overlay-text prompt-overlay-muted">{attachments().length} file(s) attached</span>
+                        <span class="inline-flex items-center gap-[0.35rem] text-muted-foreground">{attachments().length} file(s) attached</span>
                       </Show>
                       <Show when={mode() === "shell"}>
-                        <span class="prompt-overlay-shell-active">Shell mode active</span>
+                        <span class="text-success font-semibold">Shell mode active</span>
                       </Show>
                     </>
                   }
                 >
                   <>
-                    <span class="prompt-overlay-text prompt-overlay-warning">
+                    <span class="inline-flex items-center gap-[0.35rem] text-warning font-medium">
                       Press <Kbd>Esc</Kbd> again to abort session
                     </span>
                     <Show when={mode() === "shell"}>
-                      <span class="prompt-overlay-shell-active">Shell mode active</span>
+                      <span class="text-success font-semibold">Shell mode active</span>
                     </Show>
                   </>
                 </Show>
@@ -1322,36 +1350,53 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
       </div>
 
-        <div class="prompt-input-actions">
-          <button
+        <div class="flex flex-col items-center self-stretch h-full px-1 py-2 gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
             type="button"
-            class="stop-button"
+            class={cn(
+              "w-9 h-9 rounded-lg cursor-pointer flex-shrink-0 transition-all",
+              "bg-secondary text-destructive border border-border",
+              "hover:bg-destructive/10 hover:border-destructive",
+              "active:scale-95",
+              !canStop() && "opacity-30 cursor-not-allowed text-muted-foreground"
+            )}
             onClick={handleAbort}
             disabled={!canStop()}
             aria-label="Stop session"
             title="Stop session"
           >
-            <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <rect x="4" y="4" width="12" height="12" rx="2" />
             </svg>
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             type="button"
-            class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
+            class={cn(
+              "w-9 h-9 rounded-lg cursor-pointer flex-shrink-0 transition-all mt-auto",
+              mode() === "shell"
+                ? "bg-success text-primary-foreground border border-success hover:brightness-110 active:brightness-95"
+                : "bg-info text-primary-foreground border border-info hover:brightness-110",
+              "active:scale-95",
+              "disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-secondary disabled:border-border disabled:text-muted-foreground"
+            )}
             onClick={handleSend}
             disabled={!canSend()}
             aria-label="Send message"
           >
             <Show
               when={mode() === "shell"}
-              fallback={<span class="send-icon">▶</span>}
+              fallback={<span class="text-sm">▶</span>}
             >
-              <svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 8l5 4-5 4" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h6" />
               </svg>
             </Show>
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,44 +1,45 @@
-import { Component } from "solid-js"
-import { Dialog } from "@kobalte/core"
+import { Component, Show } from "solid-js"
 import { X } from "lucide-solid"
+import InstanceMcpControl from "./instance-mcp-control"
+import type { Instance } from "../types/instance"
+import { cn } from "../lib/cn"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+} from "./ui"
+import { Button } from "./ui"
 
 interface McpSettingsModalProps {
   open: boolean
   onClose: () => void
-  folder?: string
-  instanceId?: string
-  onAddServer?: () => void
+  instance: Instance | null
 }
 
 const McpSettingsModal: Component<McpSettingsModalProps> = (props) => {
   return (
-    <Dialog.Root open={props.open} onOpenChange={(open) => !open && props.onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="dialog-content dialog-content-md">
-          <div class="dialog-header">
-            <Dialog.Title class="dialog-title">MCP Settings</Dialog.Title>
-            <Dialog.CloseButton class="dialog-close-button">
-              <X size={16} />
-            </Dialog.CloseButton>
-          </div>
-          <div class="dialog-body">
-            <div class="text-muted text-sm">
-              MCP server configuration coming soon.
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              onClick={props.onClose}
-            >
-              Close
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <DialogContent class="max-w-[min(640px,calc(100vw-32px))] max-h-[calc(100vh-64px)] flex flex-col rounded-xl shadow-xl">
+        <DialogHeader class="px-5 py-4 border-b border-border">
+          <DialogTitle>MCP Servers</DialogTitle>
+        </DialogHeader>
+        <div class="flex-1 overflow-y-auto p-5">
+          <Show when={props.instance} fallback={<p class="text-muted-foreground text-sm">No instance connected.</p>}>
+            <InstanceMcpControl
+              instance={props.instance!}
+              class="space-y-2"
+            />
+          </Show>
+        </div>
+        <DialogFooter class="px-5 py-3 border-t border-border">
+          <Button variant="secondary" size="sm" onClick={props.onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

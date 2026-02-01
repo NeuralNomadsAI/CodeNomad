@@ -1,5 +1,15 @@
-import { Dialog } from "@kobalte/core/dialog"
 import { Component, Show, createEffect, createSignal } from "solid-js"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./ui"
+import { Button } from "./ui"
+import { Input } from "./ui"
+import { Label } from "./ui"
 
 interface SessionRenameDialogProps {
   open: boolean
@@ -54,75 +64,66 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
         }
       }}
     >
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface w-full max-w-sm p-6" tabIndex={-1}>
-            <Dialog.Title class="text-lg font-semibold text-primary">Rename Session</Dialog.Title>
-            <Dialog.Description class="text-sm text-secondary mt-1">
-              {description()}
-            </Dialog.Description>
+      <DialogContent class="max-w-sm" showClose={false}>
+        <DialogHeader>
+          <DialogTitle>Rename Session</DialogTitle>
+          <DialogDescription>{description()}</DialogDescription>
+        </DialogHeader>
 
-            <form class="mt-4 space-y-4" onSubmit={handleRename}>
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-secondary" for={inputId}>
-                  Session name
-                </label>
-                <input
-                  id={inputId}
-                  ref={(element) => {
-                    inputRef = element
-                  }}
-                  type="text"
-                  value={title()}
-                  onInput={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="Enter a session name"
-                  class="w-full px-3 py-2 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent"
-                />
-              </div>
+        <form class="space-y-4" onSubmit={handleRename}>
+          <div class="space-y-2">
+            <Label for={inputId}>Session name</Label>
+            <Input
+              id={inputId}
+              ref={(element: HTMLInputElement) => {
+                inputRef = element
+              }}
+              type="text"
+              value={title()}
+              onInput={(event: InputEvent & { currentTarget: HTMLInputElement }) => setTitle(event.currentTarget.value)}
+              placeholder="Enter a session name"
+            />
+          </div>
 
-              <div class="flex justify-end gap-3">
-                <button
-                  type="button"
-                  class="button-tertiary"
-                  onClick={() => {
-                    if (!isSubmitting()) {
-                      props.onClose()
-                    }
-                  }}
-                  disabled={isSubmitting()}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  class="button-primary flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                  disabled={isRenameDisabled()}
-                >
-                  <Show
-                    when={!isSubmitting()}
-                    fallback={
-                      <>
-                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                          <path
-                            class="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        <span>Renaming…</span>
-                      </>
-                    }
-                  >
-                    Rename
-                  </Show>
-                </button>
-              </div>
-            </form>
-          </Dialog.Content>
-        </div>
-      </Dialog.Portal>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!isSubmitting()) {
+                  props.onClose()
+                }
+              }}
+              disabled={isSubmitting()}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isRenameDisabled()}
+            >
+              <Show
+                when={!isSubmitting()}
+                fallback={
+                  <>
+                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    <span>Renaming...</span>
+                  </>
+                }
+              >
+                Rename
+              </Show>
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

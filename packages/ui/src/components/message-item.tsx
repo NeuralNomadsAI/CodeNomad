@@ -4,6 +4,8 @@ import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
+import { cn } from "../lib/cn"
+import { Badge, Button } from "./ui"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -166,9 +168,12 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const containerClass = () =>
-    isUser()
-      ? "message-item-base message-user-bubble bg-[var(--message-user-bg)] border-r-[3px] border-r-[#2196f3] border-solid"
-      : "message-item-base assistant-message bg-[var(--message-assistant-bg)] border-l-[3px] border-[var(--message-assistant-border)]"
+    cn(
+      "group flex flex-col gap-2 w-full relative transition-colors duration-150",
+      isUser()
+        ? "px-4 py-3 rounded-lg border-l-[3px] border-l-info bg-secondary shadow-sm"
+        : "rounded-lg px-2.5 py-2.5 border-l-[3px] border-l-warning/50 bg-muted"
+    )
 
   const speakerLabel = () => (isUser() ? "You" : "Assistant")
 
@@ -205,81 +210,105 @@ export default function MessageItem(props: MessageItemProps) {
 
 
   return (
-    <div class={containerClass()} style={isUser() ? { "border-right": "3px solid #2196f3" } : {}}>
-      <header class="message-item-header">
-        <div class="message-speaker">
-          <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
+    <div
+      class={containerClass()}
+      style={{}}
+    >
+      <header class="flex justify-between items-start gap-2.5">
+        <div class="flex flex-col gap-0.5 text-xs">
+          <span
+            class={cn(
+              "font-semibold",
+              isUser() ? "text-info" : "text-warning"
+            )}
+          >
             {speakerLabel()}
           </span>
-          <Show when={agentMeta()}>{(meta) => <span class="message-agent-meta">{meta()}</span>}</Show>
+          <Show when={agentMeta()}>
+            {(meta) => (
+              <Badge variant="secondary" class="text-xs mt-1 w-fit">
+                {meta()}
+              </Badge>
+            )}
+          </Show>
         </div>
-        <div class="message-header-right">
-          <div class="message-item-actions">
+        <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
             <Show when={isUser()}>
-              <div class="message-action-group">
+              <div class="flex items-center gap-1.5">
                 <Show when={props.onRevert}>
-                  <button
-                    class="message-action-button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={handleRevert}
                     title="Revert to this message"
                     aria-label="Revert to this message"
+                    class="h-7 px-2.5 text-xs text-muted-foreground hover:text-primary hover:border-primary"
                   >
                     Revert
-                  </button>
+                  </Button>
                 </Show>
                 <Show when={props.onFork}>
-                  <button
-                    class="message-action-button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => props.onFork?.(props.record.id)}
                     title="Fork from this message"
                     aria-label="Fork from this message"
+                    class="h-7 px-2.5 text-xs text-muted-foreground hover:text-primary hover:border-primary"
                   >
                     Fork
-                  </button>
+                  </Button>
                 </Show>
-                <button
-                  class="message-action-button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleCopy}
                   title="Copy message"
                   aria-label="Copy message"
+                  class="h-7 px-2.5 text-xs text-muted-foreground hover:text-primary hover:border-primary"
                 >
                   <Show when={copied()} fallback="Copy">
                     Copied!
                   </Show>
-                </button>
+                </Button>
               </div>
             </Show>
             <Show when={!isUser()}>
-              <button
-                class="message-action-button"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleCopy}
                 title="Copy message"
                 aria-label="Copy message"
+                class="h-7 px-2.5 text-xs text-muted-foreground hover:text-primary hover:border-primary"
               >
                 <Show when={copied()} fallback="Copy">
                   Copied!
                 </Show>
-              </button>
+              </Button>
             </Show>
           </div>
-          <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
+          <time class="text-xs text-muted-foreground whitespace-nowrap" dateTime={timestampIso()}>{timestamp()}</time>
         </div>
       </header>
 
-      <div class="pt-1 whitespace-pre-wrap break-words leading-[1.1]">
+      <div class="pt-1 whitespace-pre-wrap break-words leading-relaxed">
 
 
         <Show when={props.isQueued && isUser()}>
-          <div class="message-queued-badge">QUEUED</div>
+          <Badge variant="default" class="mb-3 tracking-wide font-bold">QUEUED</Badge>
         </Show>
 
         <Show when={errorMessage()}>
-          <div class="message-error-block">⚠️ {errorMessage()}</div>
+          <div class="text-sm p-3 rounded border-l-[3px] my-2 text-destructive bg-destructive/10 border-destructive">
+            {errorMessage()}
+          </div>
         </Show>
 
         <Show when={isGenerating()}>
-          <div class="message-generating">
-            <span class="generating-spinner">⏳</span> Generating...
+          <div class="text-sm italic py-2 text-muted-foreground">
+            <span class="inline-block animate-pulse">&#9203;</span> Generating...
           </div>
         </Show>
 
@@ -296,15 +325,18 @@ export default function MessageItem(props: MessageItemProps) {
         </For>
 
         <Show when={fileAttachments().length > 0}>
-          <div class="message-attachments mt-1">
+          <div class="flex flex-wrap gap-1.5 pt-2 mt-1 border-t border-border">
             <For each={fileAttachments()}>
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
                 return (
-                  <div class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`} title={name}>
+                  <div class={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-muted text-xs text-muted-foreground relative group/chip",
+                    isImage && "pr-1.5"
+                  )} title={name}>
                     <Show when={isImage} fallback={
-                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path
                           stroke-linecap="round"
                           stroke-linejoin="round"
@@ -313,13 +345,13 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 rounded object-cover" />
+                      <img src={attachment.url} alt={name} class="h-5 w-5 rounded object-cover shrink-0" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <button
                       type="button"
                       onClick={() => void handleAttachmentDownload(attachment)}
-                      class="attachment-download"
+                      class="ml-1 p-0.5 rounded hover:bg-accent hover:text-accent-foreground transition-colors"
                       aria-label={`Download ${name}`}
                     >
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -328,8 +360,8 @@ export default function MessageItem(props: MessageItemProps) {
                       </svg>
                     </button>
                     <Show when={isImage}>
-                      <div class="attachment-chip-preview">
-                        <img src={attachment.url} alt={name} />
+                      <div class="hidden group-hover/chip:block absolute bottom-full left-0 mb-2 p-1 rounded-lg border border-border bg-popover shadow-lg z-10">
+                        <img src={attachment.url} alt={name} class="max-w-[240px] max-h-[180px] rounded object-contain" />
                       </div>
                     </Show>
                   </div>
@@ -340,13 +372,13 @@ export default function MessageItem(props: MessageItemProps) {
         </Show>
 
         <Show when={props.record.status === "sending"}>
-          <div class="message-sending">
-            <span class="generating-spinner">●</span> Sending...
+          <div class="text-xs italic mt-1 text-muted-foreground">
+            <span class="inline-block animate-pulse">&#9679;</span> Sending...
           </div>
         </Show>
 
         <Show when={props.record.status === "error"}>
-          <div class="message-error">⚠ Message failed to send</div>
+          <div class="text-xs mt-1 text-destructive">&#9888; Message failed to send</div>
         </Show>
       </div>
     </div>

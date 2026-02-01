@@ -1,6 +1,11 @@
-import { Component, For, Show, createSignal } from "solid-js"
-import { Dialog } from "@kobalte/core"
-import { X, HelpCircle } from "lucide-solid"
+import { Component, For } from "solid-js"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "./ui"
+import { ScrollArea } from "./ui"
 import Kbd from "./kbd"
 
 interface ShortcutItem {
@@ -69,26 +74,25 @@ interface ShortcutsDialogProps {
 
 const ShortcutsDialog: Component<ShortcutsDialogProps> = (props) => {
   return (
-    <Dialog.Root open={props.open} onOpenChange={(isOpen) => !isOpen && props.onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="shortcuts-dialog-overlay" />
-        <Dialog.Content class="shortcuts-dialog-content">
-          <div class="shortcuts-dialog-header">
-            <Dialog.Title class="shortcuts-dialog-title">Keyboard Shortcuts</Dialog.Title>
-            <Dialog.CloseButton class="shortcuts-dialog-close">
-              <X class="w-4 h-4" />
-            </Dialog.CloseButton>
-          </div>
-          <div class="shortcuts-dialog-body">
+    <Dialog open={props.open} onOpenChange={(isOpen) => !isOpen && props.onClose()}>
+      <DialogContent class="max-w-lg max-h-[80vh]">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+        </DialogHeader>
+
+        <ScrollArea class="max-h-[60vh] pr-2">
+          <div class="space-y-6">
             <For each={shortcutCategories}>
               {(category) => (
-                <div class="shortcuts-category">
-                  <h3 class="shortcuts-category-title">{category.title}</h3>
-                  <div class="shortcuts-list">
+                <div class="space-y-2">
+                  <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {category.title}
+                  </h3>
+                  <div class="space-y-1">
                     <For each={category.shortcuts}>
                       {(shortcut) => (
-                        <div class="shortcut-item">
-                          <span class="shortcut-description">{shortcut.description}</span>
+                        <div class="flex items-center justify-between py-1.5 px-1">
+                          <span class="text-sm text-foreground">{shortcut.description}</span>
                           <Kbd shortcut={shortcut.keys} />
                         </div>
                       )}
@@ -98,9 +102,9 @@ const ShortcutsDialog: Component<ShortcutsDialogProps> = (props) => {
               )}
             </For>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
   )
 }
 

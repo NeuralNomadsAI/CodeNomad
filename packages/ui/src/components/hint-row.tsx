@@ -1,4 +1,5 @@
 import { Component, JSX } from "solid-js"
+import { cn } from "../lib/cn"
 
 interface HintRowProps {
   children: JSX.Element
@@ -6,7 +7,7 @@ interface HintRowProps {
 }
 
 const HintRow: Component<HintRowProps> = (props) => {
-  return <span class={`text-xs text-muted ${props.class || ""}`}>{props.children}</span>
+  return <span class={cn("text-xs text-muted-foreground", props.class)}>{props.children}</span>
 }
 
 export default HintRow

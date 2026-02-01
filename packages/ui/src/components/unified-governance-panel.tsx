@@ -26,6 +26,8 @@ import {
   Server,
   Eye,
 } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Badge, Button } from "./ui"
 import {
   governanceRules,
   governanceSummary,
@@ -81,11 +83,11 @@ function categorizeRule(rule: GovernanceRule): RuleCategory {
 }
 
 const categoryConfig: Record<RuleCategory, { label: string; icon: typeof Shield; color: string }> = {
-  security: { label: "Security", icon: ShieldAlert, color: "text-red-400" },
-  git: { label: "Git", icon: GitBranch, color: "text-purple-400" },
-  code: { label: "Code", icon: Code2, color: "text-blue-400" },
-  system: { label: "System", icon: Terminal, color: "text-orange-400" },
-  other: { label: "Other", icon: Server, color: "text-gray-400" },
+  security: { label: "Security", icon: ShieldAlert, color: "text-destructive" },
+  git: { label: "Git", icon: GitBranch, color: "text-info" },
+  code: { label: "Code", icon: Code2, color: "text-info" },
+  system: { label: "System", icon: Terminal, color: "text-warning" },
+  other: { label: "Other", icon: Server, color: "text-muted-foreground" },
 }
 
 const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) => {
@@ -252,42 +254,42 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
   }
 
   return (
-    <div class="governance-unified">
+    <div class={cn("flex flex-col gap-6")}>
       {/* Header */}
-      <div class="governance-header">
-        <div class="governance-header-title">
+      <div class={cn("flex items-center justify-between gap-4 flex-wrap")}>
+        <div class={cn("flex items-center gap-3")}>
           <Shield class="w-6 h-6 text-accent" />
           <div>
-            <h2>Governance</h2>
-            <p class="text-muted text-sm">Rules and directives that control AI behavior</p>
+            <h2 class={cn("text-lg font-semibold text-foreground")}>Governance</h2>
+            <p class={cn("text-sm text-muted-foreground")}>Rules and directives that control AI behavior</p>
           </div>
         </div>
 
         <Show when={!isGovernanceLoading() && !governanceError()}>
-          <div class="governance-stats">
-            <div class="governance-stat">
-              <span class="governance-stat-value">{totalRules()}</span>
-              <span class="governance-stat-label">Rules</span>
+          <div class={cn("flex items-center gap-3")}>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-foreground")}>{totalRules()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Rules</span>
             </div>
-            <div class="governance-stat">
-              <span class="governance-stat-value text-red-400">{activeBlocks()}</span>
-              <span class="governance-stat-label">Blocking</span>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-destructive")}>{activeBlocks()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Blocking</span>
             </div>
-            <div class="governance-stat">
-              <span class="governance-stat-value text-green-400">{overrideCount()}</span>
-              <span class="governance-stat-label">Overrides</span>
+            <div class={cn("text-center")}>
+              <span class={cn("block text-sm font-semibold text-success")}>{overrideCount()}</span>
+              <span class={cn("text-xs text-muted-foreground")}>Overrides</span>
             </div>
             <Show when={isAuditMode()}>
-              <span class="governance-audit-badge">
+              <Badge variant="outline" class="text-warning">
                 <Eye class="w-3 h-3" /> Audit Mode
-              </span>
+              </Badge>
             </Show>
           </div>
         </Show>
       </div>
 
       <Show when={!isEraInstalled()}>
-        <div class="governance-notice governance-notice-warning">
+        <div class={cn("flex items-center gap-2 p-4 rounded-md bg-warning/10 text-warning")}>
           <AlertTriangle class="w-5 h-5" />
           <div>
             <strong>Era Code Not Installed</strong>
@@ -298,58 +300,58 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
 
       <Show when={isEraInstalled()}>
         {/* Hierarchy Section */}
-        <div class="governance-hierarchy">
-          <h3 class="governance-section-title">Hierarchy</h3>
-          <p class="governance-section-desc">Rules are applied in order: Constitution → Global → Project</p>
+        <div class={cn("flex flex-col gap-4")}>
+          <h3 class={cn("text-sm font-semibold text-foreground")}>Hierarchy</h3>
+          <p class={cn("text-xs text-muted-foreground -mt-2")}>Rules are applied in order: Constitution → Global → Project</p>
 
-          <div class="governance-hierarchy-cards">
+          <div class={cn("flex flex-col gap-3")}>
             {/* Constitution Card */}
-            <div class="governance-hierarchy-card governance-hierarchy-constitution">
-              <div class="governance-hierarchy-card-header">
-                <div class="governance-hierarchy-card-icon">
+            <div class={cn("rounded-lg border border-border overflow-hidden")}>
+              <div class={cn("flex items-center gap-3 px-4 py-3 bg-secondary")}>
+                <div class={cn("flex items-center justify-center w-8 h-8 rounded-lg bg-destructive/10 text-destructive")}>
                   <Lock class="w-5 h-5" />
                 </div>
-                <div class="governance-hierarchy-card-info">
-                  <h4>Constitution</h4>
-                  <span class="governance-hierarchy-badge governance-hierarchy-badge-immutable">Immutable</span>
+                <div class={cn("flex-1 min-w-0")}>
+                  <h4 class={cn("text-sm font-semibold text-foreground")}>Constitution</h4>
+                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium")}>Immutable</span>
                 </div>
                 <button
                   type="button"
-                  class="governance-hierarchy-expand"
+                  class={cn("p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent")}
                   onClick={() => setExpandedSection(s => s === "constitution" ? null : "constitution")}
                 >
                   {expandedSection() === "constitution" ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
                 </button>
               </div>
-              <p class="governance-hierarchy-card-desc">
+              <p class={cn("px-4 py-1 text-xs text-muted-foreground border-t border-border")}>
                 Foundational safety rules that cannot be overridden
               </p>
               <Show when={expandedSection() === "constitution"}>
-                <div class="governance-hierarchy-content">
+                <div class={cn("p-4 border-t border-border")}>
                   <Show when={constitution()?.exists && constitution()?.content}>
-                    <pre class="governance-directive-preview">{constitution()!.content}</pre>
+                    <pre class={cn("p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all bg-accent text-muted-foreground overflow-auto max-h-[300px]")}>{constitution()!.content}</pre>
                   </Show>
                   <Show when={!constitution()?.exists}>
-                    <p class="text-muted text-sm">No constitution file found</p>
+                    <p class={cn("text-sm text-muted-foreground")}>No constitution file found</p>
                   </Show>
                 </div>
               </Show>
             </div>
 
             {/* Global Directives Card */}
-            <div class="governance-hierarchy-card governance-hierarchy-global">
-              <div class="governance-hierarchy-card-header">
-                <div class="governance-hierarchy-card-icon">
+            <div class={cn("rounded-lg border border-border overflow-hidden")}>
+              <div class={cn("flex items-center gap-3 px-4 py-3 bg-secondary")}>
+                <div class={cn("flex items-center justify-center w-8 h-8 rounded-lg bg-info/10 text-info")}>
                   <Globe class="w-5 h-5" />
                 </div>
-                <div class="governance-hierarchy-card-info">
-                  <h4>Global Directives</h4>
-                  <span class="governance-hierarchy-badge governance-hierarchy-badge-user">User</span>
+                <div class={cn("flex-1 min-w-0")}>
+                  <h4 class={cn("text-sm font-semibold text-foreground")}>Global Directives</h4>
+                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-info/10 text-info font-medium")}>User</span>
                 </div>
-                <div class="governance-hierarchy-actions">
+                <div class={cn("flex items-center gap-1")}>
                   <button
                     type="button"
-                    class="governance-action-btn"
+                    class={cn("p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent")}
                     onClick={() => startEditDirective("global")}
                     title="Edit global directives"
                   >
@@ -357,54 +359,59 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
                   </button>
                   <button
                     type="button"
-                    class="governance-hierarchy-expand"
+                    class={cn("p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent")}
                     onClick={() => setExpandedSection(s => s === "global" ? null : "global")}
                   >
                     {expandedSection() === "global" ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
                   </button>
                 </div>
               </div>
-              <p class="governance-hierarchy-card-desc">
+              <p class={cn("px-4 py-1 text-xs text-muted-foreground border-t border-border")}>
                 Your personal preferences across all projects
               </p>
               <Show when={globalDirectives()?.exists}>
-                <div class="governance-directive-summary">
+                <div class={cn("px-4 py-2 border-t border-border")}>
                   <For each={getDirectiveSummary(globalDirectives()?.content)}>
-                    {(line) => <span class="governance-directive-line">{line}</span>}
+                    {(line) => <span class={cn("block text-xs text-muted-foreground truncate")}>{line}</span>}
                   </For>
                 </div>
               </Show>
               <Show when={!globalDirectives()?.exists}>
-                <button
-                  type="button"
-                  class="governance-create-btn"
-                  onClick={() => startEditDirective("global")}
-                >
-                  <Plus class="w-4 h-4" /> Create Global Directives
-                </button>
+                <div class={cn("px-4 py-2 border-t border-border")}>
+                  <button
+                    type="button"
+                    class={cn(
+                      "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                      "bg-accent text-muted-foreground hover:text-foreground"
+                    )}
+                    onClick={() => startEditDirective("global")}
+                  >
+                    <Plus class="w-4 h-4" /> Create Global Directives
+                  </button>
+                </div>
               </Show>
               <Show when={expandedSection() === "global" && globalDirectives()?.content}>
-                <div class="governance-hierarchy-content">
-                  <pre class="governance-directive-preview">{globalDirectives()!.content}</pre>
+                <div class={cn("p-4 border-t border-border")}>
+                  <pre class={cn("p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all bg-accent text-muted-foreground overflow-auto max-h-[300px]")}>{globalDirectives()!.content}</pre>
                 </div>
               </Show>
             </div>
 
             {/* Project Directives Card */}
-            <div class="governance-hierarchy-card governance-hierarchy-project">
-              <div class="governance-hierarchy-card-header">
-                <div class="governance-hierarchy-card-icon">
+            <div class={cn("rounded-lg border border-border overflow-hidden")}>
+              <div class={cn("flex items-center gap-3 px-4 py-3 bg-secondary")}>
+                <div class={cn("flex items-center justify-center w-8 h-8 rounded-lg bg-success/10 text-success")}>
                   <Folder class="w-5 h-5" />
                 </div>
-                <div class="governance-hierarchy-card-info">
-                  <h4>Project Directives</h4>
-                  <span class="governance-hierarchy-badge governance-hierarchy-badge-project">Project</span>
+                <div class={cn("flex-1 min-w-0")}>
+                  <h4 class={cn("text-sm font-semibold text-foreground")}>Project Directives</h4>
+                  <span class={cn("text-xs px-2 py-0.5 rounded-full bg-success/10 text-success font-medium")}>Project</span>
                 </div>
-                <div class="governance-hierarchy-actions">
+                <div class={cn("flex items-center gap-1")}>
                   <Show when={props.folder}>
                     <button
                       type="button"
-                      class="governance-action-btn"
+                      class={cn("p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent")}
                       onClick={() => startEditDirective("project")}
                       title="Edit project directives"
                     >
@@ -413,38 +420,43 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
                   </Show>
                   <button
                     type="button"
-                    class="governance-hierarchy-expand"
+                    class={cn("p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent")}
                     onClick={() => setExpandedSection(s => s === "project" ? null : "project")}
                   >
                     {expandedSection() === "project" ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
                   </button>
                 </div>
               </div>
-              <p class="governance-hierarchy-card-desc">
+              <p class={cn("px-4 py-1 text-xs text-muted-foreground border-t border-border")}>
                 Conventions specific to this codebase
               </p>
               <Show when={!props.folder}>
-                <p class="text-muted text-sm italic">Open a project to manage project directives</p>
+                <p class={cn("px-4 py-2 text-sm text-muted-foreground italic border-t border-border")}>Open a project to manage project directives</p>
               </Show>
               <Show when={props.folder && projectDirectives()?.exists}>
-                <div class="governance-directive-summary">
+                <div class={cn("px-4 py-2 border-t border-border")}>
                   <For each={getDirectiveSummary(projectDirectives()?.content)}>
-                    {(line) => <span class="governance-directive-line">{line}</span>}
+                    {(line) => <span class={cn("block text-xs text-muted-foreground truncate")}>{line}</span>}
                   </For>
                 </div>
               </Show>
               <Show when={props.folder && !projectDirectives()?.exists}>
-                <button
-                  type="button"
-                  class="governance-create-btn"
-                  onClick={() => startEditDirective("project")}
-                >
-                  <Plus class="w-4 h-4" /> Create Project Directives
-                </button>
+                <div class={cn("px-4 py-2 border-t border-border")}>
+                  <button
+                    type="button"
+                    class={cn(
+                      "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                      "bg-accent text-muted-foreground hover:text-foreground"
+                    )}
+                    onClick={() => startEditDirective("project")}
+                  >
+                    <Plus class="w-4 h-4" /> Create Project Directives
+                  </button>
+                </div>
               </Show>
               <Show when={expandedSection() === "project" && projectDirectives()?.content}>
-                <div class="governance-hierarchy-content">
-                  <pre class="governance-directive-preview">{projectDirectives()!.content}</pre>
+                <div class={cn("p-4 border-t border-border")}>
+                  <pre class={cn("p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all bg-accent text-muted-foreground overflow-auto max-h-[300px]")}>{projectDirectives()!.content}</pre>
                 </div>
               </Show>
             </div>
@@ -452,16 +464,17 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
         </div>
 
         {/* Rules Section */}
-        <div class="governance-rules-section">
-          <div class="governance-rules-header">
-            <h3 class="governance-section-title">Active Rules</h3>
-            <div class="governance-rules-filters">
+        <div class={cn("flex flex-col gap-4")}>
+          <div class={cn("flex items-center justify-between gap-4 flex-wrap")}>
+            <h3 class={cn("text-sm font-semibold text-foreground")}>Active Rules</h3>
+            <div class={cn("flex items-center gap-3 flex-wrap")}>
               {/* Search */}
-              <div class="governance-search">
-                <Search class="w-4 h-4 text-muted" />
+              <div class={cn("flex items-center gap-2 px-3 py-1.5 rounded-lg flex-1 max-w-xs bg-secondary border border-border")}>
+                <Search class="w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="Search rules..."
+                  class={cn("flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground")}
                   value={searchQuery()}
                   onInput={(e) => setSearchQuery(e.currentTarget.value)}
                 />
@@ -474,7 +487,7 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
 
               {/* Category Filter */}
               <select
-                class="governance-filter-select"
+                class={cn("px-3 py-1.5 rounded-md text-sm bg-secondary border border-border text-foreground")}
                 value={selectedCategory()}
                 onChange={(e) => setSelectedCategory(e.currentTarget.value as RuleCategory | "all")}
               >
@@ -488,7 +501,7 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
 
               {/* Source Filter */}
               <select
-                class="governance-filter-select"
+                class={cn("px-3 py-1.5 rounded-md text-sm bg-secondary border border-border text-foreground")}
                 value={selectedSource()}
                 onChange={(e) => setSelectedSource(e.currentTarget.value as "all" | "hardcoded" | "default" | "project")}
               >
@@ -501,14 +514,14 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
           </div>
 
           <Show when={isGovernanceLoading()}>
-            <div class="governance-loading">
+            <div class={cn("flex items-center justify-center gap-3 py-8 text-muted-foreground")}>
               <RefreshCw class="w-5 h-5 animate-spin" />
               <span>Loading rules...</span>
             </div>
           </Show>
 
           <Show when={governanceError()}>
-            <div class="governance-notice governance-notice-error">
+            <div class={cn("flex items-center gap-2 p-4 rounded-md bg-destructive/10 text-destructive")}>
               <AlertTriangle class="w-5 h-5" />
               <span>{governanceError()}</span>
             </div>
@@ -516,51 +529,57 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
 
           <Show when={!isGovernanceLoading() && !governanceError()}>
             <Show when={filteredRules().length === 0}>
-              <div class="governance-empty">
-                <Shield class="w-8 h-8 text-muted" />
+              <div class={cn("flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground")}>
+                <Shield class="w-8 h-8 opacity-50" />
                 <p>No rules match your filters</p>
               </div>
             </Show>
 
-            <div class="governance-rules-list">
+            <div class={cn("space-y-4")}>
               <For each={Object.entries(groupedFilteredRules()).filter(([_, rules]) => rules.length > 0)}>
                 {([category, rules]) => {
                   const config = categoryConfig[category as RuleCategory]
                   const CategoryIcon = config.icon
                   return (
-                    <div class="governance-rule-group">
-                      <div class="governance-rule-group-header">
-                        <CategoryIcon class={`w-4 h-4 ${config.color}`} />
-                        <span>{config.label}</span>
-                        <span class="governance-rule-count">{rules.length}</span>
+                    <div class={cn("rounded-lg border border-border overflow-hidden")}>
+                      <div class={cn("flex items-center gap-2 px-3 py-2 bg-secondary")}>
+                        <CategoryIcon class={cn("w-4 h-4", config.color)} />
+                        <span class={cn("text-sm font-medium text-foreground")}>{config.label}</span>
+                        <Badge variant="secondary" class="ml-auto">{rules.length}</Badge>
                       </div>
-                      <div class="governance-rule-items">
+                      <div class={cn("divide-y divide-border")}>
                         <For each={rules}>
                           {(rule) => {
                             const isToggling = () => togglingRules().has(rule.id)
                             const isBlocking = () => rule.action === "deny"
 
                             return (
-                              <div class={`governance-rule-item ${!isBlocking() ? "governance-rule-allowed" : ""}`}>
-                                <div class="governance-rule-main">
-                                  <div class="governance-rule-info">
-                                    <div class="governance-rule-name">
-                                      <span class="font-mono text-xs">{rule.id}</span>
+                              <div class={cn("p-3", !isBlocking() && "bg-success/5")}>
+                                <div class={cn("flex items-start justify-between gap-3")}>
+                                  <div class={cn("flex-1 min-w-0")}>
+                                    <div class={cn("flex items-center gap-2 mb-1")}>
+                                      <span class={cn("font-mono text-xs text-foreground")}>{rule.id}</span>
                                       <Show when={rule.source === "hardcoded"}>
-                                        <Lock class="w-3 h-3 text-red-400" title="Cannot be overridden" />
+                                        <Lock class="w-3 h-3 text-destructive" title="Cannot be overridden" />
                                       </Show>
                                     </div>
-                                    <p class="governance-rule-reason">{rule.reason}</p>
-                                    <code class="governance-rule-pattern">{rule.pattern}</code>
+                                    <p class={cn("text-sm mb-1 text-muted-foreground")}>{rule.reason}</p>
+                                    <code class={cn("text-xs px-2 py-1 rounded font-mono bg-accent text-muted-foreground break-all")}>{rule.pattern}</code>
                                   </div>
-                                  <div class="governance-rule-controls">
-                                    <span class={`governance-rule-status ${isBlocking() ? "governance-rule-status-deny" : "governance-rule-status-allow"}`}>
+                                  <div class={cn("flex items-center gap-2 flex-shrink-0")}>
+                                    <Badge variant={isBlocking() ? "destructive" : "default"}>
                                       {isBlocking() ? "Block" : "Allow"}
-                                    </span>
+                                    </Badge>
                                     <Show when={rule.overridable && props.folder}>
                                       <button
                                         type="button"
-                                        class={`governance-rule-toggle ${!isBlocking() ? "governance-rule-toggle-on" : ""}`}
+                                        class={cn(
+                                          "flex items-center justify-center w-8 h-8 rounded transition-colors",
+                                          !isBlocking()
+                                            ? "text-success hover:opacity-80"
+                                            : "text-muted-foreground hover:text-foreground",
+                                          "disabled:opacity-50 disabled:cursor-not-allowed"
+                                        )}
                                         onClick={() => handleRuleToggle(rule)}
                                         disabled={isToggling()}
                                         title={isBlocking() ? "Click to allow" : "Click to block"}
@@ -590,41 +609,50 @@ const UnifiedGovernancePanel: Component<UnifiedGovernancePanelProps> = (props) =
 
         {/* Edit Directive Modal */}
         <Show when={editingDirective()}>
-          <div class="governance-modal-overlay" onClick={cancelEditDirective}>
-            <div class="governance-modal" onClick={(e) => e.stopPropagation()}>
-              <div class="governance-modal-header">
-                <h3>
+          <div class={cn("fixed inset-0 flex items-center justify-center p-4 bg-black/60 z-[100]")} onClick={cancelEditDirective}>
+            <div class={cn("w-full max-w-lg rounded-xl overflow-hidden bg-background border border-border shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)]")} onClick={(e) => e.stopPropagation()}>
+              <div class={cn("flex items-center justify-between px-6 py-4 border-b border-border")}>
+                <h3 class={cn("text-lg font-semibold text-foreground")}>
                   {editingDirective() === "project" ? "Edit Project Directives" : "Edit Global Directives"}
                 </h3>
-                <button type="button" onClick={cancelEditDirective}>
+                <button type="button" class={cn("p-1 rounded transition-colors text-muted-foreground hover:text-foreground")} onClick={cancelEditDirective}>
                   <X class="w-5 h-5" />
                 </button>
               </div>
-              <div class="governance-modal-body">
+              <div class={cn("p-6")}>
                 <textarea
-                  class="governance-editor"
+                  class={cn(
+                    "w-full rounded-lg p-4 text-sm resize-none min-h-[300px]",
+                    "bg-secondary border border-border text-foreground",
+                    "font-mono leading-relaxed",
+                    "placeholder:text-muted-foreground",
+                    "focus:outline-none focus:border-info"
+                  )}
                   value={editContent()}
                   onInput={(e) => setEditContent(e.currentTarget.value)}
                   placeholder={`# ${editingDirective() === "project" ? "Project" : "Global"} Directives\n\nAdd your guidelines here...`}
                 />
               </div>
-              <div class="governance-modal-footer">
+              <div class={cn("flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary")}>
                 <Show when={saveMessage()}>
-                  <span class={`governance-save-message ${saveMessage()?.type === "error" ? "text-red-400" : "text-green-400"}`}>
+                  <span class={cn(
+                    "text-sm mr-auto",
+                    saveMessage()?.type === "error" ? "text-destructive" : "text-success"
+                  )}>
                     {saveMessage()?.text}
                   </span>
                 </Show>
-                <button type="button" class="governance-btn governance-btn-secondary" onClick={cancelEditDirective}>
+                <Button variant="outline" size="sm" onClick={cancelEditDirective}>
                   Cancel
-                </button>
-                <button
-                  type="button"
-                  class="governance-btn governance-btn-primary"
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
                   onClick={handleSaveDirective}
                   disabled={isSaving()}
                 >
                   {isSaving() ? <RefreshCw class="w-4 h-4 animate-spin" /> : "Save"}
-                </button>
+                </Button>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { Component, JSX, For } from "solid-js"
 import { isMac } from "../lib/keyboard-utils"
+import { cn } from "../lib/cn"
 
 interface KbdProps {
   children?: JSX.Element
@@ -20,10 +21,10 @@ const SPECIAL_KEY_LABELS: Record<string, string> = {
   pagedown: "Page Down",
   home: "Home",
   end: "End",
-  arrowup: "↑",
-  arrowdown: "↓",
-  arrowleft: "←",
-  arrowright: "→",
+  arrowup: "\u2191",
+  arrowdown: "\u2193",
+  arrowleft: "\u2190",
+  arrowright: "\u2192",
 }
 
 const Kbd: Component<KbdProps> = (props) => {
@@ -63,11 +64,14 @@ const Kbd: Component<KbdProps> = (props) => {
   }
 
   return (
-    <kbd class={`kbd ${props.class || ""}`}>
+    <kbd class={cn(
+      "inline-flex items-center px-1.5 py-0.5 text-xs font-mono rounded bg-secondary border border-border text-foreground",
+      props.class,
+    )}>
       <For each={parts()}>
         {(part, index) => (
           <>
-            {index() > 0 && <span class="kbd-separator">+</span>}
+            {index() > 0 && <span class="text-muted-foreground mx-0.5">+</span>}
             <span>{part.text}</span>
           </>
         )}

@@ -5,6 +5,8 @@ import { useConfig, type ModelPreference } from "../stores/preferences"
 import { instances } from "../stores/instances"
 import { providers, agents, fetchProviders, fetchAgents } from "../stores/sessions"
 import type { Model } from "../types/session"
+import { cn } from "../lib/cn"
+import { Badge, Button, Card, Input, Separator } from "./ui"
 
 interface FlatModel extends Model {
   providerName: string
@@ -90,18 +92,22 @@ const ModelDefaultsPanel: Component = () => {
   }
 
   return (
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">Model Defaults (Per Agent)</h3>
-        <p class="panel-subtitle">Applied when sessions prompt using that agent</p>
+    <Card>
+      <div class="px-4 py-3 border-b border-border bg-secondary">
+        <h3 class="text-base font-semibold text-foreground">Model Defaults (Per Agent)</h3>
+        <p class="text-xs mt-0.5 text-muted-foreground">Applied when sessions prompt using that agent</p>
       </div>
 
-      <div class="panel-body" style={{ gap: "var(--space-md)" }}>
-        <div class="flex items-end flex-wrap" style={{ gap: "var(--space-sm)" }}>
-          <div class="flex flex-col" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Reference Instance</label>
+      <div class="p-4 bg-background flex flex-col gap-4">
+        <div class="flex items-end flex-wrap gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-muted-foreground">Reference Instance</label>
             <select
-              class="modal-input min-w-[200px]"
+              class={cn(
+                "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "min-w-[200px]"
+              )}
               value={referenceInstanceId() ?? ""}
               onChange={(event) => setReferenceInstanceId(event.currentTarget.value)}
             >
@@ -115,10 +121,10 @@ const ModelDefaultsPanel: Component = () => {
             </select>
           </div>
 
-          <div class="flex flex-col" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Agent</label>
-            <input
-              class="modal-input min-w-[180px]"
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-muted-foreground">Agent</label>
+            <Input
+              class="min-w-[180px]"
               value={newAgentName()}
               onInput={(event) => setNewAgentName(event.currentTarget.value)}
               list="agent-name-suggestions"
@@ -129,8 +135,8 @@ const ModelDefaultsPanel: Component = () => {
             </datalist>
           </div>
 
-          <div class="flex flex-col flex-1 min-w-[280px]" style={{ gap: "var(--space-xs)" }}>
-            <label class="text-xs text-secondary">Model</label>
+          <div class="flex flex-col flex-1 min-w-[280px] gap-1.5">
+            <label class="text-xs text-muted-foreground">Model</label>
             <Combobox<FlatModel>
               value={selectedModel()}
               onChange={(value) => setSelectedModel(value)}
@@ -144,14 +150,14 @@ const ModelDefaultsPanel: Component = () => {
               itemComponent={(itemProps) => {
                 const model = itemProps.item.rawValue as FlatModel | undefined
                 return (
-                  <Combobox.Item item={itemProps.item} class="selector-option">
-                    <div class="selector-option-content">
-                      <Combobox.ItemLabel class="selector-option-label">{model?.name ?? "Unknown"}</Combobox.ItemLabel>
-                      <Combobox.ItemDescription class="selector-option-description">
+                  <Combobox.Item item={itemProps.item} class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-accent transition-colors">
+                    <div class="flex flex-col flex-1 min-w-0">
+                      <Combobox.ItemLabel class="text-sm font-medium text-foreground truncate">{model?.name ?? "Unknown"}</Combobox.ItemLabel>
+                      <Combobox.ItemDescription class="text-xs text-muted-foreground truncate">
                         {model?.providerName ?? "?"} • {model?.providerId ?? "?"}/{model?.id ?? "?"}
                       </Combobox.ItemDescription>
                     </div>
-                    <Combobox.ItemIndicator class="selector-option-indicator">
+                    <Combobox.ItemIndicator class="w-4 h-4 text-primary">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                       </svg>
@@ -161,54 +167,55 @@ const ModelDefaultsPanel: Component = () => {
               }}
             >
               <Combobox.Control class="relative w-full">
-                <Combobox.Input class="modal-input" />
-                <Combobox.Trigger class="selector-trigger" aria-label="Choose model">
-                  <Combobox.Icon class="selector-trigger-icon">
+                <Combobox.Input
+                  class={cn(
+                    "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors",
+                    "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  )}
+                />
+                <Combobox.Trigger class="flex items-center justify-between w-full px-3 py-2 text-sm border border-border rounded-md bg-background hover:bg-accent transition-colors cursor-pointer" aria-label="Choose model">
+                  <Combobox.Icon class="w-4 h-4 text-muted-foreground">
                     <ChevronDown class="w-3 h-3" />
                   </Combobox.Icon>
                 </Combobox.Trigger>
               </Combobox.Control>
               <Combobox.Portal>
-                <Combobox.Content class="selector-popover">
-                  <Combobox.Listbox class="selector-listbox" />
+                <Combobox.Content class="w-full min-w-[200px] bg-popover border border-border rounded-md shadow-md overflow-hidden">
+                  <Combobox.Listbox class="max-h-60 overflow-y-auto py-1" />
                 </Combobox.Content>
               </Combobox.Portal>
             </Combobox>
           </div>
 
-          <button type="button" class="modal-button modal-button--primary" onClick={addDefault}>
+          <Button onClick={addDefault}>
             Add
-          </button>
+          </Button>
         </div>
 
         <Show
           when={Object.keys(defaults()).length > 0}
-          fallback={<p class="text-xs text-secondary italic">No per-agent defaults configured yet.</p>}
+          fallback={<p class="text-xs text-muted-foreground italic">No per-agent defaults configured yet.</p>}
         >
-          <div class="flex flex-col" style={{ gap: "var(--space-sm)" }}>
+          <div class="flex flex-col gap-3">
             <For each={Object.entries(defaults()).sort(([a], [b]) => a.localeCompare(b))}>
               {([agentName, model]) => (
-                <div class="px-3 py-2 rounded-md border bg-surface-secondary border-base flex items-center justify-between" style={{ gap: "var(--space-sm)" }}>
+                <div class="px-3 py-2 rounded-md border border-border bg-secondary flex items-center justify-between gap-3">
                   <div class="flex flex-col min-w-0">
-                    <div class="text-sm text-primary font-medium truncate">{agentName}</div>
-                    <div class="text-xs text-secondary truncate">
+                    <div class="text-sm text-foreground font-medium truncate">{agentName}</div>
+                    <div class="text-xs text-muted-foreground truncate">
                       {model.providerId}/{model.modelId}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    class="modal-button modal-button--danger"
-                    onClick={() => removeDefault(agentName)}
-                  >
+                  <Button variant="destructive" size="sm" onClick={() => removeDefault(agentName)}>
                     Remove
-                  </button>
+                  </Button>
                 </div>
               )}
             </For>
           </div>
         </Show>
       </div>
-    </div>
+    </Card>
   )
 }
 

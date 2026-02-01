@@ -38,7 +38,7 @@ const ALLOWED_COMMANDS = new Set([
 // Allowed subcommands per command for additional security
 const ALLOWED_SUBCOMMANDS: Record<string, Set<string>> = {
   gcloud: new Set(["auth", "config", "--version", "projects"]),
-  gh: new Set(["auth", "--version", "api"]),
+  gh: new Set(["auth", "--version", "api", "repo"]),
   which: new Set(["gcloud", "gh", "brew", "winget", "apt-get", "snap", "dnf", "yum"]),
   where: new Set(["gcloud", "gh", "winget"]),
   brew: new Set(["install", "--version"]),

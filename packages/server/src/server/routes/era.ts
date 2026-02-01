@@ -4,6 +4,23 @@ import type { EraDetectionService } from "../../era/detection"
 import type { EraGovernanceService } from "../../era/governance"
 import type { UpdateMonitor } from "../../updates/update-monitor"
 import type { Logger } from "../../logger"
+import {
+  GovernanceWriter,
+  type WriteInstructionRequest,
+  type WriteInstructionResponse,
+  type DeleteInstructionRequest,
+  type EditInstructionRequest,
+  type PromoteRequest,
+  type ListInstructionsRequest,
+} from "../../services/governance-writer"
+import { LlmClassifier } from "../../services/llm-classifier"
+import {
+  InstructionRetrieval,
+  InstructionPruner,
+  composeRetrievedSection,
+  type RetrievalContext,
+  type RetrievedInstruction,
+} from "../../services/instruction-retrieval"
 
 interface RouteDeps {
   eraDetection: EraDetectionService
@@ -525,6 +542,284 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
         exists: false,
         hash: "",
       }
+    }
+  })
+
+  // --------------------------------------------------------------------------
+  // Instruction Capture & Governance Memory
+  // --------------------------------------------------------------------------
+
+  const governanceWriter = new GovernanceWriter()
+  const llmClassifier = new LlmClassifier()
+  const instructionRetrieval = new InstructionRetrieval()
+  const instructionPruner = new InstructionPruner()
+
+  /**
+   * POST /api/era/classify-confirm
+   * Use Haiku to refine a borderline instruction classification.
+   * Returns { unavailable: true } if the API key is missing or the call fails.
+   */
+  app.post<{
+    Body: { message: string }
+  }>("/api/era/classify-confirm", async (request, reply) => {
+    const { message } = request.body ?? {}
+
+    if (!message || typeof message !== "string") {
+      reply.code(400)
+      return { error: "message is required" }
+    }
+
+    if (!llmClassifier.isAvailable()) {
+      return { unavailable: true }
+    }
+
+    try {
+      const result = await llmClassifier.classify(message)
+      if (!result) {
+        return { unavailable: true }
+      }
+      return result
+    } catch {
+      return { unavailable: true }
+    }
+  })
+
+  /**
+   * POST /api/era/classify-instruction
+   * Persist a classified instruction to the appropriate storage layer.
+   */
+  app.post<{
+    Body: WriteInstructionRequest
+  }>("/api/era/classify-instruction", async (request, reply) => {
+    const body = request.body
+    if (!body || !body.instruction || !body.category) {
+      return reply.status(400).send({ error: "Missing required fields: instruction, category" })
+    }
+
+    try {
+      const result: WriteInstructionResponse = await governanceWriter.writeInstruction(body)
+      return result
+    } catch (err) {
+      logger.error({ err }, "Failed to persist instruction")
+      return reply.status(500).send({
+        error: "write_failure",
+        message: err instanceof Error ? err.message : "Failed to persist instruction",
+      })
+    }
+  })
+
+  /**
+   * GET /api/era/directives/history
+   * Returns the change history for directives.
+   */
+  app.get<{
+    Querystring: { folder?: string }
+  }>("/api/era/directives/history", async (request) => {
+    const folder = request.query.folder
+    const historyPath = folder
+      ? `${folder}/.era/memory/directives-history.json`
+      : `${process.env.HOME ?? "."}/.era/memory/directives-history.json`
+
+    try {
+      const fs = await import("node:fs")
+      const raw = fs.readFileSync(historyPath, "utf-8")
+      return JSON.parse(raw)
+    } catch {
+      return []
+    }
+  })
+
+  /**
+   * GET /api/era/instructions
+   * List all saved instructions (directives + memories).
+   */
+  app.get<{
+    Querystring: { scope?: "project" | "global"; folder?: string }
+  }>("/api/era/instructions", async (request) => {
+    const { scope, folder } = request.query
+
+    try {
+      const instructions = await governanceWriter.listInstructions({
+        scope,
+        projectPath: folder,
+      })
+      return { success: true, instructions }
+    } catch (err) {
+      logger.error({ err }, "Failed to list instructions")
+      return { success: false, instructions: [], error: err instanceof Error ? err.message : "Unknown error" }
+    }
+  })
+
+  /**
+   * DELETE /api/era/instructions
+   * Delete a saved instruction.
+   */
+  app.delete<{
+    Body: DeleteInstructionRequest
+  }>("/api/era/instructions", async (request, reply) => {
+    const body = request.body
+    if (!body || !body.id || !body.storageType) {
+      return reply.status(400).send({ success: false, error: "Missing required fields: id, storageType" })
+    }
+
+    try {
+      const result = await governanceWriter.deleteInstruction(body)
+      return result
+    } catch (err) {
+      logger.error({ err }, "Failed to delete instruction")
+      return reply.status(500).send({ success: false, error: err instanceof Error ? err.message : "Unknown error" })
+    }
+  })
+
+  /**
+   * PATCH /api/era/instructions
+   * Edit an existing instruction.
+   */
+  app.patch<{
+    Body: EditInstructionRequest
+  }>("/api/era/instructions", async (request, reply) => {
+    const body = request.body
+    if (!body || !body.id || !body.storageType || !body.newContent) {
+      return reply.status(400).send({ success: false, error: "Missing required fields: id, storageType, newContent" })
+    }
+
+    try {
+      const result = await governanceWriter.editInstruction(body)
+      return result
+    } catch (err) {
+      logger.error({ err }, "Failed to edit instruction")
+      return reply.status(500).send({ success: false, error: err instanceof Error ? err.message : "Unknown error" })
+    }
+  })
+
+  /**
+   * POST /api/era/instructions/promote
+   * Promote a memory instruction to a directive.
+   */
+  app.post<{
+    Body: PromoteRequest
+  }>("/api/era/instructions/promote", async (request, reply) => {
+    const body = request.body
+    if (!body || !body.id || !body.content || !body.category) {
+      return reply.status(400).send({ error: "Missing required fields: id, content, category" })
+    }
+
+    try {
+      const result = await governanceWriter.promoteInstruction(body)
+      return result
+    } catch (err) {
+      logger.error({ err }, "Failed to promote instruction")
+      return reply.status(500).send({ error: err instanceof Error ? err.message : "Unknown error" })
+    }
+  })
+
+  /**
+   * POST /api/era/instructions/demote
+   * Demote a directive to a memory instruction.
+   */
+  app.post<{
+    Body: PromoteRequest
+  }>("/api/era/instructions/demote", async (request, reply) => {
+    const body = request.body
+    if (!body || !body.id || !body.content || !body.category) {
+      return reply.status(400).send({ error: "Missing required fields: id, content, category" })
+    }
+
+    try {
+      const result = await governanceWriter.demoteInstruction(body)
+      return result
+    } catch (err) {
+      logger.error({ err }, "Failed to demote instruction")
+      return reply.status(500).send({ error: err instanceof Error ? err.message : "Unknown error" })
+    }
+  })
+
+  // ============================================================================
+  // INSTRUCTION RETRIEVAL ROUTES
+  // ============================================================================
+
+  /**
+   * POST /api/era/retrieval/session-start
+   * Retrieve instructions relevant to a new session.
+   */
+  app.post<{
+    Body: { sessionId: string; context?: RetrievalContext }
+  }>("/api/era/retrieval/session-start", async (request) => {
+    const { sessionId, context } = request.body ?? {}
+
+    if (!sessionId) {
+      return { instructions: [] as RetrievedInstruction[], composed: "" }
+    }
+
+    try {
+      const instructions = await instructionRetrieval.retrieveAtSessionStart(sessionId, context ?? {})
+      const composed = composeRetrievedSection(instructions)
+      return { instructions, composed }
+    } catch (err) {
+      logger.error({ err }, "Failed to retrieve session-start instructions")
+      return { instructions: [] as RetrievedInstruction[], composed: "" }
+    }
+  })
+
+  /**
+   * POST /api/era/retrieval/tool
+   * Retrieve instructions relevant to a specific tool invocation.
+   */
+  app.post<{
+    Body: { sessionId: string; toolName: string; context?: RetrievalContext }
+  }>("/api/era/retrieval/tool", async (request) => {
+    const { sessionId, toolName, context } = request.body ?? {}
+
+    if (!sessionId || !toolName) {
+      return { instructions: [] as RetrievedInstruction[], composed: "" }
+    }
+
+    try {
+      const instructions = await instructionRetrieval.retrieveForTool(sessionId, toolName, context ?? {})
+      const composed = composeRetrievedSection(instructions)
+      return { instructions, composed }
+    } catch (err) {
+      logger.error({ err }, "Failed to retrieve tool instructions")
+      return { instructions: [] as RetrievedInstruction[], composed: "" }
+    }
+  })
+
+  /**
+   * POST /api/era/retrieval/flush
+   * Flush access counts to Era Memory at session end.
+   */
+  app.post<{
+    Body: { sessionId: string }
+  }>("/api/era/retrieval/flush", async (request) => {
+    const { sessionId } = request.body ?? {}
+
+    if (!sessionId) {
+      return { flushed: false }
+    }
+
+    try {
+      await instructionRetrieval.flushAccessCounts(sessionId)
+      return { flushed: true }
+    } catch (err) {
+      logger.error({ err }, "Failed to flush session access counts")
+      return { flushed: false }
+    }
+  })
+
+  /**
+   * POST /api/era/retrieval/prune
+   * Run instruction pruning engine.
+   */
+  app.post<{
+    Body: { projectPath?: string }
+  }>("/api/era/retrieval/prune", async (request) => {
+    const { projectPath } = request.body ?? {}
+
+    try {
+      return await instructionPruner.prune(projectPath)
+    } catch (err) {
+      logger.error({ err }, "Failed to prune instructions")
+      return { flaggedForReview: [], archived: [], errors: [err instanceof Error ? err.message : "Unknown error"] }
     }
   })
 }

@@ -1,9 +1,7 @@
-import { Index, Show, createMemo, type Accessor } from "solid-js"
+import { Index, createMemo, type Accessor } from "solid-js"
 import VirtualItem from "./virtual-item"
 import MessageBlock from "./message-block"
-import ThinkingCard from "./thinking-card"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import { preferences } from "../stores/preferences"
 
 export function getMessageAnchorId(messageId: string) {
   return `message-anchor-${messageId}`
@@ -84,8 +82,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
       <Index each={props.messageIds()}>
         {(messageId, index) => {
           const isLastMessage = () => index === props.messageIds().length - 1
-          const isSessionReady = () => !props.isSessionBusy && !props.loading && isLastMessage()
-
           // Only show tools on the last message of each assistant turn
           const turnInfo = () => assistantTurnInfo().get(messageId())
           const isLastInAssistantTurn = () => turnInfo()?.isLastInTurn ?? false
@@ -93,8 +89,8 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           // Get all message IDs in this turn for tool consolidation
           const turnMessageIds = () => isLastInAssistantTurn() ? getAssistantTurnIds(messageId(), index) : []
 
-          // Only show step-finish (summary pill) when session is ready for user input
-          const showStepFinish = () => isSessionReady() && isLastMessage()
+          // Only show step-finish (summary pill) when session is idle and this is the last message
+          const showStepFinish = () => !props.isSessionBusy && !props.loading && isLastMessage()
 
           return (
             <VirtualItem
@@ -102,7 +98,7 @@ export default function MessageBlockList(props: MessageBlockListProps) {
               cacheKey={messageId()}
               scrollContainer={props.scrollContainer}
               threshold={VIRTUAL_ITEM_MARGIN_PX}
-              placeholderClass="message-stream-placeholder"
+              placeholderClass="block w-full relative bg-transparent transition-[height] duration-100 ease-out"
               virtualizationEnabled={() => !props.loading}
               suspendMeasurements={props.suspendMeasurements}
             >
@@ -116,7 +112,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
                 showThinking={props.showThinking}
                 thinkingDefaultExpanded={props.thinkingDefaultExpanded}
                 showUsageMetrics={props.showUsageMetrics}
-                isSessionReady={isSessionReady()}
                 isLastMessage={isLastMessage()}
                 isLastInAssistantTurn={isLastInAssistantTurn()}
                 turnMessageIds={turnMessageIds()}
@@ -129,11 +124,6 @@ export default function MessageBlockList(props: MessageBlockListProps) {
           )
         }}
       </Index>
-      {/* Thinking card - shown when assistant is processing and verbose output is disabled */}
-      <Show when={props.isSessionBusy && !preferences().showVerboseOutput}>
-        <ThinkingCard isThinking={true} />
-      </Show>
-      {/* Ready indicator is now integrated into the completion card in the last message */}
       <div ref={props.setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
     </>
   )

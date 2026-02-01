@@ -1,6 +1,7 @@
 import { Component, createSignal, For, Show } from "solid-js"
 import { Plus, Trash2, Key, Globe } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
+import { cn } from "../lib/cn"
 
 interface EnvironmentVariablesEditorProps {
   disabled?: boolean
@@ -51,15 +52,15 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
   }
 
   return (
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">Environment Variables</h3>
-        <p class="panel-subtitle">
+    <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-background text-foreground">
+      <div class="px-4 py-3 border-b border-border bg-secondary">
+        <h3 class="text-base font-semibold text-foreground">Environment Variables</h3>
+        <p class="text-xs mt-0.5 text-muted-foreground">
           Applied whenever a new OpenCode instance starts ({entries().length} variable{entries().length !== 1 ? "s" : ""})
         </p>
       </div>
 
-      <div class="panel-body" style={{ gap: "var(--space-md)" }}>
+      <div class="p-4 bg-background" style={{ gap: "var(--space-md)" }}>
         {/* Existing variables */}
         <Show when={entries().length > 0}>
           <div class="flex flex-col" style={{ gap: "var(--space-sm)" }}>
@@ -72,7 +73,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                       type="text"
                       value={key}
                       disabled
-                      class="modal-input flex-1 min-w-[160px] opacity-70 cursor-not-allowed"
+                      class="w-full bg-transparent border border-border rounded-md px-3 py-2 text-sm text-foreground outline-none focus:border-primary placeholder:text-muted-foreground flex-1 min-w-[160px] opacity-70 cursor-not-allowed"
                       placeholder="Variable name"
                       title="Variable name (read-only)"
                     />
@@ -81,14 +82,14 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                       value={value}
                       disabled={props.disabled}
                       onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
-                      class="modal-input flex-1 min-w-[200px]"
+                      class="w-full bg-transparent border border-border rounded-md px-3 py-2 text-sm text-foreground outline-none focus:border-primary placeholder:text-muted-foreground flex-1 min-w-[200px]"
                       placeholder="Variable value"
                     />
                   </div>
                   <button
                     onClick={() => handleRemoveVariable(key)}
                     disabled={props.disabled}
-                    class="modal-button modal-button--danger p-2"
+                    class="inline-flex items-center justify-center gap-2 font-medium px-4 py-2 rounded-md transition-colors text-destructive hover:bg-destructive/10 p-2"
                     title="Remove variable"
                   >
                     <Trash2 class="w-3.5 h-3.5" />
@@ -100,7 +101,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
         </Show>
 
         {/* Add new variable */}
-        <div class="flex items-center pt-3 border-t border-base" style={{ gap: "var(--space-sm)" }}>
+        <div class="flex items-center pt-3 border-t border-border" style={{ gap: "var(--space-sm)" }}>
           <div class="flex-1 flex items-center" style={{ gap: "var(--space-sm)" }}>
             <Key class="w-3.5 h-3.5 icon-muted flex-shrink-0" />
             <input
@@ -109,7 +110,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
               onInput={(e) => setNewKey(e.currentTarget.value)}
               onKeyPress={handleKeyPress}
               disabled={props.disabled}
-              class="modal-input flex-1 min-w-[160px]"
+              class="w-full bg-transparent border border-border rounded-md px-3 py-2 text-sm text-foreground outline-none focus:border-primary placeholder:text-muted-foreground flex-1 min-w-[160px]"
               placeholder="Variable name"
             />
             <input
@@ -118,14 +119,14 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
               onInput={(e) => setNewValue(e.currentTarget.value)}
               onKeyPress={handleKeyPress}
               disabled={props.disabled}
-              class="modal-input flex-1 min-w-[200px]"
+              class="w-full bg-transparent border border-border rounded-md px-3 py-2 text-sm text-foreground outline-none focus:border-primary placeholder:text-muted-foreground flex-1 min-w-[200px]"
               placeholder="Variable value"
             />
           </div>
           <button
             onClick={handleAddVariable}
             disabled={props.disabled || !newKey().trim()}
-            class="modal-button modal-button--primary p-2"
+            class="inline-flex items-center justify-center gap-2 font-medium px-4 py-2 rounded-md transition-colors bg-primary text-primary-foreground hover:bg-primary/90 p-2"
             title="Add variable"
           >
             <Plus class="w-3.5 h-3.5" />
@@ -133,12 +134,12 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
         </div>
 
         <Show when={entries().length === 0}>
-          <p class="text-xs text-secondary italic text-center py-2">
+          <p class="text-xs text-muted-foreground italic text-center py-2">
             No environment variables configured. Add variables above to customize the OpenCode environment.
           </p>
         </Show>
 
-        <p class="text-xs text-secondary">
+        <p class="text-xs text-muted-foreground">
           These variables will be available in the OpenCode environment when starting instances.
         </p>
       </div>

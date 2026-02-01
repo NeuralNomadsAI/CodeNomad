@@ -1,10 +1,22 @@
 import { Component, For, Show, createSignal, createMemo, createEffect } from "solid-js"
-import { Dialog } from "@kobalte/core/dialog"
-import { Search, Key, RefreshCw, Power } from "lucide-solid"
+import { Key, Power } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { instances, stopInstance, createInstance } from "../stores/instances"
 import { fetchProviders } from "../stores/sessions"
 import { getProviderLogoUrl } from "../lib/models-api"
+import { cn } from "../lib/cn"
+import {
+  Card,
+  Button,
+  Input,
+  Label,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "./ui"
 
 type ProviderCatalogEntry = {
   id: string
@@ -150,120 +162,108 @@ const ProviderConfigModal: Component<ProviderConfigModalProps> = (props) => {
 
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && handleClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
-            <header class="px-6 py-4 border-b" style={{ "border-color": "var(--border-base)" }}>
-              <Dialog.Title class="text-lg font-semibold text-primary flex items-center gap-3">
-                <Show when={selectedProvider()}>
-                  <img
-                    src={getProviderLogoUrl(props.providerId!)}
-                    alt=""
-                    class="w-6 h-6 object-contain rounded"
-                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  />
-                </Show>
-                Configure {selectedProvider()?.name ?? "Provider"}
-              </Dialog.Title>
-              <div class="text-xs text-secondary mt-1">
-                Enter API keys to enable this provider
-              </div>
-            </header>
+      <DialogContent class="max-w-lg max-h-[85vh] flex flex-col overflow-hidden rounded-xl shadow-xl">
+        <DialogHeader class="px-6 py-4 border-b border-border">
+          <DialogTitle class="flex items-center gap-3">
+            <Show when={selectedProvider()}>
+              <img
+                src={getProviderLogoUrl(props.providerId!)}
+                alt=""
+                class="w-6 h-6 object-contain rounded"
+                onError={(e) => { e.currentTarget.style.display = 'none' }}
+              />
+            </Show>
+            Configure {selectedProvider()?.name ?? "Provider"}
+          </DialogTitle>
+          <DialogDescription>
+            Enter API keys to enable this provider
+          </DialogDescription>
+        </DialogHeader>
 
-            <div class="p-6 flex flex-col gap-5 overflow-y-auto">
-              <Show when={!referenceInstanceId()}>
-                <div class="p-4 rounded-lg bg-surface-secondary border border-base">
-                  <p class="text-sm text-secondary">
-                    Start a coding session first to configure providers.
-                  </p>
-                </div>
-              </Show>
+        <div class="p-6 flex flex-col gap-5 overflow-y-auto">
+          <Show when={!referenceInstanceId()}>
+            <Card class="p-4">
+              <p class="text-sm text-muted-foreground">
+                Start a coding session first to configure providers.
+              </p>
+            </Card>
+          </Show>
 
-              <Show when={referenceInstanceId() && selectedProvider()}>
-                {(entry) => (
-                  <>
-                    <Show
-                      when={(entry().env?.length ?? 0) > 0}
-                      fallback={
-                        <div class="p-4 rounded-lg bg-surface-secondary border border-base">
-                          <p class="text-sm text-secondary">
-                            No API keys required for this provider.
-                          </p>
-                        </div>
-                      }
-                    >
-                      <div class="space-y-4">
-                        <For each={entry().env}>
-                          {(key) => (
-                            <div class="flex flex-col gap-1.5">
-                              <label class="text-xs font-medium text-secondary">{key}</label>
-                              <input
-                                type="password"
-                                class="modal-input"
-                                value={draftKeys()[key] ?? ""}
-                                placeholder={envVars()[key] ? "••••••••" : "Enter API key"}
-                                onInput={(e) => setDraftKeys((prev) => ({
-                                  ...prev,
-                                  [key]: e.currentTarget.value
-                                }))}
-                              />
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-
-                    <div class="p-3 rounded-lg bg-surface-secondary border border-base">
-                      <p class="text-xs text-secondary">
-                        After saving, restart your session to load the provider's models.
+          <Show when={referenceInstanceId() && selectedProvider()}>
+            {(entry) => (
+              <>
+                <Show
+                  when={(entry().env?.length ?? 0) > 0}
+                  fallback={
+                    <Card class="p-4">
+                      <p class="text-sm text-muted-foreground">
+                        No API keys required for this provider.
                       </p>
-                    </div>
-                  </>
-                )}
-              </Show>
-            </div>
-
-            <div class="px-6 py-4 border-t flex items-center justify-between gap-3" style={{ "border-color": "var(--border-base)" }}>
-              <Show when={referenceInstanceId()}>
-                <button
-                  type="button"
-                  class="modal-button modal-button--secondary"
-                  onClick={() => void restartInstance()}
-                  title="Restart session to apply changes"
+                    </Card>
+                  }
                 >
-                  <Power class="w-3.5 h-3.5" />
-                  Restart Session
-                </button>
-              </Show>
-              <Show when={!referenceInstanceId()}>
-                <div />
-              </Show>
-
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  class="modal-button modal-button--secondary"
-                  onClick={handleClose}
-                >
-                  Cancel
-                </button>
-                <Show when={selectedProvider()?.env?.length}>
-                  <button
-                    type="button"
-                    class="modal-button modal-button--primary"
-                    onClick={() => void saveProviderKeys()}
-                    disabled={saving()}
-                  >
-                    <Key class="w-3.5 h-3.5" />
-                    {saving() ? "Saving..." : "Save Keys"}
-                  </button>
+                  <div class="space-y-4">
+                    <For each={entry().env}>
+                      {(key) => (
+                        <div class="flex flex-col gap-1.5">
+                          <Label class="text-xs text-muted-foreground">{key}</Label>
+                          <Input
+                            type="password"
+                            value={draftKeys()[key] ?? ""}
+                            placeholder={envVars()[key] ? "--------" : "Enter API key"}
+                            onInput={(e) => setDraftKeys((prev) => ({
+                              ...prev,
+                              [key]: e.currentTarget.value
+                            }))}
+                          />
+                        </div>
+                      )}
+                    </For>
+                  </div>
                 </Show>
-              </div>
-            </div>
-          </Dialog.Content>
+
+                <Card class="p-3">
+                  <p class="text-xs text-muted-foreground">
+                    After saving, restart your session to load the provider's models.
+                  </p>
+                </Card>
+              </>
+            )}
+          </Show>
         </div>
-      </Dialog.Portal>
+
+        <DialogFooter class="px-6 py-4 border-t border-border justify-between">
+          <Show when={referenceInstanceId()}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void restartInstance()}
+              title="Restart session to apply changes"
+            >
+              <Power class="w-3.5 h-3.5" />
+              Restart Session
+            </Button>
+          </Show>
+          <Show when={!referenceInstanceId()}>
+            <div />
+          </Show>
+
+          <div class="flex items-center gap-2">
+            <Button variant="secondary" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Show when={selectedProvider()?.env?.length}>
+              <Button
+                onClick={() => void saveProviderKeys()}
+                disabled={saving()}
+              >
+                <Key class="w-3.5 h-3.5" />
+                {saving() ? "Saving..." : "Save Keys"}
+              </Button>
+            </Show>
+          </div>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   )
 }

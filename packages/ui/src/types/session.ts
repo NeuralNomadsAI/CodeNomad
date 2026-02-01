@@ -83,6 +83,7 @@ export interface Model {
   id: string
   name: string
   providerId: string
+  reasoning?: boolean
   limit?: {
     context?: number
     output?: number

@@ -12,6 +12,7 @@ import { formatTokenTotal } from "../lib/formatters"
 import { getLogger } from "../lib/logger"
 import { DropdownMenu } from "@kobalte/core"
 import { copyToClipboard } from "../lib/clipboard"
+import { cn } from "../lib/cn"
 const log = getLogger("session")
 
 
@@ -166,48 +167,56 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     return (
-       <div class="session-list-item group">
+       <div class="border-b last:border-b-0 border-border min-w-0 max-w-full group">
 
         <button
-          class={`session-item-base ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          class={cn(
+            "w-full flex flex-col gap-1 px-3 py-2.5 text-left transition-colors outline-none font-sans text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+            isActive()
+              ? "bg-accent text-foreground font-medium shadow-[inset_0_0_0_1px_hsl(var(--border))]"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
           onClick={() => selectSession(rowProps.sessionId)}
           title={title()}
           role="button"
           aria-selected={isActive()}
         >
-          <div class="session-item-row session-item-header">
-            <div class="session-item-title-row">
+          <div class="flex items-center gap-2 w-full justify-between">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
               <MessageSquare class="w-4 h-4 flex-shrink-0" />
-              <span class="session-item-title truncate">{title()}</span>
-              <span class={`session-type-pill ${isParent() ? "session-type-pill--parent" : "session-type-pill--agent"}`}>
+              <span class="flex-1 min-w-0 truncate">{title()}</span>
+              <span class={cn(
+                "text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0",
+                isParent() ? "bg-info text-primary-foreground" : "bg-muted text-muted-foreground border border-border",
+              )}>
                 {isParent() ? "Parent" : "Agent"}
               </span>
             </div>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger
-                class="session-item-menu-trigger opacity-80 hover:opacity-100 rounded p-0.5 transition-all"
+                class="flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent opacity-80 hover:opacity-100 rounded p-0.5 transition-all"
                 onClick={(e: MouseEvent) => e.stopPropagation()}
               >
                 <MoreVertical class="w-3.5 h-3.5" />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="session-dropdown-menu">
+                <DropdownMenu.Content class="rounded-lg shadow-lg py-1 min-w-[140px] z-50 bg-background border border-border animate-in fade-in-0 zoom-in-95">
                   <DropdownMenu.Item
-                    class="session-dropdown-item"
+                    class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none transition-colors text-foreground hover:bg-accent focus:bg-accent"
                     onSelect={() => copySessionId(new MouseEvent("click"), rowProps.sessionId)}
                   >
                     <Copy class="w-3.5 h-3.5" />
                     <span>Copy ID</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    class="session-dropdown-item"
+                    class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none transition-colors text-foreground hover:bg-accent focus:bg-accent"
                     onSelect={() => openRenameDialog(rowProps.sessionId)}
                   >
                     <Pencil class="w-3.5 h-3.5" />
                     <span>Rename</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    class="session-dropdown-item session-dropdown-item--danger"
+                    class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none transition-colors text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
                     onSelect={() => handleDeleteSession(new MouseEvent("click"), rowProps.sessionId)}
                     title="Delete conversation history. The OpenCode process continues running."
                   >
@@ -233,20 +242,36 @@ const SessionList: Component<SessionListProps> = (props) => {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
           </div>
-          <div class="session-item-row session-item-meta">
-            <div class="session-item-progress">
-              <div class="context-progress-track">
+          <div class="flex items-center gap-2 w-full justify-between items-center text-xs text-muted-foreground mt-0.5">
+            <div class="mt-1 flex items-center gap-1.5">
+              <div class="relative flex-1 max-w-[100px] h-[3px] rounded-full overflow-hidden bg-white/10">
                 <div
-                  class={`context-progress-fill context-progress-fill--${contextLevel()}`}
+                  class={`absolute top-0 left-0 h-full rounded-full ${
+                    contextLevel() === "critical" ? "bg-destructive" :
+                    contextLevel() === "warning" ? "bg-warning" :
+                    "bg-success"
+                  }`}
                   style={{ width: `${contextPercentage()}%` }}
                 />
               </div>
-              <span class="session-progress-label">
+              <span class="text-[9px] font-mono text-muted-foreground whitespace-nowrap">
                 {formatTokenTotal(contextUsed())}/{contextTotal() !== null ? formatTokenTotal(contextTotal()!) : "--"}
               </span>
             </div>
-            <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
-              <span class="status-dot" />
+            <span class={cn(
+              "text-[0.65rem] uppercase tracking-wide font-medium inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-transparent",
+              statusClassName() === "session-working" && "text-warning font-medium",
+              statusClassName() === "session-compacting" && "text-info font-medium",
+              statusClassName() === "session-idle" && "text-success font-medium",
+              statusClassName() === "session-permission" && "text-warning",
+            )}>
+              <span class={cn(
+                "w-2 h-2 rounded-full",
+                statusClassName() === "session-working" && "bg-warning animate-pulse",
+                statusClassName() === "session-compacting" && "bg-info animate-pulse",
+                statusClassName() === "session-idle" && "bg-success",
+                statusClassName() === "session-permission" && "bg-warning",
+              )} />
               {statusText()}
             </span>
           </div>
@@ -289,21 +314,21 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   return (
     <div
-      class="session-list-container bg-surface-secondary border-r border-base flex flex-col w-full"
+      class="flex flex-col flex-1 min-h-0 relative bg-secondary min-w-[200px] max-w-[500px] border-r border-border flex flex-col w-full"
     >
       <Show when={props.showHeader !== false}>
-        <div class="session-list-header p-3 border-b border-base">
+        <div class="border-b border-border relative p-3">
           {props.headerContent ?? null}
         </div>
       </Show>
 
-      <div class="session-list flex-1 overflow-y-auto">
+      <div class="flex-1 overflow-y-auto">
         {/* Pin button header */}
         <Show when={!props.isPhoneLayout && props.onTogglePin}>
-          <div class="session-list-pin-header px-3 py-2 flex items-center justify-end border-b border-base">
+          <div class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider justify-end border-b border-border">
             <button
               type="button"
-              class="icon-button icon-button--sm icon-button--ghost"
+              class="inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               aria-label={props.leftPinned ? "Unpin drawer" : "Pin drawer"}
               onClick={props.onTogglePin}
             >
@@ -313,8 +338,8 @@ const SessionList: Component<SessionListProps> = (props) => {
         </Show>
 
         <Show when={userSessionIds().length > 0}>
-          <div class="session-section">
-            <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
+          <div class="pb-1">
+            <div class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Agents
             </div>
             <For each={userSessionIds()}>{(id) => <SessionRow sessionId={id} canClose />}</For>
@@ -322,8 +347,11 @@ const SessionList: Component<SessionListProps> = (props) => {
         </Show>
 
         <Show when={childSessionIds().length > 0}>
-          <div class="session-section">
-            <div class="session-section-header px-3 py-2 text-xs font-semibold text-primary/70 uppercase tracking-wide">
+          <div class="pt-1">
+            <Show when={userSessionIds().length > 0}>
+              <div class="mx-3 mb-1 border-t border-border" />
+            </Show>
+            <div class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Agent Sessions
             </div>
             <For each={childSessionIds()}>{(id) => <SessionRow sessionId={id} />}</For>
@@ -332,7 +360,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       </div>
 
       <Show when={props.showFooter !== false}>
-        <div class="session-list-footer p-3 border-t border-base">
+        <div class="border-t border-border p-3">
           {props.footerContent ?? null}
         </div>
       </Show>

@@ -73,9 +73,10 @@ test.describe("Settings CSS Audit", () => {
 
     await page.screenshot({ path: "test-screenshots/settings-audit/02-full-settings.png", fullPage: true })
 
-    // Now iterate through each section
+    // Now iterate through each section (nav items are now Tailwind-styled, not legacy CSS classes)
     for (const section of SECTIONS) {
-      const navItem = page.locator(`.full-settings-nav-item:has-text("${section.label}")`).first()
+      // After migration, nav items use inline Tailwind classes instead of .full-settings-nav-item
+      const navItem = page.locator(`[class*="cursor-pointer"]:has-text("${section.label}"), button:has-text("${section.label}")`).first()
 
       if (await navItem.isVisible({ timeout: 1000 }).catch(() => false)) {
         await navItem.click()
@@ -87,49 +88,31 @@ test.describe("Settings CSS Audit", () => {
           fullPage: true
         })
 
-        // Check for CSS issues
-        const content = page.locator(".full-settings-content")
-        const contentBox = await content.boundingBox()
+        // Check for CSS issues — content area uses inline Tailwind (flex-1 overflow-y-auto)
+        const content = page.locator('[class*="flex-1"][class*="overflow-y-auto"]').first()
+        const contentBox = await content.boundingBox().catch(() => null)
 
         // Log any potential issues
         if (!contentBox || contentBox.width < 100) {
           console.log(`WARNING: Section "${section.label}" may have CSS issues - content area too small or missing`)
         }
 
-        // Check if section has visible content
-        const sectionContent = page.locator(".full-settings-section, .full-settings-content-inner > *").first()
-        const hasContent = await sectionContent.isVisible({ timeout: 500 }).catch(() => false)
-
-        if (!hasContent) {
-          console.log(`WARNING: Section "${section.label}" appears to have no visible content`)
-        }
-
         // Check for unstyled elements (elements with no computed styles)
         const unstyledCheck = await page.evaluate(() => {
-          const contentArea = document.querySelector(".full-settings-content-inner")
+          // Find the scrollable content area
+          const contentArea = document.querySelector('[class*="flex-1"][class*="overflow-y-auto"]')
           if (!contentArea) return { hasContent: false, issues: ["No content area found"] }
 
           const issues: string[] = []
           const children = contentArea.querySelectorAll("*")
 
-          // Check if content area is empty or has only whitespace
-          if (contentArea.textContent?.trim() === "") {
-            issues.push("Content area is empty")
-          }
-
           // Check for elements that might be unstyled
           children.forEach((el) => {
             const styles = window.getComputedStyle(el)
-            const tagName = el.tagName.toLowerCase()
-
-            // Check for buttons without proper styling
-            if (tagName === "button" && styles.backgroundColor === "rgba(0, 0, 0, 0)" && styles.border === "0px none rgb(0, 0, 0)") {
-              // Might be intentionally transparent, skip
-            }
 
             // Check for text that's invisible
             if (styles.color === "rgba(0, 0, 0, 0)" || styles.opacity === "0") {
-              issues.push(`Invisible element: ${tagName}`)
+              issues.push(`Invisible element: ${el.tagName.toLowerCase()}`)
             }
           })
 

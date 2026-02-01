@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect, For, Show, onCleanup, createMemo } from "solid-js"
 import type { Command as SDKCommand } from "@opencode-ai/sdk"
 import { getCommands } from "../stores/commands"
+import { cn } from "../lib/cn"
 
 interface SlashCommandPickerProps {
   open: boolean
@@ -106,29 +107,32 @@ const SlashCommandPicker: Component<SlashCommandPickerProps> = (props) => {
     <Show when={props.open}>
       <div
         ref={containerRef}
-        class="dropdown-surface bottom-full left-0 mb-1 max-w-md"
+        class="absolute w-full rounded-md shadow-lg z-50 bg-background border border-border bottom-full left-0 mb-1 max-w-md"
         data-testid="slash-command-picker"
       >
-        <div class="dropdown-header">
-          <div class="dropdown-header-title">Slash Commands</div>
+        <div class="px-3 py-2 border-b border-border bg-secondary">
+          <div class="text-xs font-medium text-muted-foreground">Slash Commands</div>
         </div>
 
-        <div ref={scrollContainerRef} class="dropdown-content max-h-60">
+        <div ref={scrollContainerRef} class="overflow-y-auto max-h-60">
           <Show when={commandCount() === 0}>
-            <div class="dropdown-empty">No commands found</div>
+            <div class="px-3 py-4 text-center text-sm text-muted-foreground">No commands found</div>
           </Show>
 
           <For each={filteredCommands()}>
             {(command, index) => (
               <div
-                class={`dropdown-item ${index() === selectedIndex() ? "dropdown-item-highlight" : ""}`}
+                class={cn(
+                  "cursor-pointer px-3 py-2 transition-colors text-foreground",
+                  index() === selectedIndex() ? "bg-accent" : "hover:bg-accent"
+                )}
                 data-picker-selected={index() === selectedIndex()}
                 data-testid={`slash-command-${command.name}`}
                 onClick={() => handleSelect(command)}
               >
                 <div class="flex items-start gap-2">
                   <svg
-                    class="dropdown-icon-accent h-4 w-4 mt-0.5"
+                    class="h-4 w-4 mt-0.5 text-info"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -145,7 +149,7 @@ const SlashCommandPicker: Component<SlashCommandPickerProps> = (props) => {
                       <span class="text-sm font-medium">/{command.name}</span>
                     </div>
                     <Show when={command.description}>
-                      <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                      <div class="mt-0.5 text-xs text-muted-foreground">
                         {command.description && command.description.length > 100
                           ? command.description.slice(0, 100) + "..."
                           : command.description}
@@ -158,7 +162,7 @@ const SlashCommandPicker: Component<SlashCommandPickerProps> = (props) => {
           </For>
         </div>
 
-        <div class="dropdown-footer">
+        <div class="border-t border-border px-3 py-2 text-xs text-muted-foreground">
           <div>
             <span class="font-medium">Tab</span> or <span class="font-medium">Enter</span> select &middot;{" "}
             <span class="font-medium">Esc</span> close

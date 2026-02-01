@@ -5,6 +5,7 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { useConfig } from "../stores/preferences"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
+import { cn } from "../lib/cn"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -23,7 +24,11 @@ interface MessagePartProps {
   const reasoningId = () => `reasoning-${props.part?.id || ""}`
   const isReasoningExpanded = () => isItemExpanded(reasoningId())
   const isAssistantMessage = () => props.messageType === "assistant"
-  const textContainerClass = () => (isAssistantMessage() ? "message-text message-text-assistant" : "message-text")
+  const textContainerClass = () =>
+    cn(
+      "text-base leading-relaxed break-words overflow-wrap-anywhere",
+      isAssistantMessage() && "whitespace-normal"
+    )
 
   const plainTextContent = () => {
     const part = props.part
@@ -80,7 +85,7 @@ interface MessagePartProps {
     }
     return {
       id: part.id,
-      type: "text", 
+      type: "text",
       text: "",
       synthetic: false
     }

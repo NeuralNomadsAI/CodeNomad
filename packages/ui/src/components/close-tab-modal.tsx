@@ -1,6 +1,15 @@
 import { Component, createSignal, Show } from "solid-js"
-import { Dialog } from "@kobalte/core/dialog"
-import { AlertTriangle, X } from "lucide-solid"
+import { AlertTriangle } from "lucide-solid"
+import { cn } from "../lib/cn"
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "./ui"
+import { Button } from "./ui"
 
 export type CloseTabType = "session" | "project"
 
@@ -42,57 +51,53 @@ const CloseTabModal: Component<CloseTabModalProps> = (props) => {
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(open) => !open && handleCancel()} modal>
-      <Dialog.Portal>
-        <Dialog.Overlay class="close-modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="close-modal">
-            <div class="close-modal-header">
-              <div class="close-modal-icon">
-                <AlertTriangle class="w-5 h-5" />
-              </div>
-              <div class="close-modal-title-group">
-                <Dialog.Title class="close-modal-title">{title()}</Dialog.Title>
-                <Dialog.Description class="close-modal-description">
-                  {description()}
-                </Dialog.Description>
-              </div>
-              <Dialog.CloseButton class="close-modal-close" onClick={handleCancel}>
-                <X class="w-4 h-4" />
-              </Dialog.CloseButton>
+    <AlertDialog open={props.open} onOpenChange={(open) => !open && handleCancel()}>
+      <AlertDialogContent class="max-w-md">
+        <AlertDialogHeader>
+          <div class="flex items-start gap-3">
+            <div class={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+              "bg-warning/10 text-warning"
+            )}>
+              <AlertTriangle class="h-5 w-5" />
             </div>
+            <div class="flex-1">
+              <AlertDialogTitle>{title()}</AlertDialogTitle>
+              <AlertDialogDescription class="mt-1">
+                {description()}
+              </AlertDialogDescription>
+            </div>
+          </div>
+        </AlertDialogHeader>
 
-            <div class="close-modal-body">
-              <label class="close-modal-checkbox">
-                <input
-                  type="checkbox"
-                  checked={keepInBackground()}
-                  onChange={(e) => setKeepInBackground(e.currentTarget.checked)}
-                />
-                <span>Keep running in background for quick access later</span>
-              </label>
-            </div>
-
-            <div class="close-modal-footer">
-              <button
-                type="button"
-                class="close-modal-button close-modal-button-secondary"
-                onClick={handleCancel}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="close-modal-button close-modal-button-danger"
-                onClick={handleConfirm}
-              >
-                {props.type === "session" ? "Close Session" : "Close Project"}
-              </button>
-            </div>
-          </Dialog.Content>
+        <div class="py-2">
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={keepInBackground()}
+              onChange={(e) => setKeepInBackground(e.currentTarget.checked)}
+              class="rounded border-input"
+            />
+            <span>Keep running in background for quick access later</span>
+          </label>
         </div>
-      </Dialog.Portal>
-    </Dialog>
+
+        <AlertDialogFooter>
+          <Button
+            variant="outline"
+            onClick={handleCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+          >
+            {props.type === "session" ? "Close Session" : "Close Project"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

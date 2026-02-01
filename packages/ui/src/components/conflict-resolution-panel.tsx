@@ -194,7 +194,7 @@ export function ConflictResolutionPanel(props: ConflictResolutionPanelProps) {
             fallback={
               <div class="conflict-loading">
                 <Show when={loading()}>
-                  <div class="spinner" />
+                  <div class="w-8 h-8 border-2 border-border border-t-primary rounded-full animate-spin" />
                   <span>Loading conflict details...</span>
                 </Show>
                 <Show when={!loading() && !currentDetail()}>
@@ -433,7 +433,7 @@ interface ConflictResolutionModalProps extends ConflictResolutionPanelProps {
 export function ConflictResolutionModal(props: ConflictResolutionModalProps) {
   return (
     <Show when={props.isOpen}>
-      <div class="conflict-modal-overlay" onClick={(e) => {
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => {
         if (e.target === e.currentTarget) props.onClose?.()
       }}>
         <div class="conflict-modal-content">

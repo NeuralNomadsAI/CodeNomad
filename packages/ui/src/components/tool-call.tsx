@@ -21,8 +21,11 @@ import type {
 import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
+import { getQuestionRequests } from "../stores/question-store"
+import { replyToQuestion, rejectQuestion } from "../stores/session-actions"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { escapeHtml } from "../lib/markdown"
+import { cn } from "../lib/cn"
 
 const log = getLogger("session")
 
@@ -176,37 +179,42 @@ function renderDiagnosticsSection(
 ) {
   if (entries.length === 0) return null
   return (
-    <div class="tool-call-diagnostics-wrapper">
+    <div class="mt-4 border-t border-border bg-background">
       <button
         type="button"
-        class="tool-call-diagnostics-heading"
+        class="flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left font-mono text-[13px] text-muted-foreground bg-muted hover:bg-accent/10"
         aria-expanded={expanded}
         onClick={toggle}
       >
-        <span class="tool-call-icon" aria-hidden="true">
-          {expanded ? "▼" : "▶"}
+        <span class="text-base" aria-hidden="true">
+          {expanded ? "\u25BC" : "\u25B6"}
         </span>
-        <span class="tool-call-emoji" aria-hidden="true">🛠</span>
-        <span class="tool-call-summary">Diagnostics</span>
-        <span class="tool-call-diagnostics-file" title={fileLabel}>{fileLabel}</span>
+        <span class="text-base mr-1" aria-hidden="true">{"\uD83D\uDEE0"}</span>
+        <span class="flex-1 text-left inline-flex items-center gap-2">Diagnostics</span>
+        <span class="inline-flex items-center flex-1 text-xs text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap justify-end" title={fileLabel}>{fileLabel}</span>
       </button>
       <Show when={expanded}>
-        <div class="tool-call-diagnostics" role="region" aria-label="Diagnostics">
-          <div class="tool-call-diagnostics-body" role="list">
+        <div class="flex flex-col gap-1 px-3 py-2 bg-background" role="region" aria-label="Diagnostics">
+          <div class="flex flex-col gap-1 max-h-[calc(4*1.4em)] overflow-y-scroll scrollbar-thin" role="list">
             <For each={entries}>
               {(entry) => (
-                <div class="tool-call-diagnostic-row" role="listitem">
-                  <span class={`tool-call-diagnostic-chip tool-call-diagnostic-${entry.tone}`}>
-                    <span class="tool-call-diagnostic-chip-icon">{entry.icon}</span>
+                <div class="flex flex-wrap items-baseline gap-2 text-xs text-foreground" role="listitem">
+                  <span class={cn(
+                    "inline-flex items-center gap-1 px-2 min-h-[20px] rounded-full text-xs font-medium tracking-[0.02em]",
+                    entry.tone === "error" && "bg-destructive/10 text-destructive",
+                    entry.tone === "warning" && "bg-warning/10 text-warning",
+                    entry.tone === "info" && "bg-muted text-muted-foreground",
+                  )}>
+                    <span>{entry.icon}</span>
                     <span>{entry.label}</span>
                   </span>
-                  <span class="tool-call-diagnostic-path" title={entry.filePath}>
+                  <span class="font-mono text-muted-foreground inline-flex items-baseline gap-0.5" title={entry.filePath}>
                     {entry.displayPath}
-                    <span class="tool-call-diagnostic-coords">
+                    <span class="text-muted-foreground">
                       :L{entry.line || "-"}:C{entry.column || "-"}
                     </span>
                   </span>
-                  <span class="tool-call-diagnostic-message">{entry.message}</span>
+                  <span class="flex-1 min-w-[200px] text-foreground">{entry.message}</span>
                 </div>
               )}
             </For>
@@ -284,6 +292,7 @@ export default function ToolCall(props: ToolCallProps) {
   const expanded = () => {
     const permission = pendingPermission()
     if (permission?.active) return true
+    if (pendingQuestion()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -298,6 +307,19 @@ export default function ToolCall(props: ToolCallProps) {
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
+
+  // Question tool: match pending question to this tool call via callID
+  const pendingQuestion = createMemo(() => {
+    const callId = toolCallIdentifier()
+    if (!callId) return null
+    const requests = getQuestionRequests(props.instanceId, props.sessionId)
+    return requests.find(r => r.tool?.callID === callId) ?? null
+  })
+
+  const [questionAnswers, setQuestionAnswers] = createSignal<Map<number, Set<string>>>(new Map())
+  const [questionCustomText, setQuestionCustomText] = createSignal<Map<number, string>>(new Map())
+  const [questionSubmitting, setQuestionSubmitting] = createSignal(false)
+  const [questionError, setQuestionError] = createSignal<string | null>(null)
 
   const diagnosticsExpanded = () => {
     const permission = pendingPermission()
@@ -446,7 +468,7 @@ export default function ToolCall(props: ToolCallProps) {
     handleScroll: handleScrollEvent,
     renderSentinel: (options) => {
       if (options?.disableTracking) return null
-      return <div ref={setBottomSentinel} aria-hidden="true" class="tool-call-scroll-sentinel" style={{ height: "1px" }} />
+      return <div ref={setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
     },
   }
 
@@ -509,6 +531,23 @@ export default function ToolCall(props: ToolCallProps) {
     })
   })
 
+  // Scroll into view when a question arrives for this tool call
+  createEffect(() => {
+    const question = pendingQuestion()
+    if (!question) return
+    requestAnimationFrame(() => {
+      toolCallRootRef?.scrollIntoView({ block: "center", behavior: "smooth" })
+    })
+  })
+
+  // Clear question UI state when the question is resolved
+  createEffect(() => {
+    if (!pendingQuestion()) {
+      setQuestionSubmitting(false)
+      setQuestionError(null)
+    }
+  })
+
   createEffect(() => {
     const activeKey = activePermissionKey()
     if (!activeKey) return
@@ -533,33 +572,43 @@ export default function ToolCall(props: ToolCallProps) {
     const status = toolState()?.status || ""
     switch (status) {
       case "pending":
-        return "⏸"
+        return "\u23F8"
       case "running":
-        return "⏳"
+        return "\u23F3"
       case "completed":
-        return "✓"
+        return "\u2713"
       case "error":
-        return "✗"
+        return "\u2717"
       default:
         return ""
     }
   }
 
-  const statusClass = () => {
+  const statusBorderClass = () => {
     const status = toolState()?.status || "pending"
-    return `tool-call-status-${status}`
+    switch (status) {
+      case "success":
+      case "completed":
+        return "border-l-success"
+      case "error":
+        return "border-l-destructive"
+      case "running":
+        return "border-l-warning"
+      case "pending":
+        return "border-l-info"
+      default:
+        return "border-l-border"
+    }
   }
 
-  const combinedStatusClass = () => {
-    const base = statusClass()
-    return pendingPermission() ? `${base} tool-call-awaiting-permission` : base
-  }
+  const isRunning = () => toolState()?.status === "running"
 
   function toggle() {
     const permission = pendingPermission()
     if (permission?.active) {
       return
     }
+    if (pendingQuestion()) return
     setUserExpanded((prev) => {
       const current = prev === null ? defaultExpandedForTool() : prev
       return !current
@@ -570,7 +619,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions) {
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
-    const toolbarLabel = options?.label || (relativePath ? `Diff · ${relativePath}` : "Diff")
+    const toolbarLabel = options?.label || (relativePath ? `Diff \u00B7 ${relativePath}` : "Diff")
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? permissionDiffCache : diffCache
     const diffMode = () => (preferences().diffViewMode || "split") as DiffViewMode
@@ -596,16 +645,19 @@ export default function ToolCall(props: ToolCallProps) {
 
     return (
       <div
-        class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
+        class="message-text bg-muted text-foreground text-xs leading-tight max-h-[calc(30*1.4em)] overflow-y-scroll scrollbar-thin relative p-0"
         ref={(element) => scrollHelpers.registerContainer(element, { disableTracking: options?.disableScrollTracking })}
         onScroll={options?.disableScrollTracking ? undefined : scrollHelpers.handleScroll}
       >
-        <div class="tool-call-diff-toolbar" role="group" aria-label="Diff view mode">
-          <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
-          <div class="tool-call-diff-toggle">
+        <div class="flex items-center justify-between gap-3 px-3 py-2 bg-secondary border-b border-border" role="group" aria-label="Diff view mode">
+          <span class="text-xs text-muted-foreground uppercase tracking-[0.08em]">{toolbarLabel}</span>
+          <div class="inline-flex items-center gap-1">
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "split" ? " active" : ""}`}
+              class={cn(
+                "border text-xs font-semibold px-3 py-1 rounded transition-all duration-150 border-border bg-transparent text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                diffMode() === "split" && "bg-info border-info text-info-foreground",
+              )}
               aria-pressed={diffMode() === "split"}
               onClick={() => handleModeChange("split")}
             >
@@ -613,7 +665,10 @@ export default function ToolCall(props: ToolCallProps) {
             </button>
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "unified" ? " active" : ""}`}
+              class={cn(
+                "border text-xs font-semibold px-3 py-1 rounded transition-all duration-150 border-border bg-transparent text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                diffMode() === "unified" && "bg-info border-info text-info-foreground",
+              )}
               aria-pressed={diffMode() === "unified"}
               onClick={() => handleModeChange("unified")}
             >
@@ -641,7 +696,10 @@ export default function ToolCall(props: ToolCallProps) {
     }
 
     const size = options.size || "default"
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const messageClass = cn(
+      "message-text bg-muted text-foreground text-xs leading-tight overflow-y-scroll scrollbar-thin relative",
+      size === "large" ? "max-h-[calc(30*1.4em)]" : "max-h-[calc(15*1.4em)]",
+    )
     const cacheHandle = options.variant === "running" ? ansiRunningCache : ansiFinalCache
     const cached = cacheHandle.get<AnsiRenderCache>()
     const mode = typeof props.partVersion === "number" ? String(props.partVersion) : undefined
@@ -698,7 +756,7 @@ export default function ToolCall(props: ToolCallProps) {
 
     return (
       <div class={messageClass} ref={(element) => scrollHelpers.registerContainer(element)} onScroll={scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
+        <pre class="bg-secondary border border-border p-2 px-3 font-mono text-xs leading-tight overflow-x-auto text-foreground" innerHTML={nextCache.html} />
         {scrollHelpers.renderSentinel()}
       </div>
     )
@@ -711,7 +769,10 @@ export default function ToolCall(props: ToolCallProps) {
 
     const size = options.size || "default"
     const disableHighlight = options.disableHighlight || false
-    const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
+    const messageClass = cn(
+      "message-text bg-muted text-foreground text-xs leading-tight overflow-y-scroll scrollbar-thin relative",
+      size === "large" ? "max-h-[calc(30*1.4em)]" : "max-h-[calc(15*1.4em)]",
+    )
 
     const state = toolState()
     const shouldDeferMarkdown = Boolean(state && (state.status === "running" || state.status === "pending") && disableHighlight)
@@ -842,8 +903,8 @@ export default function ToolCall(props: ToolCallProps) {
     const state = toolState() || {}
     if (state.status === "error" && state.error) {
       return (
-        <div class="tool-call-error-content">
-          <strong>Error:</strong> {state.error}
+        <div class="bg-destructive/10 border-l-[3px] border-destructive p-3 my-2 rounded text-destructive text-xs">
+          <strong class="font-semibold">Error:</strong> {state.error}
         </div>
       )
     }
@@ -869,35 +930,38 @@ export default function ToolCall(props: ToolCallProps) {
     const diffPayload = diffValue && diffValue.trim().length > 0 ? { diffText: diffValue, filePath: diffPathRaw } : null
 
     return (
-      <div class={`tool-call-permission ${active ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
-        <div class="tool-call-permission-header">
-          <span class="tool-call-permission-label">{active ? "Permission Required" : "Permission Queued"}</span>
-          <span class="tool-call-permission-type">{permission.type}</span>
+      <div class={cn(
+        "flex flex-col gap-3 border-2 border-warning m-0 px-5 py-4 bg-card",
+        active ? "" : "opacity-80",
+      )}>
+        <div class="flex items-center justify-between gap-3">
+          <span class="font-semibold text-sm text-foreground">{active ? "Permission Required" : "Permission Queued"}</span>
+          <span class="font-mono text-xs px-1.5 py-0.5 rounded-md border border-border bg-muted">{permission.type}</span>
         </div>
-        <div class="tool-call-permission-body">
-          <div class="tool-call-permission-title">
-            <code>{permission.title}</code>
+        <div>
+          <div>
+            <code class="block text-[13px] text-foreground bg-muted border border-border rounded-lg px-3 py-2 break-words">{permission.title}</code>
           </div>
           <Show when={diffPayload}>
             {(payload) => (
-              <div class="tool-call-permission-diff">
+              <div class="mt-4 mb-2">
                 {renderDiffContent(payload(), {
                   variant: "permission-diff",
                   disableScrollTracking: true,
-                  label: payload().filePath ? `Requested diff · ${getRelativePath(payload().filePath || "")}` : "Requested diff",
+                  label: payload().filePath ? `Requested diff \u00B7 ${getRelativePath(payload().filePath || "")}` : "Requested diff",
                 })}
               </div>
             )}
           </Show>
           <Show
             when={active}
-            fallback={<p class="tool-call-permission-queued-text">Waiting for earlier permission responses.</p>}
+            fallback={<p class="text-sm text-muted-foreground">Waiting for earlier permission responses.</p>}
           >
-            <div class="tool-call-permission-actions">
-              <div class="tool-call-permission-buttons">
+            <div class="flex items-center justify-between gap-3 flex-wrap mt-3">
+              <div class="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  class="tool-call-permission-button"
+                  class="bg-background border border-warning text-muted-foreground px-4 py-1.5 rounded-lg text-sm font-medium leading-tight transition-all duration-150 inline-flex items-center justify-center min-h-[1.75rem] hover:bg-accent/10 hover:text-warning active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={permissionSubmitting()}
                   onClick={() => handlePermissionResponse("once")}
                 >
@@ -905,7 +969,7 @@ export default function ToolCall(props: ToolCallProps) {
                 </button>
                 <button
                   type="button"
-                  class="tool-call-permission-button"
+                  class="bg-background border border-warning text-muted-foreground px-4 py-1.5 rounded-lg text-sm font-medium leading-tight transition-all duration-150 inline-flex items-center justify-center min-h-[1.75rem] hover:bg-accent/10 hover:text-warning active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={permissionSubmitting()}
                   onClick={() => handlePermissionResponse("always")}
                 >
@@ -913,14 +977,14 @@ export default function ToolCall(props: ToolCallProps) {
                 </button>
                 <button
                   type="button"
-                  class="tool-call-permission-button"
+                  class="bg-background border border-warning text-muted-foreground px-4 py-1.5 rounded-lg text-sm font-medium leading-tight transition-all duration-150 inline-flex items-center justify-center min-h-[1.75rem] hover:bg-accent/10 hover:text-warning active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={permissionSubmitting()}
                   onClick={() => handlePermissionResponse("reject")}
                 >
                   Deny
                 </button>
               </div>
-              <div class="tool-call-permission-shortcuts">
+              <div class="flex items-center gap-2 text-xs text-muted-foreground">
                 <kbd class="kbd">Enter</kbd>
                 <span>Allow once</span>
                 <kbd class="kbd">A</kbd>
@@ -930,8 +994,169 @@ export default function ToolCall(props: ToolCallProps) {
               </div>
             </div>
             <Show when={permissionError()}>
-              <div class="tool-call-permission-error">{permissionError()}</div>
+              <div class="text-sm text-destructive mt-2">{permissionError()}</div>
             </Show>
+          </Show>
+        </div>
+      </div>
+    )
+  }
+
+  function toggleQuestionOption(questionIndex: number, label: string, isMultiple: boolean) {
+    setQuestionAnswers(prev => {
+      const next = new Map(prev)
+      const current = new Set(next.get(questionIndex) ?? [])
+      if (isMultiple) {
+        if (current.has(label)) {
+          current.delete(label)
+        } else {
+          current.add(label)
+        }
+      } else {
+        if (current.has(label)) {
+          current.clear()
+        } else {
+          current.clear()
+          current.add(label)
+        }
+      }
+      next.set(questionIndex, current)
+      return next
+    })
+  }
+
+  function setCustomText(questionIndex: number, text: string) {
+    setQuestionCustomText(prev => {
+      const next = new Map(prev)
+      next.set(questionIndex, text)
+      return next
+    })
+  }
+
+  async function handleQuestionSubmit() {
+    const question = pendingQuestion()
+    if (!question) return
+
+    setQuestionSubmitting(true)
+    setQuestionError(null)
+
+    try {
+      const answers: string[][] = question.questions.map((_q, i) => {
+        const selected = [...(questionAnswers().get(i) ?? [])]
+        const custom = questionCustomText().get(i)?.trim()
+        if (custom) {
+          selected.push(custom)
+        }
+        return selected
+      })
+
+      await replyToQuestion(props.instanceId, question.id, answers)
+      setQuestionAnswers(new Map())
+      setQuestionCustomText(new Map())
+    } catch (error) {
+      log.error("Failed to reply to question", error)
+      setQuestionError(error instanceof Error ? error.message : "Failed to send answer")
+    } finally {
+      setQuestionSubmitting(false)
+    }
+  }
+
+  async function handleQuestionDismiss() {
+    const question = pendingQuestion()
+    if (!question) return
+
+    setQuestionSubmitting(true)
+    setQuestionError(null)
+
+    try {
+      await rejectQuestion(props.instanceId, question.id)
+      setQuestionAnswers(new Map())
+      setQuestionCustomText(new Map())
+    } catch (error) {
+      log.error("Failed to reject question", error)
+      setQuestionError(error instanceof Error ? error.message : "Failed to dismiss question")
+    } finally {
+      setQuestionSubmitting(false)
+    }
+  }
+
+  const renderQuestionBlock = () => {
+    const question = pendingQuestion()
+    if (!question) return null
+
+    return (
+      <div class="flex flex-col gap-3 border-2 border-info m-0 px-5 py-4 bg-card">
+        <div class="flex items-center justify-between gap-3">
+          <span class="font-semibold text-sm text-foreground">Question from Agent</span>
+        </div>
+        <div class="flex flex-col gap-3">
+          <For each={question.questions}>
+            {(q, qIndex) => (
+              <div class="flex flex-col gap-2 [&+&]:mt-2 [&+&]:pt-3 [&+&]:border-t [&+&]:border-border">
+                <Show when={q.header}>
+                  <div class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tracking-[0.04em] uppercase bg-info text-info-foreground w-fit">{q.header}</div>
+                </Show>
+                <div class="text-sm text-foreground leading-[1.4]">{q.question}</div>
+                <Show when={q.options?.length > 0}>
+                  <div class="flex flex-col gap-1.5">
+                    <For each={q.options}>
+                      {(opt) => {
+                        const isSelected = () => questionAnswers().get(qIndex())?.has(opt.label) ?? false
+                        return (
+                          <button
+                            type="button"
+                            class={cn(
+                              "flex flex-col gap-0.5 px-3 py-2 border border-border rounded-lg bg-background cursor-pointer transition-all duration-150 text-left hover:bg-accent/10 hover:border-info disabled:opacity-50 disabled:cursor-not-allowed",
+                              isSelected() && "bg-info/10 border-info",
+                            )}
+                            disabled={questionSubmitting()}
+                            onClick={() => toggleQuestionOption(qIndex(), opt.label, q.multiple ?? false)}
+                          >
+                            <span class="text-sm font-medium text-foreground">{opt.label}</span>
+                            <Show when={opt.description}>
+                              <span class="text-xs text-muted-foreground leading-[1.3]">{opt.description}</span>
+                            </Show>
+                          </button>
+                        )
+                      }}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={q.custom !== false}>
+                  <input
+                    type="text"
+                    class="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground text-sm font-sans outline-none transition-colors duration-150 focus:border-info placeholder:text-muted-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder="Other (type your answer)..."
+                    value={questionCustomText().get(qIndex()) ?? ""}
+                    onInput={(e) => setCustomText(qIndex(), e.currentTarget.value)}
+                    disabled={questionSubmitting()}
+                  />
+                </Show>
+              </div>
+            )}
+          </For>
+          <div class="flex items-center justify-start gap-3 flex-wrap mt-2">
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="bg-info border border-info text-info-foreground px-4 py-1.5 rounded-lg text-sm font-medium leading-tight transition-all duration-150 inline-flex items-center justify-center min-h-[1.75rem] cursor-pointer hover:opacity-85 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={questionSubmitting()}
+                onClick={handleQuestionSubmit}
+              >
+                Submit Answer
+              </button>
+              <button
+                type="button"
+                class="bg-background border border-border text-muted-foreground px-4 py-1.5 rounded-lg text-sm font-medium leading-tight transition-all duration-150 inline-flex items-center justify-center min-h-[1.75rem] cursor-pointer hover:bg-accent/10 hover:border-info hover:text-info active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={questionSubmitting()}
+                onClick={handleQuestionDismiss}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <Show when={questionError()}>
+            <div class="text-sm text-destructive mt-1">{questionError()}</div>
           </Show>
         </div>
       </div>
@@ -957,40 +1182,52 @@ export default function ToolCall(props: ToolCallProps) {
 
   return (
     <div
-
       ref={(element) => {
         toolCallRootRef = element || undefined
       }}
-      class={`tool-call ${combinedStatusClass()}`}
+      class={cn(
+        "border overflow-hidden border-border border-l-[3px]",
+        statusBorderClass(),
+        pendingQuestion() && "border-l-info",
+        pendingPermission() && "border-l-warning",
+        isRunning() && "[&_.tool-call-status]:animate-pulse",
+      )}
     >
       <button
-        class="tool-call-header"
+        class={cn(
+          "flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-left font-mono text-[13px] hover:bg-accent/10",
+          "before:content-['\u25B6'] before:text-xs before:mr-1 before:text-muted-foreground",
+          expanded() && "before:content-['\u25BC']",
+        )}
         onClick={toggle}
         aria-expanded={expanded()}
         data-status-icon={statusIcon()}
       >
-        <span class="tool-call-summary" data-tool-icon={getToolIcon(toolName())}>
+        <span class="flex-1 text-left inline-flex items-center gap-2" data-tool-icon={getToolIcon(toolName())}>
           {renderToolTitle()}
         </span>
+        <span class="text-[0.95rem] ml-2">{statusIcon()}</span>
       </button>
 
       {expanded() && (
-        <div class="tool-call-details">
+        <div class="flex flex-col bg-muted text-xs text-foreground">
           {renderToolBody()}
- 
+
           {renderError()}
- 
+
           {renderPermissionBlock()}
- 
+
+          {renderQuestionBlock()}
+
           <Show when={status() === "pending" && !pendingPermission()}>
-            <div class="tool-call-pending-message">
-              <span class="spinner-small"></span>
+            <div class="flex items-center gap-2 p-3 text-xs italic text-muted-foreground">
+              <span class="w-4 h-4 border-2 border-border border-t-primary rounded-full animate-spin"></span>
               <span>Waiting to run...</span>
             </div>
           </Show>
         </div>
       )}
- 
+
       <Show when={diagnosticsEntries().length}>
 
         {renderDiagnosticsSection(

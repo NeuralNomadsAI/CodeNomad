@@ -45,6 +45,13 @@ export interface SessionDeleteResponse {
   errors?: string[]
 }
 
+export interface SessionStatsResponse {
+  total: number
+  projectCount: number
+  staleCount: number
+  blankCount: number
+}
+
 const OPENCODE_STORAGE_PATH = path.join(
   os.homedir(),
   ".local/share/opencode/storage/session"
@@ -59,52 +66,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   // GET /api/sessions - List all sessions across all projects
   app.get("/api/sessions", async (): Promise<SessionsListResponse> => {
-    const sessions: SessionFile[] = []
+    const sessions = await readAllSessionFiles(logger)
     const projectMap = new Map<string, { directory: string; count: number }>()
 
-    try {
-      // Check if the OpenCode storage directory exists
-      try {
-        await fs.access(OPENCODE_STORAGE_PATH)
-      } catch {
-        logger.debug({ path: OPENCODE_STORAGE_PATH }, "OpenCode session storage not found")
-        return { sessions: [], projects: [] }
+    for (const session of sessions) {
+      if (!projectMap.has(session.projectID)) {
+        projectMap.set(session.projectID, { directory: session.directory, count: 0 })
       }
-
-      const projectDirs = await fs.readdir(OPENCODE_STORAGE_PATH)
-
-      for (const projectHash of projectDirs) {
-        const projectPath = path.join(OPENCODE_STORAGE_PATH, projectHash)
-
-        try {
-          const stat = await fs.stat(projectPath)
-          if (!stat.isDirectory()) continue
-        } catch {
-          continue
-        }
-
-        const sessionFiles = await fs.readdir(projectPath)
-        for (const sessionFile of sessionFiles) {
-          if (!sessionFile.endsWith(".json")) continue
-
-          try {
-            const sessionPath = path.join(projectPath, sessionFile)
-            const content = await fs.readFile(sessionPath, "utf-8")
-            const session: SessionFile = JSON.parse(content)
-            sessions.push(session)
-
-            if (!projectMap.has(session.projectID)) {
-              projectMap.set(session.projectID, { directory: session.directory, count: 0 })
-            }
-            const projectInfo = projectMap.get(session.projectID)!
-            projectInfo.count++
-          } catch (error) {
-            logger.debug({ file: sessionFile, error }, "Skipping malformed session file")
-          }
-        }
-      }
-    } catch (error) {
-      logger.error({ error }, "Error reading sessions")
+      const projectInfo = projectMap.get(session.projectID)!
+      projectInfo.count++
     }
 
     return {
@@ -161,6 +131,139 @@ export function registerSessionRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
     }
   })
+
+  // GET /api/sessions/stats - Lightweight session stats for activity monitor
+  app.get("/api/sessions/stats", async (): Promise<SessionStatsResponse> => {
+    const sessions = await readAllSessionFiles(logger)
+    const now = Date.now()
+    const STALE_THRESHOLD = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+    const projectDirs = new Set<string>()
+    let staleCount = 0
+    let blankCount = 0
+
+    for (const session of sessions) {
+      projectDirs.add(session.projectID)
+      if (session.time.updated < now - STALE_THRESHOLD) {
+        staleCount++
+      }
+      const summary = session.summary || { additions: 0, deletions: 0, files: 0 }
+      if (summary.files === 0 && summary.additions === 0) {
+        blankCount++
+      }
+    }
+
+    return {
+      total: sessions.length,
+      projectCount: projectDirs.size,
+      staleCount,
+      blankCount,
+    }
+  })
+
+  // DELETE /api/sessions/stale - Purge sessions not updated in 7+ days
+  app.delete("/api/sessions/stale", async (): Promise<SessionDeleteResponse> => {
+    const sessions = await readAllSessionFiles(logger)
+    const now = Date.now()
+    const STALE_THRESHOLD = 7 * 24 * 60 * 60 * 1000
+
+    const staleIds = sessions
+      .filter((s) => s.time.updated < now - STALE_THRESHOLD)
+      .map((s) => s.id)
+
+    let deleted = 0
+    const errors: string[] = []
+
+    for (const sessionId of staleIds) {
+      try {
+        await deleteSession(sessionId, logger)
+        deleted++
+      } catch (error) {
+        errors.push(`Failed to delete ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    logger.info({ deleted, errors: errors.length }, "Purged stale sessions")
+    return {
+      success: errors.length === 0,
+      deleted,
+      errors: errors.length > 0 ? errors : undefined,
+    }
+  })
+
+  // DELETE /api/sessions/blank - Clean sessions with no file changes
+  app.delete("/api/sessions/blank", async (): Promise<SessionDeleteResponse> => {
+    const sessions = await readAllSessionFiles(logger)
+
+    const blankIds = sessions
+      .filter((s) => {
+        const summary = s.summary || { additions: 0, deletions: 0, files: 0 }
+        return summary.files === 0 && summary.additions === 0
+      })
+      .map((s) => s.id)
+
+    let deleted = 0
+    const errors: string[] = []
+
+    for (const sessionId of blankIds) {
+      try {
+        await deleteSession(sessionId, logger)
+        deleted++
+      } catch (error) {
+        errors.push(`Failed to delete ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    logger.info({ deleted, errors: errors.length }, "Cleaned blank sessions")
+    return {
+      success: errors.length === 0,
+      deleted,
+      errors: errors.length > 0 ? errors : undefined,
+    }
+  })
+}
+
+async function readAllSessionFiles(logger: RouteLogger): Promise<SessionFile[]> {
+  const sessions: SessionFile[] = []
+
+  try {
+    await fs.access(OPENCODE_STORAGE_PATH)
+  } catch {
+    return sessions
+  }
+
+  try {
+    const projectDirs = await fs.readdir(OPENCODE_STORAGE_PATH)
+
+    for (const projectHash of projectDirs) {
+      const projectPath = path.join(OPENCODE_STORAGE_PATH, projectHash)
+
+      try {
+        const stat = await fs.stat(projectPath)
+        if (!stat.isDirectory()) continue
+      } catch {
+        continue
+      }
+
+      const sessionFiles = await fs.readdir(projectPath)
+      for (const sessionFile of sessionFiles) {
+        if (!sessionFile.endsWith(".json")) continue
+
+        try {
+          const sessionPath = path.join(projectPath, sessionFile)
+          const content = await fs.readFile(sessionPath, "utf-8")
+          const session: SessionFile = JSON.parse(content)
+          sessions.push(session)
+        } catch (error) {
+          logger.debug({ file: sessionFile, error }, "Skipping malformed session file")
+        }
+      }
+    }
+  } catch (error) {
+    logger.error({ error }, "Error reading sessions")
+  }
+
+  return sessions
 }
 
 async function deleteSession(sessionId: string, logger: RouteLogger): Promise<void> {

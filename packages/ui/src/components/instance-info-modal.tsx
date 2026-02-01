@@ -1,9 +1,17 @@
 import { Component, Show, createSignal } from "solid-js"
-import { Dialog } from "@kobalte/core"
-import { X, RotateCcw, Square, Server, FileText } from "lucide-solid"
+import { RotateCcw, Square, Server, FileText } from "lucide-solid"
 import type { Instance } from "../types/instance"
 import InstanceInfo from "./instance-info"
 import InstanceLogsPanel from "./instance-logs-panel"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "./ui"
+import { Button } from "./ui"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui"
 
 type TabId = "settings" | "logs"
 
@@ -20,87 +28,74 @@ const InstanceInfoModal: Component<InstanceInfoModalProps> = (props) => {
   const [activeTab, setActiveTab] = createSignal<TabId>("settings")
 
   return (
-    <Dialog.Root open={props.open} onOpenChange={(open) => !open && props.onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="dialog-content dialog-content-lg instance-modal">
-          <div class="dialog-header">
-            <Dialog.Title class="dialog-title">Instance Details</Dialog.Title>
-            <Dialog.CloseButton class="dialog-close-button">
-              <X size={16} />
-            </Dialog.CloseButton>
-          </div>
+    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <DialogContent class="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Instance Details</DialogTitle>
+        </DialogHeader>
 
-          {/* Tab navigation */}
-          <div class="instance-modal-tabs">
-            <button
-              type="button"
-              class={`instance-modal-tab ${activeTab() === "settings" ? "active" : ""}`}
-              onClick={() => setActiveTab("settings")}
-            >
+        {/* Tab navigation */}
+        <Tabs value={activeTab()} onChange={(value) => setActiveTab(value as TabId)}>
+          <TabsList>
+            <TabsTrigger value="settings" class="flex items-center gap-1.5">
               <Server size={14} />
               Instance Settings
-            </button>
-            <button
-              type="button"
-              class={`instance-modal-tab ${activeTab() === "logs" ? "active" : ""}`}
-              onClick={() => setActiveTab("logs")}
-            >
+            </TabsTrigger>
+            <TabsTrigger value="logs" class="flex items-center gap-1.5">
               <FileText size={14} />
               Logs
-            </button>
-          </div>
+            </TabsTrigger>
+          </TabsList>
 
-          <div class="dialog-body instance-modal-body">
-            <Show when={props.instance} fallback={<div class="text-muted text-sm">No instance selected</div>}>
+          <div class="mt-4 min-h-[200px]">
+            <Show when={props.instance} fallback={<div class="text-muted-foreground text-sm">No instance selected</div>}>
               {(instance) => (
                 <>
-                  <Show when={activeTab() === "settings"}>
+                  <TabsContent value="settings">
                     <div class="space-y-4">
                       <InstanceInfo instance={instance()} />
 
                       <Show when={props.lspConnectedCount !== undefined}>
-                        <div class="text-xs text-muted">
+                        <div class="text-xs text-muted-foreground">
                           LSP Connections: {props.lspConnectedCount}
                         </div>
                       </Show>
                     </div>
-                  </Show>
-                  <Show when={activeTab() === "logs"}>
+                  </TabsContent>
+                  <TabsContent value="logs">
                     <InstanceLogsPanel instanceId={instance().id} />
-                  </Show>
+                  </TabsContent>
                 </>
               )}
             </Show>
           </div>
+        </Tabs>
 
-          <Show when={activeTab() === "settings"}>
-            <div class="dialog-footer">
-              <Show when={props.onStop}>
-                <button
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  onClick={props.onStop}
-                >
-                  <Square size={14} />
-                  <span>Stop</span>
-                </button>
-              </Show>
-              <Show when={props.onRestart}>
-                <button
-                  type="button"
-                  class="btn btn-primary btn-sm"
-                  onClick={props.onRestart}
-                >
-                  <RotateCcw size={14} />
-                  <span>Restart</span>
-                </button>
-              </Show>
-            </div>
-          </Show>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        <Show when={activeTab() === "settings"}>
+          <DialogFooter>
+            <Show when={props.onStop}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={props.onStop}
+              >
+                <Square size={14} class="mr-1.5" />
+                <span>Stop</span>
+              </Button>
+            </Show>
+            <Show when={props.onRestart}>
+              <Button
+                size="sm"
+                onClick={props.onRestart}
+              >
+                <RotateCcw size={14} class="mr-1.5" />
+                <span>Restart</span>
+              </Button>
+            </Show>
+          </DialogFooter>
+        </Show>
+      </DialogContent>
+    </Dialog>
   )
 }
 

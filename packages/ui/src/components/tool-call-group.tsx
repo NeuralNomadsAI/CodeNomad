@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, FileText, Search, Terminal, Edit3, Globe, Fo
 import { getToolName, getToolArgsSummary, getToolSummary, readToolStatePayload, getRelativePath } from "./tool-call/utils"
 import { openToolModal, type ToolModalItem } from "../stores/tool-modal"
 import type { ToolDisplayItem } from "./inline-tool-call"
-import "../styles/components/tool-call-group.css"
+import { cn } from "../lib/cn"
 
 interface ToolGroup {
   toolName: string
@@ -11,6 +11,7 @@ interface ToolGroup {
   items: ToolDisplayItem[]
   icon: typeof FileText
   colorClass: string
+  accentColor: string
 }
 
 interface ToolCallGroupProps {
@@ -21,56 +22,51 @@ interface ToolCallGroupProps {
 }
 
 // Get icon and color for tool type
-function getToolVisuals(toolName: string): { icon: typeof FileText; colorClass: string } {
+function getToolVisuals(toolName: string): { icon: typeof FileText; colorClass: string; accentColor: string } {
   const name = toolName.toLowerCase()
 
   if (name.includes("read")) {
-    return { icon: FileText, colorClass: "tool-color-read" }
+    return { icon: FileText, colorClass: "text-info", accentColor: "border-l-info" }
   }
   if (name.includes("write") || name.includes("edit") || name.includes("patch")) {
-    return { icon: Edit3, colorClass: "tool-color-write" }
+    return { icon: Edit3, colorClass: "text-warning", accentColor: "border-l-warning" }
   }
   if (name.includes("glob") || name.includes("grep") || name.includes("search")) {
-    return { icon: Search, colorClass: "tool-color-search" }
+    return { icon: Search, colorClass: "text-violet-400", accentColor: "border-l-violet-400" }
   }
   if (name.includes("bash") || name.includes("shell") || name.includes("exec")) {
-    return { icon: Terminal, colorClass: "tool-color-bash" }
+    return { icon: Terminal, colorClass: "text-success", accentColor: "border-l-success" }
   }
   if (name.includes("web") || name.includes("fetch") || name.includes("http")) {
-    return { icon: Globe, colorClass: "tool-color-web" }
+    return { icon: Globe, colorClass: "text-info", accentColor: "border-l-info" }
   }
   if (name.includes("list") || name.includes("ls") || name.includes("dir")) {
-    return { icon: FolderSearch, colorClass: "tool-color-list" }
+    return { icon: FolderSearch, colorClass: "text-violet-500", accentColor: "border-l-violet-500" }
   }
 
-  return { icon: FileText, colorClass: "tool-color-default" }
+  return { icon: FileText, colorClass: "text-muted-foreground", accentColor: "border-l-muted-foreground" }
 }
 
-// Group consecutive tools by type
+// Group all tools by type (regardless of order)
 function groupTools(tools: ToolDisplayItem[]): ToolGroup[] {
-  const groups: ToolGroup[] = []
+  const groupMap = new Map<string, ToolGroup>()
+  const order: string[] = []
 
   for (const tool of tools) {
     const toolName = tool.toolPart.tool || "unknown"
-    const displayName = getToolName(toolName)
-    const { icon, colorClass } = getToolVisuals(toolName)
 
-    // Check if we can add to the last group (same tool type)
-    const lastGroup = groups[groups.length - 1]
-    if (lastGroup && lastGroup.toolName === toolName) {
-      lastGroup.items.push(tool)
-    } else {
-      groups.push({
-        toolName,
-        displayName,
-        items: [tool],
-        icon,
-        colorClass,
-      })
+    let group = groupMap.get(toolName)
+    if (!group) {
+      const displayName = getToolName(toolName)
+      const { icon, colorClass, accentColor } = getToolVisuals(toolName)
+      group = { toolName, displayName, items: [], icon, colorClass, accentColor }
+      groupMap.set(toolName, group)
+      order.push(toolName)
     }
+    group.items.push(tool)
   }
 
-  return groups
+  return order.map(name => groupMap.get(name)!)
 }
 
 // Get a summary for a single tool item
@@ -107,11 +103,15 @@ const ToolChip: Component<{
   return (
     <button
       type="button"
-      class={`tool-chip ${props.colorClass} tool-chip--${status() || "pending"}`}
+      class={cn(
+        "inline-flex items-center gap-1 px-2 py-0.5 bg-background border border-border rounded text-xs cursor-pointer transition-all duration-150 text-muted-foreground max-w-[200px] hover:bg-accent/10",
+        status() === "running" && "border-warning bg-warning/10",
+        status() === "error" && "border-destructive bg-destructive/10",
+      )}
       onClick={props.onClick}
       title={summary()}
     >
-      <span class="tool-chip-text">{summary() || "..."}</span>
+      <span class="overflow-hidden text-ellipsis whitespace-nowrap">{summary() || "..."}</span>
     </button>
   )
 }
@@ -142,7 +142,7 @@ const ToolGroupDisplay: Component<{
     // If all summaries are similar (same pattern), show it
     const unique = [...new Set(summaries)]
     if (unique.length === 1) {
-      return `${unique[0]} × ${count()}`
+      return `${unique[0]} \u00D7 ${count()}`
     }
 
     return `${count()} files`
@@ -176,9 +176,9 @@ const ToolGroupDisplay: Component<{
         if (matchesMatch) totalMatches += parseInt(matchesMatch[1], 10)
       }
 
-      if (totalFiles > 0) return `${totalFiles} files`
-      if (totalLines > 0) return `${totalLines} lines`
-      if (totalMatches > 0) return `${totalMatches} matches`
+      if (totalFiles > 0) return `${totalFiles} file${totalFiles !== 1 ? "s" : ""}`
+      if (totalLines > 0) return `${totalLines} line${totalLines !== 1 ? "s" : ""}`
+      if (totalMatches > 0) return `${totalMatches} match${totalMatches !== 1 ? "es" : ""}`
       return "done"
     }
 
@@ -216,14 +216,19 @@ const ToolGroupDisplay: Component<{
     return (
       <button
         type="button"
-        class={`tool-row ${props.group.colorClass} tool-row--${status() || "pending"}`}
+        class={cn(
+          "flex items-center gap-2 px-2.5 py-1.5 bg-transparent border-none border-l-2 rounded-r cursor-pointer transition-colors duration-150 text-left w-full text-foreground hover:bg-accent/10",
+          props.group.accentColor,
+          status() === "running" && "border-l-warning",
+          status() === "error" && "border-l-destructive",
+        )}
         onClick={() => openModal(item, 0)}
       >
-        <Icon class="tool-row-icon" size={14} />
-        <span class="tool-row-name">{props.group.displayName}</span>
-        <span class="tool-row-path">{aggregateSummary()}</span>
+        <Icon class={cn("shrink-0", props.group.colorClass)} size={14} />
+        <span class="font-semibold text-foreground whitespace-nowrap">{props.group.displayName}</span>
+        <span class="text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap flex-1 min-w-0">{aggregateSummary()}</span>
         <Show when={resultSummary()}>
-          <span class="tool-row-result">{resultSummary()}</span>
+          <span class="shrink-0 text-muted-foreground text-xs px-1.5 py-0.5 bg-secondary rounded">{resultSummary()}</span>
         </Show>
       </button>
     )
@@ -231,26 +236,28 @@ const ToolGroupDisplay: Component<{
 
   // For multiple items, show expandable group
   return (
-    <div class={`tool-group ${props.group.colorClass}`}>
+    <div class={cn("flex flex-col border-l-2 rounded-r", props.group.accentColor)}>
       <button
         type="button"
-        class="tool-group-header"
+        class="flex items-center gap-1.5 px-2.5 py-1.5 bg-transparent border-none cursor-pointer transition-colors duration-150 text-left w-full text-foreground hover:bg-accent/10"
         onClick={() => setExpanded(!expanded())}
       >
-        <span class="tool-group-chevron">
+        <span class="shrink-0 text-muted-foreground flex items-center justify-center w-4">
           {expanded() ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
-        <Icon class="tool-group-icon" size={14} />
-        <span class="tool-group-name">{props.group.displayName}</span>
-        <span class="tool-group-count">× {count()}</span>
-        <span class="tool-group-summary">{aggregateSummary()}</span>
+        <Icon class={cn("shrink-0", props.group.colorClass)} size={14} />
+        <span class="font-semibold text-foreground whitespace-nowrap">{props.group.displayName}</span>
+        <span class={cn("font-medium text-xs", props.group.colorClass)}>{"\u00D7"} {count()}</span>
+        <Show when={aggregateSummary()}>
+          <span class="text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap flex-1 min-w-0">{"\u00B7"} {aggregateSummary()}</span>
+        </Show>
         <Show when={resultSummary()}>
-          <span class="tool-group-result">{resultSummary()}</span>
+          <span class="shrink-0 text-muted-foreground text-xs px-1.5 py-0.5 bg-secondary rounded">{resultSummary()}</span>
         </Show>
       </button>
 
       <Show when={expanded()}>
-        <div class="tool-group-items">
+        <div class="flex flex-wrap gap-1 px-2.5 py-1.5 pb-2 pl-8 bg-secondary rounded-br">
           <For each={props.group.items}>
             {(item, index) => (
               <ToolChip
@@ -277,7 +284,7 @@ const ToolCallGroup: Component<ToolCallGroupProps> = (props) => {
   }
 
   return (
-    <div class="tool-call-group-container">
+    <div class="flex flex-col gap-0.5 my-2 font-mono text-xs">
       <For each={groups()}>
         {(group) => (
           <ToolGroupDisplay

@@ -34,16 +34,9 @@ import {
   XCircle,
   Loader2,
   ListChecks,
-  Plug,
-  Server,
 } from "lucide-solid"
-import AppBar from "@suid/material/AppBar"
-import Box from "@suid/material/Box"
-import Divider from "@suid/material/Divider"
-import Drawer from "@suid/material/Drawer"
-import Toolbar from "@suid/material/Toolbar"
-import Typography from "@suid/material/Typography"
-import useMediaQuery from "@suid/material/useMediaQuery"
+import { Separator } from "../ui/separator"
+import { cn } from "../../lib/cn"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import {
@@ -64,8 +57,6 @@ import SessionList from "../session-list"
 import KeyboardHint from "../keyboard-hint"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
-import InstanceServiceStatus from "../instance-service-status"
-import InstanceMcpControl from "../instance-mcp-control"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import ThinkingSelector from "../thinking-selector"
@@ -94,9 +85,19 @@ import {
   type SessionSidebarRequestDetail,
 } from "../../lib/session-sidebar-events"
 import { useConfig } from "../../stores/preferences"
-import { getActiveMcpServerCount } from "../../stores/project-mcp"
+import { registerSidebarControls, unregisterSidebarControls } from "../../stores/sidebar-controls"
 
 const log = getLogger("session")
+
+function createMediaQuery(query: string): () => boolean {
+  if (typeof window === "undefined") return () => false
+  const mql = window.matchMedia(query)
+  const [matches, setMatches] = createSignal(mql.matches)
+  const handler = (event: MediaQueryListEvent) => setMatches(event.matches)
+  mql.addEventListener("change", handler)
+  onCleanup(() => mql.removeEventListener("change", handler))
+  return matches
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -162,7 +163,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["actions", "files", "tasks"])
+  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(["tasks", "git", "actions", "files"])
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = createSignal(false)
 
   const { preferences, updateLastUsedBinary } = useConfig()
@@ -177,9 +178,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
-  const desktopQuery = useMediaQuery("(min-width: 1280px)")
-
-  const tabletQuery = useMediaQuery("(min-width: 768px)")
+  const desktopQuery = createMediaQuery("(min-width: 1280px)")
+  const tabletQuery = createMediaQuery("(min-width: 768px)")
 
   const layoutMode = createMemo<LayoutMode>(() => {
     if (desktopQuery()) return "desktop"
@@ -355,9 +355,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return {
       used: usage?.actualUsageTokens ?? info?.actualUsageTokens ?? 0,
       avail: info?.contextAvailableTokens ?? null,
-      inputTokens: info?.inputTokens ?? 0,
-      outputTokens: info?.outputTokens ?? 0,
-      cost: info?.isSubscriptionModel ? 0 : (info?.cost ?? 0),
     }
   })
 
@@ -385,6 +382,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return state
   })
 
+  // Auto-expand tasks section when there are pending todos
+  createEffect(() => {
+    const todoState = latestTodoState()
+    if (!todoState?.todos?.length) return
+    const hasPending = todoState.todos.some(t => t.status !== "completed")
+    if (hasPending) {
+      setRightPanelExpandedItems((prev) => {
+        if (prev.includes("tasks")) return prev
+        return [...prev, "tasks"]
+      })
+    }
+  })
+
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
     const status = connectionStatus()
@@ -392,6 +402,24 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (status === "connected") return "connected"
     return "disconnected"
   }
+
+  // Register sidebar toggle controls into the shared store so session-tabs.tsx can render them
+  createEffect(() => {
+    registerSidebarControls({
+      onLeftToggle: handleLeftAppBarButtonClick,
+      onRightToggle: handleRightAppBarButtonClick,
+      leftLabel: leftAppBarButtonLabel(),
+      rightLabel: rightAppBarButtonLabel(),
+      leftIcon: leftDrawerState() === "floating-closed" ? "open" : "close",
+      rightIcon: rightDrawerState() === "floating-closed" ? "open" : "close",
+      leftDisabled: leftDrawerState() === "pinned",
+      rightDisabled: rightDrawerState() === "pinned",
+    })
+  })
+
+  onCleanup(() => {
+    unregisterSidebarControls()
+  })
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
@@ -829,7 +857,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const LeftDrawerContent = () => (
     <div class="flex flex-col h-full min-h-0" ref={setLeftDrawerContentEl}>
-      <div class="session-sidebar flex flex-col flex-1 min-h-0">
+      <div class="flex flex-col min-h-0 bg-secondary flex-1">
         <SessionList
           instanceId={props.instance.id}
           sessions={activeSessions()}
@@ -854,33 +882,47 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           isPhoneLayout={isPhoneLayout()}
         />
 
-        <Divider />
+        <Separator />
         <Show when={activeSessionForInstance()}>
           {(activeSession) => (
             <>
-              <div class="session-sidebar-controls px-4 py-4 pb-6 border-t border-base flex flex-col gap-3">
-                <AgentSelector
-                  instanceId={props.instance.id}
-                  sessionId={activeSession().id}
-                  currentAgent={activeSession().agent}
-                  onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
-                />
+              <div class="flex flex-col bg-muted px-4 py-4 pb-6 border-t border-border">
+                {/* Session group */}
+                <div class="flex flex-col gap-4 [&>*]:w-full">
+                  <AgentSelector
+                    instanceId={props.instance.id}
+                    sessionId={activeSession().id}
+                    currentAgent={activeSession().agent}
+                    onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
+                  />
 
-                <ModelSelector
-                  instanceId={props.instance.id}
-                  sessionId={activeSession().id}
-                  currentModel={activeSession().model}
-                  onModelChange={(model) => props.handleSidebarModelChange(activeSession().id, model)}
-                />
+                  <ModelSelector
+                    instanceId={props.instance.id}
+                    sessionId={activeSession().id}
+                    currentModel={activeSession().model}
+                    onModelChange={(model) => props.handleSidebarModelChange(activeSession().id, model)}
+                  />
+                </div>
 
-                <ThinkingSelector
-                  currentModelId={`${activeSession().model.providerId}/${activeSession().model.modelId}`}
-                />
+                <Separator class="my-4" />
 
-                <PermissionToggle
-                  instanceId={props.instance.id}
-                  sessionId={activeSession().id}
-                />
+                {/* Reasoning group */}
+                <div class="flex flex-col gap-4 [&>*]:w-full">
+                  <ThinkingSelector
+                    currentModelId={`${activeSession().model.providerId}/${activeSession().model.modelId}`}
+                    instanceId={props.instance.id}
+                  />
+                </div>
+
+                <Separator class="my-4" />
+
+                {/* Permissions group */}
+                <div class="flex flex-col gap-4 [&>*]:w-full">
+                  <PermissionToggle
+                    instanceId={props.instance.id}
+                    sessionId={activeSession().id}
+                  />
+                </div>
               </div>
             </>
           )}
@@ -909,12 +951,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const getOperationClass = (op: FileOperationType) => {
       switch (op) {
-        case "read": return "workspace-op-read"
-        case "edit": return "workspace-op-edit"
-        case "write": return "workspace-op-write"
-        case "create": return "workspace-op-create"
-        case "delete": return "workspace-op-delete"
-        default: return ""
+        case "read": return "text-info"
+        case "edit": return "text-warning"
+        case "write": return "text-success"
+        case "create": return "text-success"
+        case "delete": return "text-destructive"
+        default: return "text-muted-foreground"
       }
     }
 
@@ -928,9 +970,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const getStatusClass = (status: RecentAction["status"]) => {
       switch (status) {
-        case "running": return "workspace-action-running"
-        case "complete": return "workspace-action-complete"
-        case "error": return "workspace-action-error"
+        case "running": return "text-info"
+        case "complete": return "text-success"
+        case "error": return "text-destructive"
       }
     }
 
@@ -961,11 +1003,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const renderPlanSectionContent = () => {
       const sessionId = activeSessionIdForInstance()
       if (!sessionId || sessionId === "info") {
-        return <p class="text-xs text-secondary">Select a session to view plan.</p>
+        return <p class="text-xs text-muted-foreground">Select a session to view plan.</p>
       }
       const todoState = latestTodoState()
       if (!todoState) {
-        return <p class="text-xs text-secondary">Nothing planned yet.</p>
+        return <p class="text-xs text-muted-foreground">Nothing planned yet.</p>
       }
       return <TodoListView state={todoState} emptyLabel="Nothing planned yet." showStatusLabel={false} />
     }
@@ -974,25 +1016,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const renderFilesTouchedContent = () => (
       <Show
         when={filesTouched().length > 0}
-        fallback={<p class="workspace-empty-message">No files touched yet</p>}
+        fallback={<p class="text-xs text-muted-foreground italic py-2">No files touched yet</p>}
       >
-        <ul class="workspace-file-list">
+        <ul class="space-y-0.5">
           <For each={filesTouched().slice(0, 20)}>
             {(file) => (
-              <li class="workspace-file-item">
-                <button type="button" class="workspace-file-button" title={file.path}>
-                  <span class={`workspace-op-badge ${getOperationClass(file.operation)}`}>
+              <li>
+                <button type="button" class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-accent text-left" title={file.path}>
+                  <span class={`flex-shrink-0 ${getOperationClass(file.operation)}`}>
                     {getOperationIcon(file.operation)}
                   </span>
-                  <span class="workspace-file-name">{getFileName(file.path)}</span>
-                  <span class="workspace-file-path" title={file.path}>{getRelativePath(file.path)}</span>
+                  <span class="font-medium text-foreground truncate">{getFileName(file.path)}</span>
+                  <span class="text-muted-foreground truncate ml-auto" title={file.path}>{getRelativePath(file.path)}</span>
                 </button>
               </li>
             )}
           </For>
         </ul>
         <Show when={filesTouched().length > 20}>
-          <p class="workspace-more-indicator">+{filesTouched().length - 20} more files</p>
+          <p class="text-xs text-muted-foreground mt-2 text-center">+{filesTouched().length - 20} more files</p>
         </Show>
       </Show>
     )
@@ -1001,15 +1043,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const renderRecentActionsContent = () => (
       <Show
         when={recentActions().length > 0}
-        fallback={<p class="workspace-empty-message">No recent actions</p>}
+        fallback={<p class="text-xs text-muted-foreground italic py-2">No recent actions</p>}
       >
-        <ul class="workspace-action-list">
+        <ul class="space-y-0.5">
           <For each={recentActions().slice(0, 15)}>
             {(action) => (
-              <li class={`workspace-action-item ${getStatusClass(action.status)}`}>
-                <span class="workspace-action-status">{getStatusIcon(action.status)}</span>
-                <span class="workspace-action-summary" title={action.summary}>{action.summary}</span>
-                <span class="workspace-action-time">{formatRelativeTime(action.timestamp)}</span>
+              <li class={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${getStatusClass(action.status)}`}>
+                <span class="flex-shrink-0">{getStatusIcon(action.status)}</span>
+                <span class="truncate text-foreground" title={action.summary}>{action.summary}</span>
+                <span class="ml-auto text-muted-foreground flex-shrink-0">{formatRelativeTime(action.timestamp)}</span>
               </li>
             )}
           </For>
@@ -1021,74 +1063,96 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const renderGitStatusContent = () => (
       <Show
         when={gitStatus()}
-        fallback={<p class="workspace-empty-message">Git status not available</p>}
+        fallback={<p class="text-xs text-muted-foreground italic py-2">Git status not available</p>}
       >
         {(status) => (
-          <div class="workspace-git-status">
-            <div class="workspace-git-branch">
-              <GitBranch class="w-4 h-4" />
-              <span class="workspace-git-branch-name">{status().branch}</span>
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 text-sm">
+              <GitBranch class="w-4 h-4 text-info" />
+              <span class="font-medium text-foreground">{status().branch}</span>
               <Show when={status().ahead > 0 || status().behind > 0}>
-                <span class="workspace-git-sync">
+                <span class="flex items-center gap-1 text-xs">
                   <Show when={status().ahead > 0}>
-                    <span class="workspace-git-ahead">+{status().ahead}</span>
+                    <span class="text-success">+{status().ahead}</span>
                   </Show>
                   <Show when={status().behind > 0}>
-                    <span class="workspace-git-behind">-{status().behind}</span>
+                    <span class="text-destructive">-{status().behind}</span>
                   </Show>
                 </span>
               </Show>
             </div>
             <Show when={status().staged.length > 0}>
-              <div class="workspace-git-section">
-                <span class="workspace-git-label workspace-git-staged">Staged ({status().staged.length})</span>
-                <ul class="workspace-git-files">
+              <div class="space-y-1">
+                <span class="text-xs font-medium text-success">Staged ({status().staged.length})</span>
+                <ul class="space-y-0.5">
                   <For each={status().staged.slice(0, 5)}>
-                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                    {(file) => <li class="text-xs text-muted-foreground truncate pl-2" title={file}>{getFileName(file)}</li>}
                   </For>
                   <Show when={status().staged.length > 5}>
-                    <li class="workspace-git-more">+{status().staged.length - 5} more</li>
+                    <li class="text-xs text-muted-foreground italic pl-2">+{status().staged.length - 5} more</li>
                   </Show>
                 </ul>
               </div>
             </Show>
             <Show when={status().modified.length > 0}>
-              <div class="workspace-git-section">
-                <span class="workspace-git-label workspace-git-modified">Modified ({status().modified.length})</span>
-                <ul class="workspace-git-files">
+              <div class="space-y-1">
+                <span class="text-xs font-medium text-warning">Modified ({status().modified.length})</span>
+                <ul class="space-y-0.5">
                   <For each={status().modified.slice(0, 5)}>
-                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                    {(file) => <li class="text-xs text-muted-foreground truncate pl-2" title={file}>{getFileName(file)}</li>}
                   </For>
                   <Show when={status().modified.length > 5}>
-                    <li class="workspace-git-more">+{status().modified.length - 5} more</li>
+                    <li class="text-xs text-muted-foreground italic pl-2">+{status().modified.length - 5} more</li>
                   </Show>
                 </ul>
               </div>
             </Show>
             <Show when={status().untracked.length > 0}>
-              <div class="workspace-git-section">
-                <span class="workspace-git-label workspace-git-untracked">Untracked ({status().untracked.length})</span>
-                <ul class="workspace-git-files">
+              <div class="space-y-1">
+                <span class="text-xs font-medium text-muted-foreground">Untracked ({status().untracked.length})</span>
+                <ul class="space-y-0.5">
                   <For each={status().untracked.slice(0, 5)}>
-                    {(file) => <li class="workspace-git-file" title={file}>{getFileName(file)}</li>}
+                    {(file) => <li class="text-xs text-muted-foreground truncate pl-2" title={file}>{getFileName(file)}</li>}
                   </For>
                   <Show when={status().untracked.length > 5}>
-                    <li class="workspace-git-more">+{status().untracked.length - 5} more</li>
+                    <li class="text-xs text-muted-foreground italic pl-2">+{status().untracked.length - 5} more</li>
                   </Show>
                 </ul>
               </div>
             </Show>
             <Show when={status().staged.length === 0 && status().modified.length === 0 && status().untracked.length === 0}>
-              <p class="workspace-git-clean">Working tree clean</p>
+              <p class="text-xs text-success italic">Working tree clean</p>
             </Show>
           </div>
         )}
       </Show>
     )
 
-    // 6 peer sections - flattened from nested workspace
-    // Order: Recent Actions, Files Touched, LSP, MCP, Git Status, Tasks
+    // 4 peer sections - Tasks first, then Git, Actions, Files
     const sections = [
+      {
+        id: "tasks",
+        label: "Tasks",
+        icon: () => <ListChecks class="w-4 h-4" />,
+        count: () => {
+          const todoState = latestTodoState()
+          if (!todoState?.todos?.length) return null
+          const pending = todoState.todos.filter(t => t.status !== "completed").length
+          return pending > 0 ? pending : null
+        },
+        render: renderPlanSectionContent,
+      },
+      {
+        id: "git",
+        label: "Git Status",
+        icon: () => <FolderGit class="w-4 h-4" />,
+        count: () => {
+          const status = gitStatus()
+          if (!status) return null
+          return `${status.branch}${status.ahead > 0 ? ` ↑${status.ahead}` : ""}${status.behind > 0 ? ` ↓${status.behind}` : ""}`
+        },
+        render: renderGitStatusContent,
+      },
       {
         id: "actions",
         label: "Recent Actions",
@@ -1103,55 +1167,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         count: () => filesTouched().length,
         render: renderFilesTouchedContent,
       },
-      {
-        id: "lsp",
-        label: "LSP Servers",
-        icon: () => <Server class="w-4 h-4" />,
-        count: () => props.instance.metadata?.lspStatus?.length ?? 0,
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["lsp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
-      {
-        id: "mcp",
-        label: "MCP Servers",
-        icon: () => <Plug class="w-4 h-4" />,
-        count: () => getActiveMcpServerCount(props.instance.id, props.instance.folder),
-        render: () => (
-          <InstanceMcpControl
-            instance={props.instance}
-            class="space-y-2"
-          />
-        ),
-      },
-      {
-        id: "git",
-        label: "Git Status",
-        icon: () => <FolderGit class="w-4 h-4" />,
-        count: () => {
-          const status = gitStatus()
-          if (!status) return null
-          return `${status.branch}${status.ahead > 0 ? ` ↑${status.ahead}` : ""}${status.behind > 0 ? ` ↓${status.behind}` : ""}`
-        },
-        render: renderGitStatusContent,
-      },
-      {
-        id: "tasks",
-        label: "Tasks",
-        icon: () => <ListChecks class="w-4 h-4" />,
-        count: () => {
-          const todoState = latestTodoState()
-          if (!todoState?.todos?.length) return null
-          const pending = todoState.todos.filter(t => t.status !== "completed").length
-          return pending > 0 ? pending : null
-        },
-        render: renderPlanSectionContent,
-      },
     ]
 
     const handleAccordionChange = (values: string[]) => {
@@ -1164,10 +1179,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
         {/* Pin button row - no header */}
         <Show when={!isPhoneLayout()}>
-          <div class="flex justify-end px-3 py-2 border-b border-base">
+          <div class="flex justify-end px-3 py-2 border-b border-border">
             <button
               type="button"
-              class="icon-button icon-button--sm icon-button--ghost"
+              class="inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               aria-label={rightPinned() ? "Unpin right drawer" : "Pin right drawer"}
               onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
             >
@@ -1187,17 +1202,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               {(section) => (
                 <Accordion.Item
                   value={section.id}
-                  class="control-panel-section"
+                  class="border-b border-border"
                 >
                   <Accordion.Header>
-                    <Accordion.Trigger class="control-panel-trigger">
+                    <Accordion.Trigger class="flex items-center justify-between w-full px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer">
                       <span class="flex items-center gap-2">
                         {section.icon()}
                         {section.label}
                       </span>
                       <span class="flex items-center gap-2">
                         <Show when={section.count() !== null}>
-                          <span class="text-xs font-normal text-muted">{section.count()}</span>
+                          <span class="text-xs font-normal text-muted-foreground">{section.count()}</span>
                         </Show>
                         <ChevronDown
                           class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
@@ -1205,7 +1220,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </span>
                     </Accordion.Trigger>
                   </Accordion.Header>
-                  <Accordion.Content class="control-panel-content text-sm text-primary">
+                  <Accordion.Content class="px-3 py-2 text-sm text-primary">
                     {section.render()}
                   </Accordion.Content>
                 </Accordion.Item>
@@ -1220,59 +1235,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const renderLeftPanel = () => {
     if (leftPinned()) {
       return (
-        <Box
-          class="session-sidebar-container"
-          sx={{
+        <div
+          class="flex flex-col h-full bg-background border-r border-border"
+          style={{
             width: `${sessionSidebarWidth()}px`,
-            flexShrink: 0,
-            borderRight: "1px solid var(--border-base)",
-            backgroundColor: "var(--surface-secondary)",
+            "flex-shrink": "0",
+            "border-right": "1px solid hsl(var(--border))",
+            "background-color": "hsl(var(--surface-2))",
             height: "100%",
-            minHeight: 0,
+            "min-height": "0",
             position: "relative",
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--left"
+            class="absolute top-0 w-1 h-full cursor-col-resize bg-transparent transition-colors z-10 hover:bg-primary right-0"
             onMouseDown={handleDrawerResizeMouseDown("left")}
             onTouchStart={handleDrawerResizeTouchStart("left")}
             role="presentation"
             aria-hidden="true"
           />
           <LeftDrawerContent />
-        </Box>
+        </div>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
-        anchor="left"
-        variant="temporary"
-        open={leftOpen()}
-        onClose={closeLeftDrawer}
-        ModalProps={modalProps}
-        sx={{
-          "& .MuiDrawer-paper": {
-            width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
-            boxSizing: "border-box",
-            borderRight: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
-            backgroundColor: "var(--surface-secondary)",
-            backgroundImage: "none",
-            color: "var(--text-primary)",
-            boxShadow: "none",
-            borderRadius: 0,
+      <Show when={leftOpen()}>
+        <div
+          class="fixed inset-0 z-40"
+          onClick={closeLeftDrawer}
+          role="presentation"
+        />
+        <div
+          class="fixed z-50 shadow-xl"
+          style={{
+            left: "0",
             top: floatingTopPx(),
             height: floatingHeight(),
-          },
-
-          "& .MuiBackdrop-root": {
-            backgroundColor: "transparent",
-          },
-        }}
-      >
-        <LeftDrawerContent />
-      </Drawer>
+            width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
+            "border-right": isPhoneLayout() ? "none" : "1px solid hsl(var(--border))",
+            "background-color": "hsl(var(--surface-2))",
+          }}
+        >
+          <LeftDrawerContent />
+        </div>
+      </Show>
     )
   }
 
@@ -1280,59 +1286,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const renderRightPanel = () => {
     if (rightPinned()) {
       return (
-        <Box
-          class="session-right-panel"
-          sx={{
+        <div
+          class="flex flex-col h-full"
+          style={{
             width: `${rightDrawerWidth()}px`,
-            flexShrink: 0,
-            borderLeft: "1px solid var(--border-base)",
-            backgroundColor: "var(--surface-secondary)",
+            "flex-shrink": "0",
+            "border-left": "1px solid hsl(var(--border))",
+            "background-color": "hsl(var(--surface-2))",
             height: "100%",
-            minHeight: 0,
+            "min-height": "0",
             position: "relative",
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--right"
+            class="absolute top-0 w-1 h-full cursor-col-resize bg-transparent transition-colors z-10 hover:bg-primary left-0"
             onMouseDown={handleDrawerResizeMouseDown("right")}
             onTouchStart={handleDrawerResizeTouchStart("right")}
             role="presentation"
             aria-hidden="true"
           />
           <RightDrawerContent />
-        </Box>
+        </div>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
-        anchor="right"
-        variant="temporary"
-        open={rightOpen()}
-        onClose={closeRightDrawer}
-        ModalProps={modalProps}
-        sx={{
-          "& .MuiDrawer-paper": {
-            width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
-            boxSizing: "border-box",
-            borderLeft: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
-            backgroundColor: "var(--surface-secondary)",
-            backgroundImage: "none",
-            color: "var(--text-primary)",
-            boxShadow: "none",
-            borderRadius: 0,
+      <Show when={rightOpen()}>
+        <div
+          class="fixed inset-0 z-40"
+          onClick={closeRightDrawer}
+          role="presentation"
+        />
+        <div
+          class="fixed z-50 shadow-xl"
+          style={{
+            right: "0",
             top: floatingTopPx(),
             height: floatingHeight(),
-          },
-          "& .MuiBackdrop-root": {
-            backgroundColor: "transparent",
-          },
-        }}
-      >
-        <RightDrawerContent />
-      </Drawer>
-
+            width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
+            "border-left": isPhoneLayout() ? "none" : "1px solid hsl(var(--border))",
+            "background-color": "hsl(var(--surface-2))",
+          }}
+        >
+          <RightDrawerContent />
+        </div>
+      </Show>
     )
   }
 
@@ -1353,203 +1350,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         measureDrawerHost()
       }}
     >
-      <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-        <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
-          <Show
-            when={!isPhoneLayout()}
-            fallback={
-              <div class="flex flex-col w-full gap-1.5">
-                <div class="flex flex-wrap items-center justify-between gap-2 w-full">
-                  <button
-                    ref={setLeftToggleButtonEl}
-                    type="button"
-                    class="icon-button icon-button--md icon-button--ghost"
-                    onClick={handleLeftAppBarButtonClick}
-                    aria-label={leftAppBarButtonLabel()}
-                    aria-expanded={leftDrawerState() !== "floating-closed"}
-                    disabled={leftDrawerState() === "pinned"}
-                  >
-                    {leftAppBarButtonIcon()}
-                  </button>
-
-                  <div class="flex flex-wrap items-center gap-1 justify-center">
-                    <button
-                      type="button"
-                      class="connection-status-button px-2 py-0.5 text-xs"
-                      onClick={handleCommandPaletteClick}
-                      aria-label="Open command palette"
-                      style={{ flex: "0 0 auto", width: "auto" }}
-                    >
-                      Command Palette
-                    </button>
-                    <span class="connection-status-shortcut-hint">
-                      <Kbd shortcut="cmd+shift+p" />
-                    </span>
-                    <span
-                      class={`status-indicator ${connectionStatusClass()}`}
-                      aria-label={`Connection ${connectionStatus()}`}
-                    >
-                      <span class="status-dot" />
-                    </span>
-                  </div>
-
-                  <button
-                    ref={setRightToggleButtonEl}
-                    type="button"
-                    class="icon-button icon-button--md icon-button--ghost"
-                    onClick={handleRightAppBarButtonClick}
-                    aria-label={rightAppBarButtonLabel()}
-                    aria-expanded={rightDrawerState() !== "floating-closed"}
-                    disabled={rightDrawerState() === "pinned"}
-                  >
-                    {rightAppBarButtonIcon()}
-                  </button>
-                </div>
-
-                <div class="header-stats-bar header-stats-bar--compact">
-                  <div class="header-context-window">
-                    <span class="header-context-window-label">Context</span>
-                    <span class="header-context-value header-context-value--used">{formatTokenTotal(tokenStats().used)}</span>
-                    <ContextProgressBar
-                      used={tokenStats().used}
-                      available={tokenStats().avail}
-                      size="lg"
-                      showLabels={false}
-                      class="header-context-progress header-context-progress--thick"
-                    />
-                    <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
-                  </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">In</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">Out</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill header-stats-pill--compact">
-                    <span class="header-stats-label">Cost</span>
-                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-            }
-          >
-             <div class="session-toolbar-left flex items-center gap-3 min-w-0">
-               <button
-                 ref={setLeftToggleButtonEl}
-                 type="button"
-                 class="icon-button icon-button--md icon-button--ghost"
-                 onClick={handleLeftAppBarButtonClick}
-                 aria-label={leftAppBarButtonLabel()}
-                 aria-expanded={leftDrawerState() !== "floating-closed"}
-                 disabled={leftDrawerState() === "pinned"}
-               >
-                 {leftAppBarButtonIcon()}
-               </button>
-
-               <button
-                 type="button"
-                 class="icon-button icon-button--md icon-button--ghost"
-                 onClick={() => setShortcutsDialogOpen(true)}
-                 aria-label="Keyboard shortcuts"
-                 title="Keyboard shortcuts"
-               >
-                 <HelpCircle class="w-4 h-4" />
-               </button>
-             </div>
-
-
-              <Show
-                when={!showingInfoView()}
-                fallback={
-                  <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                    <button
-                      type="button"
-                      class="connection-status-button px-2 py-0.5 text-xs"
-                      onClick={handleCommandPaletteClick}
-                      aria-label="Open command palette"
-                    >
-                      Command Palette
-                    </button>
-                    <Kbd shortcut="cmd+shift+p" />
-                  </div>
-                }
-              >
-                <div class="header-stats-bar">
-                  <div class="header-context-window">
-                    <span class="header-context-window-label">Context</span>
-                    <span class="header-context-value header-context-value--used">{formatTokenTotal(tokenStats().used)}</span>
-                    <ContextProgressBar
-                      used={tokenStats().used}
-                      available={tokenStats().avail}
-                      size="lg"
-                      showLabels={false}
-                      class="header-context-progress header-context-progress--thick"
-                    />
-                    <span class="header-context-value header-context-value--total">{tokenStats().avail !== null ? formatTokenTotal(tokenStats().used + tokenStats().avail) : '--'}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">In</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().inputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">Out</span>
-                    <span class="header-stats-value">{formatTokenTotal(tokenStats().outputTokens)}</span>
-                  </div>
-                  <div class="header-stats-pill">
-                    <span class="header-stats-label">Cost</span>
-                    <span class="header-stats-value">${tokenStats().cost.toFixed(2)}</span>
-                  </div>
-                </div>
-              </Show>
-
-
-            <div class="session-toolbar-right flex items-center gap-3">
-              <div class="connection-status-meta flex items-center gap-3">
-                <Show when={connectionStatus() === "connected"}>
-                  <span class="status-indicator connected">
-                    <span class="status-dot" />
-                    <span class="status-text">Connected</span>
-                  </span>
-                </Show>
-                <Show when={connectionStatus() === "connecting"}>
-                  <span class="status-indicator connecting">
-                    <span class="status-dot" />
-                    <span class="status-text">Connecting...</span>
-                  </span>
-                </Show>
-                <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                  <span class="status-indicator disconnected">
-                    <span class="status-dot" />
-                    <span class="status-text">Disconnected</span>
-                  </span>
-                </Show>
-              </div>
-              <button
-                ref={setRightToggleButtonEl}
-                type="button"
-                class="icon-button icon-button--md icon-button--ghost"
-                onClick={handleRightAppBarButtonClick}
-                aria-label={rightAppBarButtonLabel()}
-                aria-expanded={rightDrawerState() !== "floating-closed"}
-                disabled={rightDrawerState() === "pinned"}
-              >
-                {rightAppBarButtonIcon()}
-              </button>
-            </div>
-          </Show>
-        </Toolbar>
-      </AppBar>
-
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0, overflowX: "hidden" }}>
+      <div class="flex flex-1 min-h-0 overflow-x-hidden">
         {renderLeftPanel()}
 
-        <Box
-          component="main"
-          sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
-          class="content-area"
-        >
+        <main class="flex-grow min-h-0 flex flex-col overflow-x-hidden content-area">
           <Show
             when={showingInfoView()}
             fallback={
@@ -1557,7 +1361,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
                   <div class="flex items-center justify-center h-full">
-                    <div class="text-center text-gray-500 dark:text-gray-400">
+                    <div class="text-center text-muted-foreground">
                       <p class="mb-2">No session selected</p>
                       <p class="text-sm">Select a session to view messages</p>
                     </div>
@@ -1596,10 +1400,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <InfoView instanceId={props.instance.id} />
             </div>
           </Show>
-        </Box>
+        </main>
 
         {renderRightPanel()}
-      </Box>
+      </div>
     </div>
   )
 
@@ -1610,8 +1414,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           when={!isFetchingSessions()}
           fallback={
             <div class="flex-1 flex items-center justify-center">
-              <div class="text-center text-gray-500 dark:text-gray-400">
-                <div class="spinner mb-2 mx-auto" />
+              <div class="text-center text-muted-foreground">
+                <div class="w-8 h-8 border-2 border-border border-t-primary rounded-full animate-spin mb-2 mx-auto" />
                 <p class="text-sm">Loading sessions...</p>
               </div>
             </div>

@@ -1,5 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onMount, Show } from "solid-js"
 import { Globe, RefreshCw, AlertTriangle, Plus, Save, Check } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button, Badge } from "./ui"
 import DirectiveCardList from "./directive-card-list"
 import AddDirectiveModal from "./add-directive-modal"
 import type { ViewMode } from "./directive-card-list"
@@ -125,21 +127,21 @@ const GlobalDirectivesPanel: Component<GlobalDirectivesPanelProps> = (props) => 
   const existingSections = createMemo(() => parsedSections().map(s => s.title))
 
   return (
-    <div class="directives-panel">
+    <div class={cn("flex flex-col gap-6")}>
       {/* Header */}
-      <div class="directives-panel-header">
+      <div class={cn("flex items-center justify-between gap-4 flex-wrap")}>
         <div>
-          <h2 class="flex items-center gap-2">
-            <Globe class="w-5 h-5 text-blue-400" />
+          <h2 class={cn("flex items-center gap-2 text-lg font-semibold text-foreground")}>
+            <Globe class="w-5 h-5 text-info" />
             Global Directives
           </h2>
-          <p>Your personal preferences that apply across all projects</p>
+          <p class={cn("text-sm mt-1 text-muted-foreground")}>Your personal preferences that apply across all projects</p>
         </div>
-        <div class="directives-panel-actions">
+        <div class={cn("flex items-center gap-3")}>
           <Show when={hasChanges()}>
-            <button
-              type="button"
-              class="directives-add-btn"
+            <Button
+              variant="default"
+              size="sm"
               onClick={handleSave}
               disabled={isSaving()}
             >
@@ -149,10 +151,13 @@ const GlobalDirectivesPanel: Component<GlobalDirectivesPanelProps> = (props) => 
                 <Save class="w-4 h-4" />
               )}
               Save Changes
-            </button>
+            </Button>
           </Show>
           <Show when={saveStatus()}>
-            <span class={`directives-save-status ${saveStatus()?.type}`}>
+            <span class={cn(
+              "flex items-center gap-2 text-sm",
+              saveStatus()?.type === "success" ? "text-success" : "text-destructive"
+            )}>
               <Show when={saveStatus()?.type === "success"}>
                 <Check class="w-4 h-4" />
               </Show>
@@ -162,19 +167,19 @@ const GlobalDirectivesPanel: Component<GlobalDirectivesPanelProps> = (props) => 
               {saveStatus()?.message}
             </span>
           </Show>
-          <button
-            type="button"
-            class="directives-add-btn"
+          <Button
+            variant="default"
+            size="sm"
             onClick={() => openAddModal()}
           >
             <Plus class="w-4 h-4" />
             Add Directive
-          </button>
+          </Button>
         </div>
       </div>
 
       <Show when={!isEraInstalled()}>
-        <div class="governance-notice governance-notice-warning">
+        <div class={cn("flex items-center gap-2 p-4 rounded-md bg-warning/10 text-warning")}>
           <AlertTriangle class="w-5 h-5" />
           <div>
             <strong>Era Code Not Installed</strong>
@@ -184,7 +189,7 @@ const GlobalDirectivesPanel: Component<GlobalDirectivesPanelProps> = (props) => 
       </Show>
 
       <Show when={isDirectivesLoading()}>
-        <div class="directives-loading">
+        <div class={cn("flex items-center justify-center gap-2 py-8 text-muted-foreground")}>
           <RefreshCw class="w-5 h-5 animate-spin" />
           <span>Loading directives...</span>
         </div>

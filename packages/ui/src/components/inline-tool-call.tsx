@@ -4,7 +4,7 @@ import { openToolModal, type ToolModalItem } from "../stores/tool-modal"
 import { requestModelSelector, requestInstanceInfo } from "../stores/ui-actions"
 import { RefreshCw, Info } from "lucide-solid"
 import type { ClientPart } from "../types/message"
-import "../styles/components/inline-tool-call.css"
+import { cn } from "../lib/cn"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -136,19 +136,33 @@ const InlineToolCall: Component<InlineToolCallProps> = (props) => {
     )
   }
 
-  const statusClass = () => {
+  const statusDotClass = () => {
     if (isStalled()) {
-      return "inline-tool-status--stalled"
+      return "bg-destructive animate-pulse shadow-[0_0_0_2px_var(--background),0_0_8px_var(--destructive)]"
     }
     switch (status()) {
       case "running":
-        return "inline-tool-status--running"
+        return "bg-warning animate-pulse shadow-[0_0_0_2px_var(--background),0_0_6px_var(--warning)]"
       case "completed":
-        return "inline-tool-status--completed"
+        return "bg-success"
       case "error":
-        return "inline-tool-status--error"
+        return "bg-destructive"
       default:
-        return "inline-tool-status--pending"
+        return "bg-muted-foreground opacity-50"
+    }
+  }
+
+  const borderColor = () => {
+    if (isStalled()) return "border-l-destructive"
+    switch (status()) {
+      case "running":
+        return "border-l-warning"
+      case "completed":
+        return "border-l-success"
+      case "error":
+        return "border-l-destructive"
+      default:
+        return "border-l-border"
     }
   }
 
@@ -170,30 +184,36 @@ const InlineToolCall: Component<InlineToolCallProps> = (props) => {
   return (
     <button
       type="button"
-      class={`inline-tool-call ${isStalled() ? "inline-tool-call--stalled" : ""}`}
+      class={cn(
+        "flex flex-col gap-1 px-3 py-2 my-2 bg-transparent border-none border-l-[3px] cursor-pointer text-left w-full transition-all duration-150 rounded-r-sm",
+        borderColor(),
+        "hover:bg-accent/10 hover:border-l-4",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        isStalled() && "bg-destructive/5",
+      )}
       onClick={handleClick}
       data-status={isStalled() ? "stalled" : status()}
     >
-      <div class="inline-tool-call-header">
-        <span class={`inline-tool-status ${statusClass()}`} aria-hidden="true" />
-        <span class="inline-tool-name">{displayName()}</span>
+      <div class="flex items-center gap-2 font-mono text-sm leading-[1.4]">
+        <span class={cn("w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_0_2px_var(--background)]", statusDotClass())} aria-hidden="true" />
+        <span class="font-bold text-foreground tracking-tight">{displayName()}</span>
         <Show when={argsSummary()}>
-          <span class="inline-tool-args">{argsSummary()}</span>
+          <span class="text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap max-w-[60%] opacity-85">{argsSummary()}</span>
         </Show>
         <Show when={status() === "running" && elapsedDisplay()}>
-          <span class="inline-tool-elapsed">{elapsedDisplay()}</span>
+          <span class="text-muted-foreground text-xs ml-auto pl-2">{elapsedDisplay()}</span>
         </Show>
       </div>
       <Show when={isStalled()}>
-        <div class="inline-tool-stalled-warning">
-          <span class="inline-tool-summary-prefix">└─</span>
-          <span class="inline-tool-stalled-text">
+        <div class="flex items-start gap-1 ml-[calc(10px+0.5rem)] text-xs py-1">
+          <span class="text-muted-foreground opacity-40 text-[0.85em]">{"\u2514\u2500"}</span>
+          <span class="text-destructive leading-[1.4]">
             Appears stalled — API may be unavailable.
           </span>
-          <div class="inline-tool-stalled-actions">
+          <div class="flex items-center gap-2 ml-2 flex-wrap">
             <button
               type="button"
-              class="inline-tool-switch-model-btn"
+              class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-foreground bg-secondary border border-border rounded-sm cursor-pointer transition-all duration-150 shrink-0 hover:bg-info hover:text-info-foreground hover:border-info active:scale-[0.98]"
               onClick={(e) => {
                 e.stopPropagation()
                 console.log("[InlineToolCall] Switch Model clicked")
@@ -206,7 +226,7 @@ const InlineToolCall: Component<InlineToolCallProps> = (props) => {
             </button>
             <button
               type="button"
-              class="inline-tool-view-details-btn"
+              class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-muted-foreground bg-transparent border border-border rounded-sm cursor-pointer transition-all duration-150 shrink-0 hover:bg-accent/10 hover:text-foreground active:scale-[0.98]"
               onClick={(e) => {
                 e.stopPropagation()
                 console.log("[InlineToolCall] View Details clicked")
@@ -221,9 +241,13 @@ const InlineToolCall: Component<InlineToolCallProps> = (props) => {
         </div>
       </Show>
       <Show when={!isStalled() && summary()}>
-        <div class="inline-tool-summary">
-          <span class="inline-tool-summary-prefix">└─</span>
-          <span class="inline-tool-summary-text">{summary()}</span>
+        <div class="flex items-center gap-1 ml-[calc(8px+0.5rem)] text-xs text-muted-foreground font-mono">
+          <span class="text-muted-foreground opacity-40 text-[0.85em]">{"\u2514\u2500"}</span>
+          <span class={cn(
+            "text-muted-foreground",
+            status() === "error" && "text-destructive",
+            status() === "running" && "text-warning",
+          )}>{summary()}</span>
         </div>
       </Show>
     </button>

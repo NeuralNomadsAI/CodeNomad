@@ -1,12 +1,24 @@
+/* Token system - @import must precede other rules per CSS spec */
 @import './styles/tokens.css';
-@import './styles/utilities.css';
-@import './styles/controls.css';
-@import './styles/messaging.css';
-@import './styles/panels.css';
 @import './styles/markdown.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+  }
+  #root {
+    @apply w-screen h-screen bg-background;
+  }
+}
 
 * {
   box-sizing: border-box;
@@ -14,51 +26,12 @@
   padding: 0;
 }
 
-
-
-body {
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-base);
-  line-height: var(--line-height-normal);
-  font-weight: var(--font-weight-regular);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: var(--surface-base);
-  color: var(--text-primary);
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
 }
-
-#root {
-  width: 100vw;
-  height: 100vh;
-  background-color: var(--surface-base);
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

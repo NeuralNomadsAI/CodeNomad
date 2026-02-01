@@ -4,7 +4,7 @@ import type { ToolState } from "@opencode-ai/sdk"
 import type { ClientPart } from "../types/message"
 import { openToolModal, type ToolModalItem } from "../stores/tool-modal"
 import ToolCall from "./tool-call"
-import "../styles/components/grouped-tools-summary.css"
+import { cn } from "../lib/cn"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -166,41 +166,61 @@ export const GroupedToolsSummary: Component<GroupedToolsSummaryProps> = (props) 
   }
 
   return (
-    <div class="grouped-tools-container">
+    <div class="mt-3 ml-2 flex flex-col gap-2 rounded-lg border-l-[3px] border-l-violet-500 bg-secondary px-3 py-2">
       {/* Collapsed summary bar */}
       <Show when={totalToolCount() > 0}>
         <button
           type="button"
-          class={`grouped-tools-toggle ${expanded() ? "expanded" : ""}`}
+          class={cn(
+            "flex w-full items-center gap-2 rounded-sm bg-transparent px-2 py-1 text-left text-sm text-muted-foreground transition-all duration-150",
+            "hover:bg-muted hover:text-foreground"
+          )}
           onClick={toggleExpanded}
           aria-expanded={expanded()}
         >
-          <span class="grouped-tools-icon">▸</span>
-          <span class="grouped-tools-count">{totalToolCount()} tools:</span>
-          <span class="grouped-tools-summary">{summaryText()}</span>
+          <span
+            class={cn(
+              "flex-shrink-0 text-xs text-muted-foreground transition-transform duration-150",
+              expanded() && "rotate-90"
+            )}
+          >
+            ▸
+          </span>
+          <span class="flex-shrink-0 font-semibold text-foreground">{totalToolCount()} tools:</span>
+          <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground">{summaryText()}</span>
         </button>
       </Show>
 
       {/* Expanded view - grouped by tool type */}
       <Show when={expanded()}>
-        <div class="grouped-tools-expanded">
+        <div class="flex flex-col gap-1 border-t border-border pt-2 mt-1">
           <For each={toolGroups()}>
             {(group) => (
-              <div class="tool-group">
+              <div class="flex flex-col gap-1">
                 <button
                   type="button"
-                  class={`tool-group-header ${expandedGroups().has(group.toolName) ? "expanded" : ""}`}
+                  class={cn(
+                    "flex items-center gap-2 rounded-sm bg-transparent border-none px-2 py-1 text-left text-sm text-muted-foreground transition-all duration-150 cursor-pointer",
+                    "hover:bg-secondary hover:text-foreground"
+                  )}
                   onClick={() => toggleGroup(group.toolName)}
                   aria-expanded={expandedGroups().has(group.toolName)}
                 >
-                  <span class="tool-group-icon">▸</span>
-                  <span class="tool-group-emoji">{group.icon}</span>
-                  <span class="tool-group-name">{group.displayName}</span>
-                  <span class="tool-group-count">({group.items.length})</span>
+                  <span
+                    class={cn(
+                      "flex-shrink-0 text-xs transition-transform duration-150",
+                      expandedGroups().has(group.toolName) && "rotate-90"
+                    )}
+                  >
+                    ▸
+                  </span>
+                  <span class="text-base">{group.icon}</span>
+                  <span class="font-medium text-foreground">{group.displayName}</span>
+                  <span class="text-xs text-muted-foreground">({group.items.length})</span>
                 </button>
 
                 <Show when={expandedGroups().has(group.toolName)}>
-                  <div class="tool-group-items">
+                  <div class="flex flex-col gap-1 pl-4 animate-in slide-in-from-top-1 duration-150">
                     <For each={group.files.length > 0 ? group.files : group.items.map((item) => ({ item, path: "", relativePath: "" }))}>
                       {(fileOrItem) => {
                         const item = "item" in fileOrItem ? fileOrItem.item : fileOrItem
@@ -210,17 +230,27 @@ export const GroupedToolsSummary: Component<GroupedToolsSummaryProps> = (props) 
                         return (
                           <button
                             type="button"
-                            class={`tool-item-button ${status || ""}`}
+                            class={cn(
+                              "group flex w-full items-center gap-2 rounded-sm bg-transparent border-none px-2 py-1 text-left text-sm text-muted-foreground transition-all duration-150 cursor-pointer",
+                              "hover:bg-secondary hover:text-foreground"
+                            )}
                             onClick={() => handleItemClick(item, displayPath, group)}
                           >
-                            <span class="tool-item-status">
+                            <span
+                              class={cn(
+                                "w-4 flex-shrink-0 text-center text-xs",
+                                status === "completed" && "text-success",
+                                status === "running" && "animate-pulse",
+                                status === "error" && "text-destructive"
+                              )}
+                            >
                               {status === "completed" && "✓"}
                               {status === "running" && "⏳"}
                               {status === "error" && "✗"}
                               {!status && "○"}
                             </span>
-                            <span class="tool-item-path">{displayPath}</span>
-                            <span class="tool-item-view">→</span>
+                            <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs">{displayPath}</span>
+                            <span class="flex-shrink-0 text-sm text-info opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5">→</span>
                           </button>
                         )
                       }}

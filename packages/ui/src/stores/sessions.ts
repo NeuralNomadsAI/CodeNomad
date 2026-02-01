@@ -60,6 +60,7 @@ import {
   handleSessionIdle,
   handleSessionUpdate,
   handleTuiToast,
+  handleQuestionEvent,
 } from "./session-events"
 
 sseManager.onMessageUpdate = handleMessageUpdate
@@ -73,10 +74,18 @@ sseManager.onSessionIdle = handleSessionIdle
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
+sseManager.onQuestionEvent = handleQuestionEvent
 
-// When connection is restored after disconnect, reload messages for all sessions
-// to sync UI state with actual OpenCode state (fixes "stuck in working" issue)
+// When connection is restored after disconnect, re-fetch the session list
+// and reload messages for all sessions to sync UI state with actual OpenCode state
 sseManager.onConnectionRestored = async (instanceId: string) => {
+  // Re-fetch session list — may have changed while disconnected
+  try {
+    await fetchSessions(instanceId)
+  } catch (error) {
+    console.error(`Failed to re-fetch sessions for instance ${instanceId} after reconnect:`, error)
+  }
+
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
 

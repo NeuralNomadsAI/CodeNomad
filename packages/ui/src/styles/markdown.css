@@ -114,7 +114,7 @@
     font-family: var(--font-family-mono);
     font-size: var(--font-size-sm);
     background-color: var(--surface-muted);
-    border: 1px solid var(--border-base);
+    border: 1px solid hsl(var(--border));
     border-radius: 4px;
     padding: 0.15em 0.35em;
   }
@@ -130,7 +130,7 @@
     font-size: var(--font-size-sm);
     line-height: var(--line-height-normal);
     background-color: var(--surface-code);
-    border: 1px solid var(--border-base);
+    border: 1px solid hsl(var(--border));
     border-radius: 8px;
     padding: 0.75rem;
     margin: 1rem 0;
@@ -192,7 +192,7 @@
 
   .markdown-body th,
   .markdown-body td {
-    border: 1px solid var(--border-base);
+    border: 1px solid hsl(var(--border));
     padding: 0.5rem 0.75rem;
     text-align: left;
     font-size: var(--font-size-sm);
@@ -217,7 +217,7 @@
     margin: 10px 0;
     border-radius: 6px;
     background-color: var(--surface-muted);
-    border: 1px solid var(--border-base);
+    border: 1px solid hsl(var(--border));
   }
 
   .code-block-header {
@@ -226,7 +226,7 @@
     justify-content: space-between;
     padding: 4px 8px;
     background-color: var(--surface-secondary);
-    border-bottom: 1px solid var(--border-base);
+    border-bottom: 1px solid hsl(var(--border));
     /* border-top-left-radius: 6px;
     border-top-right-radius: 6px; */
   }
@@ -245,7 +245,7 @@
     gap: 4px;
     padding: 4px 8px;
     background-color: transparent;
-    border: 1px solid var(--border-base);
+    border: 1px solid hsl(var(--border));
     border-radius: 4px;
     cursor: pointer;
     color: var(--text-secondary);

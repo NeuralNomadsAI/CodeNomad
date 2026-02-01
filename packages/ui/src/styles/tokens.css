@@ -1,130 +1,65 @@
+/* ============================================================
+   Design Tokens - HSL-based semantic color system
+   ============================================================
+   All color tokens use raw HSL values (no hsl() wrapper) so
+   Tailwind's opacity modifier works: bg-primary/10
+   ============================================================ */
+
 :root {
-  /* Surface tokens */
-  --surface-base: #ffffff;
-  --surface-secondary: #f5f5f5;
-  --surface-muted: #f8f9fa;
-  --surface-code: #f8f8f8;
-  --surface-hover: #e0e0e0;
-  
-  /* Border tokens */
-  --border-base: #e0e0e0;
-  --border-secondary: #e0e0e0;
-  --border-muted: #e0e0e0;
-  
-  /* Text tokens */
-  --text-primary: #1a1a1a;
-  --text-secondary: #666666;
-  --text-muted: #666666;
-  --text-inverted: #ffffff;
-  
-  /* Accent tokens */
-  --accent-primary: #0066ff;
-  --accent-hover: #0052cc;
+  /* --- Core semantic tokens --- */
+  --background: 0 0% 100%;
+  --foreground: 224 71.4% 4.1%;
 
-  /* Context progress tokens */
-  --context-progress-track: rgba(0, 0, 0, 0.08);
-  --context-progress-low: #22c55e;
-  --context-progress-moderate: #3b82f6;
-  --context-progress-warning: #f59e0b;
-  --context-progress-critical: #ef4444;
+  --card: 0 0% 100%;
+  --card-foreground: 224 71.4% 4.1%;
 
-  /* Status tokens */
-  --status-success: #4caf50;
-  --status-error: #f44336;
-  --status-warning: #ff9800;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 71.4% 4.1%;
 
-  /* Subagent status tokens */
-  --status-running: #22c55e;
-  --status-running-bg: rgba(34, 197, 94, 0.15);
-  --status-complete: #3b82f6;
-  --status-complete-bg: rgba(59, 130, 246, 0.15);
-  --status-idle: #6b7280;
-  --status-idle-bg: rgba(107, 114, 128, 0.15);
+  --primary: 220.9 39.3% 11%;
+  --primary-foreground: 210 20% 98%;
 
-  /* Message-specific tokens */
-  --message-user-bg: var(--surface-secondary);
-  --message-user-border: #2196f3;
-  --message-assistant-bg: var(--message-tool-bg);
-  --message-assistant-border: #f59e0b;
+  --secondary: 220 14.3% 95.9%;
+  --secondary-foreground: 220.9 39.3% 11%;
 
-  --message-tool-bg: #f8f9fa;
-  --message-tool-border: #6c757d;
+  --muted: 220 14.3% 95.9%;
+  --muted-foreground: 220 8.9% 46.1%;
 
-  /* Semantic component colors */
-  /* Running (working) = Green */
-  --session-status-working-fg: #15803d;
-  --session-status-working-bg: rgba(34, 197, 94, 0.16);
-  /* Compacting = Purple (keep as is for system status) */
-  --session-status-compacting-fg: #6d28d9;
-  --session-status-compacting-bg: rgba(109, 40, 217, 0.18);
-  /* Idle = Gray */
-  --session-status-idle-fg: #6b7280;
-  --session-status-idle-bg: rgba(107, 114, 128, 0.16);
-  /* Complete = Blue (for subagents that finished) */
-  --session-status-complete-fg: #1d4ed8;
-  --session-status-complete-bg: rgba(59, 130, 246, 0.16);
-  /* Permission = Orange/Amber (needs attention) */
-  --session-status-permission-fg: #c2410c;
-  --session-status-permission-bg: rgba(251, 191, 36, 0.25);
-  --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
-  --list-item-highlight-bg-solid: #e5f0ff;
-  --list-item-highlight-border: rgba(0, 102, 255, 0.25);
-  --attachment-chip-bg: rgba(0, 102, 255, 0.1);
-  --attachment-chip-text: #0066ff;
-  --attachment-chip-ring: rgba(0, 102, 255, 0.1);
-  --badge-neutral-bg: rgba(0, 102, 255, 0.05);
-  --badge-neutral-text: #0066ff;
-  --status-ready-fg: #16a34a;
-  --status-ready-bg: rgba(34, 197, 94, 0.1);
-  --status-starting-fg: #ca8a04;
-  --status-starting-bg: rgba(250, 204, 21, 0.1);
-  --status-error-fg: #dc2626;
-  --status-error-bg: rgba(239, 68, 68, 0.1);
-  --status-stopped-fg: #6b7280;
-  --status-stopped-bg: rgba(107, 114, 128, 0.1);
-  --env-vars-bg: rgba(0, 102, 255, 0.1);
-  --env-vars-border: rgba(0, 102, 255, 0.2);
-  --env-vars-text: #0066ff;
-  --folder-overlay-bg: rgba(0, 0, 0, 0.35);
-  --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-  --folder-card-radius: 16px;
-  --dropdown-highlight-bg: rgba(0, 102, 255, 0.1);
-  --dropdown-highlight-text: var(--text-inverted);
-  --selection-highlight-bg: rgba(0, 102, 255, 0.12);
-  --selection-highlight-strong-bg: rgba(0, 102, 255, 0.18);
-  --overlay-scrim: rgba(0, 0, 0, 0.5);
-  --scroll-elevation-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
-  --message-error-bg: rgba(244, 67, 54, 0.1);
-  --message-error-bg-strong: rgba(244, 67, 54, 0.15);
-  --danger-soft-bg: rgba(239, 68, 68, 0.1);
-  --danger-soft-bg-strong: rgba(244, 67, 54, 0.15);
-  --log-level-error: var(--status-error);
-  --log-level-warn: var(--status-warning);
-  --log-level-debug: var(--text-muted);
-  --log-level-default: var(--text-primary);
-  --focus-ring-color: var(--accent-primary);
-  --focus-ring-offset: var(--surface-base);
-  --kbd-bg: var(--surface-secondary);
-  --kbd-border: var(--border-base);
-  --kbd-text: var(--text-primary);
-  --button-primary-bg: var(--accent-primary);
-  --button-primary-hover-bg: var(--accent-hover);
-  --button-primary-text: var(--text-inverted);
-  --tab-active-bg: var(--accent-primary);
-  --tab-active-hover-bg: var(--accent-hover);
-  --tab-active-text: var(--text-inverted);
-  --tab-inactive-bg: var(--surface-muted);
-  --tab-inactive-hover-bg: var(--surface-hover);
-  --tab-inactive-text: var(--text-secondary);
-  --new-tab-bg: var(--surface-secondary);
-  --new-tab-hover-bg: var(--surface-hover);
-  --new-tab-text: var(--text-muted);
-  --session-tab-active-bg: var(--surface-base);
-  --session-tab-active-text: var(--text-primary);
-  --session-tab-inactive-text: var(--text-muted);
-  --session-tab-hover-bg: var(--surface-hover);
+  --accent: 220 14.3% 95.9%;
+  --accent-foreground: 220.9 39.3% 11%;
 
-  /* Layout & spacing tokens */
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 20% 98%;
+
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 224 71.4% 4.1%;
+  --radius: 0.75rem;
+
+  /* --- Extended semantic: status --- */
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 100%;
+  --info: 217 91% 60%;
+  --info-foreground: 0 0% 100%;
+
+  /* --- Surface elevation system --- */
+  --surface-0: 0 0% 100%;
+  --surface-1: 220 14.3% 97.5%;
+  --surface-2: 220 13% 95%;
+  --surface-3: 220 12% 92%;
+  --surface-4: 220 11% 88%;
+
+  /* --- Shadow elevation system --- */
+  --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.1), 0 2px 4px -2px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.1), 0 4px 6px -4px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 20px 25px -5px hsl(0 0% 0% / 0.1), 0 8px 10px -6px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.25);
+
+  /* --- Layout & spacing tokens --- */
   --space-2xs: 2px;
   --space-xs: 4px;
   --space-sm: 8px;
@@ -132,9 +67,9 @@
   --space-lg: 16px;
   --space-xl: 24px;
   --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
   --radius-xl: 12px;
   --radius-2xl: 16px;
   --radius-full: 9999px;
@@ -143,298 +78,208 @@
   --button-radius: 0.5rem;
   --chip-radius: 0.375rem;
   --pill-radius: 9999px;
-  
-  /* Typography tokens */
-  --font-family-sans: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  
-  /* Font weights */
+
+  /* --- Typography tokens --- */
+  --font-family-sans: "Inter", "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
-  
-  /* Font sizes */
-  --font-size-xs: 11px;
+
+  --font-size-xs: 12px;
   --font-size-sm: 12px;
   --font-size-base: 14px;
   --font-size-lg: 16px;
   --font-size-xl: 18px;
   --font-size-2xl: 20px;
-  
-  /* Line heights */
+
   --line-height-tight: 1.25;
   --line-height-normal: 1.5;
   --line-height-relaxed: 1.6;
+
+  /* --- Semantic aliases for markdown & prose (light) --- */
+  --text-primary: hsl(var(--foreground));
+  --text-secondary: hsl(var(--muted-foreground));
+  --surface-muted: hsl(var(--muted));
+  --surface-secondary: hsl(var(--secondary));
+  --surface-code: hsl(220 14% 96%);
+  --surface-hover: hsl(var(--accent));
+  --accent-primary: hsl(var(--info));
+  --accent-hover: hsl(217 91% 50%);
+  --border-muted: hsl(var(--border));
+
+  /* --- Chrome elevation (shadow + gradient blend for toolbar → content) --- */
+  --chrome-shadow: 0 1px 2px hsl(220 20% 20% / 0.06), 0 4px 12px hsl(220 20% 20% / 0.03);
+
+  /* --- Context progress tokens (HSL) --- */
+  --context-progress-track: hsl(0 0% 0% / 0.08);
+  --context-progress-low: hsl(142 76% 36%);
+  --context-progress-moderate: hsl(217 91% 60%);
+  --context-progress-warning: hsl(38 92% 50%);
+  --context-progress-critical: hsl(0 84% 60%);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Surface tokens */
-    --surface-base: #1a1a1a;
-    --surface-secondary: #2a2a2a;
-    --surface-muted: #212529;
-    --surface-code: #1a1a1a;
-    --surface-hover: #3a3a3a;
-    
-    /* Border tokens */
-    --border-base: #3a3a3a;
-    --border-secondary: #3a3a3a;
-    --border-muted: #3a3a3a;
-    
-    /* Text tokens */
-    --text-primary: #cfd4dc;
-    --text-secondary: #999999;
-    --text-muted: #999999;
-    --text-inverted: #1a1a1a;
-    
-    /* Accent tokens */
-    --accent-primary: #0080ff;
-    --accent-hover: #0066cc;
-    
-    /* Status tokens */
-    --status-success: #4caf50;
-    --status-error: #f44336;
-    --status-warning: #ff9800;
 
-    /* Subagent status tokens */
-    --status-running: #22c55e;
-    --status-running-bg: rgba(34, 197, 94, 0.2);
-    --status-complete: #3b82f6;
-    --status-complete-bg: rgba(59, 130, 246, 0.2);
-    --status-idle: #9ca3af;
-    --status-idle-bg: rgba(156, 163, 175, 0.2);
-
-    /* Message-specific tokens */
-    --message-user-bg: #202734;
-    --message-user-border: #42a5f5;
-    --message-assistant-bg: var(--message-tool-bg);
-    --message-assistant-border: #d97706;
-
-    --message-tool-bg: #212529;
-    --message-tool-border: #adb5bd;
-
-    /* Semantic component colors */
-    /* Running (working) = Green */
-    --session-status-working-fg: #22c55e;
-    --session-status-working-bg: rgba(34, 197, 94, 0.25);
-    /* Compacting = Purple */
-    --session-status-compacting-fg: #c084fc;
-    --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
-    /* Idle = Gray */
-    --session-status-idle-fg: #9ca3af;
-    --session-status-idle-bg: rgba(156, 163, 175, 0.22);
-    /* Complete = Blue */
-    --session-status-complete-fg: #3b82f6;
-    --session-status-complete-bg: rgba(59, 130, 246, 0.25);
-    /* Permission = Amber */
-    --session-status-permission-fg: #fbbf24;
-    --session-status-permission-bg: rgba(251, 191, 36, 0.35);
-  --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
-  --list-item-highlight-bg-solid: #15324e;
-  --list-item-highlight-border: rgba(0, 128, 255, 0.4);
-
-    --attachment-chip-bg: rgba(0, 128, 255, 0.1);
-    --attachment-chip-text: #0080ff;
-    --attachment-chip-ring: rgba(0, 128, 255, 0.2);
-  --badge-neutral-bg: rgba(0, 128, 255, 0.15);
-  --badge-neutral-text: #0080ff;
-  --status-ready-fg: #22c55e;
-  --status-ready-bg: rgba(34, 197, 94, 0.2);
-  --status-starting-fg: #facc15;
-  --status-starting-bg: rgba(250, 204, 21, 0.2);
-  --status-error-fg: #ef4444;
-  --status-error-bg: rgba(239, 68, 68, 0.2);
-  --status-stopped-fg: #9ca3af;
-  --status-stopped-bg: rgba(107, 114, 128, 0.2);
-  --env-vars-bg: rgba(0, 128, 255, 0.2);
-  --env-vars-border: rgba(0, 128, 255, 0.3);
-  --env-vars-text: #0080ff;
-  --folder-overlay-bg: rgba(0, 0, 0, 0.45);
-  --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  --folder-card-radius: 16px;
-  --dropdown-highlight-bg: rgba(0, 128, 255, 0.2);
-  --dropdown-highlight-text: var(--text-primary);
-  --kbd-bg: var(--surface-secondary);
-  --kbd-border: var(--border-base);
-  --kbd-text: var(--text-primary);
-  --button-primary-bg: #3f3f46;
-  --button-primary-hover-bg: #52525b;
-  --button-primary-text: #f5f6f8;
-  --tab-active-bg: #3f3f46;
-  --tab-active-hover-bg: #52525b;
-  --tab-active-text: #f5f6f8;
-  --tab-inactive-bg: #2a2a31;
-  --tab-inactive-hover-bg: #3f3f46;
-  --tab-inactive-text: #d4d4d8;
-  --new-tab-bg: #3f3f46;
-  --new-tab-hover-bg: #52525b;
-  --new-tab-text: #f5f6f8;
-  --session-tab-active-bg: var(--surface-muted);
-  --session-tab-active-text: var(--text-primary);
-  --session-tab-inactive-text: var(--text-muted);
-  --session-tab-hover-bg: #3f3f46;
-
-    --button-primary-bg: #3f3f46;
-    --button-primary-hover-bg: #52525b;
-    --button-primary-text: #f5f6f8;
-    --tab-active-bg: #3f3f46;
-    --tab-active-hover-bg: #52525b;
-    --tab-active-text: #f5f6f8;
-    --tab-inactive-bg: #2f2f36;
-    --tab-inactive-hover-bg: #3d3d45;
-    --tab-inactive-text: #d4d4d8;
-    --new-tab-bg: #3f3f46;
-    --new-tab-hover-bg: #52525b;
-    --new-tab-text: #f5f6f8;
-    --session-tab-active-bg: var(--surface-muted);
-    --session-tab-active-text: var(--text-primary);
-    --session-tab-inactive-text: var(--text-muted);
-    --session-tab-hover-bg: #3f3f46;
-
-    /* Layout & spacing tokens */
-    --space-2xs: 2px;
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 12px;
-    --space-lg: 16px;
-    --space-xl: 24px;
-    --radius-xs: 3px;
-    --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 8px;
-    --radius-xl: 12px;
-    --radius-2xl: 16px;
-    --radius-full: 9999px;
-    --button-padding-y: 0.75rem;
-    --button-padding-x: 1.25rem;
-    --button-radius: 0.5rem;
-    --chip-radius: 0.375rem;
-    --pill-radius: 9999px;
-    
-  }
-}
+/* ============================================================
+   Dark Theme
+   Blue-tinted surfaces for character, not flat grays
+   ============================================================ */
 
 [data-theme="dark"] {
-  /* Surface tokens */
-  --surface-base: #1a1a1a;
-  --surface-secondary: #2a2a2a;
-  --surface-muted: #212529;
-  --surface-code: #1a1a1a;
-  --surface-hover: #3a3a3a;
+  --background: 224 71.4% 4.1%;
+  --foreground: 210 20% 98%;
 
-  /* Border tokens */
-  --border-base: #3a3a3a;
-  --border-secondary: #3a3a3a;
-  --border-muted: #3a3a3a;
+  --card: 224 71.4% 6%;
+  --card-foreground: 210 20% 98%;
 
-  /* Text tokens */
-  --text-primary: #cfd4dc;
-  --text-secondary: #999999;
-  --text-muted: #999999;
-  --text-inverted: #1a1a1a;
+  --popover: 224 71.4% 6%;
+  --popover-foreground: 210 20% 98%;
 
-  /* Accent tokens */
-  --accent-primary: #0080ff;
-  --accent-hover: #0066cc;
+  --primary: 210 20% 98%;
+  --primary-foreground: 220.9 39.3% 11%;
 
-  /* Status tokens */
-  --status-success: #4caf50;
-  --status-error: #f44336;
-  --status-warning: #ff9800;
+  --secondary: 215 27.9% 16.9%;
+  --secondary-foreground: 210 20% 98%;
 
-  /* Subagent status tokens */
-  --status-running: #22c55e;
-  --status-running-bg: rgba(34, 197, 94, 0.2);
-  --status-complete: #3b82f6;
-  --status-complete-bg: rgba(59, 130, 246, 0.2);
-  --status-idle: #9ca3af;
-  --status-idle-bg: rgba(156, 163, 175, 0.2);
+  --muted: 215 25% 18.5%;
+  --muted-foreground: 217.9 10.6% 64.9%;
 
-  /* Message-specific tokens */
-  --message-user-bg: #202734;
-  --message-user-border: #2196f3;
-  --message-assistant-bg: var(--message-tool-bg);
-  --message-assistant-border: #d97706;
+  --accent: 215 25% 20%;
+  --accent-foreground: 210 20% 98%;
 
-  --message-tool-bg: #212529;
-  --message-tool-border: #adb5bd;
+  --destructive: 0 62.8% 50.6%;
+  --destructive-foreground: 210 20% 98%;
 
-  /* Semantic component colors */
-  /* Running (working) = Green */
-  --session-status-working-fg: #22c55e;
-  --session-status-working-bg: rgba(34, 197, 94, 0.25);
-  /* Compacting = Purple */
-  --session-status-compacting-fg: #c084fc;
-  --session-status-compacting-bg: rgba(192, 132, 252, 0.28);
-  /* Idle = Gray */
-  --session-status-idle-fg: #9ca3af;
-  --session-status-idle-bg: rgba(156, 163, 175, 0.22);
-  /* Complete = Blue */
-  --session-status-complete-fg: #3b82f6;
-  --session-status-complete-bg: rgba(59, 130, 246, 0.25);
-  /* Permission = Amber */
-  --session-status-permission-fg: #fbbf24;
-  --session-status-permission-bg: rgba(251, 191, 36, 0.35);
-  --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
-  --list-item-highlight-bg-solid: #15324e;
-  --list-item-highlight-border: rgba(0, 128, 255, 0.4);
-  --attachment-chip-bg: rgba(0, 128, 255, 0.1);
-  --attachment-chip-text: #0080ff;
-  --attachment-chip-ring: rgba(0, 128, 255, 0.2);
-  --badge-neutral-bg: rgba(0, 128, 255, 0.15);
-  --badge-neutral-text: #0080ff;
-  --status-ready-fg: #22c55e;
-  --status-ready-bg: rgba(34, 197, 94, 0.2);
-  --status-starting-fg: #facc15;
-  --status-starting-bg: rgba(250, 204, 21, 0.2);
-  --status-error-fg: #ef4444;
-  --status-error-bg: rgba(239, 68, 68, 0.2);
-  --status-stopped-fg: #9ca3af;
-  --status-stopped-bg: rgba(107, 114, 128, 0.2);
-  --env-vars-bg: rgba(0, 128, 255, 0.2);
-  --env-vars-border: rgba(0, 128, 255, 0.3);
-  --env-vars-text: #0080ff;
-  --folder-overlay-bg: rgba(0, 0, 0, 0.45);
-  --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  --folder-card-radius: 16px;
-  --dropdown-highlight-bg: rgba(0, 128, 255, 0.2);
-  --dropdown-highlight-text: var(--text-primary);
-  --selection-highlight-bg: rgba(0, 128, 255, 0.18);
-  --selection-highlight-strong-bg: rgba(0, 128, 255, 0.28);
-  --overlay-scrim: rgba(0, 0, 0, 0.6);
-  --scroll-elevation-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
-  --message-error-bg: rgba(244, 67, 54, 0.12);
-  --message-error-bg-strong: rgba(244, 67, 54, 0.2);
-  --danger-soft-bg: rgba(244, 67, 54, 0.16);
-  --danger-soft-bg-strong: rgba(244, 67, 54, 0.28);
-  --log-level-error: var(--status-error);
-  --log-level-warn: var(--status-warning);
-  --log-level-debug: var(--text-secondary);
-  --log-level-default: var(--text-primary);
-  --focus-ring-color: var(--accent-primary);
-  --focus-ring-offset: var(--surface-base);
-  --kbd-bg: var(--surface-secondary);
-  --kbd-border: var(--border-base);
-  --kbd-text: var(--text-primary);
+  --border: 215 20% 22%;
+  --input: 215 20% 22%;
+  --ring: 216 12.2% 83.9%;
 
-  /* Layout & spacing tokens */
+  /* --- Extended semantic: status (brighter for dark bg) --- */
+  --success: 142 71% 45%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 55%;
+  --warning-foreground: 0 0% 0%;
+  --info: 217 91% 65%;
+  --info-foreground: 0 0% 100%;
+
+  /* --- Dark surface elevations (blue-tinted) --- */
+  --surface-0: 224 71.4% 4.1%;
+  --surface-1: 224 50% 7%;
+  --surface-2: 215 28% 10%;
+  --surface-3: 215 25% 14%;
+  --surface-4: 215 22% 18%;
+
+  /* --- Chrome elevation (shadow + gradient blend for toolbar → content) --- */
+  --chrome-shadow: 0 1px 2px hsl(220 60% 2% / 0.2), 0 4px 12px hsl(220 60% 2% / 0.1);
+
+  /* --- Dark shadows (blue-black for richer depth) --- */
+  --shadow-xs: 0 1px 2px 0 hsl(220 60% 2% / 0.3);
+  --shadow-sm: 0 1px 3px 0 hsl(220 60% 2% / 0.4), 0 1px 2px -1px hsl(220 60% 2% / 0.4);
+  --shadow-md: 0 4px 6px -1px hsl(220 60% 2% / 0.4), 0 2px 4px -2px hsl(220 60% 2% / 0.4);
+  --shadow-lg: 0 10px 15px -3px hsl(220 60% 2% / 0.4), 0 4px 6px -4px hsl(220 60% 2% / 0.4);
+  --shadow-xl: 0 20px 25px -5px hsl(220 60% 2% / 0.5), 0 8px 10px -6px hsl(220 60% 2% / 0.5);
+  --shadow-2xl: 0 25px 50px -12px hsl(220 60% 2% / 0.7);
+
+  /* --- Layout & spacing (same for both themes) --- */
   --space-2xs: 2px;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
   --space-lg: 16px;
   --space-xl: 24px;
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-full: 9999px;
   --button-padding-y: 0.75rem;
   --button-padding-x: 1.25rem;
   --button-radius: 0.5rem;
   --chip-radius: 0.375rem;
   --pill-radius: 9999px;
+
+  /* --- Semantic aliases for markdown & prose (dark) --- */
+  --text-primary: hsl(var(--foreground));
+  --text-secondary: hsl(var(--muted-foreground));
+  --surface-muted: hsl(var(--muted));
+  --surface-secondary: hsl(var(--secondary));
+  --surface-code: hsl(215 28% 10%);
+  --surface-hover: hsl(var(--accent));
+  --accent-primary: hsl(var(--info));
+  --accent-hover: hsl(217 91% 70%);
+  --border-muted: hsl(var(--border));
+
+  /* --- Context progress tokens (dark - slightly more vibrant) --- */
+  --context-progress-track: hsl(0 0% 100% / 0.08);
+  --context-progress-low: hsl(142 71% 45%);
+  --context-progress-moderate: hsl(217 91% 65%);
+  --context-progress-warning: hsl(38 92% 55%);
+  --context-progress-critical: hsl(0 62% 50%);
+}
+
+/* System preference fallback for when data-theme isn't set */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+
+    --card: 224 71.4% 6%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 224 71.4% 6%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 210 20% 98%;
+    --primary-foreground: 220.9 39.3% 11%;
+
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 215 25% 18.5%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+
+    --accent: 215 25% 20%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 62.8% 50.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 215 20% 22%;
+    --input: 215 20% 22%;
+    --ring: 216 12.2% 83.9%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 0%;
+    --info: 217 91% 65%;
+    --info-foreground: 0 0% 100%;
+
+    --surface-0: 224 71.4% 4.1%;
+    --surface-1: 224 50% 7%;
+    --surface-2: 215 28% 10%;
+    --surface-3: 215 25% 14%;
+    --surface-4: 215 22% 18%;
+
+    --shadow-xs: 0 1px 2px 0 hsl(220 60% 2% / 0.3);
+    --shadow-sm: 0 1px 3px 0 hsl(220 60% 2% / 0.4), 0 1px 2px -1px hsl(220 60% 2% / 0.4);
+    --shadow-md: 0 4px 6px -1px hsl(220 60% 2% / 0.4), 0 2px 4px -2px hsl(220 60% 2% / 0.4);
+    --shadow-lg: 0 10px 15px -3px hsl(220 60% 2% / 0.4), 0 4px 6px -4px hsl(220 60% 2% / 0.4);
+    --shadow-xl: 0 20px 25px -5px hsl(220 60% 2% / 0.5), 0 8px 10px -6px hsl(220 60% 2% / 0.5);
+    --shadow-2xl: 0 25px 50px -12px hsl(220 60% 2% / 0.7);
+
+    /* --- Semantic aliases for markdown & prose (dark fallback) --- */
+    --text-primary: hsl(var(--foreground));
+    --text-secondary: hsl(var(--muted-foreground));
+    --surface-muted: hsl(var(--muted));
+    --surface-secondary: hsl(var(--secondary));
+    --surface-code: hsl(215 28% 10%);
+    --surface-hover: hsl(var(--accent));
+    --accent-primary: hsl(var(--info));
+    --accent-hover: hsl(217 91% 70%);
+    --border-muted: hsl(var(--border));
+
+    --context-progress-track: hsl(0 0% 100% / 0.08);
+    --context-progress-low: hsl(142 71% 45%);
+    --context-progress-moderate: hsl(217 91% 65%);
+    --context-progress-warning: hsl(38 92% 55%);
+    --context-progress-critical: hsl(0 62% 50%);
+  }
 }

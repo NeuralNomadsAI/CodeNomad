@@ -1,6 +1,7 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onMount } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { X, Plus, Trash2, Edit2, Check, ChevronDown, ChevronRight, Zap, Save, AlertCircle } from "lucide-solid"
+import { Button, Badge, Input } from "./ui"
 import type { Command as SDKCommand } from "@opencode-ai/sdk"
 import { getCommands, fetchCommands } from "../stores/commands"
 import { instances } from "../stores/instances"
@@ -212,30 +213,30 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()} modal>
       <Dialog.Portal>
-        <Dialog.Overlay class="commands-panel-overlay" />
+        <Dialog.Overlay class="fixed inset-0 z-40 bg-black/50" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="commands-panel">
-            <div class="commands-panel-header">
-              <Dialog.Title class="commands-panel-title">
+          <Dialog.Content class="flex flex-col w-full max-w-2xl rounded-lg bg-background border border-border shadow-xl max-h-[85vh]">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+              <Dialog.Title class="flex items-center gap-2 text-lg font-semibold text-foreground">
                 <Zap class="w-5 h-5" />
                 Slash Commands
               </Dialog.Title>
-              <Dialog.CloseButton class="commands-panel-close">
+              <Dialog.CloseButton class="p-1.5 rounded transition-colors text-muted-foreground hover:bg-accent hover:text-foreground">
                 <X class="w-4 h-4" />
               </Dialog.CloseButton>
             </div>
 
-            <div class="commands-panel-content">
+            <div class="flex-1 overflow-y-auto p-5">
               {/* Success/Error Messages */}
               <Show when={saveSuccess()}>
-                <div class="commands-alert commands-alert-success">
+                <div class="flex items-center gap-2 px-3 py-2 rounded-md text-sm mb-4 bg-success/10 text-success border border-success/20">
                   <Check class="w-4 h-4" />
                   Command saved successfully
                 </div>
               </Show>
 
               <Show when={saveError()}>
-                <div class="commands-alert commands-alert-error">
+                <div class="flex items-center gap-2 px-3 py-2 rounded-md text-sm mb-4 bg-destructive/10 text-destructive border border-destructive/20">
                   <AlertCircle class="w-4 h-4" />
                   {saveError()}
                 </div>
@@ -243,66 +244,62 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
 
               {/* Add/Edit Form */}
               <Show when={isEditing()}>
-                <div class="commands-form">
-                  <h3 class="commands-form-title">
+                <div class="p-4 rounded-lg mb-4 bg-secondary border border-border">
+                  <h3 class="text-sm font-medium mb-4 text-foreground">
                     {isAddingCommand() ? "Add Custom Command" : `Edit /${editingCommand()}`}
                   </h3>
 
-                  <div class="commands-form-field">
-                    <label class="commands-form-label">Command Name</label>
-                    <input
+                  <div class="mb-4">
+                    <label class="block text-xs font-medium mb-1.5 text-muted-foreground">Command Name</label>
+                    <Input
                       type="text"
-                      class="commands-form-input"
                       placeholder="e.g., test, deploy, review"
                       value={formName()}
                       onInput={(e) => setFormName(e.currentTarget.value)}
                       disabled={editingCommand() !== null}
                     />
-                    <span class="commands-form-hint">Used as /{formName() || "command"}</span>
+                    <span class="block text-xs mt-1 text-muted-foreground">Used as /{formName() || "command"}</span>
                   </div>
 
-                  <div class="commands-form-field">
-                    <label class="commands-form-label">Template *</label>
+                  <div class="mb-4">
+                    <label class="block text-xs font-medium mb-1.5 text-muted-foreground">Template *</label>
                     <textarea
-                      class="commands-form-textarea"
+                      class="w-full px-3 py-2 text-sm rounded-md border border-border bg-background text-foreground outline-none transition-colors resize-y font-mono min-h-[80px] focus:border-primary placeholder:text-muted-foreground"
                       placeholder="The prompt sent to the LLM. Use $ARGUMENTS for user input, $1, $2 for positional args."
                       value={formTemplate()}
                       onInput={(e) => setFormTemplate(e.currentTarget.value)}
                       rows={4}
                     />
-                    <span class="commands-form-hint">
+                    <span class="block text-xs mt-1 text-muted-foreground">
                       Supports: $ARGUMENTS, $1 $2 etc., `!command` for shell output, @filename for file content
                     </span>
                   </div>
 
-                  <div class="commands-form-field">
-                    <label class="commands-form-label">Description</label>
-                    <input
+                  <div class="mb-4">
+                    <label class="block text-xs font-medium mb-1.5 text-muted-foreground">Description</label>
+                    <Input
                       type="text"
-                      class="commands-form-input"
                       placeholder="Brief explanation shown in the picker"
                       value={formDescription()}
                       onInput={(e) => setFormDescription(e.currentTarget.value)}
                     />
                   </div>
 
-                  <div class="commands-form-row">
-                    <div class="commands-form-field flex-1">
-                      <label class="commands-form-label">Agent</label>
-                      <input
+                  <div class="flex gap-4 mb-4">
+                    <div class="mb-4 flex-1">
+                      <label class="block text-xs font-medium mb-1.5 text-muted-foreground">Agent</label>
+                      <Input
                         type="text"
-                        class="commands-form-input"
                         placeholder="e.g., build, code"
                         value={formAgent()}
                         onInput={(e) => setFormAgent(e.currentTarget.value)}
                       />
                     </div>
 
-                    <div class="commands-form-field flex-1">
-                      <label class="commands-form-label">Model</label>
-                      <input
+                    <div class="mb-4 flex-1">
+                      <label class="block text-xs font-medium mb-1.5 text-muted-foreground">Model</label>
+                      <Input
                         type="text"
-                        class="commands-form-input"
                         placeholder="e.g., anthropic/claude-sonnet"
                         value={formModel()}
                         onInput={(e) => setFormModel(e.currentTarget.value)}
@@ -310,24 +307,25 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
                     </div>
                   </div>
 
-                  <div class="commands-form-checkbox">
+                  <div class="flex items-center gap-2 mb-4">
                     <input
                       type="checkbox"
                       id="subtask-checkbox"
+                      class="w-4 h-4 rounded accent-primary"
                       checked={formSubtask()}
                       onChange={(e) => setFormSubtask(e.currentTarget.checked)}
                     />
-                    <label for="subtask-checkbox">Run as subtask (spawns subagent)</label>
+                    <label for="subtask-checkbox" class="text-sm text-muted-foreground">Run as subtask (spawns subagent)</label>
                   </div>
 
-                  <div class="commands-form-actions">
-                    <button class="commands-btn commands-btn-secondary" onClick={cancelEdit}>
+                  <div class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border">
+                    <Button variant="outline" onClick={cancelEdit}>
                       Cancel
-                    </button>
-                    <button class="commands-btn commands-btn-primary" onClick={saveCommand}>
+                    </Button>
+                    <Button onClick={saveCommand}>
                       <Save class="w-4 h-4" />
                       Save Command
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </Show>
@@ -335,59 +333,62 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
               {/* Commands List */}
               <Show when={!isEditing()}>
                 {/* Add Command Button */}
-                <button class="commands-add-btn" onClick={startAddCommand}>
+                <button
+                  class="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-md text-sm font-medium transition-colors mb-4 bg-primary text-primary-foreground hover:brightness-110"
+                  onClick={startAddCommand}
+                >
                   <Plus class="w-4 h-4" />
                   Add Custom Command
                 </button>
 
                 {/* Custom Commands Section */}
-                <div class="commands-section">
+                <div class="mb-4">
                   <button
-                    class="commands-section-toggle"
+                    class="flex items-center gap-2 w-full text-left text-sm font-medium py-2 px-2 -mx-2 rounded transition-colors text-foreground hover:bg-accent"
                     onClick={() => setShowCustom(!showCustom())}
                   >
                     {showCustom() ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
                     <span>Custom Commands</span>
-                    <span class="commands-section-count">{customCommands().length}</span>
+                    <span class="ml-auto text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{customCommands().length}</span>
                   </button>
 
                   <Show when={showCustom()}>
-                    <div class="commands-list">
+                    <div class="mt-2 space-y-2">
                       <Show when={customCommands().length === 0}>
-                        <div class="commands-empty">
+                        <div class="text-sm text-center py-6 px-4 rounded-lg bg-secondary text-muted-foreground">
                           No custom commands defined. Click "Add Custom Command" to create one.
                         </div>
                       </Show>
                       <For each={customCommands()}>
                         {(cmd) => (
-                          <div class="commands-item">
-                            <div class="commands-item-main">
-                              <div class="commands-item-name">/{cmd.name}</div>
+                          <div class="flex items-start justify-between gap-3 p-3 rounded-lg transition-colors bg-secondary hover:bg-accent">
+                            <div class="flex-1 min-w-0">
+                              <div class="text-sm font-mono font-medium text-info">/{cmd.name}</div>
                               <Show when={cmd.description}>
-                                <div class="commands-item-desc">{cmd.description}</div>
+                                <div class="text-xs mt-0.5 truncate text-muted-foreground">{cmd.description}</div>
                               </Show>
-                              <div class="commands-item-meta">
+                              <div class="flex flex-wrap gap-1.5 mt-1.5">
                                 <Show when={cmd.agent}>
-                                  <span class="commands-item-badge">agent: {cmd.agent}</span>
+                                  <Badge variant="secondary" class="text-xs">agent: {cmd.agent}</Badge>
                                 </Show>
                                 <Show when={cmd.model}>
-                                  <span class="commands-item-badge">model: {cmd.model}</span>
+                                  <Badge variant="secondary" class="text-xs">model: {cmd.model}</Badge>
                                 </Show>
                                 <Show when={cmd.subtask}>
-                                  <span class="commands-item-badge">subtask</span>
+                                  <Badge variant="secondary" class="text-xs">subtask</Badge>
                                 </Show>
                               </div>
                             </div>
-                            <div class="commands-item-actions">
+                            <div class="flex items-center gap-1">
                               <button
-                                class="commands-item-action"
+                                class="p-1.5 rounded transition-colors text-muted-foreground hover:bg-background hover:text-foreground"
                                 onClick={() => startEditCommand(cmd)}
                                 title="Edit command"
                               >
                                 <Edit2 class="w-4 h-4" />
                               </button>
                               <button
-                                class="commands-item-action commands-item-action-danger"
+                                class="p-1.5 rounded transition-colors text-muted-foreground hover:bg-background hover:text-destructive"
                                 onClick={() => deleteCommand(cmd.name)}
                                 title="Delete command"
                               >
@@ -402,28 +403,28 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
                 </div>
 
                 {/* Built-in Commands Section */}
-                <div class="commands-section">
+                <div class="mb-4">
                   <button
-                    class="commands-section-toggle"
+                    class="flex items-center gap-2 w-full text-left text-sm font-medium py-2 px-2 -mx-2 rounded transition-colors text-foreground hover:bg-accent"
                     onClick={() => setShowBuiltIn(!showBuiltIn())}
                   >
                     {showBuiltIn() ? <ChevronDown class="w-4 h-4" /> : <ChevronRight class="w-4 h-4" />}
                     <span>Built-in Commands</span>
-                    <span class="commands-section-count">{builtInCommands().length}</span>
+                    <span class="ml-auto text-xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{builtInCommands().length}</span>
                   </button>
 
                   <Show when={showBuiltIn()}>
-                    <div class="commands-list">
+                    <div class="mt-2 space-y-2">
                       <For each={builtInCommands()}>
                         {(cmd) => (
-                          <div class="commands-item commands-item-builtin">
-                            <div class="commands-item-main">
-                              <div class="commands-item-name">/{cmd.name}</div>
+                          <div class="flex items-start justify-between gap-3 p-3 rounded-lg transition-colors bg-secondary opacity-70">
+                            <div class="flex-1 min-w-0">
+                              <div class="text-sm font-mono font-medium text-info">/{cmd.name}</div>
                               <Show when={cmd.description}>
-                                <div class="commands-item-desc">{cmd.description}</div>
+                                <div class="text-xs mt-0.5 truncate text-muted-foreground">{cmd.description}</div>
                               </Show>
                             </div>
-                            <div class="commands-item-badge-builtin">built-in</div>
+                            <Badge variant="secondary" class="text-xs self-start">built-in</Badge>
                           </div>
                         )}
                       </For>
@@ -432,12 +433,12 @@ const CommandsSettingsPanel: Component<CommandsSettingsPanelProps> = (props) => 
                 </div>
 
                 {/* Documentation Link */}
-                <div class="commands-docs">
+                <div class="mt-4 pt-4 text-center border-t border-border">
                   <a
                     href="https://opencode.ai/docs/commands/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="commands-docs-link"
+                    class="text-sm underline text-info hover:opacity-80"
                   >
                     Learn more about slash commands
                   </a>

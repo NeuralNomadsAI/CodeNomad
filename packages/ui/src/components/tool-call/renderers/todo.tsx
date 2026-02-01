@@ -2,6 +2,7 @@ import { For, Show } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { ToolRenderer } from "../types"
 import { readToolStatePayload } from "../utils"
+import { cn } from "../../../lib/cn"
 
 export type TodoViewStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
@@ -58,6 +59,45 @@ function getTodoStatusLabel(status: TodoViewStatus): string {
   }
 }
 
+function getCheckboxClass(status: TodoViewStatus): string {
+  switch (status) {
+    case "completed":
+      return "bg-info border-info text-info-foreground"
+    case "in_progress":
+      return "border-border text-info"
+    case "cancelled":
+      return "border-border text-destructive"
+    default:
+      return "border-border text-muted-foreground"
+  }
+}
+
+function getCheckboxContent(status: TodoViewStatus): string {
+  switch (status) {
+    case "completed":
+      return "\u2713"
+    case "in_progress":
+      return "\u2026"
+    case "cancelled":
+      return "\u00D7"
+    default:
+      return ""
+  }
+}
+
+function getStatusBadgeClass(status: TodoViewStatus): string {
+  switch (status) {
+    case "completed":
+      return "bg-success/10 text-success"
+    case "in_progress":
+      return "bg-muted text-foreground"
+    case "cancelled":
+      return "bg-destructive/10 text-destructive"
+    default:
+      return "bg-accent/10 text-muted-foreground"
+  }
+}
+
 interface TodoListViewProps {
   state?: ToolState
   emptyLabel?: string
@@ -69,35 +109,48 @@ export function TodoListView(props: TodoListViewProps) {
   const counts = summarizeTodos(todos)
 
   if (counts.total === 0) {
-    return <div class="tool-call-todo-empty">{props.emptyLabel ?? "No plan items yet."}</div>
+    return <div class="text-sm text-muted-foreground py-3">{props.emptyLabel ?? "No plan items yet."}</div>
   }
 
   return (
-    <div class="tool-call-todo-region">
-      <div class="tool-call-todos" role="list">
+    <div class="flex flex-col">
+      <div class="flex flex-col" role="list">
         <For each={todos}>
           {(todo) => {
             const label = getTodoStatusLabel(todo.status)
             return (
               <div
-                class="tool-call-todo-item"
-                classList={{
-                  "tool-call-todo-item-completed": todo.status === "completed",
-                  "tool-call-todo-item-cancelled": todo.status === "cancelled",
-                  "tool-call-todo-item-active": todo.status === "in_progress",
-                }}
+                class={cn(
+                  "flex items-start gap-3 border border-border px-3 py-2.5 bg-secondary min-h-[42px]",
+                  todo.status === "completed" && "bg-muted",
+                  todo.status === "cancelled" && "opacity-75",
+                  todo.status === "in_progress" && "border-info bg-accent/10",
+                )}
                 role="listitem"
               >
-                <span class="tool-call-todo-checkbox" data-status={todo.status} aria-label={label}></span>
-                  <div class="tool-call-todo-body">
-                    <div class="tool-call-todo-heading">
-                      <span class="tool-call-todo-text">{todo.content}</span>
-                      <Show when={props.showStatusLabel !== false}>
-                        <span class={`tool-call-todo-status tool-call-todo-status-${todo.status}`}>{label}</span>
-                      </Show>
-                    </div>
+                <span
+                  class={cn(
+                    "w-[1.1rem] h-[1.1rem] rounded-full border-2 inline-flex items-center justify-center text-xs font-semibold bg-transparent",
+                    getCheckboxClass(todo.status),
+                  )}
+                  aria-label={label}
+                >
+                  {getCheckboxContent(todo.status)}
+                </span>
+                <div class="flex-1 flex flex-col gap-1.5">
+                  <div class="flex items-start gap-3 justify-between">
+                    <span class={cn(
+                      "text-sm leading-tight text-foreground break-words",
+                      todo.status === "cancelled" && "line-through text-muted-foreground",
+                    )}>{todo.content}</span>
+                    <Show when={props.showStatusLabel !== false}>
+                      <span class={cn(
+                        "text-[10px] uppercase tracking-[0.08em] rounded-full px-2 py-0.5 whitespace-nowrap",
+                        getStatusBadgeClass(todo.status),
+                      )}>{label}</span>
+                    </Show>
                   </div>
-
+                </div>
               </div>
             )
           }}

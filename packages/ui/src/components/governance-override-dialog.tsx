@@ -1,6 +1,8 @@
 import { Component, Show, createSignal } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { X, Shield, AlertTriangle } from "lucide-solid"
+import { cn } from "../lib/cn"
+import { Button } from "./ui"
 import { setRuleOverride, type GovernanceRule } from "../stores/era-governance"
 
 interface GovernanceOverrideDialogProps {
@@ -50,32 +52,32 @@ const GovernanceOverrideDialog: Component<GovernanceOverrideDialogProps> = (prop
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && handleClose()} modal>
       <Dialog.Portal>
-        <Dialog.Overlay class="governance-dialog-overlay" />
+        <Dialog.Overlay class={cn("fixed inset-0 z-[55] bg-black/50")} />
         <div class="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <Dialog.Content class="governance-dialog">
-            <div class="governance-dialog-header">
-              <Dialog.Title class="governance-dialog-title">
+          <Dialog.Content class={cn("w-full max-w-md rounded-lg shadow-2xl bg-background border border-border")}>
+            <div class={cn("flex items-center justify-between px-4 py-3 border-b border-border")}>
+              <Dialog.Title class={cn("flex items-center gap-2 text-lg font-semibold text-foreground")}>
                 <Shield class="w-5 h-5" />
                 <span>Override Rule</span>
               </Dialog.Title>
-              <Dialog.CloseButton class="governance-dialog-close">
+              <Dialog.CloseButton class={cn("p-1 rounded hover:bg-accent transition-colors text-muted-foreground")}>
                 <X class="w-4 h-4" />
               </Dialog.CloseButton>
             </div>
 
             <Show when={props.rule}>
-              <div class="governance-dialog-content">
-                <div class="governance-dialog-rule-info">
-                  <div class="governance-dialog-rule-id">{props.rule!.id}</div>
-                  <div class="governance-dialog-rule-reason">{props.rule!.reason}</div>
+              <div class={cn("p-4 space-y-4")}>
+                <div class={cn("p-3 rounded-lg bg-secondary")}>
+                  <div class={cn("font-mono text-sm font-medium mb-1 text-foreground")}>{props.rule!.id}</div>
+                  <div class={cn("text-sm text-muted-foreground")}>{props.rule!.reason}</div>
                   <Show when={props.rule!.suggestion}>
-                    <div class="governance-dialog-rule-suggestion">
+                    <div class={cn("text-xs mt-2 pt-2 border-t border-border text-muted-foreground")}>
                       {props.rule!.suggestion}
                     </div>
                   </Show>
                 </div>
 
-                <div class="governance-dialog-warning">
+                <div class={cn("flex items-start gap-2 p-3 rounded-lg text-sm bg-warning/10 text-warning")}>
                   <AlertTriangle class="w-4 h-4" />
                   <span>
                     Overriding this rule will allow the blocked command to execute.
@@ -83,47 +85,52 @@ const GovernanceOverrideDialog: Component<GovernanceOverrideDialogProps> = (prop
                   </span>
                 </div>
 
-                <div class="governance-dialog-form">
-                  <label class="governance-dialog-label">
-                    Justification <span class="text-red-400">*</span>
+                <div class={cn("space-y-2")}>
+                  <label class={cn("block text-sm font-medium text-foreground")}>
+                    Justification <span class="text-destructive">*</span>
                   </label>
                   <textarea
-                    class="governance-dialog-textarea"
+                    class={cn(
+                      "w-full px-3 py-2 rounded-md text-sm resize-none",
+                      "bg-secondary border border-border text-foreground",
+                      "placeholder:text-muted-foreground",
+                      "focus:outline-none focus:border-info"
+                    )}
                     placeholder="Explain why this override is necessary..."
                     value={justification()}
                     onInput={(e) => setJustification(e.currentTarget.value)}
                     rows={3}
                   />
-                  <p class="governance-dialog-hint">
+                  <p class={cn("text-xs text-muted-foreground")}>
                     This justification will be saved to .era/governance.local.yaml
                   </p>
                 </div>
 
                 <Show when={error()}>
-                  <div class="governance-dialog-error">
+                  <div class={cn("flex items-center gap-2 p-3 rounded-lg text-sm bg-destructive/10 text-destructive")}>
                     <AlertTriangle class="w-4 h-4" />
                     <span>{error()}</span>
                   </div>
                 </Show>
               </div>
 
-              <div class="governance-dialog-footer">
-                <button
-                  type="button"
-                  class="governance-dialog-btn governance-dialog-btn-cancel"
+              <div class={cn("flex items-center justify-end gap-2 px-4 py-3 border-t border-border")}>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleClose}
                   disabled={isSubmitting()}
                 >
                   Cancel
-                </button>
-                <button
-                  type="button"
-                  class="governance-dialog-btn governance-dialog-btn-confirm"
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
                   onClick={handleSubmit}
                   disabled={isSubmitting() || !justification().trim()}
                 >
                   {isSubmitting() ? "Saving..." : "Allow Rule"}
-                </button>
+                </Button>
               </div>
             </Show>
           </Dialog.Content>

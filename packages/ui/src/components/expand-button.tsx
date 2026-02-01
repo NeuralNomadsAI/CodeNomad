@@ -1,5 +1,6 @@
 import { Show } from "solid-js"
 import { Maximize2, Minimize2 } from "lucide-solid"
+import { Button } from "./ui"
 
 interface ExpandButtonProps {
   expandState: () => "normal" | "expanded"
@@ -13,9 +14,11 @@ export default function ExpandButton(props: ExpandButtonProps) {
   }
 
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon"
       type="button"
-      class="prompt-expand-button"
+      class="w-7 h-7 flex-shrink-0 text-muted-foreground bg-black/[0.04] hover:bg-secondary hover:text-foreground active:bg-info active:text-primary-foreground active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
       onClick={handleClick}
       aria-label="Toggle chat input height"
     >
@@ -25,6 +28,6 @@ export default function ExpandButton(props: ExpandButtonProps) {
       >
         <Maximize2 class="h-4 w-4" aria-hidden="true" />
       </Show>
-    </button>
+    </Button>
   )
 }

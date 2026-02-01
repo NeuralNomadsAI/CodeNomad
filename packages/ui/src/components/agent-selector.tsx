@@ -4,8 +4,10 @@ import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Agent } from "../types/session"
 import { getLogger } from "../lib/logger"
+import { cn } from "../lib/cn"
 const log = getLogger("session")
 
+const INTERNAL_AGENT_NAMES = new Set(["compaction", "title", "summary"])
 
 interface AgentSelectorProps {
   instanceId: string
@@ -32,7 +34,9 @@ export default function AgentSelector(props: AgentSelectorProps) {
       return allAgents
     }
 
-    const filtered = allAgents.filter((agent) => agent.mode !== "subagent")
+    const filtered = allAgents.filter(
+      (agent) => agent.mode !== "subagent" && !INTERNAL_AGENT_NAMES.has(agent.name),
+    )
 
     const currentAgent = allAgents.find((a) => a.name === props.currentAgent)
     if (currentAgent && !filtered.find((a) => a.name === props.currentAgent)) {
@@ -66,8 +70,8 @@ export default function AgentSelector(props: AgentSelectorProps) {
   const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.slice(1)
 
   return (
-    <div class="sidebar-selector">
-      <label class="selector-label">Agent</label>
+    <div class="flex flex-col gap-1.5 w-full">
+      <label class="text-xs font-semibold uppercase tracking-wide block text-muted-foreground">Agent</label>
       <Select
         value={availableAgents().find((a) => a.name === props.currentAgent)}
         onChange={handleChange}
@@ -80,17 +84,17 @@ export default function AgentSelector(props: AgentSelectorProps) {
           return (
             <Select.Item
               item={itemProps.item}
-              class="selector-option"
+              class="px-3 py-2 cursor-pointer rounded outline-none transition-colors flex items-start gap-2 w-full text-foreground hover:bg-accent data-[highlighted]:bg-accent data-[focused]:bg-accent data-[selected]:bg-accent"
             >
               <div class="flex flex-col flex-1 min-w-0">
-                <Select.ItemLabel class="selector-option-label flex items-center gap-2">
+                <Select.ItemLabel class="font-medium text-sm text-foreground flex items-center gap-2">
                   <span>{capitalize(agent?.name ?? "Unknown")}</span>
                   <Show when={agent?.mode === "subagent"}>
                     <span class="neutral-badge">subagent</span>
                   </Show>
                 </Select.ItemLabel>
                 <Show when={agent?.description}>
-                  <Select.ItemDescription class="selector-option-description">
+                  <Select.ItemDescription class="text-xs text-muted-foreground">
                     {agent?.description}
                   </Select.ItemDescription>
                 </Show>
@@ -101,25 +105,25 @@ export default function AgentSelector(props: AgentSelectorProps) {
       >
         <Select.Trigger
           data-agent-selector
-          class="selector-trigger"
+          class="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 border rounded outline-none transition-colors text-xs bg-background border-border text-foreground hover:bg-accent focus:ring-2 focus:ring-info"
         >
           <Select.Value<Agent>>
             {(state) => (
-              <div class="selector-trigger-label">
-                <span class="selector-trigger-primary">
+              <div class="flex flex-col min-w-0">
+                <span class="text-sm font-medium truncate text-foreground">
                   {capitalize(state.selectedOption()?.name ?? "None")}
                 </span>
               </div>
             )}
           </Select.Value>
-          <Select.Icon class="selector-trigger-icon">
+          <Select.Icon class="flex-shrink-0 text-muted-foreground">
             <ChevronDown class="w-3 h-3" />
           </Select.Icon>
         </Select.Trigger>
 
         <Select.Portal>
-          <Select.Content class="selector-popover max-h-80 overflow-auto p-1">
-            <Select.Listbox class="selector-listbox" />
+          <Select.Content class="rounded-md shadow-lg overflow-hidden min-w-[300px] bg-background border border-border z-[2200] max-h-80 overflow-auto p-1">
+            <Select.Listbox class="max-h-64 overflow-auto p-1 bg-background" />
           </Select.Content>
         </Select.Portal>
       </Select>

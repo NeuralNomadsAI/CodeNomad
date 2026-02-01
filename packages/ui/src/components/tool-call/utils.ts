@@ -49,6 +49,8 @@ export function getToolIcon(tool: string): string {
       return "📁"
     case "patch":
       return "🔧"
+    case "question":
+      return "❓"
     default:
       return "🔧"
   }
@@ -65,6 +67,8 @@ export function getToolName(tool: string): string {
     case "todowrite":
     case "todoread":
       return "Plan"
+    case "question":
+      return "Question"
     default: {
       const normalized = tool.replace(/^opencode_/, "")
       return normalized.charAt(0).toUpperCase() + normalized.slice(1)
@@ -218,6 +222,8 @@ export function getDefaultToolAction(toolName: string) {
       return "Planning..."
     case "patch":
       return "Preparing patch..."
+    case "question":
+      return "Asking..."
     default:
       return "Working..."
   }

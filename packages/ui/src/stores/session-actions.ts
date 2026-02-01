@@ -1,14 +1,26 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { classifyPromptIntent, shouldEscalateAgent } from "../lib/agent-intent"
+import {
+  classify,
+  mergeWithLlmResult,
+  isLlmUnavailable,
+  type ClassifyConfirmResponse,
+  type ClassificationResult,
+} from "../lib/instruction-classifier"
+import { showCaptureCard } from "./instruction-capture"
+import { getComposedInjection, retrieveSessionStartInstructions } from "./instruction-retrieval"
+import { ERA_CODE_API_BASE } from "../lib/api-client"
 import { instances } from "./instances"
 
-import { addRecentModelPreference, setAgentModelPreference } from "./preferences"
+import { addRecentModelPreference, setAgentModelPreference, getEffectiveThinkingMode } from "./preferences"
 import { getEffectivePermissionState } from "./session-permissions"
-import { sessions, withSession, checkAndArchiveSubagents } from "./session-state"
+import { sessions, withSession, checkAndArchiveSubagents, agents } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus, triggerCollapseAll } from "./message-v2/bus"
 import { cleanupIdleChildren } from "./session-cleanup"
 import { getLogger } from "../lib/logger"
+import { setRequestSent } from "./streaming-metrics"
 
 const log = getLogger("actions")
 
@@ -71,7 +83,7 @@ async function sendMessage(
   }
 
   const instanceSessions = sessions().get(instanceId)
-  const session = instanceSessions?.get(sessionId)
+  let session = instanceSessions?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
   }
@@ -86,6 +98,76 @@ async function sendMessage(
     const store = messageStoreBus.getOrCreate(instanceId)
     const parentMessageCount = store.getSessionMessageIds(sessionId).length
     checkAndArchiveSubagents(instanceId, parentMessageCount)
+  }
+
+  // Auto-route agent on first message of a top-level session
+  {
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const isFirstMessage = store.getSessionMessageIds(sessionId).length === 0
+
+    if (isFirstMessage && session.parentId === null) {
+      const instanceAgentList = agents().get(instanceId) || []
+      const availableNames = instanceAgentList
+        .filter((a) => a.mode !== "subagent")
+        .map((a) => a.name)
+      const suggestedAgent = classifyPromptIntent(prompt, availableNames)
+
+      if (suggestedAgent && suggestedAgent !== session.agent) {
+        const nextModel = await getDefaultModel(instanceId, suggestedAgent)
+        const shouldApplyModel = isModelValid(instanceId, nextModel)
+
+        withSession(instanceId, sessionId, (current) => {
+          current.agent = suggestedAgent
+          if (shouldApplyModel) {
+            current.model = nextModel
+          }
+        })
+        // Re-read session after mutation for request body
+        session = sessions().get(instanceId)?.get(sessionId)
+        if (!session) {
+          throw new Error("Session lost after auto-route")
+        }
+        log.info("Auto-routed to agent", { suggestedAgent, sessionId })
+      }
+    }
+  }
+
+  // Auto-escalate: if current agent is read-only (e.g. "plan") and the
+  // follow-up prompt signals execution intent, switch to a capable agent.
+  {
+    const instanceAgentList = agents().get(instanceId) || []
+    const availableNames = instanceAgentList
+      .filter((a) => a.mode !== "subagent")
+      .map((a) => a.name)
+    const escalateTarget = shouldEscalateAgent(prompt, session.agent, availableNames)
+
+    if (escalateTarget && escalateTarget !== session.agent) {
+      const nextModel = await getDefaultModel(instanceId, escalateTarget)
+      const shouldApplyModel = isModelValid(instanceId, nextModel)
+
+      withSession(instanceId, sessionId, (current) => {
+        current.agent = escalateTarget
+        if (shouldApplyModel) {
+          current.model = nextModel
+        }
+      })
+      session = sessions().get(instanceId)?.get(sessionId)
+      if (!session) {
+        throw new Error("Session lost after agent escalation")
+      }
+      log.info("Auto-escalated agent", { from: session.agent, to: escalateTarget, sessionId })
+    }
+  }
+
+  // Fire-and-forget: pre-fetch instructions for first message of a top-level session
+  {
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const isFirstMessage = store.getSessionMessageIds(sessionId).length === 0
+    if (isFirstMessage && session.parentId === null) {
+      const folder = instance?.folder
+      const projectName = folder?.split("/").pop() ?? undefined
+      retrieveSessionStartInstructions(instanceId, sessionId, { projectName }).catch(() => {})
+    }
   }
 
   const messageId = createId("msg")
@@ -157,6 +239,16 @@ async function sendMessage(
     }
   }
 
+  // Inject retrieved instructions as a hidden text part (requestParts only, not optimisticParts)
+  const composedInstructions = getComposedInjection(instanceId, sessionId)
+  if (composedInstructions) {
+    requestParts.unshift({
+      id: createId("part"),
+      type: "text" as const,
+      text: composedInstructions,
+    })
+  }
+
   const store = messageStoreBus.getOrCreate(instanceId)
   const createdAt = Date.now()
 
@@ -175,8 +267,30 @@ async function sendMessage(
     /* trigger reactivity for legacy session data */
   })
 
+  // Non-blocking instruction classification — fire and forget
+  try {
+    const classification = classify(resolvedPrompt)
+    if (classification) {
+      if (!classification.needsLlmConfirmation) {
+        // High confidence — show card immediately
+        showCaptureCard(classification)
+      } else {
+        // Borderline — ask server for LLM confirmation
+        confirmClassification(classification).catch(() => {})
+      }
+    }
+  } catch {
+    // Classification errors are silently swallowed — never block message send
+  }
+
   // Get effective permission state for this session
   const autoApprove = getEffectivePermissionState(instanceId, sessionId)
+
+  // Resolve thinking mode for the current model
+  const modelKey = session.model.providerId && session.model.modelId
+    ? `${session.model.providerId}/${session.model.modelId}`
+    : ""
+  const thinkingMode = modelKey ? getEffectiveThinkingMode(modelKey, session.model.providerId) : undefined
 
   const requestBody = {
     messageID: messageId,
@@ -189,6 +303,8 @@ async function sendMessage(
           modelID: session.model.modelId,
         },
       }),
+    // Include thinking mode in request (backend may silently ignore if unsupported)
+    ...(thinkingMode && { thinking: thinkingMode }),
     // Include permission state in request
     dangerouslySkipPermissions: autoApprove,
   }
@@ -200,6 +316,7 @@ async function sendMessage(
   })
 
   try {
+    setRequestSent(instanceId, sessionId)
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     const response = await instance.client.session.promptAsync({
       path: { id: sessionId },
@@ -394,10 +511,90 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
+/**
+ * Reply to an active Question tool call via the /question/{id}/reply API.
+ * The question tool uses a separate API from permissions and regular messages.
+ */
+async function replyToQuestion(
+  instanceId: string,
+  requestId: string,
+  answers: string[][],
+): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance) {
+    throw new Error("Instance not ready")
+  }
+
+  log.info("replyToQuestion", { instanceId, requestId, answers })
+
+  try {
+    const { instanceApi } = await import("../lib/instance-api")
+    await instanceApi.replyToQuestion(instance, requestId, answers)
+    log.info("Question reply sent successfully")
+  } catch (error) {
+    log.error("Failed to reply to question", error)
+    throw error
+  }
+}
+
+/**
+ * Reject/dismiss an active Question tool call.
+ */
+async function rejectQuestion(
+  instanceId: string,
+  requestId: string,
+): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance) {
+    throw new Error("Instance not ready")
+  }
+
+  log.info("rejectQuestion", { instanceId, requestId })
+
+  try {
+    const { instanceApi } = await import("../lib/instance-api")
+    await instanceApi.rejectQuestion(instance, requestId)
+    log.info("Question rejected successfully")
+  } catch (error) {
+    log.error("Failed to reject question", error)
+    throw error
+  }
+}
+
+/**
+ * Ask the server to refine a borderline classification using Haiku.
+ * Fire-and-forget: if the LLM confirms, shows the capture card.
+ * If it rejects or is unavailable, does nothing.
+ */
+async function confirmClassification(regexResult: ClassificationResult): Promise<void> {
+  try {
+    const resp = await fetch(`${ERA_CODE_API_BASE}/api/era/classify-confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: regexResult.sourceMessage }),
+    })
+
+    if (!resp.ok) return
+
+    const data = (await resp.json()) as ClassifyConfirmResponse
+
+    if (isLlmUnavailable(data)) return
+
+    const refined = mergeWithLlmResult(regexResult, data)
+    if (refined.isInstruction) {
+      showCaptureCard(refined)
+    }
+  } catch {
+    // Best-effort — silently ignore errors
+  }
+}
+
 export {
   abortSession,
   executeCustomCommand,
+  rejectQuestion,
   renameSession,
+  replyToQuestion,
   runShellCommand,
   sendMessage,
   updateSessionAgent,

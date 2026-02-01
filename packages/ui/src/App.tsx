@@ -2,7 +2,6 @@ import { Component, For, Show, createMemo, createEffect, createSignal, onMount, 
 import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./components/alert-dialog"
-import FolderSelectionView from "./components/folder-selection-view"
 import FolderSelectionCards from "./components/folder-selection-cards"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
@@ -12,6 +11,7 @@ import SubagentBar from "./components/subagent-bar"
 import SettingsPanel from "./components/settings-panel"
 import CommandsSettingsPanel from "./components/commands-settings-panel"
 import McpSettingsModal from "./components/mcp-settings-modal"
+import LspSettingsModal from "./components/lsp-settings-modal"
 import AddMcpServerModal, { type AddMcpServerResult } from "./components/add-mcp-server-modal"
 import GovernancePanel from "./components/governance-panel"
 import DirectivesEditorPanel from "./components/directives-editor-panel"
@@ -90,6 +90,7 @@ import { isSessionCompactionActive } from "./stores/session-compaction"
 import { isSessionBusy as checkSessionBusy } from "./stores/session-status"
 import { modelSelectorRequestedSignal, acknowledgeModelSelectorRequest, clearContinueFlag, shouldContinueAfterSwitch, instanceInfoRequestedSignal, acknowledgeInstanceInfoRequest } from "./stores/ui-actions"
 import { sendMessage } from "./stores/session-actions"
+import { sseManager } from "./lib/sse-manager"
 
 const log = getLogger("actions")
 
@@ -114,6 +115,7 @@ const App: Component = () => {
   const [settingsPanelOpen, setSettingsPanelOpen] = createSignal(false)
   const [commandsPanelOpen, setCommandsPanelOpen] = createSignal(false)
   const [mcpSettingsOpen, setMcpSettingsOpen] = createSignal(false)
+  const [lspSettingsOpen, setLspSettingsOpen] = createSignal(false)
   const [addMcpServerOpen, setAddMcpServerOpen] = createSignal(false)
   const [governancePanelOpen, setGovernancePanelOpen] = createSignal(false)
   const [directivesEditorOpen, setDirectivesEditorOpen] = createSignal(false)
@@ -254,20 +256,24 @@ const App: Component = () => {
   // Aggregate total tokens (input + output) across ALL sessions for this project/instance
   const totalProjectTokens = createMemo(() => {
     const instance = activeInstance()
-    if (!instance) return { used: 0, cost: 0 }
+    if (!instance) return { used: 0, input: 0, output: 0, cost: 0 }
 
     const sessionInfoMap = sessionInfoByInstance().get(instance.id)
-    if (!sessionInfoMap) return { used: 0, cost: 0 }
+    if (!sessionInfoMap) return { used: 0, input: 0, output: 0, cost: 0 }
 
     let totalUsed = 0
+    let totalInput = 0
+    let totalOutput = 0
     let totalCost = 0
 
     for (const info of sessionInfoMap.values()) {
+      totalInput += info.inputTokens ?? 0
+      totalOutput += info.outputTokens ?? 0
       totalUsed += (info.inputTokens ?? 0) + (info.outputTokens ?? 0)
       totalCost += info.cost ?? 0
     }
 
-    return { used: totalUsed, cost: totalCost }
+    return { used: totalUsed, input: totalInput, output: totalOutput, cost: totalCost }
   })
 
   const isCompacting = createMemo(() => {
@@ -315,6 +321,13 @@ const App: Component = () => {
     const instance = activeInstance()
     if (!instance) return 0
     return getActiveMcpServerCount(instance.id, instance.folder)
+  })
+
+  // Connection status for bottom status bar
+  const connectionStatus = createMemo(() => {
+    const instance = activeInstance()
+    if (!instance) return null
+    return sseManager.getStatus(instance.id)
   })
 
   // Check if we're viewing a child session (not the parent)
@@ -574,7 +587,17 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      // Actually delete the session via API
+      // Delete child sessions first to avoid orphaned sub-agent tabs
+      const children = getChildSessions(instanceId, parentSessionId)
+      for (const child of children) {
+        try {
+          await deleteSession(instanceId, child.id)
+        } catch (childError) {
+          log.warn("Failed to delete child session", { sessionId: child.id, error: childError })
+        }
+      }
+
+      // Actually delete the parent session via API
       await deleteSession(instanceId, parentSessionId)
       log.info("Session deleted successfully", { instanceId, sessionId: parentSessionId })
     } catch (error) {
@@ -787,27 +810,27 @@ const App: Component = () => {
 
       <Dialog open={Boolean(launchErrorBinary())} modal>
         <Dialog.Portal>
-          <Dialog.Overlay class="modal-overlay" />
+          <Dialog.Overlay class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-6">
+            <Dialog.Content class="bg-background/95 backdrop-blur-sm rounded-xl border border-border shadow-xl w-full max-w-md p-6 flex flex-col gap-6">
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">Unable to launch OpenCode</Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-2 break-words">
+                <Dialog.Description class="text-sm text-muted-foreground mt-2 break-words">
                   Install the OpenCode CLI and make sure it is available in your PATH, or pick a custom binary from
                   Advanced Settings.
                 </Dialog.Description>
               </div>
 
-              <div class="rounded-lg border border-base bg-surface-secondary p-4">
-                <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Binary path</p>
+              <div class="rounded-lg border border-border bg-secondary p-4">
+                <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Binary path</p>
                 <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
               </div>
 
               <div class="flex justify-end gap-2">
-                <button type="button" class="selector-button selector-button-secondary" onClick={handleLaunchErrorAdvanced}>
+                <button type="button" class="inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium bg-secondary text-secondary-foreground border border-border hover:bg-accent transition-colors" onClick={handleLaunchErrorAdvanced}>
                   Open Advanced Settings
                 </button>
-                <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
+                <button type="button" class="inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors" onClick={handleLaunchErrorClose}>
                   Close
                 </button>
               </div>
@@ -904,6 +927,7 @@ const App: Component = () => {
                       advancedSettingsOpen={isAdvancedSettingsOpen()}
                       onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
                       onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
+                      onOpenFullSettings={() => setFullSettingsOpen(true)}
                     />
                   </div>
                 </div>
@@ -938,15 +962,21 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            isLoading={isSelectingFolder()}
-            advancedSettingsOpen={isAdvancedSettingsOpen()}
-            onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
-            onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
-            onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
-            onOpenFullSettings={() => setFullSettingsOpen(true)}
-          />
+          <div
+            class="flex-1 min-h-0 overflow-auto flex items-center justify-center p-6"
+            style="background-color: var(--surface-secondary)"
+          >
+            <div class="w-full max-w-3xl">
+              <FolderSelectionCards
+                onSelectFolder={handleSelectFolder}
+                isLoading={isSelectingFolder()}
+                advancedSettingsOpen={isAdvancedSettingsOpen()}
+                onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
+                onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
+                onOpenFullSettings={() => setFullSettingsOpen(true)}
+              />
+            </div>
+          </div>
         </Show>
  
         <RemoteAccessOverlay open={remoteAccessOpen()} onClose={() => setRemoteAccessOpen(false)} />
@@ -963,6 +993,10 @@ const App: Component = () => {
           onOpenMcpSettings={() => {
             setSettingsPanelOpen(false)
             setMcpSettingsOpen(true)
+          }}
+          onOpenLspSettings={() => {
+            setSettingsPanelOpen(false)
+            setLspSettingsOpen(true)
           }}
           onOpenAdvancedSettings={() => {
             setSettingsPanelOpen(false)
@@ -1005,9 +1039,13 @@ const App: Component = () => {
         <McpSettingsModal
           open={mcpSettingsOpen()}
           onClose={() => setMcpSettingsOpen(false)}
-          folder={activeInstance()?.folder}
-          instanceId={activeInstance()?.id}
-          onAddServer={handleOpenAddServer}
+          instance={activeInstance() ?? null}
+        />
+
+        <LspSettingsModal
+          open={lspSettingsOpen()}
+          onClose={() => setLspSettingsOpen(false)}
+          instance={activeInstance() ?? null}
         />
 
         <AddMcpServerModal
@@ -1078,6 +1116,8 @@ const App: Component = () => {
           <BottomStatusBar
             projectName={projectName()}
             usedTokens={totalProjectTokens().used}
+            inputTokens={totalProjectTokens().input}
+            outputTokens={totalProjectTokens().output}
             availableTokens={activeSessionInfo()?.contextAvailableTokens ?? null}
             contextWindow={activeSessionInfo()?.contextWindow ?? 0}
             isCompacting={isCompacting()}
@@ -1091,6 +1131,7 @@ const App: Component = () => {
             gitBranch={gitStatus()?.branch}
             gitAhead={gitStatus()?.ahead}
             gitBehind={gitStatus()?.behind}
+            connectionStatus={connectionStatus()}
             onModelClick={() => setModelSelectorOpen(true)}
             onContextClick={() => {
               // TODO: Open session summary modal
@@ -1099,6 +1140,7 @@ const App: Component = () => {
             onGovernanceClick={() => setGovernancePanelOpen(true)}
             onDirectivesClick={() => setDirectivesEditorOpen(true)}
             onMcpClick={() => setMcpSettingsOpen(true)}
+            onLspClick={() => setLspSettingsOpen(true)}
             onInstanceClick={() => setInstanceInfoModalOpen(true)}
             onSettingsClick={() => setSettingsPanelOpen(true)}
           />

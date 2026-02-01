@@ -1,6 +1,7 @@
 import { Component } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { Terminal, Settings2, Plug, Variable, Settings, ExternalLink } from "lucide-solid"
+import { Button } from "./ui"
 import OpenCodeBinarySelector from "./opencode-binary-selector"
 import EnvironmentVariablesEditor from "./environment-variables-editor"
 import ModelDefaultsPanel from "./model-defaults-panel"
@@ -20,19 +21,19 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
+        <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-            <header class="modal-header">
-              <Dialog.Title class="text-xl font-semibold text-primary">Advanced Settings</Dialog.Title>
-              <p class="text-sm text-secondary mt-1">Configure OpenCode instances, providers, and environment</p>
+          <Dialog.Content class="rounded-lg shadow-2xl flex flex-col bg-background text-foreground w-full max-w-4xl max-h-[90vh] overflow-hidden">
+            <header class="px-6 py-4 border-b border-border">
+              <Dialog.Title class="text-xl font-semibold text-foreground">Advanced Settings</Dialog.Title>
+              <p class="text-sm text-muted-foreground mt-1">Configure OpenCode instances, providers, and environment</p>
             </header>
 
-            <div class="modal-body">
+            <div class="flex-1 overflow-y-auto p-6 space-y-6">
               {/* Session Configuration Group */}
-              <div class="modal-section">
-                <div class="modal-section-header">
-                  <Terminal />
+              <div class="space-y-4">
+                <div class="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Terminal class="w-4 h-4" />
                   <span>Session Configuration</span>
                 </div>
                 <OpenCodeBinarySelector
@@ -45,9 +46,9 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
               </div>
 
               {/* Connections Group */}
-              <div class="modal-section">
-                <div class="modal-section-header">
-                  <Plug />
+              <div class="space-y-4">
+                <div class="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Plug class="w-4 h-4" />
                   <span>Connections</span>
                 </div>
                 <ProviderSettingsPanel />
@@ -55,19 +56,19 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
               </div>
 
               {/* Environment Group */}
-              <div class="modal-section">
-                <div class="modal-section-header">
-                  <Variable />
+              <div class="space-y-4">
+                <div class="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Variable class="w-4 h-4" />
                   <span>Environment</span>
                 </div>
                 <EnvironmentVariablesEditor disabled={Boolean(props.isLoading)} />
               </div>
             </div>
 
-            <div class="modal-footer justify-between">
-              <button
+            <div class="flex items-center justify-between px-6 py-4 border-t border-border">
+              <Button
+                variant="outline"
                 type="button"
-                class="modal-button modal-button--secondary flex items-center gap-2"
                 onClick={() => {
                   props.onClose()
                   props.onOpenFullSettings?.()
@@ -75,14 +76,14 @@ const AdvancedSettingsModal: Component<AdvancedSettingsModalProps> = (props) => 
               >
                 <Settings class="w-4 h-4" />
                 All Settings
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
-                class="modal-button modal-button--ghost"
                 onClick={props.onClose}
               >
                 Close
-              </button>
+              </Button>
             </div>
           </Dialog.Content>
         </div>

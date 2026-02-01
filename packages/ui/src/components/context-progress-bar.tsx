@@ -1,4 +1,6 @@
 import { Component, createMemo } from "solid-js"
+import { cn } from "../lib/cn"
+import { Progress } from "./ui"
 import { formatTokenTotal } from "../lib/formatters"
 
 interface ContextProgressBarProps {
@@ -28,32 +30,61 @@ const ContextProgressBar: Component<ContextProgressBarProps> = (props) => {
     return "normal"
   })
 
-  const sizeClass = createMemo(() => {
+  const indicatorColor = createMemo(() => {
+    switch (usageLevel()) {
+      case "critical":
+        return "bg-destructive"
+      case "warning":
+        return "bg-warning"
+      default:
+        return "bg-success"
+    }
+  })
+
+  const trackSize = createMemo(() => {
     switch (props.size) {
       case "sm":
-        return "context-progress-bar--sm"
+        return "h-[3px] min-w-[40px]"
       case "lg":
-        return "context-progress-bar--lg"
+        return "h-2 min-w-[120px] max-w-[300px]"
       default:
-        return "context-progress-bar--md"
+        return "h-1.5 min-w-[80px] max-w-[200px]"
+    }
+  })
+
+  const labelSize = createMemo(() => {
+    switch (props.size) {
+      case "sm":
+        return "text-[9px]"
+      default:
+        return "text-[10px]"
+    }
+  })
+
+  const gapSize = createMemo(() => {
+    switch (props.size) {
+      case "sm":
+        return "gap-1"
+      default:
+        return "gap-2"
     }
   })
 
   return (
-    <div class={`context-progress-bar ${sizeClass()} ${props.class ?? ""}`}>
+    <div class={cn("flex items-center", gapSize(), props.class)}>
       {props.showLabels !== false && (
-        <span class="context-progress-label context-progress-label--used">
+        <span class={cn("font-mono font-semibold whitespace-nowrap text-muted-foreground", labelSize())}>
           {formatTokenTotal(props.used)}
         </span>
       )}
-      <div class="context-progress-track">
-        <div
-          class={`context-progress-fill context-progress-fill--${usageLevel()}`}
-          style={{ width: `${percentage()}%` }}
-        />
-      </div>
+      <Progress
+        value={percentage()}
+        max={100}
+        class={cn("flex-1 bg-primary/20", trackSize())}
+        indicatorClass={indicatorColor()}
+      />
       {props.showLabels !== false && (
-        <span class="context-progress-label context-progress-label--total">
+        <span class={cn("font-mono font-semibold whitespace-nowrap text-muted-foreground", labelSize())}>
           {total() !== null ? formatTokenTotal(total()!) : "--"}
         </span>
       )}

@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
+import { cn } from "../lib/cn"
 
 interface InstanceInfoProps {
   instance: Instance
@@ -31,14 +32,14 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   })
 
   return (
-    <div class="panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Instance Information</h2>
+    <div class="rounded-lg shadow-sm border border-border overflow-hidden min-w-0 bg-card text-foreground">
+      <div class="px-4 py-3 border-b border-border bg-secondary">
+        <h2 class="text-base font-semibold text-foreground">Instance Information</h2>
       </div>
-      <div class="panel-body space-y-3">
+      <div class="p-4 space-y-3">
         <div>
-          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Folder</div>
-          <div class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
+          <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Folder</div>
+          <div class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-secondary border-border">
             {currentInstance().folder}
           </div>
         </div>
@@ -47,23 +48,22 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           {(project) => (
             <>
               <div>
-                <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+                <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
                   Project
                 </div>
-                <div class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
+                <div class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-secondary border-border text-primary">
                   {project().id}
                 </div>
               </div>
 
               <Show when={project().vcs}>
                 <div>
-                  <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+                  <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
                     Version Control
                   </div>
                   <div class="flex items-center gap-2 text-xs text-primary">
                     <svg
-                      class="w-3.5 h-3.5"
-                      style="color: var(--status-warning);"
+                      class="w-3.5 h-3.5 text-warning"
                       fill="currentColor"
                       viewBox="0 0 24 24"
                     >
@@ -79,10 +79,10 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
 
         <Show when={binaryVersion()}>
           <div>
-            <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+            <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
               {isEraCode() ? "Era-Code Version" : "OpenCode Version"}
             </div>
-            <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div class="text-xs px-2 py-1.5 rounded border bg-secondary border-border text-primary">
               v{binaryVersion()}
             </div>
           </div>
@@ -90,10 +90,10 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
 
         <Show when={currentInstance().binaryPath}>
           <div>
-            <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+            <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
               Binary Path
             </div>
-            <div class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-secondary border-border text-primary">
               {currentInstance().binaryPath}
             </div>
           </div>
@@ -101,17 +101,17 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
 
         <Show when={environmentEntries().length > 0}>
           <div>
-            <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">
+            <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
               Environment Variables ({environmentEntries().length})
             </div>
             <div class="space-y-1">
               <For each={environmentEntries()}>
                 {([key, value]) => (
-                  <div class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                  <div class="flex items-center gap-2 px-2 py-1.5 rounded border bg-secondary border-border">
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
                       {key}
                     </span>
-                    <span class="text-xs font-mono flex-1 text-secondary" title={value}>
+                    <span class="text-xs font-mono flex-1 text-muted-foreground" title={value}>
                       {value}
                     </span>
                   </div>
@@ -124,7 +124,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         <InstanceServiceStatus initialInstance={props.instance} class="space-y-3" />
 
         <Show when={isLoadingMetadata()}>
-          <div class="text-xs text-muted py-1">
+          <div class="text-xs text-muted-foreground py-1">
             <div class="flex items-center gap-1.5">
               <svg class="animate-spin h-3 w-3 icon-muted" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -140,21 +140,34 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         </Show>
 
         <div>
-          <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">Server</div>
+          <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Server</div>
           <div class="space-y-1 text-xs">
             <div class="flex justify-between items-center">
-              <span class="text-secondary">Port:</span>
+              <span class="text-muted-foreground">Port:</span>
               <span class="text-primary font-mono">{currentInstance().port}</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-secondary">PID:</span>
+              <span class="text-muted-foreground">PID:</span>
               <span class="text-primary font-mono">{currentInstance().pid}</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-secondary">Status:</span>
-              <span class={`status-badge ${currentInstance().status}`}>
+              <span class="text-muted-foreground">Status:</span>
+              <span class={cn(
+                "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium",
+                currentInstance().status === "ready" && "bg-success/20 text-success",
+                currentInstance().status === "starting" && "bg-warning/20 text-warning",
+                currentInstance().status === "error" && "bg-destructive/20 text-destructive",
+                currentInstance().status === "stopped" && "bg-muted text-muted-foreground",
+              )}>
                 <div
-                  class={`status-dot ${currentInstance().status === "ready" ? "ready" : currentInstance().status === "starting" ? "starting" : currentInstance().status === "error" ? "error" : "stopped"} ${currentInstance().status === "ready" || currentInstance().status === "starting" ? "animate-pulse" : ""}`}
+                  class={cn(
+                    "w-2 h-2 rounded-full",
+                    currentInstance().status === "ready" && "bg-success",
+                    currentInstance().status === "starting" && "bg-warning",
+                    currentInstance().status === "error" && "bg-destructive",
+                    currentInstance().status === "stopped" && "bg-muted-foreground",
+                    (currentInstance().status === "ready" || currentInstance().status === "starting") && "animate-pulse",
+                  )}
                 />
                 {currentInstance().status}
               </span>

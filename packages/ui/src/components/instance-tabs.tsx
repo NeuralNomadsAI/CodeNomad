@@ -2,6 +2,7 @@ import { Component, For, Show, createSignal, onMount, onCleanup } from "solid-js
 import type { Instance } from "../types/instance"
 import InstanceTab from "./instance-tab"
 import { Plus, X, ChevronLeft, ChevronRight, Settings } from "lucide-solid"
+import { cn } from "../lib/cn"
 
 interface InstanceTabsProps {
   instances: Map<string, Instance>
@@ -56,19 +57,23 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
   const statusColor = () => {
     switch (props.serverStatus) {
-      case "healthy": return "bg-green-500"
-      case "warning": return "bg-yellow-500"
-      case "error": return "bg-red-500"
-      default: return "bg-green-500"
+      case "healthy": return "bg-success"
+      case "warning": return "bg-warning"
+      case "error": return "bg-destructive"
+      default: return "bg-success"
     }
   }
 
   return (
-    <div class="project-tab-bar">
+    <div
+      class="flex items-center h-10 px-1 bg-secondary border-b border-border"
+      style={{ "-webkit-app-region": "drag" }}
+    >
       {/* Left scroll arrow */}
       <Show when={showLeftArrow()}>
         <button
-          class="project-tab-scroll-arrow project-tab-scroll-left"
+          class="flex items-center justify-center w-6 h-6 rounded transition-colors flex-shrink-0 mr-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          style={{ "-webkit-app-region": "no-drag" }}
           onClick={scrollLeft}
           aria-label="Scroll tabs left"
         >
@@ -79,11 +84,12 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       {/* Scrollable tab container */}
       <div
         ref={scrollContainerRef}
-        class="project-tab-scroll-container"
+        class="flex-1 overflow-x-auto scrollbar-none"
+        style={{ "-webkit-app-region": "no-drag" }}
         onScroll={checkScrollArrows}
         role="tablist"
       >
-        <div class="project-tab-list">
+        <div class="flex items-center gap-0.5 h-full">
           <For each={Array.from(props.instances.entries())}>
             {([id, instance]) => (
               <InstanceTab
@@ -98,13 +104,16 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
           {/* New Tab - shown when showNewTab is true */}
           <Show when={props.showNewTab}>
             <button
-              class="project-tab project-tab-active group"
+              class={cn(
+                "inline-flex items-center gap-2 px-3 h-8 rounded-md text-sm font-medium transition-colors cursor-pointer max-w-[180px] outline-none group",
+                "bg-background text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.2),0_0_0_1px_rgba(255,255,255,0.05)] border-b-2 border-info"
+              )}
               role="tab"
               aria-selected="true"
             >
-              <span class="project-tab-label">New Project</span>
+              <span class="truncate">New Project</span>
               <span
-                class="project-tab-close"
+                class="opacity-50 hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground rounded p-0.5 transition-all cursor-pointer ml-1 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-info"
                 onClick={(e) => {
                   e.stopPropagation()
                   props.onCloseNewTab?.()
@@ -120,7 +129,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
           {/* New tab button */}
           <button
-            class="project-tab-new"
+            class="inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors flex-shrink-0 ml-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-info focus-visible:ring-offset-secondary"
             onClick={props.onNew}
             title="New project (Cmd+N)"
             aria-label="New project"
@@ -133,7 +142,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       {/* Right scroll arrow */}
       <Show when={showRightArrow()}>
         <button
-          class="project-tab-scroll-arrow project-tab-scroll-right"
+          class="flex items-center justify-center w-6 h-6 rounded transition-colors flex-shrink-0 ml-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          style={{ "-webkit-app-region": "no-drag" }}
           onClick={scrollRight}
           aria-label="Scroll tabs right"
         >
@@ -146,13 +156,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
       {/* Settings button with status indicator */}
       <button
-        class="project-tab-settings"
+        class="relative inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors flex-shrink-0 mr-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-info focus-visible:ring-offset-secondary"
+        style={{ "-webkit-app-region": "no-drag" }}
         onClick={() => props.onOpenSettings?.()}
         title="Settings"
         aria-label="Open settings"
       >
         <Settings class="w-4 h-4" />
-        <span class={`project-tab-status-dot ${statusColor()}`} />
+        <span class={cn("absolute bottom-1 right-1 w-2 h-2 rounded-full", statusColor())} />
       </button>
     </div>
   )

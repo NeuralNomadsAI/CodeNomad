@@ -1,6 +1,7 @@
 import { Component, createSignal, For, Show, createEffect, createMemo } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import type { Command } from "../lib/commands"
+import { cn } from "../lib/cn"
 import Kbd from "./kbd"
 
 interface CommandPaletteProps {
@@ -103,7 +104,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       setTimeout(() => inputRef?.focus(), 100)
     }
   })
- 
+
   createEffect(() => {
     const ordered = orderedCommands()
     if (ordered.length === 0) {
@@ -112,7 +113,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       }
       return
     }
- 
+
     const currentId = selectedCommandId()
     if (!currentId || !ordered.some((cmd) => cmd.id === currentId)) {
       setSelectedCommandId(ordered[0].id)
@@ -182,23 +183,24 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   function handlePointerLeave() {
     setIsPointerSelecting(false)
   }
- 
+
   return (
 
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
+        <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
         <div class="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
           <Dialog.Content
-            class="modal-surface w-full max-w-2xl max-h-[60vh]"
+            class="rounded-xl shadow-2xl flex flex-col bg-background text-foreground w-full max-w-2xl max-h-[60vh] overflow-hidden"
+            style={{ "max-width": "min(100%, calc(100vw - 32px))", "overflow-wrap": "anywhere", "word-break": "break-word" }}
             onKeyDown={handleKeyDown}
           >
             <Dialog.Title class="sr-only">Command Palette</Dialog.Title>
             <Dialog.Description class="sr-only">Search and execute commands</Dialog.Description>
 
-            <div class="modal-search-container">
+            <div class="p-4 border-b border-border">
               <div class="flex items-center gap-3">
-                <svg class="w-5 h-5 modal-search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
@@ -215,25 +217,25 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                     setSelectedCommandId(null)
                   }}
                   placeholder="Type a command or search..."
-                  class="modal-search-input"
+                  class="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
                 />
               </div>
             </div>
 
             <div
               ref={listRef}
-              class="modal-list-container"
+              class="flex-1 overflow-y-auto"
               data-pointer-mode={isPointerSelecting() ? "pointer" : "keyboard"}
               onPointerLeave={handlePointerLeave}
             >
               <Show
                 when={orderedCommands().length > 0}
-                fallback={<div class="modal-empty-state">No commands found for "{query()}"</div>}
+                fallback={<div class="p-8 text-center text-muted-foreground">No commands found for "{query()}"</div>}
               >
                 <For each={groupedCommandList()}>
                   {(group) => (
                     <div class="py-2">
-                      <div class="modal-section-header">
+                      <div class="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {group.category}
                       </div>
                       <For each={group.commands}>
@@ -244,7 +246,11 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                               type="button"
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
-                              class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
+                              class={cn(
+                                "w-full px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer border-none text-left text-foreground",
+                                selectedCommandId() === command.id && "bg-accent",
+                                isPointerSelecting() && selectedCommandId() !== command.id && "hover:bg-accent/50",
+                              )}
                               onPointerMove={(event) => {
                                 if (event.movementX === 0 && event.movementY === 0) return
                                 if (event.pointerType === "mouse" || event.pointerType === "pen" || event.pointerType === "touch") {
@@ -256,10 +262,10 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                               }}
                             >
                               <div class="flex-1 min-w-0">
-                                <div class="modal-item-label">
+                                <div class="font-medium text-foreground">
                                   {typeof command.label === "function" ? command.label() : command.label}
                                 </div>
-                                <div class="modal-item-description">
+                                <div class="text-sm mt-0.5 text-muted-foreground">
                                   {command.description}
                                 </div>
                               </div>

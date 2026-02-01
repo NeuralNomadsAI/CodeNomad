@@ -1,4 +1,13 @@
-import { Dialog } from "@kobalte/core/dialog"
+import { cn } from "../lib/cn"
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "./ui"
+import { Button } from "./ui"
 
 interface InstanceDisconnectedModalProps {
   open: boolean
@@ -12,36 +21,33 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
   const reasonLabel = props.reason || "The server stopped responding"
 
   return (
-    <Dialog open={props.open} modal>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-6">
-            <div>
-              <Dialog.Title class="text-xl font-semibold text-primary">Instance Disconnected</Dialog.Title>
-              <Dialog.Description class="text-sm text-secondary mt-2 break-words">
-                {folderLabel} can no longer be reached. Close the tab to continue working.
-              </Dialog.Description>
-            </div>
+    <AlertDialog open={props.open}>
+      <AlertDialogContent class="max-w-md">
+        <AlertDialogHeader>
+          <AlertDialogTitle class="text-xl">Instance Disconnected</AlertDialogTitle>
+          <AlertDialogDescription class="break-words">
+            {folderLabel} can no longer be reached. Close the tab to continue working.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
-            <div class="rounded-lg border border-base bg-surface-secondary p-4 text-sm text-secondary">
-              <p class="font-medium text-primary">Details</p>
-              <p class="mt-2 text-secondary">{reasonLabel}</p>
-              {props.folder && (
-                <p class="mt-2 text-secondary">
-                  Folder: <span class="font-mono text-primary break-all">{props.folder}</span>
-                </p>
-              )}
-            </div>
-
-            <div class="flex justify-end">
-              <button type="button" class="selector-button selector-button-primary" onClick={props.onClose}>
-                Close Instance
-              </button>
-            </div>
-          </Dialog.Content>
+        <div class={cn(
+          "rounded-lg border border-border bg-secondary p-4 text-sm text-muted-foreground"
+        )}>
+          <p class="font-medium text-foreground">Details</p>
+          <p class="mt-2">{reasonLabel}</p>
+          {props.folder && (
+            <p class="mt-2">
+              Folder: <span class="font-mono text-foreground break-all">{props.folder}</span>
+            </p>
+          )}
         </div>
-      </Dialog.Portal>
-    </Dialog>
+
+        <AlertDialogFooter>
+          <Button onClick={props.onClose}>
+            Close Instance
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

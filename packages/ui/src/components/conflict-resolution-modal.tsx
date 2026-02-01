@@ -1,6 +1,16 @@
 import { Component, createSignal, Show } from "solid-js"
-import { AlertTriangle, X, RefreshCw, Upload, Download } from "lucide-solid"
+import { AlertTriangle, RefreshCw, Upload, Download } from "lucide-solid"
 import type { ConflictInfo } from "../stores/era-directives"
+import { cn } from "../lib/cn"
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from "./ui"
+import { Button } from "./ui"
 
 export type ConflictResolution = "keep-local" | "keep-server" | "retry"
 
@@ -36,117 +46,117 @@ const ConflictResolutionModal: Component<ConflictResolutionModalProps> = (props)
   }
 
   return (
-    <Show when={props.open}>
-      <div class="modal-overlay" onClick={() => props.onClose()}>
-        <div class="modal-content conflict-modal" onClick={(e) => e.stopPropagation()}>
-          {/* Header */}
-          <div class="modal-header conflict-modal-header">
-            <div class="conflict-modal-title">
-              <AlertTriangle class="w-6 h-6 text-amber-500" />
-              <h2>File Conflict Detected</h2>
-            </div>
-            <button
-              type="button"
-              class="modal-close-btn"
-              onClick={() => props.onClose()}
-              aria-label="Close"
-            >
-              <X class="w-5 h-5" />
-            </button>
+    <AlertDialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <AlertDialogContent class="max-w-[500px]">
+        <AlertDialogHeader>
+          <div class="flex items-center gap-2">
+            <AlertTriangle class="w-6 h-6 text-warning" />
+            <AlertDialogTitle>File Conflict Detected</AlertDialogTitle>
           </div>
+          <AlertDialogDescription>
+            The {props.fileType} file has been modified by another session while you were editing.
+            Your changes cannot be saved without overwriting the other changes.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
-          {/* Body */}
-          <div class="modal-body conflict-modal-body">
-            <p class="conflict-modal-description">
-              The {props.fileType} file has been modified by another session while you were editing.
-              Your changes cannot be saved without overwriting the other changes.
-            </p>
-
-            <div class="conflict-modal-details">
-              <div class="conflict-detail-row">
-                <span class="conflict-detail-label">File:</span>
-                <span class="conflict-detail-value">{props.filePath}</span>
-              </div>
-              <Show when={props.conflictInfo.lastModifiedBy}>
-                <div class="conflict-detail-row">
-                  <span class="conflict-detail-label">Modified by:</span>
-                  <span class="conflict-detail-value">{props.conflictInfo.lastModifiedBy}</span>
-                </div>
-              </Show>
-              <Show when={props.conflictInfo.lastModifiedAt}>
-                <div class="conflict-detail-row">
-                  <span class="conflict-detail-label">Modified at:</span>
-                  <span class="conflict-detail-value">
-                    {formatTimestamp(props.conflictInfo.lastModifiedAt)}
-                  </span>
-                </div>
-              </Show>
-            </div>
-
-            <div class="conflict-modal-options">
-              <h3>Choose how to resolve:</h3>
-
-              <button
-                type="button"
-                class="conflict-option-btn conflict-option-local"
-                onClick={() => handleResolve("keep-local")}
-                disabled={isResolving()}
-              >
-                <Upload class="w-5 h-5" />
-                <div class="conflict-option-text">
-                  <span class="conflict-option-title">Keep My Changes</span>
-                  <span class="conflict-option-desc">
-                    Overwrite the server version with your local changes
-                  </span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                class="conflict-option-btn conflict-option-server"
-                onClick={() => handleResolve("keep-server")}
-                disabled={isResolving()}
-              >
-                <Download class="w-5 h-5" />
-                <div class="conflict-option-text">
-                  <span class="conflict-option-title">Discard My Changes</span>
-                  <span class="conflict-option-desc">
-                    Reload the server version and discard your local changes
-                  </span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                class="conflict-option-btn conflict-option-retry"
-                onClick={() => handleResolve("retry")}
-                disabled={isResolving()}
-              >
-                <RefreshCw class="w-5 h-5" />
-                <div class="conflict-option-text">
-                  <span class="conflict-option-title">Retry</span>
-                  <span class="conflict-option-desc">
-                    Refresh and try saving again (useful if conflict was resolved)
-                  </span>
-                </div>
-              </button>
-            </div>
+        {/* Conflict details */}
+        <div class="rounded-lg bg-secondary p-4 space-y-2">
+          <div class="flex items-baseline gap-2 py-1 border-b border-border last:border-b-0">
+            <span class="text-xs text-muted-foreground min-w-[80px]">File:</span>
+            <span class="text-sm font-mono text-foreground break-all">{props.filePath}</span>
           </div>
-
-          {/* Footer */}
-          <div class="modal-footer conflict-modal-footer">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              onClick={() => props.onClose()}
-              disabled={isResolving()}
-            >
-              Cancel
-            </button>
-          </div>
+          <Show when={props.conflictInfo.lastModifiedBy}>
+            <div class="flex items-baseline gap-2 py-1 border-b border-border last:border-b-0">
+              <span class="text-xs text-muted-foreground min-w-[80px]">Modified by:</span>
+              <span class="text-sm font-mono text-foreground break-all">{props.conflictInfo.lastModifiedBy}</span>
+            </div>
+          </Show>
+          <Show when={props.conflictInfo.lastModifiedAt}>
+            <div class="flex items-baseline gap-2 py-1">
+              <span class="text-xs text-muted-foreground min-w-[80px]">Modified at:</span>
+              <span class="text-sm font-mono text-foreground break-all">
+                {formatTimestamp(props.conflictInfo.lastModifiedAt)}
+              </span>
+            </div>
+          </Show>
         </div>
-      </div>
-    </Show>
+
+        {/* Resolution options */}
+        <div class="flex flex-col gap-2">
+          <h3 class="text-sm font-medium text-muted-foreground mb-1">Choose how to resolve:</h3>
+
+          <button
+            type="button"
+            class={cn(
+              "flex items-start gap-3 p-3 rounded-lg border border-border bg-background",
+              "text-left cursor-pointer transition-all duration-150",
+              "hover:border-info hover:bg-secondary",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+            onClick={() => handleResolve("keep-local")}
+            disabled={isResolving()}
+          >
+            <Upload class="w-5 h-5 shrink-0 mt-0.5" />
+            <div class="flex flex-col gap-0.5">
+              <span class="text-sm font-medium text-foreground">Keep My Changes</span>
+              <span class="text-xs text-muted-foreground">
+                Overwrite the server version with your local changes
+              </span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class={cn(
+              "flex items-start gap-3 p-3 rounded-lg border border-border bg-background",
+              "text-left cursor-pointer transition-all duration-150",
+              "hover:border-warning hover:bg-secondary",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+            onClick={() => handleResolve("keep-server")}
+            disabled={isResolving()}
+          >
+            <Download class="w-5 h-5 shrink-0 mt-0.5" />
+            <div class="flex flex-col gap-0.5">
+              <span class="text-sm font-medium text-foreground">Discard My Changes</span>
+              <span class="text-xs text-muted-foreground">
+                Reload the server version and discard your local changes
+              </span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class={cn(
+              "flex items-start gap-3 p-3 rounded-lg border border-border bg-background",
+              "text-left cursor-pointer transition-all duration-150",
+              "hover:border-success hover:bg-secondary",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+            onClick={() => handleResolve("retry")}
+            disabled={isResolving()}
+          >
+            <RefreshCw class="w-5 h-5 shrink-0 mt-0.5" />
+            <div class="flex flex-col gap-0.5">
+              <span class="text-sm font-medium text-foreground">Retry</span>
+              <span class="text-xs text-muted-foreground">
+                Refresh and try saving again (useful if conflict was resolved)
+              </span>
+            </div>
+          </button>
+        </div>
+
+        <AlertDialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => props.onClose()}
+            disabled={isResolving()}
+          >
+            Cancel
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
