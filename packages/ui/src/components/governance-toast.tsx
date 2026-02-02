@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal } from "solid-js"
+import { Component, For, Show, createSignal, createRoot } from "solid-js"
 import {
   RefreshCw,
   AlertTriangle,
@@ -41,7 +41,16 @@ const NOTIFICATION_CONFIG = {
 // Store (module-level for cross-component access)
 // ============================================================================
 
-const [notifications, setNotifications] = createSignal<GovernanceNotification[]>([])
+let notifications: () => GovernanceNotification[]
+let setNotifications: (fn: GovernanceNotification[] | ((prev: GovernanceNotification[]) => GovernanceNotification[])) => void
+
+createRoot(() => {
+  const [_n, _sn] = createSignal<GovernanceNotification[]>([])
+  notifications = _n
+  setNotifications = _sn
+})
+
+const autoDismissTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export function pushNotification(notification: GovernanceNotification): void {
   setNotifications((prev) => {
@@ -52,15 +61,26 @@ export function pushNotification(notification: GovernanceNotification): void {
 
   // Auto-dismiss
   if (notification.autoDismissMs && notification.severity !== "critical") {
-    setTimeout(() => dismissNotification(notification.id), notification.autoDismissMs)
+    // Clear existing timer for same id
+    const existing = autoDismissTimers.get(notification.id)
+    if (existing) clearTimeout(existing)
+    const timerId = setTimeout(() => dismissNotification(notification.id), notification.autoDismissMs)
+    autoDismissTimers.set(notification.id, timerId)
   }
 }
 
 export function dismissNotification(id: string): void {
+  const timer = autoDismissTimers.get(id)
+  if (timer) {
+    clearTimeout(timer)
+    autoDismissTimers.delete(id)
+  }
   setNotifications((prev) => prev.filter((n) => n.id !== id))
 }
 
 export function clearNotifications(): void {
+  for (const timer of autoDismissTimers.values()) clearTimeout(timer)
+  autoDismissTimers.clear()
   setNotifications([])
 }
 
@@ -108,6 +128,7 @@ const GovernanceToast: Component<GovernanceToastProps> = (props) => {
               <button
                 class="shrink-0 rounded p-0.5 hover:bg-muted/50 transition-colors"
                 onClick={() => dismissNotification(notif.id)}
+                aria-label="Dismiss notification"
               >
                 <X class="h-3.5 w-3.5 text-muted-foreground" />
               </button>

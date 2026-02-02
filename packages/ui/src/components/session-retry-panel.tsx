@@ -25,7 +25,7 @@ interface SessionError {
 
 interface SessionRetryPanelProps {
   error?: SessionError
-  onResume?: (sessionId: string) => void
+  onResume?: (sessionId: string) => void | Promise<void>
   onStartFresh?: () => void
 }
 
@@ -54,7 +54,7 @@ const SessionRetryPanel: Component<SessionRetryPanelProps> = (props) => {
     if (!props.error || !props.onResume) return
     setState("resuming")
     try {
-      props.onResume(props.error.sessionId)
+      await props.onResume(props.error.sessionId)
       setState("resumed")
     } catch {
       setState("resume-failed")
