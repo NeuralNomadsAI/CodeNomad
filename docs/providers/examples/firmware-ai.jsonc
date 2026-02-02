@@ -1,0 +1,190 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "small_model": "opencode/big-pickle",
+  "provider": {
+    "firmware": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Firmware AI",
+      "options": {
+        "baseURL": "https://app.firmware.ai/api/v1",
+        "apiKey": "YOUR_FIRMWARE_API_KEY",
+        "timeout": 300000,
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "features": {
+        "streaming": true,
+        "tools": true,
+        "mcpServers": true,
+        "thinking": true,
+        "reasoningEffort": true,
+        "googleGenerationConfig": true,
+        "googleSafetySettings": true
+      },
+      "models": {
+        "openai-gpt-5-2": {
+          "id": "openai/gpt-5.2",
+          "name": "GPT 5.2",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "openai-gpt-5": {
+          "id": "openai/gpt-5",
+          "name": "GPT 5",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "openai-gpt-5-mini": {
+          "id": "openai/gpt-5-mini",
+          "name": "GPT 5 Mini",
+          "limit": { "context": 200000, "output": 32000 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "openai-gpt-5-nano": {
+          "id": "openai/gpt-5-nano",
+          "name": "GPT 5 Nano",
+          "limit": { "context": 128000, "output": 16000 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "openai-gpt-4o": {
+          "id": "openai/gpt-4o",
+          "name": "GPT 4o",
+          "limit": { "context": 128000, "output": 16384 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "openai-gpt-4o-mini": {
+          "id": "openai/gpt-4o-mini",
+          "name": "GPT 4o Mini",
+          "limit": { "context": 128000, "output": 16384 },
+          "reasoning": false,
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "anthropic-claude-opus-4-5": {
+          "id": "anthropic/claude-opus-4-5",
+          "name": "Claude Opus 4.5",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": true,
+          "supports": ["thinking", "tools"],
+          "thinkingConfig": { "type": "enabled", "budgetTokens": 2048 },
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "anthropic-claude-sonnet-4-5-20250929": {
+          "id": "anthropic/claude-sonnet-4-5-20250929",
+          "name": "Claude Sonnet 4.5 (2025-09-29)",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": false,
+          "supports": ["thinking", "tools"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "anthropic-claude-haiku-4-5-20251001": {
+          "id": "anthropic/claude-haiku-4-5-20251001",
+          "name": "Claude Haiku 4.5 (2025-10-01)",
+          "limit": { "context": 200000, "output": 32000 },
+          "reasoning": false,
+          "supports": ["thinking", "tools"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "google-gemini-3-pro-preview": {
+          "id": "google/gemini-3-pro-preview",
+          "name": "Gemini 3 Pro Preview",
+          "limit": { "context": 1048576, "output": 64000 },
+          "reasoning": true,
+          "supports": ["generationConfig", "safetySettings"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "google-gemini-3-flash-preview": {
+          "id": "google/gemini-3-flash-preview",
+          "name": "Gemini 3 Flash Preview",
+          "limit": { "context": 1048576, "output": 64000 },
+          "reasoning": true,
+          "supports": ["generationConfig", "safetySettings"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "google-gemini-2-5-pro": {
+          "id": "google/gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "limit": { "context": 2000000, "output": 64000 },
+          "reasoning": true,
+          "supports": ["generationConfig", "safetySettings"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "google-gemini-2-5-flash": {
+          "id": "google/gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "limit": { "context": 1000000, "output": 64000 },
+          "reasoning": true,
+          "supports": ["generationConfig", "safetySettings"],
+          "modalities": { "input": ["image", "text"], "output": ["text"] }
+        },
+        "xai-grok-4-fast-reasoning": {
+          "id": "xai/grok-4-fast-reasoning",
+          "name": "Grok 4 Fast Reasoning",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": true,
+          "reasoningEffort": ["low", "medium", "high"],
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "xai-grok-4-fast-non-reasoning": {
+          "id": "xai/grok-4-fast-non-reasoning",
+          "name": "Grok 4 Fast Non-Reasoning",
+          "limit": { "context": 200000, "output": 64000 },
+          "reasoning": false,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "xai-grok-code-fast-1": {
+          "id": "xai/grok-code-fast-1",
+          "name": "Grok Code Fast 1",
+          "limit": { "context": 131072, "output": 32768 },
+          "reasoning": false,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "deepseek-deepseek-chat": {
+          "id": "deepseek/deepseek-chat",
+          "name": "DeepSeek Chat",
+          "limit": { "context": 131072, "output": 16384 },
+          "reasoning": false,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "deepseek-deepseek-reasoner": {
+          "id": "deepseek/deepseek-reasoner",
+          "name": "DeepSeek Reasoner",
+          "limit": { "context": 131072, "output": 65536 },
+          "reasoning": true,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "moonshot-kimi-k2-thinking": {
+          "id": "moonshot/kimi-k2-thinking",
+          "name": "Kimi K2 Thinking",
+          "limit": { "context": 256000, "output": 32000 },
+          "reasoning": true,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "moonshot-kimi-k2-thinking-turbo": {
+          "id": "moonshot/kimi-k2-thinking-turbo",
+          "name": "Kimi K2 Thinking Turbo",
+          "limit": { "context": 256000, "output": 32000 },
+          "reasoning": true,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        },
+        "cerebras-zai-glm-4-7": {
+          "id": "cerebras/zai-glm-4.7",
+          "name": "Zai GLM 4.7",
+          "limit": { "context": 128000, "output": 16384 },
+          "reasoning": false,
+          "modalities": { "input": ["text"], "output": ["text"] }
+        }
+      }
+    }
+  },
+  "permission": {
+    "skill": {
+      "*": "allow"
+    }
+  }
+}
