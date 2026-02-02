@@ -36,6 +36,15 @@ interface RouteDeps {
 export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   const { eraDetection, eraGovernance, updateMonitor, logger } = deps
 
+  function validateFolder(folder: string | undefined): string | undefined {
+    if (!folder) return undefined
+    if (folder.includes("..") || folder.includes("\0")) {
+      logger.warn({ folder }, "Rejected suspicious folder path")
+      return undefined
+    }
+    return folder
+  }
+
   /**
    * GET /api/era/status
    * Returns the era-code installation status and project initialization state
@@ -43,7 +52,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/status", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
 
     logger.debug({ folder }, "Checking Era status")
 
@@ -123,10 +132,10 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
     return {
       available: true,
       assetsPath: binaryInfo.assetsPath,
-      agents: assets.agents.map((p) => extractAssetName(p, "agent")),
-      commands: assets.commands.map((p) => extractAssetName(p, "command")),
+      agents: assets.agents.map((p) => extractAssetName(p)),
+      commands: assets.commands.map((p) => extractAssetName(p)),
       skills: assets.skills.map((p) => extractSkillName(p)),
-      plugins: assets.plugins.map((p) => extractAssetName(p, "plugin")),
+      plugins: assets.plugins.map((p) => extractAssetName(p)),
     }
   })
 
@@ -211,7 +220,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/governance/config", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
     logger.debug({ folder }, "Getting governance config")
     return eraGovernance.getConfig(folder)
   })
@@ -223,7 +232,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/governance/summary", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
     logger.debug({ folder }, "Getting governance summary")
     return eraGovernance.getSummary(folder)
   })
@@ -236,7 +245,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/governance/rules", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
     logger.debug({ folder }, "Getting governance rules")
 
     const result = eraGovernance.getConfig(folder)
@@ -554,6 +563,11 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   // --------------------------------------------------------------------------
 
   const eraMemoryClient = new EraMemoryClient()
+
+  app.addHook("onClose", async () => {
+    if (typeof (eraMemoryClient as any).close === "function") await (eraMemoryClient as any).close()
+  })
+
   const governanceWriter = new GovernanceWriter()
   const llmClassifier = new LlmClassifier()
   const instructionRetrieval = new InstructionRetrieval(eraMemoryClient)
@@ -620,15 +634,17 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/directives/history", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
     const historyPath = folder
       ? `${folder}/.era/memory/directives-history.json`
       : `${process.env.HOME ?? "."}/.era/memory/directives-history.json`
 
     try {
-      const fs = await import("node:fs")
-      const raw = fs.readFileSync(historyPath, "utf-8")
-      return JSON.parse(raw)
+      const fs = await import("node:fs/promises")
+      const raw = await fs.readFile(historyPath, "utf-8")
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return []
+      return parsed
     } catch {
       return []
     }
@@ -959,7 +975,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Querystring: { folder?: string }
   }>("/api/era/health", async (request) => {
-    const folder = request.query.folder
+    const folder = validateFolder(request.query.folder)
     logger.debug({ folder }, "Running health check")
 
     try {
@@ -1221,7 +1237,8 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   /** GET /api/era/gates/status — Gate statuses */
   app.get<{
     Querystring: { planId?: string }
-  }>("/api/era/gates/status", async () => {
+  }>("/api/era/gates/status", async (request) => {
+    const _planId = request.query.planId
     try {
       return { gates: [] }
     } catch (err) {
@@ -1233,7 +1250,8 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
   /** GET /api/era/handoffs — Session handoffs */
   app.get<{
     Querystring: { sessionId?: string }
-  }>("/api/era/handoffs", async () => {
+  }>("/api/era/handoffs", async (request) => {
+    const _sessionId = request.query.sessionId
     try {
       return { handoffs: [], chain: [] }
     } catch (err) {
@@ -1247,7 +1265,7 @@ export function registerEraRoutes(app: FastifyInstance, deps: RouteDeps) {
  * Extract asset name from path
  * e.g., "/path/to/agent/plan.md" -> "plan"
  */
-function extractAssetName(assetPath: string, type: string): string {
+function extractAssetName(assetPath: string): string {
   const parts = assetPath.split("/")
   const filename = parts[parts.length - 1]
   return filename.replace(/\.(md|ts)$/, "")
