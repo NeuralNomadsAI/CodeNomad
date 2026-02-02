@@ -3,6 +3,7 @@
   "version": "0.9.3",
   "private": true,
   "description": "CodeNomad monorepo workspace",
+  "license": "MIT",
   "workspaces": {
     "packages": [
       "packages/server",
