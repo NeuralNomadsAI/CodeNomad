@@ -6,6 +6,7 @@ import { getActiveQuestion } from "../stores/question-store"
 import { getRandomLoadingVerb } from "../lib/loading-verbs"
 import { getRandomPenguinFact } from "../lib/penguin-facts"
 import { getStreamingMetrics, sampleCurrentRate, getRollingTokPerSec } from "../stores/streaming-metrics"
+import { showToastNotification } from "../lib/notifications"
 import { cn } from "../lib/cn"
 
 interface ActivityStatusLineProps {
@@ -128,6 +129,30 @@ export default function ActivityStatusLine(props: ActivityStatusLineProps) {
     onCleanup(() => clearInterval(id))
   })
 
+  // Context pressure warning — fires once per session when crossing 70%
+  const [pressureWarningFired, setPressureWarningFired] = createSignal(false)
+
+  const contextPercentage = createMemo(() => {
+    const info = sessionInfo()
+    if (!info || !info.contextWindow) return 0
+    const used = (info.inputTokens || 0) + (info.outputTokens || 0)
+    return Math.min((used / info.contextWindow) * 100, 100)
+  })
+
+  createEffect(() => {
+    const pct = contextPercentage()
+    if (pct >= 70 && !pressureWarningFired()) {
+      setPressureWarningFired(true)
+      const rounded = Math.round(pct)
+      showToastNotification({
+        title: "Context window filling",
+        message: `Context at ${rounded}% \u2014 consider compacting or starting a new session.`,
+        variant: rounded >= 85 ? "error" : "warning",
+        duration: 6000,
+      })
+    }
+  })
+
   // Verb text depends on display mode
   const verbText = createMemo(() => {
     const mode = displayMode()
@@ -197,6 +222,15 @@ export default function ActivityStatusLine(props: ActivityStatusLineProps) {
         <Show when={cost() > 0}>
           <span class="text-border">|</span>
           <span class="text-muted-foreground tabular-nums">${cost().toFixed(4)}</span>
+        </Show>
+        <Show when={contextPercentage() > 0}>
+          <span class="text-border md:hidden">|</span>
+          <span class={cn(
+            "tabular-nums md:hidden",
+            contextPercentage() >= 85 ? "text-destructive font-medium" : contextPercentage() >= 70 ? "text-warning" : "text-muted-foreground"
+          )}>
+            ctx {Math.round(contextPercentage())}%
+          </span>
         </Show>
       </div>
       <Show when={showPenguinFact()}>

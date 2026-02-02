@@ -33,6 +33,11 @@ import {
   flushSession,
   clearRetrievalState,
   getRetrievalState,
+  recordInstructionFeedback,
+  getPromotionCandidates,
+  onRetrievalEvent,
+  offRetrievalEvent,
+  type RetrievalEvent,
 } from "../stores/instruction-retrieval"
 
 export interface TestInjectionHooks {
@@ -76,6 +81,18 @@ export interface TestInjectionHooks {
   clearRetrievalState: typeof clearRetrievalState
   /** Raw signal accessor for retrieval state */
   getRetrievalState: typeof getRetrievalState
+
+  // --- Access counting & feedback hooks (ERA-713) ---
+  /** Record feedback for a retrieved instruction */
+  recordFeedback: typeof recordInstructionFeedback
+  /** Query promotion candidates */
+  getPromotionCandidates: typeof getPromotionCandidates
+
+  // --- Retrieval event bus hooks (ERA-714) ---
+  /** Subscribe to retrieval events */
+  onRetrievalEvent: typeof onRetrievalEvent
+  /** Unsubscribe from retrieval events */
+  offRetrievalEvent: typeof offRetrievalEvent
 }
 
 const testDataStore = new Map<string, unknown>()
@@ -109,6 +126,14 @@ const hooks: TestInjectionHooks = {
   flushSession,
   clearRetrievalState,
   getRetrievalState,
+
+  // Access counting & feedback hooks (ERA-713)
+  recordFeedback: recordInstructionFeedback,
+  getPromotionCandidates,
+
+  // Retrieval event bus hooks (ERA-714)
+  onRetrievalEvent,
+  offRetrievalEvent,
 }
 
 /**

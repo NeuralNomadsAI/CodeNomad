@@ -409,3 +409,23 @@ export interface UpdateCheckResult {
   openCode: OpenCodeUpdateInfo | null
   lastChecked: number
 }
+
+// ============================================================
+// Project Init Types
+// ============================================================
+
+export interface ProjectInitRequest {
+  name: string
+  location: string
+  template: "blank" | "typescript-node" | "python" | "react-vite"
+  gitInit: boolean
+  createReadme: boolean
+}
+
+export interface ProjectInitResponse {
+  success: boolean
+  path: string
+  filesCreated: string[]
+  gitInitialized: boolean
+  error?: string
+}

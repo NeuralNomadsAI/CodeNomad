@@ -4,7 +4,9 @@ import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import ActivityStatusLine from "../activity-status-line"
+import PlanStatusRibbon from "../plan-status-ribbon"
 import InstructionCaptureCard from "../instruction-capture-card"
+import CompactionCard from "../compaction-card"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import { instances } from "../../stores/instances"
@@ -263,10 +265,20 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                onQuoteSelection={handleQuoteSelection}
              />
 
+            <PlanStatusRibbon
+              instanceId={props.instanceId}
+              sessionId={activeSession.id}
+            />
+
             <ActivityStatusLine
               instanceId={props.instanceId}
               sessionId={activeSession.id}
               store={messageStore}
+            />
+
+            <CompactionCard
+              instanceId={props.instanceId}
+              sessionId={activeSession.id}
             />
 
             <InstructionCaptureCard />

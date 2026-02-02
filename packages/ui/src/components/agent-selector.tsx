@@ -38,8 +38,10 @@ export default function AgentSelector(props: AgentSelectorProps) {
       (agent) => agent.mode !== "subagent" && !INTERNAL_AGENT_NAMES.has(agent.name),
     )
 
+    // Don't re-add internal agents (compaction, title, summary) — let the
+    // auto-switch effect below revert to a valid agent instead.
     const currentAgent = allAgents.find((a) => a.name === props.currentAgent)
-    if (currentAgent && !filtered.find((a) => a.name === props.currentAgent)) {
+    if (currentAgent && !INTERNAL_AGENT_NAMES.has(currentAgent.name) && !filtered.find((a) => a.name === props.currentAgent)) {
       return [currentAgent, ...filtered]
     }
 

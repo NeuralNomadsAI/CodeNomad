@@ -34,6 +34,8 @@ import {
   XCircle,
   Loader2,
   ListChecks,
+  SquareKanban,
+  RefreshCw,
 } from "lucide-solid"
 import { Separator } from "../ui/separator"
 import { cn } from "../../lib/cn"
@@ -75,6 +77,8 @@ import {
   type FileOperationType,
   type RecentAction,
 } from "../../stores/workspace-state"
+import { getLinearTasks, fetchLinearTasks, linearStatus } from "../../stores/linear-tasks"
+import LinearTaskList from "../linear-task-list"
 import { serverApi } from "../../lib/api-client"
 import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
@@ -86,6 +90,7 @@ import {
 } from "../../lib/session-sidebar-events"
 import { useConfig } from "../../stores/preferences"
 import { registerSidebarControls, unregisterSidebarControls } from "../../stores/sidebar-controls"
+import MobileShell from "../mobile/mobile-shell"
 
 const log = getLogger("session")
 
@@ -109,6 +114,14 @@ interface InstanceShellProps {
   handleSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onExecuteCommand: (command: Command) => void
   tabBarOffset: number
+  // Mobile-specific callbacks (passed to MobileShell for settings view)
+  onOpenMcpSettings?: () => void
+  onOpenLspSettings?: () => void
+  onOpenGovernance?: () => void
+  onOpenDirectives?: () => void
+  onOpenFullSettings?: () => void
+  onOpenInstanceInfo?: () => void
+  onOpenProjectSwitcher?: () => void
 }
 
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
@@ -1128,8 +1141,48 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </Show>
     )
 
-    // 4 peer sections - Tasks first, then Git, Actions, Files
+    // Linear Tasks section content
+    const linearIssues = createMemo(() => getLinearTasks(props.instance.id))
+    const renderLinearTasksContent = () => (
+      <Show
+        when={linearStatus() !== "error"}
+        fallback={<p class="text-xs text-muted-foreground italic py-2">Connect Linear in settings to see tasks</p>}
+      >
+        <LinearTaskList issues={linearIssues()} compact={true} emptyMessage="No Linear tasks found" />
+      </Show>
+    )
+
+    // 5 peer sections - Linear Tasks, then Tasks, Git, Actions, Files
     const sections = [
+      {
+        id: "linear",
+        label: "Linear Tasks",
+        icon: () => <SquareKanban class="w-4 h-4" />,
+        count: () => {
+          const issues = linearIssues()
+          if (issues.length === 0) return null
+          const active = issues.filter(i => {
+            const s = i.status.toLowerCase()
+            return s !== "done" && s !== "completed" && s !== "canceled" && s !== "cancelled"
+          }).length
+          return active > 0 ? active : null
+        },
+        render: renderLinearTasksContent,
+        headerAction: () => (
+          <button
+            type="button"
+            class="inline-flex items-center justify-center w-5 h-5 rounded text-muted-foreground hover:text-foreground transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              void fetchLinearTasks(props.instance.id)
+            }}
+            aria-label="Sync Linear tasks"
+            title="Sync Linear tasks"
+          >
+            <RefreshCw class={cn("w-3 h-3", linearStatus() === "connecting" && "animate-spin")} />
+          </button>
+        ),
+      },
       {
         id: "tasks",
         label: "Tasks",
@@ -1213,6 +1266,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       <span class="flex items-center gap-2">
                         <Show when={section.count() !== null}>
                           <span class="text-xs font-normal text-muted-foreground">{section.count()}</span>
+                        </Show>
+                        <Show when={section.headerAction}>
+                          {section.headerAction!()}
                         </Show>
                         <ChevronDown
                           class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
@@ -1409,23 +1465,57 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   return (
     <>
-      <div class="instance-shell2 flex flex-col flex-1 min-h-0">
-        <Show
-          when={!isFetchingSessions()}
-          fallback={
-            <div class="flex-1 flex items-center justify-center">
-              <div class="text-center text-muted-foreground">
-                <div class="w-8 h-8 border-2 border-border border-t-primary rounded-full animate-spin mb-2 mx-auto" />
-                <p class="text-sm">Loading sessions...</p>
+      <Show
+        when={!isPhoneLayout()}
+        fallback={
+          <Show
+            when={!isFetchingSessions()}
+            fallback={
+              <div class="flex-1 flex items-center justify-center">
+                <div class="text-center text-muted-foreground">
+                  <div class="w-8 h-8 border-2 border-border border-t-primary rounded-full animate-spin mb-2 mx-auto" />
+                  <p class="text-sm">Loading sessions...</p>
+                </div>
               </div>
-            </div>
-          }
-        >
-          <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
-            {sessionLayout}
+            }
+          >
+            <MobileShell
+              instance={props.instance}
+              escapeInDebounce={props.escapeInDebounce}
+              onCloseSession={props.onCloseSession}
+              onNewSession={props.onNewSession}
+              handleSidebarAgentChange={props.handleSidebarAgentChange}
+              handleSidebarModelChange={props.handleSidebarModelChange}
+              onExecuteCommand={props.onExecuteCommand}
+              onOpenMcpSettings={props.onOpenMcpSettings}
+              onOpenLspSettings={props.onOpenLspSettings}
+              onOpenGovernance={props.onOpenGovernance}
+              onOpenDirectives={props.onOpenDirectives}
+              onOpenFullSettings={props.onOpenFullSettings}
+              onOpenInstanceInfo={props.onOpenInstanceInfo}
+              onOpenProjectSwitcher={props.onOpenProjectSwitcher}
+            />
           </Show>
-        </Show>
-      </div>
+        }
+      >
+        <div class="instance-shell2 flex flex-col flex-1 min-h-0">
+          <Show
+            when={!isFetchingSessions()}
+            fallback={
+              <div class="flex-1 flex items-center justify-center">
+                <div class="text-center text-muted-foreground">
+                  <div class="w-8 h-8 border-2 border-border border-t-primary rounded-full animate-spin mb-2 mx-auto" />
+                  <p class="text-sm">Loading sessions...</p>
+                </div>
+              </div>
+            }
+          >
+            <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+              {sessionLayout}
+            </Show>
+          </Show>
+        </div>
+      </Show>
 
       <CommandPalette
         open={paletteOpen()}

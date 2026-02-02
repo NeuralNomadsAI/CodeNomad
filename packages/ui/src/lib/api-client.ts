@@ -7,6 +7,8 @@ import type {
   FileSystemEntry,
   FileSystemListResponse,
   InstanceData,
+  ProjectInitRequest,
+  ProjectInitResponse,
   ServerMeta,
   UpdateCheckResult,
   WorkspaceCreateRequest,
@@ -92,6 +94,12 @@ export const serverApi = {
   },
   createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceDescriptor> {
     return request<WorkspaceDescriptor>("/api/workspaces", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  initProject(payload: ProjectInitRequest): Promise<ProjectInitResponse> {
+    return request<ProjectInitResponse>("/api/projects/init", {
       method: "POST",
       body: JSON.stringify(payload),
     })

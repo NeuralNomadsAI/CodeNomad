@@ -52,10 +52,18 @@ const TOOL_CATEGORY_MAP: Record<string, string[]> = {
 // Session Cache
 // ---------------------------------------------------------------------------
 
+export interface DedupOverlap {
+  instructionId: string
+  instructionContent: string
+  matchedDirective: string
+  similarity: number
+}
+
 interface SessionCache {
   sessionStartInstructions: RetrievedInstruction[]
   queriedTools: Set<string>
   accessLog: Map<string, number>
+  dedupOverlaps: DedupOverlap[]
 }
 
 const sessionCaches = new Map<string, SessionCache>()
@@ -67,6 +75,7 @@ function getSessionCache(sessionId: string): SessionCache {
       sessionStartInstructions: [],
       queriedTools: new Set(),
       accessLog: new Map(),
+      dedupOverlaps: [],
     }
     sessionCaches.set(sessionId, cache)
   }
@@ -81,7 +90,12 @@ export function clearSessionCache(sessionId: string): void {
 // Deduplication
 // ---------------------------------------------------------------------------
 
-function isDuplicateOfDirective(instruction: string, directives: string[]): boolean {
+interface DedupMatch {
+  directive: string
+  similarity: number
+}
+
+function findDuplicateDirective(instruction: string, directives: string[]): DedupMatch | null {
   const normalize = (s: string) =>
     s
       .toLowerCase()
@@ -99,10 +113,10 @@ function isDuplicateOfDirective(instruction: string, directives: string[]): bool
       if (dirTokens.has(t)) intersection++
     }
     const similarity = intersection / (instructionTokens.size + dirTokens.size - intersection)
-    if (similarity > 0.75) return true
+    if (similarity > 0.75) return { directive: dir, similarity }
   }
 
-  return false
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -143,16 +157,26 @@ export class InstructionRetrieval {
         minScore: 0.7,
       })
 
-      const instructions = results
-        .map((r) => toRetrievedInstruction(r))
-        .filter((inst) => {
-          // Deduplicate against active directives
-          if (context.activeDirectives && isDuplicateOfDirective(inst.content, context.activeDirectives)) {
-            return false
+      const allMapped = results.map((r) => toRetrievedInstruction(r))
+      const instructions: RetrievedInstruction[] = []
+
+      for (const inst of allMapped) {
+        if (context.activeDirectives) {
+          const match = findDuplicateDirective(inst.content, context.activeDirectives)
+          if (match) {
+            cache.dedupOverlaps.push({
+              instructionId: inst.id,
+              instructionContent: inst.content,
+              matchedDirective: match.directive,
+              similarity: match.similarity,
+            })
+            continue
           }
-          return true
-        })
-        .slice(0, 5) // Max 5 per session start
+        }
+        if (instructions.length < 5) {
+          instructions.push(inst)
+        }
+      }
 
       cache.sessionStartInstructions = instructions
 
@@ -199,15 +223,26 @@ export class InstructionRetrieval {
         minScore: 0.7,
       })
 
-      const instructions = results
-        .map((r) => toRetrievedInstruction(r))
-        .filter((inst) => {
-          if (context.activeDirectives && isDuplicateOfDirective(inst.content, context.activeDirectives)) {
-            return false
+      const allMapped = results.map((r) => toRetrievedInstruction(r))
+      const instructions: RetrievedInstruction[] = []
+
+      for (const inst of allMapped) {
+        if (context.activeDirectives) {
+          const match = findDuplicateDirective(inst.content, context.activeDirectives)
+          if (match) {
+            cache.dedupOverlaps.push({
+              instructionId: inst.id,
+              instructionContent: inst.content,
+              matchedDirective: match.directive,
+              similarity: match.similarity,
+            })
+            continue
           }
-          return true
-        })
-        .slice(0, 3)
+        }
+        if (instructions.length < 3) {
+          instructions.push(inst)
+        }
+      }
 
       for (const inst of instructions) {
         this.trackAccess(sessionId, inst.id)
@@ -230,26 +265,92 @@ export class InstructionRetrieval {
 
   /**
    * Flush access counts to Era Memory at session end.
+   * Increments the existing server-side count rather than overwriting.
    */
-  async flushAccessCounts(sessionId: string): Promise<void> {
+  async flushAccessCounts(sessionId: string): Promise<{ flushed: number; promotionCandidates: string[] }> {
     const cache = sessionCaches.get(sessionId)
-    if (!cache) return
+    if (!cache) return { flushed: 0, promotionCandidates: [] }
+
+    const promotionCandidates: string[] = []
+    let flushed = 0
 
     try {
       const available = await this.memoryClient.isAvailable()
-      if (!available) return
+      if (!available) return { flushed: 0, promotionCandidates: [] }
 
-      for (const [id, count] of cache.accessLog) {
+      for (const [id, sessionCount] of cache.accessLog) {
         try {
-          await this.memoryClient.update(id, {
-            metadata: { lastAccessed: new Date().toISOString(), accessCount: count },
+          // Read existing memory to get current cumulative count
+          const results = await this.memoryClient.search({
+            query: id,
+            type: "preference",
+            limit: 1,
+            minScore: 0.0,
           })
+
+          const existingMeta = results.length > 0
+            ? (results[0].memory.metadata ?? {}) as Record<string, unknown>
+            : {}
+
+          const existingCount = (existingMeta.accessCount as number) ?? 0
+          const newCount = existingCount + sessionCount
+          const feedbackScore = (existingMeta.feedbackScore as number) ?? 0
+
+          await this.memoryClient.update(id, {
+            metadata: {
+              ...existingMeta,
+              lastAccessed: new Date().toISOString(),
+              accessCount: newCount,
+              sessionAccessCount: sessionCount,
+            },
+          })
+          flushed++
+
+          // Check promotion threshold
+          if (newCount >= PROMOTION_THRESHOLD && feedbackScore >= PROMOTION_THRESHOLD) {
+            promotionCandidates.push(id)
+          }
         } catch {
           // Best-effort — don't fail the session for access tracking
         }
       }
     } finally {
       clearSessionCache(sessionId)
+    }
+
+    return { flushed, promotionCandidates }
+  }
+
+  /**
+   * Get dedup overlaps tracked during this session.
+   */
+  getDedupOverlaps(sessionId: string): DedupOverlap[] {
+    const cache = sessionCaches.get(sessionId)
+    return cache?.dedupOverlaps ?? []
+  }
+
+  /**
+   * Query for instructions that meet the promotion threshold.
+   */
+  async getPromotionCandidates(): Promise<RetrievedInstruction[]> {
+    try {
+      const available = await this.memoryClient.isAvailable()
+      if (!available) return []
+
+      const results = await this.memoryClient.search({
+        query: "development preferences instructions",
+        type: "preference",
+        limit: 50,
+        minScore: 0.0,
+      })
+
+      return results
+        .map((r) => toRetrievedInstruction(r))
+        .filter((inst) => {
+          return inst.accessCount >= PROMOTION_THRESHOLD
+        })
+    } catch {
+      return []
     }
   }
 }
@@ -456,28 +557,29 @@ export interface FeedbackEvent {
   outcome: "success" | "failure" | "dismissed"
 }
 
-const PROMOTION_THRESHOLD = 10
+export const PROMOTION_THRESHOLD = 10
 
 export async function recordFeedback(
   memoryClient: EraMemoryClient,
   event: FeedbackEvent,
-): Promise<{ promoted: boolean }> {
+): Promise<{ promoted: boolean; accessCount: number; feedbackScore: number }> {
   try {
     const available = await memoryClient.isAvailable()
-    if (!available) return { promoted: false }
+    if (!available) return { promoted: false, accessCount: 0, feedbackScore: 0 }
 
-    // Search for the memory to get current metadata
+    // Read existing metadata via search (Era Memory doesn't have a get-by-id)
     const results = await memoryClient.search({
       query: event.instructionId,
       type: "preference",
-      limit: 1,
+      limit: 10,
       minScore: 0.0,
     })
 
-    if (results.length === 0) return { promoted: false }
+    // Find exact ID match
+    const match = results.find((r) => r.memory.id === event.instructionId)
+    if (!match) return { promoted: false, accessCount: 0, feedbackScore: 0 }
 
-    const memory = results[0].memory
-    const meta = (memory.metadata ?? {}) as Record<string, unknown>
+    const meta = (match.memory.metadata ?? {}) as Record<string, unknown>
 
     let score = (meta.feedbackScore as number) ?? 0
     let accessCount = (meta.accessCount as number) ?? 0
@@ -495,7 +597,7 @@ export async function recordFeedback(
         break
     }
 
-    await memoryClient.update(memory.id, {
+    await memoryClient.update(match.memory.id, {
       metadata: {
         ...meta,
         feedbackScore: score,
@@ -505,11 +607,10 @@ export async function recordFeedback(
       },
     })
 
-    // Check if it should be promoted to a directive
     const promoted = score >= PROMOTION_THRESHOLD && accessCount >= PROMOTION_THRESHOLD
-    return { promoted }
+    return { promoted, accessCount, feedbackScore: score }
   } catch {
-    return { promoted: false }
+    return { promoted: false, accessCount: 0, feedbackScore: 0 }
   }
 }
 

@@ -25,6 +25,8 @@ import { registerMcpRoutes } from "./routes/mcp"
 import { registerFileRoutes } from "./routes/files"
 import { registerSessionRoutes } from "./routes/sessions"
 import { registerGitHubRoutes } from "./routes/github"
+import { registerLinearRoutes } from "./routes/linear"
+import { registerProjectRoutes } from "./routes/projects"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { EraDetectionService } from "../era/detection"
@@ -175,6 +177,12 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   // Register GitHub routes
   registerGitHubRoutes(app, { logger: deps.logger })
+
+  // Register Linear routes
+  registerLinearRoutes(app, { logger: deps.logger })
+
+  // Register Project init routes
+  registerProjectRoutes(app, { logger: deps.logger })
 
   // Register Session management routes
   registerSessionRoutes(app, { logger: deps.logger })

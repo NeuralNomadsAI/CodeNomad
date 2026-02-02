@@ -6,6 +6,10 @@
  * invocation, then injected as a hidden text part into `requestParts`
  * (not shown to the user in the chat UI).
  *
+ * Includes:
+ * - Access counting with server-side persistence (ERA-713)
+ * - Event bus for retrieval notifications (ERA-714)
+ *
  * Follows the instruction-capture.ts signal pattern.
  */
 import { createSignal } from "solid-js"
@@ -35,6 +39,14 @@ export interface RetrievalContext {
   activeDirectives?: string[]
 }
 
+export interface FeedbackResult {
+  promoted: boolean
+  accessCount: number
+  feedbackScore: number
+}
+
+export interface PromotionCandidate extends RetrievedInstruction {}
+
 interface SessionRetrievalState {
   sessionStartInstructions: RetrievedInstruction[]
   sessionStartComposed: string
@@ -43,6 +55,44 @@ interface SessionRetrievalState {
   injectedSessionStart: boolean
   injectedTools: Set<string>
   fetchingSessionStart: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Event Bus (ERA-714)
+// ---------------------------------------------------------------------------
+
+export type RetrievalEventType = "instruction:retrieved" | "instruction:injected" | "instruction:promoted"
+
+export interface RetrievalEvent {
+  type: RetrievalEventType
+  sessionId: string
+  instanceId: string
+  instructions?: RetrievedInstruction[]
+  toolName?: string
+  promotionCandidateIds?: string[]
+  timestamp: number
+}
+
+type RetrievalEventListener = (event: RetrievalEvent) => void
+
+const eventListeners = new Set<RetrievalEventListener>()
+
+function emitRetrievalEvent(event: RetrievalEvent): void {
+  for (const listener of eventListeners) {
+    try {
+      listener(event)
+    } catch (err) {
+      log.warn("Retrieval event listener error", { error: err })
+    }
+  }
+}
+
+export function onRetrievalEvent(listener: RetrievalEventListener): void {
+  eventListeners.add(listener)
+}
+
+export function offRetrievalEvent(listener: RetrievalEventListener): void {
+  eventListeners.delete(listener)
 }
 
 // ---------------------------------------------------------------------------
@@ -122,13 +172,37 @@ async function fetchToolInstructions(sessionId: string, toolName: string, contex
   return resp.json()
 }
 
-async function fetchFlush(sessionId: string): Promise<{ flushed: boolean }> {
+async function fetchFlush(sessionId: string): Promise<{
+  flushed: boolean
+  count: number
+  promotionCandidates: string[]
+}> {
   const resp = await fetch(`${ERA_CODE_API_BASE}/api/era/retrieval/flush`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId }),
   })
   if (!resp.ok) throw new Error(`retrieval/flush ${resp.status}`)
+  return resp.json()
+}
+
+async function fetchFeedback(
+  sessionId: string,
+  instructionId: string,
+  outcome: "success" | "failure" | "dismissed",
+): Promise<FeedbackResult> {
+  const resp = await fetch(`${ERA_CODE_API_BASE}/api/era/retrieval/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, instructionId, outcome }),
+  })
+  if (!resp.ok) throw new Error(`retrieval/feedback ${resp.status}`)
+  return resp.json()
+}
+
+async function fetchPromotionCandidates(): Promise<{ candidates: PromotionCandidate[] }> {
+  const resp = await fetch(`${ERA_CODE_API_BASE}/api/era/retrieval/promotion-candidates`)
+  if (!resp.ok) throw new Error(`retrieval/promotion-candidates ${resp.status}`)
   return resp.json()
 }
 
@@ -165,6 +239,17 @@ export async function retrieveSessionStartInstructions(
       sessionId,
       count: result.instructions.length,
     })
+
+    // Emit retrieval event (ERA-714)
+    if (result.instructions.length > 0) {
+      emitRetrievalEvent({
+        type: "instruction:retrieved",
+        sessionId,
+        instanceId,
+        instructions: result.instructions,
+        timestamp: Date.now(),
+      })
+    }
   } catch (err) {
     updateSessionState(instanceId, sessionId, (s) => {
       s.fetchingSessionStart = false
@@ -200,6 +285,18 @@ export async function retrieveToolInstructions(
       toolName,
       count: result.instructions.length,
     })
+
+    // Emit retrieval event (ERA-714)
+    if (result.instructions.length > 0) {
+      emitRetrievalEvent({
+        type: "instruction:retrieved",
+        sessionId,
+        instanceId,
+        instructions: result.instructions,
+        toolName,
+        timestamp: Date.now(),
+      })
+    }
   } catch (err) {
     // Mark as queried even on failure to avoid retry storms
     updateSessionState(instanceId, sessionId, (s) => {
@@ -220,16 +317,20 @@ export function getComposedInjection(instanceId: string, sessionId: string): str
   if (!state) return ""
 
   const parts: string[] = []
+  const injectedInstructions: RetrievedInstruction[] = []
 
   // Session-start instructions (inject once)
   if (state.sessionStartComposed && !state.injectedSessionStart) {
     parts.push(state.sessionStartComposed)
+    injectedInstructions.push(...state.sessionStartInstructions)
   }
 
   // Tool instructions (inject once per tool)
   for (const [tool, composed] of state.toolComposed) {
     if (composed && !state.injectedTools.has(tool)) {
       parts.push(composed)
+      const toolInsts = state.toolInstructions.get(tool)
+      if (toolInsts) injectedInstructions.push(...toolInsts)
     }
   }
 
@@ -247,20 +348,87 @@ export function getComposedInjection(instanceId: string, sessionId: string): str
     }
   })
 
+  // Emit injection event (ERA-714)
+  if (injectedInstructions.length > 0) {
+    emitRetrievalEvent({
+      type: "instruction:injected",
+      sessionId,
+      instanceId,
+      instructions: injectedInstructions,
+      timestamp: Date.now(),
+    })
+  }
+
   return parts.join("\n")
 }
 
 /**
  * Flush access counts to the server and clear local state.
+ * Returns any promotion candidates identified during flush.
  */
 export async function flushSession(instanceId: string, sessionId: string): Promise<void> {
   try {
-    await fetchFlush(sessionId)
-    log.info("Session flushed", { sessionId })
+    const result = await fetchFlush(sessionId)
+    log.info("Session flushed", { sessionId, count: result.count })
+
+    // Emit promotion event if candidates found (ERA-714)
+    if (result.promotionCandidates && result.promotionCandidates.length > 0) {
+      emitRetrievalEvent({
+        type: "instruction:promoted",
+        sessionId,
+        instanceId,
+        promotionCandidateIds: result.promotionCandidates,
+        timestamp: Date.now(),
+      })
+    }
   } catch (err) {
     log.warn("Failed to flush session", { sessionId, error: err })
   } finally {
     clearRetrievalState(instanceId, sessionId)
+  }
+}
+
+/**
+ * Record feedback for a retrieved instruction.
+ * Returns whether the instruction should be promoted to a directive.
+ */
+export async function recordInstructionFeedback(
+  instanceId: string,
+  sessionId: string,
+  instructionId: string,
+  outcome: "success" | "failure" | "dismissed",
+): Promise<FeedbackResult> {
+  try {
+    const result = await fetchFeedback(sessionId, instructionId, outcome)
+    log.info("Feedback recorded", { sessionId, instructionId, outcome, promoted: result.promoted })
+
+    if (result.promoted) {
+      emitRetrievalEvent({
+        type: "instruction:promoted",
+        sessionId,
+        instanceId,
+        promotionCandidateIds: [instructionId],
+        timestamp: Date.now(),
+      })
+    }
+
+    return result
+  } catch (err) {
+    log.warn("Failed to record feedback", { instructionId, outcome, error: err })
+    return { promoted: false, accessCount: 0, feedbackScore: 0 }
+  }
+}
+
+/**
+ * Query promotion candidates from the server.
+ */
+export async function getPromotionCandidates(): Promise<PromotionCandidate[]> {
+  try {
+    const result = await fetchPromotionCandidates()
+    return result.candidates
+  } catch (err) {
+    log.warn("Failed to get promotion candidates", { error: err })
+    return []
   }
 }
 

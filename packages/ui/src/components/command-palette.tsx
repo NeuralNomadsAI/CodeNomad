@@ -189,10 +189,10 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
-        <div class="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
+        <div class="fixed inset-0 z-50 flex items-end md:items-start justify-center md:pt-[20vh]">
           <Dialog.Content
-            class="rounded-xl shadow-2xl flex flex-col bg-background text-foreground w-full max-w-2xl max-h-[60vh] overflow-hidden"
-            style={{ "max-width": "min(100%, calc(100vw - 32px))", "overflow-wrap": "anywhere", "word-break": "break-word" }}
+            class="rounded-t-xl md:rounded-xl shadow-2xl flex flex-col bg-background text-foreground w-full max-w-2xl max-h-[80vh] md:max-h-[60vh] overflow-hidden"
+            style={{ "max-width": "min(100%, calc(100vw - 0px))", "overflow-wrap": "anywhere", "word-break": "break-word", "padding-bottom": "env(safe-area-inset-bottom, 0px)" }}
             onKeyDown={handleKeyDown}
           >
             <Dialog.Title class="sr-only">Command Palette</Dialog.Title>
@@ -217,7 +217,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                     setSelectedCommandId(null)
                   }}
                   placeholder="Type a command or search..."
-                  class="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
+                  class="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-base"
                 />
               </div>
             </div>
@@ -247,7 +247,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
                               class={cn(
-                                "w-full px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer border-none text-left text-foreground",
+                                "w-full px-4 py-3 min-h-[48px] flex items-start gap-3 transition-colors cursor-pointer border-none text-left text-foreground",
                                 selectedCommandId() === command.id && "bg-accent",
                                 isPointerSelecting() && selectedCommandId() !== command.id && "hover:bg-accent/50",
                               )}

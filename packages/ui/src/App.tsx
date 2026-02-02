@@ -94,6 +94,17 @@ import { sseManager } from "./lib/sse-manager"
 
 const log = getLogger("actions")
 
+function createAppMediaQuery(query: string): () => boolean {
+  if (typeof window === "undefined") return () => false
+  const mql = window.matchMedia(query)
+  const [matches, setMatches] = createSignal(mql.matches)
+  const handler = (event: MediaQueryListEvent) => setMatches(event.matches)
+  mql.addEventListener("change", handler)
+  return matches
+}
+
+const isNotMobileLayout = createAppMediaQuery("(min-width: 768px)")
+
 const App: Component = () => {
   const { isDark } = useTheme()
   const {
@@ -843,24 +854,26 @@ const App: Component = () => {
           when={!hasInstances()}
           fallback={
             <>
-              <InstanceTabs
-                instances={instances()}
-                activeInstanceId={activeInstanceId()}
-                onSelect={setActiveInstanceId}
-                onClose={handleCloseInstanceRequest}
-                onNew={handleNewInstanceRequest}
-                onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
-                onOpenSettings={() => setSettingsPanelOpen(true)}
-                showNewTab={showFolderSelection()}
-                onCloseNewTab={() => {
-                  setShowFolderSelection(false)
-                  setIsAdvancedSettingsOpen(false)
-                }}
-                serverStatus={serverStatus()}
-              />
+              <Show when={isNotMobileLayout()}>
+                <InstanceTabs
+                  instances={instances()}
+                  activeInstanceId={activeInstanceId()}
+                  onSelect={setActiveInstanceId}
+                  onClose={handleCloseInstanceRequest}
+                  onNew={handleNewInstanceRequest}
+                  onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
+                  onOpenSettings={() => setSettingsPanelOpen(true)}
+                  showNewTab={showFolderSelection()}
+                  onCloseNewTab={() => {
+                    setShowFolderSelection(false)
+                    setIsAdvancedSettingsOpen(false)
+                  }}
+                  serverStatus={serverStatus()}
+                />
+              </Show>
 
               {/* Session tabs - shown when instance is active and has sessions */}
-              <Show when={activeInstance() && !showFolderSelection() && activeInstanceParentSessions().size > 0}>
+              <Show when={isNotMobileLayout() && activeInstance() && !showFolderSelection() && activeInstanceParentSessions().size > 0}>
                 <SessionTabs
                   instanceId={activeInstance()!.id}
                   sessions={activeInstanceParentSessions()}
@@ -876,7 +889,7 @@ const App: Component = () => {
               </Show>
 
               {/* Subagent bar - shown when a session has its subagents expanded */}
-              <Show when={expandedSubagents() && !isViewingChildSession()}>
+              <Show when={isNotMobileLayout() && expandedSubagents() && !isViewingChildSession()}>
                 {(() => {
                   const parentId = expandedSubagents()!
                   const parentSession = activeInstanceParentSessions().get(parentId)
@@ -903,7 +916,7 @@ const App: Component = () => {
               </Show>
 
               {/* Breadcrumb - shown when viewing a child session */}
-              <Show when={isViewingChildSession() && parentSessionForBreadcrumb() && currentViewedSession()}>
+              <Show when={isNotMobileLayout() && isViewingChildSession() && parentSessionForBreadcrumb() && currentViewedSession()}>
                 <SessionBreadcrumb
                   instanceId={activeInstance()!.id}
                   parentSession={parentSessionForBreadcrumb()!}
@@ -950,6 +963,13 @@ const App: Component = () => {
                             handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
                             onExecuteCommand={executeCommand}
                             tabBarOffset={instanceTabBarHeight()}
+                            onOpenMcpSettings={() => setMcpSettingsOpen(true)}
+                            onOpenLspSettings={() => setLspSettingsOpen(true)}
+                            onOpenGovernance={() => setGovernancePanelOpen(true)}
+                            onOpenDirectives={() => setDirectivesEditorOpen(true)}
+                            onOpenFullSettings={() => setFullSettingsOpen(true)}
+                            onOpenInstanceInfo={() => setInstanceInfoModalOpen(true)}
+                            onOpenProjectSwitcher={() => setShowFolderSelection(true)}
                           />
                         </InstanceMetadataProvider>
 
@@ -1111,8 +1131,8 @@ const App: Component = () => {
           }}
         />
 
-        {/* Bottom Status Bar - shown when we have an active instance */}
-        <Show when={activeInstance() && !showFolderSelection()}>
+        {/* Bottom Status Bar - shown when we have an active instance (hidden on mobile) */}
+        <Show when={isNotMobileLayout() && activeInstance() && !showFolderSelection()}>
           <BottomStatusBar
             projectName={projectName()}
             usedTokens={totalProjectTokens().used}

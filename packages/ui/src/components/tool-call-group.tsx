@@ -1,9 +1,32 @@
 import { Component, createMemo, createSignal, For, Show } from "solid-js"
-import { ChevronDown, ChevronRight, FileText, Search, Terminal, Edit3, Globe, FolderSearch } from "lucide-solid"
+import { ChevronDown, ChevronRight, FileText, Search, Terminal, Edit3, Globe, FolderSearch, Scissors } from "lucide-solid"
 import { getToolName, getToolArgsSummary, getToolSummary, readToolStatePayload, getRelativePath } from "./tool-call/utils"
 import { openToolModal, type ToolModalItem } from "../stores/tool-modal"
 import type { ToolDisplayItem } from "./inline-tool-call"
 import { cn } from "../lib/cn"
+
+/** Default display threshold in characters */
+const TRUNCATION_DISPLAY_THRESHOLD = 2000
+
+function formatCharCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
+
+/** Compute total output character count for a set of tool items */
+function computeOutputSize(items: ToolDisplayItem[]): number {
+  let total = 0
+  for (const item of items) {
+    const { output } = readToolStatePayload(item.toolPart.state)
+    if (typeof output === "string") {
+      total += output.length
+    } else if (output !== null && output !== undefined) {
+      try { total += JSON.stringify(output).length } catch { /* skip */ }
+    }
+  }
+  return total
+}
 
 interface ToolGroup {
   toolName: string
@@ -208,6 +231,16 @@ const ToolGroupDisplay: Component<{
     )
   }
 
+  // Output size tracking for truncation display
+  const outputSize = createMemo(() => computeOutputSize(props.group.items))
+  const isTruncated = createMemo(() => outputSize() > TRUNCATION_DISPLAY_THRESHOLD)
+  const truncationLabel = createMemo(() => {
+    const size = outputSize()
+    if (size <= 0) return null
+    if (size <= TRUNCATION_DISPLAY_THRESHOLD) return null
+    return `${formatCharCount(TRUNCATION_DISPLAY_THRESHOLD)} of ${formatCharCount(size)}`
+  })
+
   // For single items, just show a simple row
   if (!isMultiple()) {
     const item = props.group.items[0]
@@ -227,6 +260,12 @@ const ToolGroupDisplay: Component<{
         <Icon class={cn("shrink-0", props.group.colorClass)} size={14} />
         <span class="font-semibold text-foreground whitespace-nowrap">{props.group.displayName}</span>
         <span class="text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap flex-1 min-w-0">{aggregateSummary()}</span>
+        <Show when={truncationLabel()}>
+          <span class="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground px-1.5 py-0.5 bg-warning/10 border border-warning/20 rounded" title="Click to view full output">
+            <Scissors size={10} class="text-warning" />
+            {truncationLabel()}
+          </span>
+        </Show>
         <Show when={resultSummary()}>
           <span class="shrink-0 text-muted-foreground text-xs px-1.5 py-0.5 bg-secondary rounded">{resultSummary()}</span>
         </Show>
@@ -250,6 +289,12 @@ const ToolGroupDisplay: Component<{
         <span class={cn("font-medium text-xs", props.group.colorClass)}>{"\u00D7"} {count()}</span>
         <Show when={aggregateSummary()}>
           <span class="text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap flex-1 min-w-0">{"\u00B7"} {aggregateSummary()}</span>
+        </Show>
+        <Show when={truncationLabel()}>
+          <span class="shrink-0 inline-flex items-center gap-1 text-xs text-muted-foreground px-1.5 py-0.5 bg-warning/10 border border-warning/20 rounded" title="Click to view full output">
+            <Scissors size={10} class="text-warning" />
+            {truncationLabel()}
+          </span>
         </Show>
         <Show when={resultSummary()}>
           <span class="shrink-0 text-muted-foreground text-xs px-1.5 py-0.5 bg-secondary rounded">{resultSummary()}</span>

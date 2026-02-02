@@ -1,5 +1,5 @@
-import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderOpen, Github, Search, X, Settings, Lock, Loader2 } from "lucide-solid"
+import { Component, createSignal, createMemo, Show, For, onMount, onCleanup, createEffect } from "solid-js"
+import { Folder, Trash2, FolderOpen, Github, Search, X, Settings, Lock, Loader2, Plus } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -8,6 +8,7 @@ import { openNativeFolderDialog, supportsNativeDialogsAsync } from "../lib/nativ
 import eraCodeAnimated from "../images/era-code-animated.gif"
 import EraUpgradeBanner from "./era-upgrade-banner"
 import { cn } from "../lib/cn"
+import NewProjectWizard from "./new-project-wizard"
 import {
   isGhCliInstalled,
   isGhCliChecked,
@@ -47,11 +48,21 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [manualPath, setManualPath] = createSignal("")
   const [manualPathError, setManualPathError] = createSignal<string | null>(null)
+  const [isNewProjectWizardOpen, setIsNewProjectWizardOpen] = createSignal(false)
 
   let recentListRef: HTMLDivElement | undefined
 
   const folders = () => recentFolders()
   const isLoading = () => Boolean(props.isLoading)
+
+  const filteredFolders = createMemo(() => {
+    const query = manualPath().toLowerCase().trim()
+    if (!query) return folders()
+    return folders().filter((f) => {
+      const name = f.path.split("/").pop()?.toLowerCase() || ""
+      return name.includes(query) || getDisplayPath(f.path).toLowerCase().includes(query)
+    })
+  })
 
   // Update selected binary when preferences change
   createEffect(() => {
@@ -101,6 +112,14 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
     }
 
     const folderList = folders()
+
+    // Cmd+Shift+N opens new project wizard
+    const isNewProjectShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && normalizedKey === "n"
+    if (isNewProjectShortcut) {
+      e.preventDefault()
+      setIsNewProjectWizardOpen(true)
+      return
+    }
 
     // Cmd+, opens full settings
     if ((e.metaKey || e.ctrlKey) && normalizedKey === ",") {
@@ -283,6 +302,11 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
     setSelectedBinary(binary)
   }
 
+  function handleProjectCreated(path: string) {
+    setIsNewProjectWizardOpen(false)
+    handleFolderSelect(path)
+  }
+
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
@@ -304,17 +328,16 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
 
   return (
     <>
-      <div class="flex flex-col items-center gap-8 py-8 px-4 max-w-[900px] mx-auto w-full">
-        {/* Hero section with logo and search */}
-        <div class="flex flex-col items-center gap-4 text-center">
-          <img src={eraCodeAnimated} alt="Era Code" class="w-[200px] h-auto object-contain" />
+      <div class="flex flex-col items-center gap-6 py-8 px-4 max-w-[800px] mx-auto w-full">
+        {/* Hero section: logo, tagline, upgrade banner, search */}
+        <div class="flex flex-col items-center gap-4 text-center w-full">
+          <img src={eraCodeAnimated} alt="Era Code" class="w-[180px] h-auto object-contain" />
           <p class="text-base text-muted-foreground">Your AI-powered coding workspace</p>
 
-          {/* Era upgrade banner */}
-          <EraUpgradeBanner class="mt-4" />
+          <EraUpgradeBanner class="mt-2" />
 
-          {/* Unified search bar */}
-          <div class="w-full max-w-lg mt-4">
+          {/* Search bar */}
+          <div class="w-full max-w-lg mt-2">
             <div class="relative flex items-center">
               <Search class="absolute left-3 w-5 h-5 text-muted-foreground" />
               <input
@@ -324,7 +347,7 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
                   setManualPath(event.currentTarget.value)
                   setManualPathError(null)
                 }}
-                placeholder="Search folders, GitHub repos, or paste a path..."
+                placeholder="Search projects, repos, or paste a path..."
                 disabled={isLoading()}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && manualPath().trim()) {
@@ -348,58 +371,57 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
           </div>
         </div>
 
-        {/* Three cards grid */}
-        <div class="grid gap-4 w-full" style={{ "grid-template-columns": "repeat(auto-fit, minmax(260px, 1fr))" }}>
-          {/* Recent Folders Card */}
-          <div class="flex flex-col rounded-lg border p-4 bg-card border-border min-h-[200px]">
-            <div class="flex items-center gap-2 mb-2">
-              <Clock class="w-5 h-5 text-primary" />
-              <h2 class="text-base font-semibold text-foreground">Recent</h2>
-            </div>
-            <p class="text-sm mb-4 text-muted-foreground">Quick access to your last projects</p>
-
-            <Show
-              when={folders().length > 0}
-              fallback={
-                <div class="flex-1 flex flex-col items-center justify-center text-center py-4 text-muted-foreground">
-                  <p>No recent folders</p>
-                  <p class="text-xs text-muted-foreground">Browse for a folder to get started</p>
-                </div>
-              }
-            >
-              <div class="flex flex-col gap-1 -mx-2 max-h-[200px] overflow-y-auto" ref={(el) => (recentListRef = el)}>
-                <For each={folders().slice(0, 5)}>
-                  {(folder, index) => (
-                    <div
-                      data-folder-index={index()}
-                      class={cn(
-                        "flex items-center justify-between px-2 py-2 rounded transition-colors text-left w-full cursor-pointer group hover:bg-accent/50",
-                        focusMode() === "recent" && selectedIndex() === index() && "bg-accent",
-                        isLoading() && "opacity-50 cursor-not-allowed",
-                      )}
-                      role="button"
-                      tabIndex={isLoading() ? -1 : 0}
-                      onClick={() => !isLoading() && handleFolderSelect(folder.path)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          if (!isLoading()) handleFolderSelect(folder.path)
-                        }
-                      }}
-                      onMouseEnter={() => {
-                        if (isLoading()) return
-                        setFocusMode("recent")
-                        setSelectedIndex(index())
-                      }}
-                    >
-                      <div class="flex items-start gap-2 min-w-0 flex-1">
-                        <Folder class="w-4 h-4 flex-shrink-0 mt-0.5 text-muted-foreground" />
-                        <div class="flex flex-col min-w-0">
-                          <span class="text-sm font-medium truncate text-foreground">{folder.path.split("/").pop()}</span>
-                          <span class="text-xs font-mono truncate text-muted-foreground">{getDisplayPath(folder.path)}</span>
-                          <span class="text-xs text-muted-foreground">{formatRelativeTime(folder.lastAccessed)}</span>
-                        </div>
-                      </div>
+        {/* Recent Projects section */}
+        <div class="w-full">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">Recent Projects</h2>
+          <Show
+            when={filteredFolders().length > 0}
+            fallback={
+              <div class="rounded-lg border border-border bg-card px-4 py-6 text-center text-muted-foreground">
+                <Show when={manualPath().trim()} fallback={
+                  <>
+                    <p>No recent projects</p>
+                    <p class="text-xs mt-1">Browse for a folder or create a new project to get started</p>
+                  </>
+                }>
+                  <p>No projects matching "{manualPath().trim()}"</p>
+                </Show>
+              </div>
+            }
+          >
+            <div class="rounded-lg border border-border bg-card overflow-hidden" ref={(el) => (recentListRef = el)}>
+              <For each={filteredFolders().slice(0, 5)}>
+                {(folder, index) => (
+                  <div
+                    data-folder-index={index()}
+                    class={cn(
+                      "flex items-center justify-between px-4 py-3 transition-colors text-left w-full cursor-pointer group hover:bg-accent/50",
+                      index() > 0 && "border-t border-border",
+                      focusMode() === "recent" && selectedIndex() === index() && "bg-accent",
+                      isLoading() && "opacity-50 cursor-not-allowed",
+                    )}
+                    role="button"
+                    tabIndex={isLoading() ? -1 : 0}
+                    onClick={() => !isLoading() && handleFolderSelect(folder.path)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        if (!isLoading()) handleFolderSelect(folder.path)
+                      }
+                    }}
+                    onMouseEnter={() => {
+                      if (isLoading()) return
+                      setFocusMode("recent")
+                      setSelectedIndex(index())
+                    }}
+                  >
+                    <div class="flex items-center gap-3 min-w-0 flex-1">
+                      <Folder class="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                      <span class="text-sm font-medium truncate text-foreground">{folder.path.split("/").pop()}</span>
+                      <span class="text-xs font-mono truncate text-muted-foreground hidden sm:inline">{getDisplayPath(folder.path)}</span>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                      <span class="text-xs text-muted-foreground">{formatRelativeTime(folder.lastAccessed)}</span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -408,45 +430,29 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
                         disabled={isLoading()}
                         class="opacity-0 group-hover:opacity-100 p-1 rounded transition-all text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         title="Remove from recent"
+                        aria-label={`Remove ${folder.path.split("/").pop()} from recent`}
                       >
                         <Trash2 class="w-3.5 h-3.5" />
                       </button>
                     </div>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </div>
-
-          {/* Browse Card */}
-          <div class="flex flex-col rounded-lg border p-4 bg-card border-border min-h-[200px]">
-            <div class="flex items-center gap-2 mb-2">
-              <FolderOpen class="w-5 h-5 text-primary" />
-              <h2 class="text-base font-semibold text-foreground">Browse</h2>
+                  </div>
+                )}
+              </For>
             </div>
-            <p class="text-sm mb-4 text-muted-foreground">Open any folder on your computer</p>
+          </Show>
+        </div>
 
-            <div class="flex-1 flex flex-col justify-center">
-              <button
-                onClick={() => void handleBrowse()}
-                disabled={props.isLoading}
-                class="w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors border border-border bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <span>{props.isLoading ? "Opening..." : "Browse Folders..."}</span>
-              </button>
-            </div>
-          </div>
-
+        {/* Two-column: GitHub + New Project */}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
           {/* GitHub Card */}
           <div class="flex flex-col rounded-lg border p-4 bg-card border-border min-h-[200px]">
             <div class="flex items-center gap-2 mb-2">
               <Github class="w-5 h-5 text-primary" />
-              <h2 class="text-base font-semibold text-foreground">GitHub</h2>
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">GitHub</h2>
               <Show when={isGitHubAuthenticated() && githubUsername()}>
                 <span class="text-xs ml-auto text-muted-foreground">@{githubUsername()}</span>
               </Show>
             </div>
-            <p class="text-sm mb-4 text-muted-foreground">Clone or open repositories from GitHub</p>
 
             <div class="flex-1 flex flex-col justify-center">
               <Show when={isGhCliChecked()} fallback={
@@ -461,6 +467,7 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
                     <button
                       class="w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors bg-accent text-muted-foreground hover:brightness-110"
                       onClick={() => void installGhCli()}
+                      aria-label="Install GitHub CLI"
                     >
                       Install GitHub CLI
                     </button>
@@ -473,6 +480,7 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
                         class="w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors bg-primary text-primary-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                         onClick={() => void initiateGitHubLogin()}
                         disabled={isGitHubLoading()}
+                        aria-label="Sign in with GitHub"
                       >
                         {isGitHubLoading() ? "Signing in..." : "Sign in with GitHub"}
                       </button>
@@ -548,10 +556,41 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
               </Show>
             </div>
           </div>
+
+          {/* New Project Card */}
+          <div class="flex flex-col rounded-lg border p-4 bg-card border-border min-h-[200px]">
+            <div class="flex items-center gap-2 mb-2">
+              <Plus class="w-5 h-5 text-primary" />
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">New Project</h2>
+            </div>
+
+            <div class="flex-1 flex flex-col justify-center gap-3">
+              <button
+                onClick={() => setIsNewProjectWizardOpen(true)}
+                disabled={isLoading()}
+                class="w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors bg-primary text-primary-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                aria-label="Create new project"
+              >
+                <Plus class="w-4 h-4" />
+                Create New Project
+              </button>
+              <button
+                onClick={() => void handleBrowse()}
+                disabled={isLoading()}
+                class="w-full py-2.5 px-4 rounded-md text-sm font-medium text-center transition-colors border border-border bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                aria-label="Browse folders"
+              >
+                <FolderOpen class="w-4 h-4" />
+                {isLoading() ? "Opening..." : "Browse Folders..."}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Keyboard shortcuts footer */}
         <div class="flex items-center justify-center gap-2 flex-wrap text-sm text-muted-foreground">
+          <span><Kbd shortcut="cmd+shift+n" /> New</span>
+          <span class="text-border">·</span>
           <span><Kbd shortcut="cmd+n" /> Browse</span>
           <span class="text-border">·</span>
           <span><Kbd shortcut="cmd+shift+g" /> GitHub</span>
@@ -568,6 +607,12 @@ const FolderSelectionCards: Component<FolderSelectionCardsProps> = (props) => {
           </button>
         </div>
       </div>
+
+      <NewProjectWizard
+        open={isNewProjectWizardOpen()}
+        onClose={() => setIsNewProjectWizardOpen(false)}
+        onProjectCreated={handleProjectCreated}
+      />
 
       <AdvancedSettingsModal
         open={Boolean(props.advancedSettingsOpen)}

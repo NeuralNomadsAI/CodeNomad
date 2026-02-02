@@ -132,11 +132,11 @@ export const ToolCallModal: Component = () => {
         >
           <div
             ref={modalRef}
-            class="relative flex flex-col w-[90vw] max-w-[1200px] h-[85vh] max-h-[900px] bg-background border border-border rounded-xl shadow-2xl animate-in slide-in-from-bottom-5 duration-200 outline-none md:max-w-none md:max-h-none"
+            class="relative flex flex-col w-screen h-screen bg-background border-0 shadow-2xl animate-in slide-in-from-bottom-5 duration-200 outline-none md:w-[90vw] md:max-w-[1200px] md:h-[85vh] md:max-h-[900px] md:border md:border-border md:rounded-xl"
             tabIndex={-1}
           >
             {/* Header */}
-            <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary rounded-t-xl">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-border bg-secondary md:px-4 md:py-3 md:rounded-t-xl">
               <div class="flex items-center gap-2 text-base font-medium text-foreground overflow-hidden" id="tool-modal-title">
                 <span class="text-lg shrink-0">{getToolIcon(toolName())}</span>
                 <span class="text-muted-foreground">{getToolName(toolName())}</span>
@@ -146,7 +146,7 @@ export const ToolCallModal: Component = () => {
               <div class="flex items-center gap-3">
                 {/* Diff view mode toggle - only for diff-capable tools */}
                 <Show when={isDiffTool()}>
-                  <div class="flex items-center bg-muted rounded-md p-0.5" role="group" aria-label="View mode">
+                  <div class="hidden md:flex items-center bg-muted rounded-md p-0.5" role="group" aria-label="View mode">
                     <button
                       type="button"
                       class={cn(
@@ -194,7 +194,7 @@ export const ToolCallModal: Component = () => {
 
                 <button
                   type="button"
-                  class="flex items-center justify-center w-8 h-8 p-0 bg-transparent border-none rounded-md text-muted-foreground cursor-pointer transition-all duration-150 hover:bg-muted hover:text-foreground"
+                  class="flex items-center justify-center w-10 h-10 md:w-8 md:h-8 p-0 bg-transparent border-none rounded-md text-muted-foreground cursor-pointer transition-all duration-150 hover:bg-muted hover:text-foreground"
                   onClick={() => closeToolModal()}
                   aria-label="Close modal"
                 >
@@ -204,7 +204,7 @@ export const ToolCallModal: Component = () => {
             </div>
 
             {/* Content */}
-            <div class="flex-1 overflow-auto p-4 text-foreground" data-tool-type={toolName()}>
+            <div class="flex-1 overflow-auto p-2 md:p-4 text-foreground" data-tool-type={toolName()}>
               <Show
                 when={currentItem()?.toolPart.state?.status !== "running"}
                 fallback={
@@ -243,7 +243,7 @@ export const ToolCallModal: Component = () => {
             </div>
 
             {/* Footer with navigation and stats */}
-            <div class="flex items-center justify-between px-4 py-3 border-t border-border bg-secondary rounded-b-xl">
+            <div class="flex items-center justify-between px-3 py-2 border-t border-border bg-secondary md:px-4 md:py-3 md:rounded-b-xl" style={{ "padding-bottom": "max(0.5rem, env(safe-area-inset-bottom, 0px))" }}>
               <div class="flex items-center gap-3">
                 <button
                   type="button"

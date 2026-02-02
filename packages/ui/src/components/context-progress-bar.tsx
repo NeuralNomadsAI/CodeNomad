@@ -3,12 +3,16 @@ import { cn } from "../lib/cn"
 import { Progress } from "./ui"
 import { formatTokenTotal } from "../lib/formatters"
 
+export type ContextUsageLevel = "low" | "moderate" | "elevated" | "critical"
+
 interface ContextProgressBarProps {
   used: number
   available: number | null
   showLabels?: boolean
   size?: "sm" | "md" | "lg"
   class?: string
+  /** Called when usage level changes */
+  onLevelChange?: (level: ContextUsageLevel, percentage: number) => void
 }
 
 const ContextProgressBar: Component<ContextProgressBarProps> = (props) => {
@@ -23,21 +27,30 @@ const ContextProgressBar: Component<ContextProgressBarProps> = (props) => {
     return Math.min((props.used / t) * 100, 100)
   })
 
-  const usageLevel = createMemo(() => {
+  const usageLevel = createMemo<ContextUsageLevel>((prev) => {
     const pct = percentage()
-    if (pct >= 90) return "critical"
-    if (pct >= 75) return "warning"
-    return "normal"
+    let level: ContextUsageLevel
+    if (pct >= 85) level = "critical"
+    else if (pct >= 70) level = "elevated"
+    else if (pct >= 50) level = "moderate"
+    else level = "low"
+
+    if (prev !== undefined && level !== prev && props.onLevelChange) {
+      props.onLevelChange(level, pct)
+    }
+    return level
   })
 
   const indicatorColor = createMemo(() => {
     switch (usageLevel()) {
       case "critical":
-        return "bg-destructive"
-      case "warning":
-        return "bg-warning"
+        return "bg-[hsl(var(--context-progress-critical))]"
+      case "elevated":
+        return "bg-[hsl(var(--context-progress-warning))]"
+      case "moderate":
+        return "bg-[hsl(var(--context-progress-moderate))]"
       default:
-        return "bg-success"
+        return "bg-[hsl(var(--context-progress-low))]"
     }
   })
 
@@ -70,17 +83,25 @@ const ContextProgressBar: Component<ContextProgressBarProps> = (props) => {
     }
   })
 
+  const levelTextColor = createMemo(() => {
+    switch (usageLevel()) {
+      case "critical": return "text-destructive"
+      case "elevated": return "text-warning"
+      default: return "text-muted-foreground"
+    }
+  })
+
   return (
     <div class={cn("flex items-center", gapSize(), props.class)}>
       {props.showLabels !== false && (
-        <span class={cn("font-mono font-semibold whitespace-nowrap text-muted-foreground", labelSize())}>
+        <span class={cn("font-mono font-semibold whitespace-nowrap", labelSize(), levelTextColor())}>
           {formatTokenTotal(props.used)}
         </span>
       )}
       <Progress
         value={percentage()}
         max={100}
-        class={cn("flex-1 bg-primary/20", trackSize())}
+        class={cn("flex-1 bg-[hsl(var(--context-progress-track))]", trackSize())}
         indicatorClass={indicatorColor()}
       />
       {props.showLabels !== false && (
