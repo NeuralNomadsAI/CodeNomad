@@ -222,20 +222,18 @@ export class FileSystemBrowser {
     const results: FileSystemEntry[] = []
 
     for (const entry of dirents) {
-      if (!options.includeFiles && !entry.isDirectory()) {
-        continue
-      }
-
       const absoluteEntryPath = path.join(directory, entry.name)
       let stats: fs.Stats
       try {
+        // Use fs.statSync (not Dirent.isDirectory) so symlinks to directories
+        // are treated as directories in directory-only listings.
         stats = fs.statSync(absoluteEntryPath)
       } catch {
         // Skip entries we cannot stat (insufficient permissions, etc.)
         continue
       }
 
-      const isDirectory = entry.isDirectory()
+      const isDirectory = stats.isDirectory()
       if (!options.includeFiles && !isDirectory) {
         continue
       }
