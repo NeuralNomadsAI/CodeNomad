@@ -6,7 +6,7 @@
 }
 
 .tool-call-task-section {
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   overflow: hidden;
   background-color: transparent;
   border-radius: 0;
@@ -19,7 +19,7 @@
   gap: 0.75rem;
   padding: 0.5rem;
   background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--border-base);
+  border-bottom: 1px solid var(--tool-call-border-color, var(--border-base));
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: inherit;
@@ -81,7 +81,7 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.5rem 0.35rem 0.75rem;
-  border-left: 2px solid var(--border-base);
+  border-left: 2px solid var(--tool-call-border-color, var(--border-base));
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   line-height: 1.35;

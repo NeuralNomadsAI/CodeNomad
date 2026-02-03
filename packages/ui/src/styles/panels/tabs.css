@@ -87,6 +87,23 @@
   ring-offset-color: inherit;
 }
 
+/* Instance tabs: session-status dots should be lighter/softer than list/status pills. */
+.tab-base .status-indicator.session-status.session-working {
+  --session-status-dot: color-mix(in oklab, var(--session-status-working-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-compacting {
+  --session-status-dot: color-mix(in oklab, var(--session-status-compacting-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-idle {
+  --session-status-dot: color-mix(in oklab, var(--session-status-idle-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-permission {
+  --session-status-dot: color-mix(in oklab, var(--session-status-permission-fg) 55%, var(--surface-base));
+}
+
 .new-tab-button {
   @apply inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors;
   background-color: var(--new-tab-bg);

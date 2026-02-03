@@ -57,6 +57,7 @@
   --attachment-chip-ring: rgba(0, 102, 255, 0.1);
   --badge-neutral-bg: rgba(0, 102, 255, 0.05);
   --badge-neutral-text: #0066ff;
+  --badge-success-bg: rgba(76, 175, 80, 0.12);
   --status-ready-fg: #16a34a;
   --status-ready-bg: rgba(34, 197, 94, 0.1);
   --status-starting-fg: #ca8a04;
@@ -94,9 +95,10 @@
   --status-success-ring: color-mix(in oklab, var(--status-success) 45%, transparent);
   --border-critical: var(--status-error);
 
-  --timeline-segment-active-bg: #0f5b44;
-  --timeline-segment-active-text: #ffffff;
-  --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+  /* Message timeline active segment (light theme should be a light tint). */
+  --timeline-segment-active-bg: #b7e6d6;
+  --timeline-segment-active-text: #032f23;
+  --timeline-segment-active-ring: inset 0 0 0 1px rgba(3, 47, 35, 0.28);
 
   --button-danger-bg: color-mix(in oklab, var(--status-error) 85%, var(--surface-base));
   --button-danger-hover-bg: color-mix(in oklab, var(--status-error) 90%, var(--surface-base));
@@ -223,6 +225,7 @@
     --attachment-chip-ring: rgba(0, 128, 255, 0.2);
   --badge-neutral-bg: rgba(0, 128, 255, 0.15);
   --badge-neutral-text: #0080ff;
+  --badge-success-bg: rgba(76, 175, 80, 0.22);
   --status-ready-fg: #22c55e;
   --status-ready-bg: rgba(34, 197, 94, 0.2);
   --status-starting-fg: #facc15;
@@ -385,6 +388,7 @@
   --attachment-chip-ring: rgba(0, 128, 255, 0.2);
   --badge-neutral-bg: rgba(0, 128, 255, 0.15);
   --badge-neutral-text: #0080ff;
+  --badge-success-bg: rgba(76, 175, 80, 0.22);
   --status-ready-fg: #22c55e;
   --status-ready-bg: rgba(34, 197, 94, 0.2);
   --status-starting-fg: #facc15;

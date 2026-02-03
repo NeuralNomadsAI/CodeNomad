@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { renderMarkdown, onLanguagesLoaded, decodeHtmlEntities } from "../lib/markdown"
+import { renderMarkdown, onLanguagesLoaded, decodeHtmlEntities, setMarkdownTheme } from "../lib/markdown"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
@@ -71,6 +71,9 @@ export function Markdown(props: MarkdownProps) {
 
   createEffect(async () => {
     const { part, text, themeKey, highlightEnabled, version } = resolved()
+
+    // Ensure the markdown highlighter theme matches the active UI theme.
+    setMarkdownTheme(themeKey === "dark")
 
     latestRequestedText = text
 
@@ -170,6 +173,8 @@ export function Markdown(props: MarkdownProps) {
       }
 
       const { part, text, themeKey, version } = resolved()
+
+      setMarkdownTheme(themeKey === "dark")
 
       if (latestRequestedText !== text) {
         return

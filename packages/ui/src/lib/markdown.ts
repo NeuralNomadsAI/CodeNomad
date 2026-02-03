@@ -329,6 +329,10 @@ export async function initMarkdown(isDark: boolean) {
   isInitialized = true
 }
 
+export function setMarkdownTheme(isDark: boolean) {
+  currentTheme = isDark ? "dark" : "light"
+}
+
 export function isMarkdownReady(): boolean {
   return isInitialized && highlighter !== null
 }

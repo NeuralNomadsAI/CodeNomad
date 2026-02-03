@@ -103,7 +103,7 @@
 }
 
 .message-timeline-segment-active {
-  border-color: transparent;
+  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text));
   background-color: var(--timeline-segment-active-bg);
   color: var(--timeline-segment-active-text);
   font-weight: 700;
@@ -182,7 +182,7 @@
 
 .message-timeline-segment-active {
   background-color: var(--timeline-segment-active-bg) !important;
-  border-color: transparent !important;
+  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text)) !important;
   color: var(--timeline-segment-active-text) !important;
   font-weight: 700;
   box-shadow: var(--timeline-segment-active-ring);

@@ -38,7 +38,8 @@
   @apply w-full pl-3 pr-10 pt-2.5 border text-sm resize-none outline-none transition-colors;
   font-family: inherit;
   background-color: var(--surface-base);
-  color: inherit;
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
   border-color: var(--border-base);
   line-height: var(--line-height-normal);
   border-radius: 0;

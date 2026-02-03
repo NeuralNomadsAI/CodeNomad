@@ -15,7 +15,6 @@ import { Accordion } from "@kobalte/core"
 import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
-import Divider from "@suid/material/Divider"
 import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
@@ -916,7 +915,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           showFooter={false}
         />
 
-        <Divider />
+        <div class="session-sidebar-separator" />
         <Show when={activeSessionForInstance()}>
           {(activeSession) => (
             <>
