@@ -78,11 +78,11 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
-  const { themePreference } = useConfig()
+  const { themePreference, setThemePreference } = useConfig()
   const [isDark, setIsDarkSignal] = createSignal(true)
-  const [themeMode, setThemeModeSignal] = createSignal<ThemeMode>(themePreference())
-  const [hasUserOverride, setHasUserOverride] = createSignal(false)
   const [themeRevision, setThemeRevision] = createSignal(0)
+
+  const themeMode = () => themePreference() as ThemeMode
 
   const resolveDarkTheme = () => {
     const mode = themeMode()
@@ -111,12 +111,6 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     applyResolvedTheme()
   })
 
-  createEffect(() => {
-    const preference = themePreference()
-    if (hasUserOverride()) return
-    setThemeModeSignal(preference)
-  })
-
   onMount(() => {
     if (!mediaQuery) return
     const handleSystemThemeChange = () => {
@@ -131,10 +125,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   const setThemeMode = (mode: ThemeMode) => {
-    setHasUserOverride(true)
-    setThemeModeSignal(mode)
-    // Persistence is intentionally implemented later.
-    // When we wire it up, this should call `setThemePreference(mode)`.
+    setThemePreference(mode)
   }
 
   const cycleThemeMode = () => {
