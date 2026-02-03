@@ -167,7 +167,7 @@
 .stop-button {
   @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
   background-color: var(--button-danger-bg, rgba(239, 68, 68, 0.85));
-  color: var(--button-danger-text, #ffffff);
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
 }
 
 .stop-button:hover:not(:disabled) {

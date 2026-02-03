@@ -106,7 +106,7 @@
   --button-danger-bg: rgba(239, 68, 68, 0.85);
   --button-danger-hover-bg: rgba(239, 68, 68, 0.9);
   --button-danger-active-bg: rgba(239, 68, 68, 1);
-  --button-danger-text: #ffffff;
+  --button-danger-text: var(--text-inverted);
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
   --kbd-text: var(--text-primary);
@@ -258,7 +258,7 @@
   --timeline-segment-active-bg: #0f5b44;
   --timeline-segment-active-text: #ffffff;
   --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  --button-danger-text: #ffffff;
+  --button-danger-text: var(--text-inverted);
   --button-primary-bg: #3f3f46;
   --button-primary-hover-bg: #52525b;
   --button-primary-text: #f5f6f8;
@@ -425,7 +425,7 @@
   --timeline-segment-active-bg: #0f5b44;
   --timeline-segment-active-text: #ffffff;
   --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  --button-danger-text: #ffffff;
+  --button-danger-text: var(--text-inverted);
   --message-error-bg: rgba(244, 67, 54, 0.12);
   --message-error-bg-strong: rgba(244, 67, 54, 0.2);
   --danger-soft-bg: rgba(244, 67, 54, 0.16);
