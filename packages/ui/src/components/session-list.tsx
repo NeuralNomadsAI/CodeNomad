@@ -120,9 +120,10 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const selectSession = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
-    const parentId = session?.parentId ?? session?.id
-    if (parentId) {
-      ensureSessionParentExpanded(props.instanceId, parentId)
+    // If the user selects a child session, make sure its parent thread is expanded.
+    // For parent sessions we don't force expansion; user can collapse/expand freely.
+    if (session?.parentId) {
+      ensureSessionParentExpanded(props.instanceId, session.parentId)
     }
 
     props.onSelect(sessionId)
@@ -525,6 +526,13 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   createEffect(() => {
+    // Keep the active child session visible by ensuring its parent is expanded.
+    // Don't force-expanding when the active session itself is a parent lets users collapse it.
+    const activeId = props.activeSessionId
+    if (!activeId || activeId === "info") return
+    const activeSession = sessionStateSessions().get(props.instanceId)?.get(activeId)
+    if (!activeSession) return
+    if (!activeSession.parentId) return
     const parentId = activeParentId()
     if (!parentId) return
     ensureSessionParentExpanded(props.instanceId, parentId)
