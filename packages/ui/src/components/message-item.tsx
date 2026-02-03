@@ -5,6 +5,8 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { showAlertDialog } from "../stores/alerts"
+import { deleteMessagePart } from "../stores/session-actions"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -22,6 +24,7 @@ interface MessageItemProps {
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
+  const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -172,6 +175,50 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const deletableTextPartId = () => {
+    const part = props.parts.find((candidate) => {
+      if (!candidate || candidate.type !== "text") return false
+      const id = (candidate as any).id
+      if (typeof id !== "string" || id.length === 0) return false
+      return !Boolean((candidate as any).synthetic)
+    })
+    return (part as any)?.id as string | undefined
+  }
+
+  const isDeletingPart = (partId?: string) => {
+    if (!partId) return false
+    return deletingParts().has(partId)
+  }
+
+  const setPartDeleting = (partId: string, value: boolean) => {
+    setDeletingParts((prev) => {
+      const next = new Set(prev)
+      if (value) {
+        next.add(partId)
+      } else {
+        next.delete(partId)
+      }
+      return next
+    })
+  }
+
+  const handleDeletePart = async (partId?: string) => {
+    if (!partId) return
+    if (isDeletingPart(partId)) return
+    setPartDeleting(partId, true)
+    try {
+      await deleteMessagePart(props.instanceId, props.sessionId, props.record.id, partId)
+    } catch (error) {
+      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
+        title: t("messagePart.actions.deleteFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setPartDeleting(partId, false)
+    }
+  }
+
   if (!isUser() && !hasContent() && !isGenerating()) {
     return null
   }
@@ -257,19 +304,48 @@ export default function MessageItem(props: MessageItemProps) {
                   {t("messageItem.actions.copied")}
                 </Show>
               </button>
+              <Show when={deletableTextPartId()}>
+                {(partId) => (
+                  <button
+                    class="message-action-button"
+                    onClick={() => void handleDeletePart(partId())}
+                    disabled={isDeletingPart(partId())}
+                    title={t("messagePart.actions.deleteTitle")}
+                    aria-label={t("messagePart.actions.deleteTitle")}
+                  >
+                    {isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                  </button>
+                )}
+              </Show>
             </div>
           </Show>
           <Show when={!isUser()}>
-            <button
-              class="message-action-button"
-              onClick={handleCopy}
-              title={t("messageItem.actions.copyTitle")}
-              aria-label={t("messageItem.actions.copyTitle")}
-            >
-              <Show when={copied()} fallback={t("messageItem.actions.copy")}>
-                {t("messageItem.actions.copied")}
+            <div class="message-action-group">
+              <button
+                class="message-action-button"
+                onClick={handleCopy}
+                title={t("messageItem.actions.copyTitle")}
+                aria-label={t("messageItem.actions.copyTitle")}
+              >
+                <Show when={copied()} fallback={t("messageItem.actions.copy")}>
+                  {t("messageItem.actions.copied")}
+                </Show>
+              </button>
+
+              <Show when={deletableTextPartId()}>
+                {(partId) => (
+                  <button
+                    class="message-action-button"
+                    onClick={() => void handleDeletePart(partId())}
+                    disabled={isDeletingPart(partId())}
+                    title={t("messagePart.actions.deleteTitle")}
+                    aria-label={t("messagePart.actions.deleteTitle")}
+                  >
+                    {isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                  </button>
+                )}
               </Show>
-            </button>
+            </div>
           </Show>
           <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
         </div>
@@ -335,6 +411,19 @@ export default function MessageItem(props: MessageItemProps) {
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12l4 4 4-4m-4-8v12" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDeletePart(attachment.id)}
+                      class="attachment-remove"
+                      disabled={isDeletingPart(attachment.id)}
+                      aria-label={t("messagePart.actions.deleteTitle")}
+                      title={t("messagePart.actions.deleteTitle")}
+                    >
+                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                     <Show when={isImage}>

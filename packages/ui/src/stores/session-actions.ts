@@ -6,6 +6,7 @@ import { providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { removeMessagePartV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 
@@ -395,8 +396,30 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
+async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+  if (!instanceId || !sessionId || !messageId || !partId) return
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  await requestData(
+    instance.client.part.delete({
+      sessionID: sessionId,
+      messageID: messageId,
+      partID: partId,
+    }),
+    "part.delete",
+  )
+
+  // Optimistic removal; SSE will also broadcast a part-removed event.
+  removeMessagePartV2(instanceId, messageId, partId)
+  updateSessionInfo(instanceId, sessionId)
+}
+
 export {
   abortSession,
+  deleteMessagePart,
   executeCustomCommand,
   renameSession,
   runShellCommand,
