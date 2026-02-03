@@ -91,7 +91,7 @@ async function getOrCreateHighlighter() {
 
   // Create highlighter with no preloaded languages
   highlighterPromise = createHighlighter({
-    themes: ["github-light", "github-dark"],
+    themes: ["github-light", "github-light-high-contrast", "github-dark"],
     langs: [],
   })
 
@@ -242,9 +242,9 @@ async function runLanguageLoadQueue() {
 }
 
 function setupRenderer(isDark: boolean) {
-  if (!highlighter || rendererSetup) return
-
   currentTheme = isDark ? "dark" : "light"
+  if (!highlighter) return
+  if (rendererSetup) return
 
   marked.setOptions({
     breaks: true,
@@ -296,10 +296,10 @@ function setupRenderer(isDark: boolean) {
     // Use highlighting if language is loaded, otherwise fall back to plain code
     if (loadedLanguages.has(langKey)) {
       try {
-        const html = highlighter!.codeToHtml(decodedCode, {
-          lang: langKey,
-          theme: currentTheme === "dark" ? "github-dark" : "github-light",
-        })
+         const html = highlighter!.codeToHtml(decodedCode, {
+           lang: langKey,
+           theme: currentTheme === "dark" ? "github-dark" : "github-light-high-contrast",
+         })
         return `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}">${header}${html}</div>`
       } catch {
         // Fall through to plain code if highlighting fails

@@ -5,6 +5,7 @@ import KeyboardHint from "./keyboard-hint"
 import { Plus, MonitorUp } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
+import { ThemeModeToggle } from "./theme-mode-toggle"
 
 interface InstanceTabsProps {
   instances: Map<string, Instance>
@@ -52,6 +53,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 />
               </div>
             </Show>
+            <ThemeModeToggle class="new-tab-button" />
             <Show when={Boolean(props.onOpenRemoteAccess)}>
               <button
                 class="new-tab-button tab-remote-button"

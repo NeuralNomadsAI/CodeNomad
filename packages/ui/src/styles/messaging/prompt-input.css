@@ -97,7 +97,7 @@
 .prompt-history-button {
   @apply w-7 h-7 flex items-center justify-center rounded-md;
   color: var(--text-muted);
-  background-color: rgba(15, 23, 42, 0.04);
+  background-color: var(--control-ghost-bg);
   transition: background-color 0.15s ease, color 0.15s ease;
   padding: 0;
   flex-shrink: 0;
@@ -143,7 +143,7 @@
 
 .prompt-input.shell-mode {
   border-color: var(--status-success);
-  box-shadow: inset 0 0 0 1px rgba(76, 175, 80, 0.4);
+  box-shadow: inset 0 0 0 1px var(--status-success-ring);
 }
 
 .prompt-input:focus {
@@ -152,7 +152,7 @@
 
 .prompt-input.shell-mode:focus {
   border-color: var(--status-success);
-  box-shadow: inset 0 0 0 1px rgba(76, 175, 80, 0.4);
+  box-shadow: inset 0 0 0 1px var(--status-success-ring);
 }
 
 .prompt-input:disabled {
@@ -165,17 +165,17 @@
 
 .stop-button {
   @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
-  background-color: rgba(239, 68, 68, 0.85);
-  color: var(--text-inverted);
+  background-color: var(--button-danger-bg);
+  color: var(--button-danger-text);
 }
 
 .stop-button:hover:not(:disabled) {
-  background-color: rgba(239, 68, 68, 0.9);
+  background-color: var(--button-danger-hover-bg);
   @apply opacity-95 scale-105;
 }
 
 .stop-button:active:not(:disabled) {
-  background-color: rgba(239, 68, 68, 1);
+  background-color: var(--button-danger-active-bg);
   @apply scale-95;
 }
 
@@ -260,7 +260,7 @@
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
   border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.25);
+  box-shadow: var(--popover-shadow);
   z-index: 20;
 }
 

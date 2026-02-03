@@ -5,6 +5,7 @@ import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
+import { ThemeModeToggle } from "./theme-mode-toggle"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
@@ -313,8 +314,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </Select.Portal>
             </Select>
           </div>
-          <Show when={props.onOpenRemoteAccess}>
-            <div class="absolute top-4 right-6">
+          <div class="absolute top-4 right-6 flex items-center gap-2">
+            <ThemeModeToggle class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center" />
+            <Show when={props.onOpenRemoteAccess}>
               <button
                 type="button"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
@@ -322,8 +324,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               >
                 <MonitorUp class="w-4 h-4" />
               </button>
-            </div>
-          </Show>
+            </Show>
+          </div>
           <div class="mb-6 text-center shrink-0">
             <div class="mb-3 flex justify-center">
               <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="h-32 w-auto sm:h-48" loading="lazy" />

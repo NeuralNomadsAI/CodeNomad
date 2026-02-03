@@ -55,7 +55,7 @@ export function CodeBlockInline(props: CodeBlockInlineProps) {
 
       const highlighted = highlighter.codeToHtml(props.code, {
         lang: props.language as CodeToHtmlOptions["lang"],
-        theme: isDark() ? "github-dark" : "github-light",
+        theme: isDark() ? "github-dark" : "github-light-high-contrast",
       })
       setHtml(highlighted)
     } catch {

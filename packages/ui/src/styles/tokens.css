@@ -1,9 +1,10 @@
 :root {
+  color-scheme: light;
   /* Surface tokens */
   --surface-base: #ffffff;
   --surface-secondary: #f5f5f5;
-  --surface-muted: #f8f9fa;
-  --surface-code: #f8f8f8;
+  --surface-muted: #f8fafc;
+  --surface-code: #f1f5f9;
   --surface-hover: #e0e0e0;
   
   /* Border tokens */
@@ -12,9 +13,9 @@
   --border-muted: #e0e0e0;
   
   /* Text tokens */
-  --text-primary: #1a1a1a;
-  --text-secondary: #666666;
-  --text-muted: #666666;
+  --text-primary: #111827;
+  --text-secondary: #334155;
+  --text-muted: #475569;
   --text-inverted: #ffffff;
   
   /* Accent tokens */
@@ -27,13 +28,13 @@
   --status-warning: #ff9800;
   
   /* Message-specific tokens */
-  --message-user-bg: var(--surface-secondary);
+  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 88%, var(--message-user-border));
   --message-user-border: #2196f3;
   --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #f59e0b;
 
-  --message-tool-bg: #f8f9fa;
-  --message-tool-border: #6c757d;
+  --message-tool-bg: #eef2f7;
+  --message-tool-border: #64748b;
 
   /* Session list selection tints */
   --session-user-active-bg: color-mix(in oklab, var(--surface-secondary) 85%, var(--message-user-border));
@@ -71,11 +72,14 @@
   --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   --folder-card-radius: 16px;
   --dropdown-highlight-bg: rgba(0, 102, 255, 0.1);
-  --dropdown-highlight-text: var(--text-inverted);
+  --dropdown-highlight-text: var(--text-primary);
   --selection-highlight-bg: rgba(0, 102, 255, 0.12);
   --selection-highlight-strong-bg: rgba(0, 102, 255, 0.18);
   --overlay-scrim: rgba(0, 0, 0, 0.5);
   --scroll-elevation-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+  --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
   --message-error-bg: rgba(244, 67, 54, 0.1);
   --message-error-bg-strong: rgba(244, 67, 54, 0.15);
   --danger-soft-bg: rgba(239, 68, 68, 0.1);
@@ -86,6 +90,18 @@
   --log-level-default: var(--text-primary);
   --focus-ring-color: var(--accent-primary);
   --focus-ring-offset: var(--surface-base);
+  --control-ghost-bg: color-mix(in oklab, var(--text-primary) 6%, transparent);
+  --status-success-ring: color-mix(in oklab, var(--status-success) 45%, transparent);
+  --border-critical: var(--status-error);
+
+  --timeline-segment-active-bg: #0f5b44;
+  --timeline-segment-active-text: #ffffff;
+  --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+
+  --button-danger-bg: color-mix(in oklab, var(--status-error) 85%, var(--surface-base));
+  --button-danger-hover-bg: color-mix(in oklab, var(--status-error) 90%, var(--surface-base));
+  --button-danger-active-bg: color-mix(in oklab, var(--status-error) 95%, var(--surface-base));
+  --button-danger-text: #ffffff;
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
   --kbd-text: var(--text-primary);
@@ -151,7 +167,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
+    color-scheme: dark;
     /* Surface tokens */
     --surface-base: #1a1a1a;
     --surface-secondary: #2a2a2a;
@@ -225,6 +242,14 @@
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
   --kbd-text: var(--text-primary);
+  --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --border-critical: var(--status-error);
+  --timeline-segment-active-bg: #0f5b44;
+  --timeline-segment-active-text: #ffffff;
+  --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  --button-danger-text: #ffffff;
   --button-primary-bg: #3f3f46;
   --button-primary-hover-bg: #52525b;
   --button-primary-text: #f5f6f8;
@@ -306,6 +331,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   /* Surface tokens */
   --surface-base: #1a1a1a;
   --surface-secondary: #2a2a2a;
@@ -379,6 +405,14 @@
   --selection-highlight-strong-bg: rgba(0, 128, 255, 0.28);
   --overlay-scrim: rgba(0, 0, 0, 0.6);
   --scroll-elevation-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --border-critical: var(--status-error);
+  --timeline-segment-active-bg: #0f5b44;
+  --timeline-segment-active-text: #ffffff;
+  --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  --button-danger-text: #ffffff;
   --message-error-bg: rgba(244, 67, 54, 0.12);
   --message-error-bg-strong: rgba(244, 67, 54, 0.2);
   --danger-soft-bg: rgba(244, 67, 54, 0.16);
