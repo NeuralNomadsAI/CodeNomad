@@ -175,7 +175,7 @@
 
 .message-reasoning {
   @apply my-2 border rounded;
-  --reasoning-border-color: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
+  --reasoning-border-color: var(--border-strong, var(--border-base));
   border-color: var(--reasoning-border-color);
   background-color: var(--surface-secondary);
   color: inherit;
@@ -287,7 +287,7 @@
 }
 
 .message-reasoning-card {
-  --reasoning-border-color: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
+  --reasoning-border-color: var(--border-strong, var(--border-base));
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
   margin-top: 0;

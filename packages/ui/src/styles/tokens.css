@@ -11,6 +11,7 @@
   --border-base: #e0e0e0;
   --border-secondary: #e0e0e0;
   --border-muted: #e0e0e0;
+  --border-strong: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
   
   /* Text tokens */
   --text-primary: #111827;
@@ -81,6 +82,7 @@
   --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
   --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.18);
   --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  --code-block-header-bg: color-mix(in oklab, var(--surface-secondary) 78%, var(--text-primary));
   --message-error-bg: rgba(244, 67, 54, 0.1);
   --message-error-bg-strong: rgba(244, 67, 54, 0.15);
   --danger-soft-bg: rgba(239, 68, 68, 0.1);
@@ -182,6 +184,7 @@
     --border-base: #3a3a3a;
     --border-secondary: #3a3a3a;
     --border-muted: #3a3a3a;
+    --border-strong: var(--border-base);
     
     /* Text tokens */
     --text-primary: #cfd4dc;
@@ -248,6 +251,7 @@
   --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.45);
   --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --code-block-header-bg: var(--surface-secondary);
   --border-critical: var(--status-error);
   --timeline-segment-active-bg: #0f5b44;
   --timeline-segment-active-text: #ffffff;
@@ -346,6 +350,7 @@
   --border-base: #3a3a3a;
   --border-secondary: #3a3a3a;
   --border-muted: #3a3a3a;
+  --border-strong: var(--border-base);
   
   /* Text tokens */
   --text-primary: #cfd4dc;
@@ -412,6 +417,7 @@
   --panel-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   --panel-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.45);
   --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --code-block-header-bg: var(--surface-secondary);
   --border-critical: var(--status-error);
   --timeline-segment-active-bg: #0f5b44;
   --timeline-segment-active-text: #ffffff;
@@ -430,6 +436,18 @@
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
   --kbd-text: var(--text-primary);
+  --button-primary-bg: #3f3f46;
+  --button-primary-hover-bg: #52525b;
+  --button-primary-text: #f5f6f8;
+  --tab-active-bg: #3f3f46;
+  --tab-active-hover-bg: #52525b;
+  --tab-active-text: #f5f6f8;
+  --tab-inactive-bg: #2a2a31;
+  --tab-inactive-hover-bg: #3f3f46;
+  --tab-inactive-text: #d4d4d8;
+  --new-tab-bg: #3f3f46;
+  --new-tab-hover-bg: #52525b;
+  --new-tab-text: #f5f6f8;
 
   /* Layout & spacing tokens */
   --space-2xs: 2px;

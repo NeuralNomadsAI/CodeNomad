@@ -66,8 +66,8 @@
 
 .tool-call {
   @apply border overflow-hidden;
-  /* Tool-call output borders need more contrast in light mode. */
-  --tool-call-border-color: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
+  /* Tokenized so dark mode doesn't get overly bright borders. */
+  --tool-call-border-color: var(--border-strong, var(--border-base));
   border-color: var(--tool-call-border-color);
   color: inherit;
   --tool-call-line-unit: 1.4em;
@@ -419,7 +419,7 @@
   position: sticky;
   top: 0;
   z-index: auto;
-  background-color: color-mix(in oklab, var(--surface-secondary) 70%, var(--text-primary));
+  background-color: var(--code-block-header-bg, var(--surface-secondary));
   border-bottom: 1px solid var(--tool-call-border-color);
   box-shadow: none;
 }
@@ -445,6 +445,14 @@
   min-height: auto;
   max-height: none;
   overflow-y: visible;
+}
+
+/* Shiki injects inline background colors; force token surfaces. */
+.tool-call-markdown pre.shiki,
+.tool-call-markdown pre.shiki code,
+.tool-call-markdown .shiki {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 .tool-call-markdown::-webkit-scrollbar {
