@@ -166,17 +166,17 @@
 
 .stop-button {
   @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
-  background-color: var(--button-danger-bg);
-  color: var(--button-danger-text);
+  background-color: var(--button-danger-bg, rgba(239, 68, 68, 0.85));
+  color: var(--button-danger-text, #ffffff);
 }
 
 .stop-button:hover:not(:disabled) {
-  background-color: var(--button-danger-hover-bg);
+  background-color: var(--button-danger-hover-bg, rgba(239, 68, 68, 0.9));
   @apply opacity-95 scale-105;
 }
 
 .stop-button:active:not(:disabled) {
-  background-color: var(--button-danger-active-bg);
+  background-color: var(--button-danger-active-bg, rgba(239, 68, 68, 1));
   @apply scale-95;
 }
 

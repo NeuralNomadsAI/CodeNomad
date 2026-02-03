@@ -103,9 +103,9 @@
   --timeline-segment-active-text: #032f23;
   --timeline-segment-active-ring: inset 0 0 0 1px rgba(3, 47, 35, 0.28);
 
-  --button-danger-bg: color-mix(in oklab, var(--status-error) 85%, var(--surface-base));
-  --button-danger-hover-bg: color-mix(in oklab, var(--status-error) 90%, var(--surface-base));
-  --button-danger-active-bg: color-mix(in oklab, var(--status-error) 95%, var(--surface-base));
+  --button-danger-bg: rgba(239, 68, 68, 0.85);
+  --button-danger-hover-bg: rgba(239, 68, 68, 0.9);
+  --button-danger-active-bg: rgba(239, 68, 68, 1);
   --button-danger-text: #ffffff;
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
