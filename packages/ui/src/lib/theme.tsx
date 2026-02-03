@@ -3,22 +3,24 @@ import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/s
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
 
+export type ThemeMode = "system" | "light" | "dark"
+
 interface ThemeContextValue {
   isDark: () => boolean
-  toggleTheme: () => void
-  setTheme: (dark: boolean) => void
+  themeMode: () => ThemeMode
+  setThemeMode: (mode: ThemeMode) => void
+  cycleThemeMode: () => void
 }
 
 const ThemeContext = createContext<ThemeContextValue>()
 
-function applyTheme(dark: boolean) {
+function applyThemeMode(mode: ThemeMode) {
   if (typeof document === "undefined") return
-  if (dark) {
-    document.documentElement.setAttribute("data-theme", "dark")
+  if (mode === "system") {
+    document.documentElement.removeAttribute("data-theme")
     return
   }
-
-  document.documentElement.removeAttribute("data-theme")
+  document.documentElement.setAttribute("data-theme", mode)
 }
 
 interface ResolvedPaletteColors {
@@ -78,16 +80,31 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
   const { themePreference, setThemePreference } = useConfig()
   const [isDark, setIsDarkSignal] = createSignal(true)
+  const [themeRevision, setThemeRevision] = createSignal(0)
+
+  const themeMode = () => themePreference() as ThemeMode
 
   const resolveDarkTheme = () => {
-    themePreference()
-    return true
+    const mode = themeMode()
+    if (mode === "dark") return true
+    if (mode === "light") return false
+    return mediaQuery?.matches ?? false
   }
 
   const applyResolvedTheme = () => {
+    const mode = themeMode()
     const dark = resolveDarkTheme()
+    if (mode === "system") {
+      applyThemeMode("system")
+    } else {
+      applyThemeMode(mode)
+    }
     setIsDarkSignal(dark)
-    applyTheme(dark)
+    if (typeof window !== "undefined") {
+      requestAnimationFrame(() => setThemeRevision((v) => v + 1))
+    } else {
+      setThemeRevision((v) => v + 1)
+    }
   }
 
   createEffect(() => {
@@ -107,15 +124,18 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     }
   })
 
-  const setTheme = (_dark: boolean) => {
-    setThemePreference("dark")
+  const setThemeMode = (mode: ThemeMode) => {
+    setThemePreference(mode)
   }
 
-  const toggleTheme = () => {
-    setTheme(true)
+  const cycleThemeMode = () => {
+    const current = themeMode()
+    const next: ThemeMode = current === "system" ? "light" : current === "light" ? "dark" : "system"
+    setThemeMode(next)
   }
 
   const muiTheme = createMemo(() => {
+    themeRevision()
     const paletteColors = resolvePaletteColors(isDark())
     return createTheme({
       palette: {
@@ -144,21 +164,32 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         borderRadius: 8,
       },
       components: {
+        MuiIconButton: {
+          styleOverrides: {
+            root: {
+              color: "inherit",
+              "&.Mui-disabled": {
+                color: "var(--text-muted)",
+                opacity: 0.55,
+              },
+            },
+          },
+        },
         MuiDrawer: {
           styleOverrides: {
             paper: {
-              backgroundColor: paletteColors.backgroundPaper,
-              color: paletteColors.textPrimary,
+              backgroundColor: "var(--surface-secondary)",
+              color: "var(--text-primary)",
             },
           },
         },
         MuiAppBar: {
           styleOverrides: {
             root: {
-              backgroundColor: paletteColors.backgroundPaper,
-              color: paletteColors.textPrimary,
+              backgroundColor: "var(--surface-secondary)",
+              color: "var(--text-primary)",
               boxShadow: "none",
-              borderBottom: `1px solid ${paletteColors.divider}`,
+              borderBottom: "1px solid var(--border-base)",
               zIndex: 10,
             },
           },
@@ -175,7 +206,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   return (
-    <ThemeContext.Provider value={{ isDark, toggleTheme, setTheme }}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode }}>
       <MuiThemeProvider theme={muiTheme()}>
         <CssBaseline />
         {props.children}

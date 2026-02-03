@@ -3,7 +3,7 @@ import Kbd from "./kbd"
 import { useI18n } from "../lib/i18n"
 
 const METRIC_CHIP_CLASS = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
-const METRIC_LABEL_CLASS = "uppercase text-[10px] tracking-wide text-primary/70"
+const METRIC_LABEL_CLASS = "uppercase text-[10px] tracking-wide text-muted"
 
 interface MessageListHeaderProps {
   usedTokens: number

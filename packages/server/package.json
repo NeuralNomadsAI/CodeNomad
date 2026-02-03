@@ -1,7 +1,8 @@
 {
   "name": "@neuralnomads/codenomad",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "CodeNomad Server",
+  "license": "MIT",
   "author": {
     "name": "Neural Nomads",
     "email": "codenomad@neuralnomads.ai"

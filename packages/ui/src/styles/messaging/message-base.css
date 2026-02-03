@@ -175,7 +175,8 @@
 
 .message-reasoning {
   @apply my-2 border rounded;
-  border-color: var(--border-base);
+  --reasoning-border-color: var(--border-strong, var(--border-base));
+  border-color: var(--reasoning-border-color);
   background-color: var(--surface-secondary);
   color: inherit;
 }
@@ -286,6 +287,7 @@
 }
 
 .message-reasoning-card {
+  --reasoning-border-color: var(--border-strong, var(--border-base));
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
   margin-top: 0;
@@ -339,7 +341,7 @@
   justify-content: center;
   height: 1.5rem;
   padding: 0 0.75rem;
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--reasoning-border-color, var(--border-base));
   border-radius: 0.375rem;
   background-color: transparent;
   color: var(--text-muted);
@@ -381,6 +383,7 @@
   @apply flex flex-col;
   margin: 0;
   padding: 0.75rem;
+  border: 1px solid var(--reasoning-border-color, var(--border-base));
   max-height: 30rem;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -397,4 +400,3 @@
   white-space: pre-wrap;
   margin: 0;
 }
-

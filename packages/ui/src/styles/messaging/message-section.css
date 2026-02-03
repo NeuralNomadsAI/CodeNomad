@@ -244,7 +244,7 @@
   border-radius: 9999px;
   border: 1px solid var(--list-item-highlight-border);
   background-color: var(--list-item-highlight-bg-solid);
-  box-shadow: var(--panel-shadow, 0 4px 16px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
 }
 

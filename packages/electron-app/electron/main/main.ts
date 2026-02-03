@@ -505,7 +505,6 @@ app.on("before-quit", async (event) => {
 })
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit()
-  }
+  // CodeNomad supports a single window; closing it should quit the app on all platforms.
+  app.quit()
 })

@@ -16,7 +16,7 @@
 
 .tool-call-todo-item {
   @apply flex items-start gap-3;
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   border-radius: 0;
   padding: 10px 12px;
   background-color: var(--surface-secondary);
@@ -40,7 +40,7 @@
   width: 1.1rem;
   height: 1.1rem;
   border-radius: 9999px;
-  border: 2px solid var(--border-base);
+  border: 2px solid var(--tool-call-border-color, var(--border-base));
   display: inline-flex;
   align-items: center;
   justify-content: center;

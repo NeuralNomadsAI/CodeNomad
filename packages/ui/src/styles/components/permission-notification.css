@@ -35,7 +35,7 @@
 .permission-center-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--text-inverted) 55%, transparent);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -52,7 +52,7 @@
   border-radius: var(--radius-xl);
   border: 1px solid var(--border-base);
   background: var(--surface-base);
-  box-shadow: var(--panel-shadow, 0 12px 32px rgba(0, 0, 0, 0.25));
+  box-shadow: var(--panel-shadow-strong);
   overflow: hidden;
 }
 

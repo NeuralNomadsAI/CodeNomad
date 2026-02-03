@@ -194,7 +194,7 @@ const [isConfigLoaded, setIsConfigLoaded] = createSignal(false)
 const preferences = createMemo<Preferences>(() => internalConfig().preferences)
 const recentFolders = createMemo<RecentFolder[]>(() => internalConfig().recentFolders ?? [])
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => internalConfig().opencodeBinaries ?? [])
-const themePreference = createMemo<ThemePreference>(() => internalConfig().theme ?? "dark")
+const themePreference = createMemo<ThemePreference>(() => internalConfig().theme ?? "system")
 let loadPromise: Promise<void> | null = null
 
 function normalizeConfig(config?: ConfigData | null): ConfigData {
@@ -202,7 +202,7 @@ function normalizeConfig(config?: ConfigData | null): ConfigData {
     preferences: normalizePreferences(config?.preferences),
     recentFolders: (config?.recentFolders ?? []).map((folder) => ({ ...folder })),
     opencodeBinaries: (config?.opencodeBinaries ?? []).map((binary) => ({ ...binary })),
-    theme: config?.theme ?? "dark",
+    theme: config?.theme ?? "system",
   }
 }
 

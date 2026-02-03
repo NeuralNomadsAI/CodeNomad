@@ -15,7 +15,7 @@ interface MessagePartProps {
   sessionId: string
   onRendered?: () => void
  }
- export default function MessagePart(props: MessagePartProps) {
+  export default function MessagePart(props: MessagePartProps) {
 
   const { isDark } = useTheme()
   const { preferences } = useConfig()
@@ -31,6 +31,7 @@ interface MessagePartProps {
     // Keep optimistic user prompts visible; hide synthetic assistant text.
     return Boolean((part as any).synthetic) && props.messageType !== "user"
   }
+
 
   const plainTextContent = () => {
     const part = props.part
@@ -103,21 +104,21 @@ interface MessagePartProps {
       <Match when={partType() === "text"}>
         <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
           <div class={textContainerClass()}>
-            <Show
-               when={isAssistantMessage()}
-               fallback={<span>{plainTextContent()}</span>}
-             >
-              <Markdown
-                part={createTextPartForMarkdown()}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                isDark={isDark()}
-                size={isAssistantMessage() ? "tight" : "base"}
-                onRendered={props.onRendered}
-              />
-             </Show>
+                <Show
+                 when={isAssistantMessage()}
+                 fallback={<span class="text-primary">{plainTextContent()}</span>}
+               >
+                 <Markdown
+                   part={createTextPartForMarkdown()}
+                   instanceId={props.instanceId}
+                   sessionId={props.sessionId}
+                   isDark={isDark()}
+                 size={isAssistantMessage() ? "tight" : "base"}
+                 onRendered={props.onRendered}
+               />
+              </Show>
 
-          </div>
+           </div>
         </Show>
       </Match>
 

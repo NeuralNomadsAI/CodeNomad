@@ -9,8 +9,8 @@ interface ContextUsagePanelProps {
 }
 
 const chipClass = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
-const chipLabelClass = "uppercase text-[10px] tracking-wide text-primary/70"
-const headingClass = "text-xs font-semibold text-primary/70 uppercase tracking-wide"
+const chipLabelClass = "uppercase text-[10px] tracking-wide text-muted"
+const headingClass = "text-xs font-semibold text-muted uppercase tracking-wide"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const { t } = useI18n()
@@ -49,7 +49,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
 
   return (
     <div class="session-context-panel border-r border-base border-b px-3 py-3 space-y-3">
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
+      <div class="flex flex-wrap items-center gap-2 text-xs text-primary">
         <div class={headingClass}>{t("contextUsagePanel.headings.tokens")}</div>
         <div class={chipClass}>
           <span class={chipLabelClass}>{t("contextUsagePanel.labels.input")}</span>
@@ -65,7 +65,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary/90">
+      <div class="flex flex-wrap items-center gap-2 text-xs text-primary">
         <div class={headingClass}>{t("contextUsagePanel.headings.context")}</div>
         <div class={chipClass}>
           <span class={chipLabelClass}>{t("contextUsagePanel.labels.used")}</span>

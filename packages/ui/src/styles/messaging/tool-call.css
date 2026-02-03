@@ -11,7 +11,7 @@
 
 .tool-call-header-label {
   @apply flex items-center justify-between gap-2 font-semibold text-sm;
-  color: var(--message-tool-border);
+  color: var(--text-primary);
   margin-bottom: 1px;
 }
 
@@ -21,8 +21,8 @@
 
 .tool-call-header-button {
   background-color: transparent;
-  border: 1px solid var(--border-base);
-  color: var(--message-tool-border);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
+  color: var(--text-secondary);
   padding: 0.15rem 0.75rem;
   border-radius: 0.375rem;
   font-size: 0.75rem;
@@ -58,7 +58,7 @@
   font-family: var(--font-family-mono);
   color: inherit;
   background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 13px;
@@ -66,7 +66,9 @@
 
 .tool-call {
   @apply border overflow-hidden;
-  border-color: var(--border-base);
+  /* Tokenized so dark mode doesn't get overly bright borders. */
+  --tool-call-border-color: var(--border-strong, var(--border-base));
+  border-color: var(--tool-call-border-color);
   color: inherit;
   --tool-call-line-unit: 1.4em;
   --tool-call-lines-compact: 15;
@@ -86,13 +88,14 @@
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
+  color: var(--text-primary);
 }
 
 .tool-call-header::before {
   content: "▶";
   font-size: 11px;
   margin-right: 0.35rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tool-call-header[aria-expanded="true"]::before {
@@ -115,6 +118,7 @@
 
 .tool-call-summary {
   @apply flex-1 text-left inline-flex items-center gap-2;
+  color: var(--text-primary);
 }
 
 .tool-call-summary::before {
@@ -130,6 +134,8 @@
   margin-right: 0.35rem;
 }
 
+/* ToolState uses status="completed"; keep "success" as a legacy alias. */
+.tool-call-status-completed,
 .tool-call-status-success {
   border-left: 3px solid var(--status-success);
 }
@@ -157,12 +163,12 @@
 .tool-call-preview {
   @apply p-2 flex flex-col gap-1.5;
   background-color: var(--surface-code);
-  border-top: 1px solid var(--border-base);
+  border-top: 1px solid var(--tool-call-border-color);
 }
 
 .tool-call-preview-label {
   @apply text-xs font-semibold uppercase tracking-wide;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   letter-spacing: 0.5px;
 }
 
@@ -170,7 +176,7 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -186,7 +192,8 @@
 
 .tool-call-markdown {
   background-color: var(--surface-code);
-  border: none;
+  /* Keep a visible frame around the scroll viewport (not the content). */
+  border: 1px solid var(--tool-call-border-color);
   border-radius: 0;
   padding: 0;
   font-size: var(--font-size-xs);
@@ -197,6 +204,16 @@
   scrollbar-color: var(--border-base) transparent;
   scrollbar-gutter: stable both-edges;
   position: relative;
+}
+
+/* Inner code blocks should not own the frame border; the scroll container does. */
+.tool-call-markdown .markdown-code-block {
+  border: none;
+}
+
+/* Avoid double borders when ANSI output uses .tool-call-content inside tool-call-markdown. */
+.tool-call-markdown .tool-call-content {
+  border: none;
 }
 
 .tool-call-markdown-large {
@@ -216,7 +233,7 @@
 .tool-call-diff-toolbar {
   @apply flex items-center justify-between gap-3 px-3 py-2;
   background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--border-base);
+  border-bottom: 1px solid var(--tool-call-border-color);
   position: sticky;
   top: 0;
   z-index: 2;
@@ -231,7 +248,7 @@
 
 .tool-call-diff-toolbar-label {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -242,9 +259,9 @@
 
 .tool-call-diff-mode-button {
   @apply border text-xs font-semibold px-3 py-1 rounded transition-all duration-150;
-  border-color: var(--border-base);
+  border-color: var(--tool-call-border-color, var(--border-base));
   background-color: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tool-call-diff-mode-button:hover {
@@ -303,7 +320,7 @@
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 0.375rem;
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   background-color: var(--surface-code);
 }
 
@@ -312,7 +329,7 @@
   font-size: 13px;
   color: var(--text-primary);
   background-color: var(--surface-code);
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   border-radius: 0.5rem;
   padding: 0.5rem 0.75rem;
   word-break: break-word;
@@ -388,19 +405,13 @@
 .tool-call-diff-viewer .diff-line-old-num,
 .tool-call-diff-viewer .diff-line-new-num,
 .tool-call-diff-viewer .diff-line-num {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .tool-call-markdown .markdown-code-block {
   margin: 0;
   border-radius: 0;
-}
-
-
-.tool-call-markdown .markdown-code-block {
-  margin: 0;
-  border: none;
   background-color: transparent;
 }
 
@@ -408,7 +419,25 @@
   position: sticky;
   top: 0;
   z-index: auto;
-  box-shadow: 0 1px 0 var(--border-base);
+  background-color: var(--code-block-header-bg, var(--surface-secondary));
+  border-bottom: 1px solid var(--tool-call-border-color);
+  box-shadow: none;
+}
+
+/* Tool output header (language + copy) needs stronger contrast in light mode. */
+.tool-call-markdown .code-block-language {
+  color: var(--text-primary);
+}
+
+.tool-call-markdown .code-block-copy {
+  border-color: var(--tool-call-border-color);
+  color: var(--text-primary);
+}
+
+/* Plain (non-highlighted) tool output must remain readable in light mode. */
+.tool-call-markdown .markdown-code-block pre:not(.shiki),
+.tool-call-markdown .markdown-code-block pre:not(.shiki) code {
+  color: var(--text-primary);
 }
 
 .tool-call-markdown .markdown-code-block pre {
@@ -416,6 +445,14 @@
   min-height: auto;
   max-height: none;
   overflow-y: visible;
+}
+
+/* Shiki injects inline background colors; force token surfaces. */
+.tool-call-markdown pre.shiki,
+.tool-call-markdown pre.shiki code,
+.tool-call-markdown .shiki {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 .tool-call-markdown::-webkit-scrollbar {
@@ -450,7 +487,7 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   margin-bottom: 4px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tool-call-diagnostics {
@@ -458,12 +495,12 @@
   flex-direction: column;
   gap: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
-  border-top: 1px solid var(--border-base);
+  border-top: 1px solid var(--tool-call-border-color);
   background-color: var(--surface-base);
 }
 
 .tool-call-diagnostics-wrapper {
-  border-top: 1px solid var(--border-base);
+  border-top: 1px solid var(--tool-call-border-color);
   background-color: var(--surface-base);
   margin-top: var(--space-md);
 }
@@ -472,7 +509,7 @@
   @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
   font-family: var(--font-family-mono);
   font-size: 13px;
-  color: var(--message-tool-border);
+  color: var(--text-primary);
   background-color: var(--surface-code);
 }
 
@@ -496,7 +533,7 @@
   @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
   font-family: var(--font-family-mono);
   font-size: 13px;
-  color: var(--message-tool-border);
+  color: var(--text-primary);
   background-color: var(--surface-code);
 }
 
@@ -515,7 +552,7 @@
   width: 1.25rem;
   height: 1.25rem;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-base);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
   font-size: 12px;
 }
 
@@ -535,7 +572,7 @@
 
 .tool-call-diagnostics-caret {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tool-call-diagnostics {
@@ -615,7 +652,8 @@
 .tool-call-section pre {
   margin: 0;
   padding: 8px;
-  background-color: var(--surface-base);
+  background-color: var(--surface-code);
+  border: 1px solid var(--tool-call-border-color);
   border-radius: 0px;
   overflow-x: auto;
   max-height: var(--tool-call-max-height-compact, calc(25 * 1.4em));
@@ -649,7 +687,7 @@
 
 .tool-call-pending-message {
   @apply flex items-center gap-2 p-3 text-xs italic;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .tool-call-emoji {
@@ -658,8 +696,8 @@
 
 .tool-call-action-button {
   @apply border text-xs font-semibold px-3 py-1 rounded transition-colors h-8 flex items-center;
-  border-color: var(--border-base);
-  color: var(--text-muted);
+  border-color: var(--tool-call-border-color, var(--border-base));
+  color: var(--text-secondary);
   background-color: transparent;
 }
 
@@ -679,8 +717,8 @@
 }
 
 .tool-call-content {
-  background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
+  background-color: var(--surface-code);
+  border: 1px solid var(--tool-call-border-color);
   border-radius: 0;
   padding: 8px 12px;
   font-family: var(--font-family-mono);
@@ -688,6 +726,7 @@
   line-height: var(--line-height-tight);
   overflow-x: auto;
   margin: 0;
+  color: var(--text-primary);
 }
 
 .tool-call-content code {

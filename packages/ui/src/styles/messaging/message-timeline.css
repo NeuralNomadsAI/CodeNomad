@@ -69,7 +69,7 @@
   overflow-y: auto;
   border-radius: 8px;
   background-color: var(--surface-base);
-  box-shadow: var(--panel-shadow, 0 6px 24px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--panel-shadow);
 }
 
 .message-timeline::-webkit-scrollbar {
@@ -103,11 +103,11 @@
 }
 
 .message-timeline-segment-active {
-  border-color: transparent;
-  background-color: #0f5b44;
-  color: #fff;
+  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text));
+  background-color: var(--timeline-segment-active-bg);
+  color: var(--timeline-segment-active-text);
   font-weight: 700;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--timeline-segment-active-ring);
 }
 
 .message-timeline-segment:hover,
@@ -121,10 +121,10 @@
 .message-timeline-segment-active,
 .message-timeline-segment-active:hover,
 .message-timeline-segment-active:focus-visible {
-  background-color: #0f5b44;
-  color: #fff;
+  background-color: var(--timeline-segment-active-bg);
+  color: var(--timeline-segment-active-text);
   transform: none;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--timeline-segment-active-ring);
 }
 
 .message-timeline-segment:focus-visible {
@@ -167,7 +167,7 @@
   border-color: var(--session-status-permission-fg) !important;
   color: var(--session-status-permission-fg) !important;
   transform: none;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--timeline-segment-active-ring);
 }
 
 .message-timeline-compaction-auto {
@@ -181,11 +181,11 @@
 }
 
 .message-timeline-segment-active {
-  background-color: #0f5b44 !important;
-  border-color: transparent !important;
-  color: #fff !important;
+  background-color: var(--timeline-segment-active-bg) !important;
+  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text)) !important;
+  color: var(--timeline-segment-active-text) !important;
   font-weight: 700;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--timeline-segment-active-ring);
 }
 
 .message-timeline-label {
@@ -221,7 +221,7 @@
   border-radius: 8px;
   border: 1px solid var(--border-base);
   background-color: var(--surface-base);
-  box-shadow: var(--panel-shadow, 0 12px 32px rgba(0, 0, 0, 0.25));
+  box-shadow: var(--panel-shadow-strong);
   padding: 0.75rem;
 }
 
