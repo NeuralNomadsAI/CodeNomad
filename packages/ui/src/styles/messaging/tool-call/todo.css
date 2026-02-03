@@ -58,7 +58,7 @@
 .tool-call-todo-checkbox[data-status="completed"] {
   background-color: var(--accent-primary);
   border-color: var(--accent-primary);
-  color: var(--text-inverted);
+  color: var(--text-on-accent, #ffffff);
 }
 
 .tool-call-todo-checkbox[data-status="completed"]::after {
@@ -155,5 +155,5 @@
 
 .tool-call-todo-item-active .tool-call-todo-tag {
   background-color: var(--accent-primary);
-  color: var(--text-inverted);
+  color: var(--text-on-accent, #ffffff);
 }

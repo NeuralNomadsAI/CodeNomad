@@ -85,7 +85,7 @@
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   line-height: 1.35;
-  background-color: var(--surface-code);
+  background-color: var(--surface-secondary);
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 

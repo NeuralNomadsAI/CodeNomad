@@ -18,6 +18,7 @@
   --text-secondary: #334155;
   --text-muted: #475569;
   --text-inverted: #ffffff;
+  --text-on-accent: #ffffff;
   
   /* Accent tokens */
   --accent-primary: #0066ff;
@@ -191,6 +192,7 @@
     --text-secondary: #999999;
     --text-muted: #999999;
     --text-inverted: #1a1a1a;
+    --text-on-accent: #f5f6f8;
     
     /* Accent tokens */
     --accent-primary: #0080ff;
@@ -357,6 +359,7 @@
   --text-secondary: #999999;
   --text-muted: #999999;
   --text-inverted: #1a1a1a;
+  --text-on-accent: #f5f6f8;
   
   /* Accent tokens */
   --accent-primary: #0080ff;
