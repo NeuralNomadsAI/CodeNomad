@@ -199,7 +199,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                 const customChecked = () => customValue().length > 0
 
                 return (
-                  <div class="rounded-md border border-base/60 bg-surface/30 p-3">
+                  <div class="rounded-md border border-base bg-surface-secondary p-3">
                     <div class="flex items-baseline justify-between gap-2">
                       <div class="text-xs">
                         {t("toolCall.question.number", { number: i() + 1 })} <span class="font-semibold">{q?.header}</span>
@@ -226,6 +226,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                                 }}
                                 type={inputType()}
                                 name={groupName()}
+                                class="mt-0.5 accent-[var(--accent-primary)]"
                                 checked={checked()}
                                 disabled={!props.active() || props.submitting()}
                                 onChange={() => toggleOption(i(), opt.label)}
@@ -249,6 +250,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                           }}
                           type={inputType()}
                           name={groupName()}
+                          class="mt-0.5 accent-[var(--accent-primary)]"
                           checked={customChecked()}
                           disabled={!props.active() || props.submitting()}
                           onChange={(e) => {
@@ -265,14 +267,14 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                             toggleFromCustomInput(i(), input)
                           }}
                         />
-                        <div class="flex flex-1 flex-col gap-2">
-                          <div class="text-sm leading-tight">{t("toolCall.question.custom.label")}</div>
-                          <input
-                            class="w-full rounded-md border border-base/50 bg-surface px-2 py-1 text-sm"
-                            type="text"
-                            placeholder={t("toolCall.question.custom.placeholder")}
-                            disabled={!props.active() || props.submitting()}
-                            value={customValue()}
+                          <div class="flex flex-1 flex-col gap-2">
+                            <div class="text-sm leading-tight">{t("toolCall.question.custom.label")}</div>
+                            <input
+                            class="w-full rounded-md border border-base bg-surface-base px-2 py-1 text-sm text-primary"
+                              type="text"
+                              placeholder={t("toolCall.question.custom.placeholder")}
+                              disabled={!props.active() || props.submitting()}
+                              value={customValue()}
                             onFocus={(e) => {
                               if (!props.active()) return
                               // Keep the radio/checkbox selected while editing.
