@@ -199,9 +199,9 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                 const customChecked = () => customValue().length > 0
 
                 return (
-                  <div class="rounded-md border border-base bg-surface-secondary p-3">
+                  <div class="rounded-md border border-base bg-surface-secondary p-3 text-primary">
                     <div class="flex items-baseline justify-between gap-2">
-                      <div class="text-xs">
+                      <div class="text-sm text-primary">
                         {t("toolCall.question.number", { number: i() + 1 })} <span class="font-semibold">{q?.header}</span>
                       </div>
                       <Show when={multi()}>
@@ -209,7 +209,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                       </Show>
                     </div>
 
-                    <div class="mt-1 text-sm font-medium">{q?.question}</div>
+                    <div class="mt-1 text-sm font-medium text-primary">{q?.question}</div>
 
                     <div class="mt-3 flex flex-col gap-1">
                       <For each={q?.options ?? []}>
@@ -232,7 +232,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                                 onChange={() => toggleOption(i(), opt.label)}
                               />
                               <div class="flex flex-col">
-                                <div class="text-sm leading-tight">{opt.label}</div>
+                                <div class="text-sm leading-tight text-primary">{opt.label}</div>
                                 <div class="text-xs text-muted leading-tight">{opt.description}</div>
                               </div>
                             </label>
@@ -267,12 +267,12 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                             toggleFromCustomInput(i(), input)
                           }}
                         />
-                          <div class="flex flex-1 flex-col gap-2">
-                            <div class="text-sm leading-tight">{t("toolCall.question.custom.label")}</div>
-                            <input
+                        <div class="flex flex-1 flex-col gap-2">
+                          <div class="text-sm leading-tight text-primary">{t("toolCall.question.custom.label")}</div>
+                          <input
                             class="w-full rounded-md border border-base bg-surface-base px-2 py-1 text-sm text-primary"
-                              type="text"
-                              placeholder={t("toolCall.question.custom.placeholder")}
+                            type="text"
+                            placeholder={t("toolCall.question.custom.placeholder")}
                               disabled={!props.active() || props.submitting()}
                               value={customValue()}
                             onFocus={(e) => {

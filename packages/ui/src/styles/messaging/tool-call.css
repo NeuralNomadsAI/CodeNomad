@@ -322,6 +322,7 @@
   border-radius: 0.375rem;
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   background-color: var(--surface-code);
+  color: var(--text-primary);
 }
 
 .tool-call-permission-title code {
