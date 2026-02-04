@@ -80,6 +80,19 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
     return Array.isArray(draft) ? draft : []
   })
 
+  const hasFinalAnswers = createMemo(() => {
+    const state = props.toolState()
+    if ((state as any)?.status === "completed") return true
+
+    const request = props.request()
+    const requestAnswers = request?.questions?.map((q) => (q as any)?.answer)
+    if (Array.isArray(requestAnswers) && requestAnswers.length > 0) {
+      return requestAnswers.every((row) => Array.isArray(row) && row.length > 0)
+    }
+
+    return false
+  })
+
   const updateAnswer = (questionIndex: number, next: string[]) => {
     if (!props.active()) return
     props.setDraftAnswers((prev) => {
@@ -170,22 +183,11 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
 
   return (
     <Show when={isVisible() && questions().length > 0}>
-      <div class={`tool-call-permission ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"}`}>
-        <div class="tool-call-permission-header">
-          <span class="tool-call-permission-label">
-            {props.active()
-              ? t("toolCall.question.status.required")
-              : props.request()
-                ? t("toolCall.question.status.queued")
-                : t("toolCall.question.status.questions")}
-          </span>
-          <span class="tool-call-permission-type">
-            {questions().length === 1 ? t("toolCall.question.type.one") : t("toolCall.question.type.other")}
-          </span>
-        </div>
-
+      <div
+        class={`tool-call-permission p-0 gap-2 ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"} ${hasFinalAnswers() ? "tool-call-permission-answered" : ""}`}
+      >
         <div class="tool-call-permission-body">
-          <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-2">
             <For each={questions()}>
               {(q, index) => {
                 const i = () => index()
@@ -199,7 +201,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
                 const customChecked = () => customValue().length > 0
 
                 return (
-                  <div class="rounded-md border border-base bg-surface-secondary p-3 text-primary">
+                  <div class="border border-base bg-surface-secondary p-3 text-primary">
                     <div class="flex items-baseline justify-between gap-2">
                       <div class="text-sm text-primary">
                         {t("toolCall.question.number", { number: i() + 1 })} <span class="font-semibold">{q?.header}</span>
@@ -298,7 +300,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
             </For>
 
             <Show when={props.active()}>
-              <div class="tool-call-permission-actions">
+              <div class="tool-call-permission-actions px-3 pb-3">
                 <div class="tool-call-permission-buttons">
                   <button
                     type="button"
@@ -332,7 +334,7 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
             </Show>
 
             <Show when={!props.active() && props.request()}>
-              <p class="tool-call-permission-queued-text">{t("toolCall.question.queuedText")}</p>
+              <p class="tool-call-permission-queued-text px-3 pb-3">{t("toolCall.question.queuedText")}</p>
             </Show>
           </div>
         </div>

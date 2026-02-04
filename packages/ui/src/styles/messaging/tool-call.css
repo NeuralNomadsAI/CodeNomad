@@ -306,6 +306,10 @@
   background-color: var(--message-tool-bg);
 }
 
+.tool-call-permission.tool-call-permission-answered {
+  border-color: transparent;
+}
+
 .tool-call-permission-header {
   @apply flex items-center justify-between gap-3;
 }
