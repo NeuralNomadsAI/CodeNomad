@@ -74,12 +74,15 @@ function createStaticContext(snapshot: TitleSnapshot): ToolRendererContext {
     toolCall: toolCallAccessor,
     toolState: toolStateAccessor,
     toolName: toolNameAccessor,
+    instanceId: "",
+    sessionId: "",
     t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown,
     renderAnsi,
     renderDiff,
+    renderToolCall: () => null,
     scrollHelpers: undefined,
   }
 }

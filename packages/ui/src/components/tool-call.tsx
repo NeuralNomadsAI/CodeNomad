@@ -59,6 +59,11 @@ interface ToolCallProps {
   instanceId: string
   sessionId: string
   onContentRendered?: () => void
+  /**
+   * When true, tool call starts collapsed regardless of user preferences.
+   * Users can still expand/collapse manually.
+   */
+  forceCollapsed?: boolean
  }
 
 
@@ -142,6 +147,9 @@ export default function ToolCall(props: ToolCallProps) {
   const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
 
   const defaultExpandedForTool = createMemo(() => {
+    if (props.forceCollapsed) {
+      return false
+    }
     const prefExpanded = toolOutputDefaultExpanded()
     const toolName = toolCallMemo()?.tool || ""
     if (toolName === "read") {
@@ -575,12 +583,29 @@ export default function ToolCall(props: ToolCallProps) {
     toolCall: toolCallMemo,
     toolState,
     toolName,
+    instanceId: props.instanceId,
+    sessionId: props.sessionId,
     t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
     renderMarkdown: renderMarkdownContent,
     renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
+    renderToolCall: (options) => {
+      if (!options?.toolCall) return null
+      return (
+        <ToolCall
+          toolCall={options.toolCall}
+          toolCallId={options.toolCall.id}
+          messageId={options.messageId}
+          messageVersion={options.messageVersion}
+          partVersion={options.partVersion}
+          instanceId={props.instanceId}
+          sessionId={options.sessionId}
+          forceCollapsed={options.forceCollapsed}
+        />
+      )
+    },
     scrollHelpers,
   }
 

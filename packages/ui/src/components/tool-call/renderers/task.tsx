@@ -1,8 +1,11 @@
-import { For, Show, createMemo } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
 import { resolveTitleForTool } from "../tool-title"
+import { messageStoreBus } from "../../../stores/message-v2/bus"
+import { loadMessages } from "../../../stores/session-api"
+import { loading, messagesLoaded } from "../../../stores/session-state"
 
 interface TaskSummaryItem {
   id: string
@@ -12,6 +15,70 @@ interface TaskSummaryItem {
   state?: ToolState
   status?: ToolState["status"]
   title?: string
+}
+
+function extractSessionIdFromTaskState(state?: ToolState): string {
+  if (!state) return ""
+  const metadata = (state as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
+  const directId = (metadata as any)?.sessionId ?? (metadata as any)?.sessionID
+  return typeof directId === "string" ? directId : ""
+}
+
+function splitToolKey(key: string): { messageId: string; partId: string } | null {
+  const separator = "::"
+  const index = key.lastIndexOf(separator)
+  if (index <= 0) return null
+  const messageId = key.slice(0, index)
+  const partId = key.slice(index + separator.length)
+  if (!messageId || !partId) return null
+  return { messageId, partId }
+}
+
+function TaskToolCallRow(props: {
+  toolKey: string
+  store: ReturnType<typeof messageStoreBus.getOrCreate>
+  sessionId: string
+  renderToolCall: NonNullable<import("../types").ToolRendererContext["renderToolCall"]>
+}) {
+  const parts = createMemo(() => splitToolKey(props.toolKey))
+  const messageId = createMemo(() => parts()?.messageId ?? "")
+  const partId = createMemo(() => parts()?.partId ?? "")
+
+  const record = createMemo(() => {
+    const id = messageId()
+    if (!id) return undefined
+    return props.store.getMessage(id)
+  })
+
+  const partEntry = createMemo(() => {
+    const rec = record()
+    const pid = partId()
+    if (!rec || !pid) return undefined
+    return rec.parts?.[pid]
+  })
+
+  const toolPart = createMemo(() => {
+    const data = partEntry()?.data
+    return data && (data as any).type === "tool" ? (data as any) : undefined
+  })
+
+  const messageVersion = createMemo(() => record()?.revision ?? 0)
+  const partVersion = createMemo(() => partEntry()?.revision ?? 0)
+
+  const rendered = createMemo(() => {
+    const part = toolPart()
+    if (!part) return null
+    return props.renderToolCall({
+      toolCall: part as any,
+      messageId: messageId(),
+      messageVersion: messageVersion(),
+      partVersion: partVersion(),
+      sessionId: props.sessionId,
+      forceCollapsed: true,
+    })
+  })
+
+  return <>{rendered()}</>
 }
 
 function normalizeStatus(status?: string | null): ToolState["status"] | undefined {
@@ -78,7 +145,63 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, messageVersion, partVersion, scrollHelpers, renderMarkdown, t }) {
+  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t }) {
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
+
+    const childSessionId = createMemo(() => {
+      const state = toolState()
+      return extractSessionIdFromTaskState(state)
+    })
+
+    const childSessionLoaded = createMemo(() => {
+      const id = childSessionId()
+      if (!id) return false
+      const loadedForInstance = messagesLoaded().get(instanceId)
+      return loadedForInstance?.has(id) ?? false
+    })
+
+    const childSessionLoading = createMemo(() => {
+      const id = childSessionId()
+      if (!id) return false
+      const loadingSet = loading().loadingMessages.get(instanceId)
+      return loadingSet?.has(id) ?? false
+    })
+
+    createEffect(() => {
+      const id = childSessionId()
+      if (!id) return
+      if (requestedChildLoad()) return
+      if (childSessionLoaded()) return
+      if (childSessionLoading()) return
+      setRequestedChildLoad(true)
+      void loadMessages(instanceId, id)
+    })
+
+    const childToolKeys = createMemo(() => {
+      const id = childSessionId()
+      if (!id) return [] as string[]
+      if (!childSessionLoaded()) return [] as string[]
+
+      // React to session changes, but do the scan untracked to avoid
+      // subscribing to every message/part node in the store.
+      store.getSessionRevision(id)
+      return untrack(() => {
+        const messageIds = store.getSessionMessageIds(id)
+        const keys: string[] = []
+        for (const messageId of messageIds) {
+          const record = store.getMessage(messageId)
+          if (!record) continue
+          for (const partId of record.partIds) {
+            const entry = record.parts?.[partId]
+            const data = entry?.data
+            if (!data || (data as any).type !== "tool") continue
+            keys.push(`${messageId}::${partId}`)
+          }
+        }
+        return keys
+      })
+    })
     const promptContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
@@ -123,13 +246,16 @@ export const taskRenderer: ToolRenderer = {
       return null
     })
 
-    const items = createMemo(() => {
+    const legacyItems = createMemo(() => {
       // Track the reactive change points so we only recompute when the part/message changes
       messageVersion?.()
       partVersion?.()
 
       const state = toolState()
       if (!state) return []
+
+      // Prefer deriving steps from the child session when loaded.
+      if (childSessionLoaded()) return []
 
       const { metadata } = readToolStatePayload(state)
       const summary = Array.isArray((metadata as any).summary) ? ((metadata as any).summary as any[]) : []
@@ -167,51 +293,84 @@ export const taskRenderer: ToolRenderer = {
           </section>
         </Show>
 
-        <Show when={items().length > 0}>
+        <Show when={childToolKeys().length > 0 || legacyItems().length > 0}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
-              <span class="tool-call-task-section-meta">{t("toolCall.task.steps.count", { count: items().length })}</span>
+              <span class="tool-call-task-section-meta">
+                {t("toolCall.task.steps.count", { count: childToolKeys().length > 0 ? childToolKeys().length : legacyItems().length })}
+              </span>
             </header>
             <div class="tool-call-task-section-body">
-              <div
-                class="message-text tool-call-markdown tool-call-task-container"
-                ref={scrollHelpers?.registerContainer}
-                onScroll={
-                  scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
+              <Show
+                when={childToolKeys().length > 0}
+                fallback={
+                  <div
+                    class="message-text tool-call-markdown tool-call-task-container"
+                    ref={scrollHelpers?.registerContainer}
+                    onScroll={
+                      scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
+                    }
+                  >
+                    <div class="tool-call-task-summary">
+                      <For each={legacyItems()}>
+                        {(item) => {
+                          const icon = getToolIcon(item.tool)
+                          const description = describeToolTitle(item)
+                          const toolLabel = getToolName(item.tool)
+                          const status = normalizeStatus(item.status ?? item.state?.status)
+                          const statusIcon = summarizeStatusIcon(status)
+                          const statusKey = summarizeStatusLabel(status)
+                          const statusLabel = statusKey
+                            ? t(`toolCall.status.${statusKey}`)
+                            : t("toolCall.status.unknown")
+                          const statusAttr = status ?? "pending"
+                          return (
+                            <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
+                              <span class="tool-call-task-icon">{icon}</span>
+                              <span class="tool-call-task-label">{toolLabel}</span>
+                              <span class="tool-call-task-separator" aria-hidden="true">—</span>
+                              <span class="tool-call-task-text">{description}</span>
+                              <Show when={statusIcon}>
+                                <span class="tool-call-task-status" aria-label={statusLabel} title={statusLabel}>
+                                  {statusIcon}
+                                </span>
+                              </Show>
+                            </div>
+                          )
+                        }}
+                      </For>
+                    </div>
+                    {scrollHelpers?.renderSentinel?.()}
+                  </div>
                 }
               >
-                <div class="tool-call-task-summary">
-                  <For each={items()}>
-                    {(item) => {
-                      const icon = getToolIcon(item.tool)
-                      const description = describeToolTitle(item)
-                      const toolLabel = getToolName(item.tool)
-                      const status = normalizeStatus(item.status ?? item.state?.status)
-                      const statusIcon = summarizeStatusIcon(status)
-                      const statusKey = summarizeStatusLabel(status)
-                      const statusLabel = statusKey
-                        ? t(`toolCall.status.${statusKey}`)
-                        : t("toolCall.status.unknown")
-                      const statusAttr = status ?? "pending"
-                      return (
-                        <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
-                          <span class="tool-call-task-icon">{icon}</span>
-                          <span class="tool-call-task-label">{toolLabel}</span>
-                          <span class="tool-call-task-separator" aria-hidden="true">—</span>
-                          <span class="tool-call-task-text">{description}</span>
-                          <Show when={statusIcon}>
-                            <span class="tool-call-task-status" aria-label={statusLabel} title={statusLabel}>
-                              {statusIcon}
-                            </span>
-                          </Show>
-                        </div>
-                      )
-                    }}
-                  </For>
+                <div
+                  class="message-text tool-call-markdown tool-call-task-container"
+                  ref={scrollHelpers?.registerContainer}
+                  onScroll={
+                    scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
+                  }
+                >
+                  <div class="tool-call-task-summary">
+                    <For each={childToolKeys()}>
+                      {(key) => (
+                        <Show when={renderToolCall}>
+                          {(render) => (
+                            <TaskToolCallRow
+                              toolKey={key}
+                              store={store}
+                              sessionId={childSessionId()}
+                              renderToolCall={render()}
+                            />
+                          )}
+                        </Show>
+                      )}
+                    </For>
+                  </div>
+                  {scrollHelpers?.renderSentinel?.()}
                 </div>
-                {scrollHelpers?.renderSentinel?.()}
-              </div>
+              </Show>
             </div>
           </section>
         </Show>
