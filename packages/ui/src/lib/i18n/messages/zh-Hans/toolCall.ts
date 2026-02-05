@@ -2,6 +2,9 @@ export const toolCallMessages = {
   "toolCall.pending.waitingToRun": "等待运行...",
   "toolCall.error.label": "错误：",
 
+  "toolCall.header.copyTitle": "Copy tool call title",
+  "toolCall.header.copyAriaLabel": "Copy tool call title",
+
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
   "toolCall.diff.viewMode.ariaLabel": "Diff 视图模式",

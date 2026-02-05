@@ -2,6 +2,9 @@ export const toolCallMessages = {
   "toolCall.pending.waitingToRun": "En attente d'exécution...",
   "toolCall.error.label": "Erreur :",
 
+  "toolCall.header.copyTitle": "Copy tool call title",
+  "toolCall.header.copyAriaLabel": "Copy tool call title",
+
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
   "toolCall.diff.viewMode.ariaLabel": "Mode d'affichage du diff",
