@@ -1021,7 +1021,7 @@ export default function PromptInput(props: PromptInputProps) {
     const blockquote = lines.map((line) => `> ${line}`).join("\n")
     if (!blockquote) return
 
-    insertBlockContent(`${blockquote}\n\n`)
+    insertBlockContent(`${blockquote}\n`)
   }
 
   function insertCodeSelection(rawText: string) {
