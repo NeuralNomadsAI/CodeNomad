@@ -20,6 +20,9 @@ export const messagingMessages = {
   "messageSection.scroll.toLatestAriaLabel": "Desplazarse al último mensaje",
   "messageSection.quote.addAsQuote": "Añadir como cita",
   "messageSection.quote.addAsCode": "Añadir como código",
+  "messageSection.quote.copy": "Copiar",
+  "messageSection.quote.copied": "¡Copiado!",
+  "messageSection.quote.copyFailed": "No se pudo copiar",
 
   "messageTimeline.ariaLabel": "Línea de tiempo de mensajes",
   "messageTimeline.segment.user.label": "Tú",

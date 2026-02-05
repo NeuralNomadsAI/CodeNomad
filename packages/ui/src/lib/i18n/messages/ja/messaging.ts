@@ -20,6 +20,9 @@ export const messagingMessages = {
   "messageSection.scroll.toLatestAriaLabel": "最新のメッセージへスクロール",
   "messageSection.quote.addAsQuote": "引用として追加",
   "messageSection.quote.addAsCode": "コードとして追加",
+  "messageSection.quote.copy": "コピー",
+  "messageSection.quote.copied": "コピーしました",
+  "messageSection.quote.copyFailed": "コピーできませんでした",
 
   "messageTimeline.ariaLabel": "メッセージタイムライン",
   "messageTimeline.segment.user.label": "あなた",

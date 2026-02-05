@@ -20,6 +20,9 @@ export const messagingMessages = {
   "messageSection.scroll.toLatestAriaLabel": "Прокрутить к последнему сообщению",
   "messageSection.quote.addAsQuote": "Добавить как цитату",
   "messageSection.quote.addAsCode": "Добавить как код",
+  "messageSection.quote.copy": "Копировать",
+  "messageSection.quote.copied": "Скопировано!",
+  "messageSection.quote.copyFailed": "Не удалось скопировать",
 
   "messageTimeline.ariaLabel": "Таймлайн сообщений",
   "messageTimeline.segment.user.label": "Вы",
