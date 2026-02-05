@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
+import { Copy, Split, Trash2, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -159,6 +160,8 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
+  const copyLabel = () => (copied() ? t("messageItem.actions.copied") : t("messageItem.actions.copy"))
+
   const getRawContent = () => {
     return props.parts
       .filter(part => part.type === "text")
@@ -278,31 +281,29 @@ export default function MessageItem(props: MessageItemProps) {
                 <button
                   class="message-action-button"
                   onClick={handleRevert}
-                  title={t("messageItem.actions.revertTitle")}
-                  aria-label={t("messageItem.actions.revertTitle")}
+                  title={t("messageItem.actions.revert")}
+                  aria-label={t("messageItem.actions.revert")}
                 >
-                  {t("messageItem.actions.revert")}
+                  <Undo class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
               </Show>
               <Show when={props.onFork}>
                 <button
                   class="message-action-button"
                   onClick={() => props.onFork?.(props.record.id)}
-                  title={t("messageItem.actions.forkTitle")}
-                  aria-label={t("messageItem.actions.forkTitle")}
+                  title={t("messageItem.actions.fork")}
+                  aria-label={t("messageItem.actions.fork")}
                 >
-                  {t("messageItem.actions.fork")}
+                  <Split class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
               </Show>
               <button
                 class="message-action-button"
                 onClick={handleCopy}
-                title={t("messageItem.actions.copyTitle")}
-                aria-label={t("messageItem.actions.copyTitle")}
+                title={copyLabel()}
+                aria-label={copyLabel()}
               >
-                <Show when={copied()} fallback={t("messageItem.actions.copy")}>
-                  {t("messageItem.actions.copied")}
-                </Show>
+                <Copy class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
               <Show when={deletableTextPartId()}>
                 {(partId) => (
@@ -310,10 +311,10 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={() => void handleDeletePart(partId())}
                     disabled={isDeletingPart(partId())}
-                    title={t("messagePart.actions.deleteTitle")}
-                    aria-label={t("messagePart.actions.deleteTitle")}
+                    title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                   >
-                    {isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 )}
               </Show>
@@ -324,12 +325,10 @@ export default function MessageItem(props: MessageItemProps) {
               <button
                 class="message-action-button"
                 onClick={handleCopy}
-                title={t("messageItem.actions.copyTitle")}
-                aria-label={t("messageItem.actions.copyTitle")}
+                title={copyLabel()}
+                aria-label={copyLabel()}
               >
-                <Show when={copied()} fallback={t("messageItem.actions.copy")}>
-                  {t("messageItem.actions.copied")}
-                </Show>
+                <Copy class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
 
               <Show when={deletableTextPartId()}>
@@ -338,10 +337,10 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={() => void handleDeletePart(partId())}
                     disabled={isDeletingPart(partId())}
-                    title={t("messagePart.actions.deleteTitle")}
-                    aria-label={t("messagePart.actions.deleteTitle")}
+                    title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                   >
-                    {isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 )}
               </Show>

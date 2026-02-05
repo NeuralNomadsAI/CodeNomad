@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import { FoldVertical } from "lucide-solid"
+import { ExternalLink, FoldVertical, Trash2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -390,9 +390,10 @@ function ToolCallItem(props: ToolCallItemProps) {
                   type="button"
                   disabled={!taskLocation()}
                   onClick={handleGoToTaskSession}
-                  title={!taskLocation() ? t("messageBlock.tool.goToSession.unavailableTitle") : t("messageBlock.tool.goToSession.title")}
+                  title={t("messageBlock.tool.goToSession.label")}
+                  aria-label={t("messageBlock.tool.goToSession.label")}
                 >
-                  {t("messageBlock.tool.goToSession.label")}
+                  <ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
               </Show>
 
@@ -401,9 +402,10 @@ function ToolCallItem(props: ToolCallItemProps) {
                 type="button"
                 disabled={deleteDisabled()}
                 onClick={handleDeleteToolPart}
-                title={t("messageBlock.tool.deletePart.title")}
+                title={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
+                aria-label={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
               >
-                {deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
+                <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             </div>
           </div>
