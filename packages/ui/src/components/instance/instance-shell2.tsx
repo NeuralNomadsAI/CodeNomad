@@ -839,50 +839,49 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const LeftDrawerContent = () => (
     <div class="flex flex-col h-full min-h-0" ref={setLeftDrawerContentEl}>
-      <div class="flex items-start justify-between gap-2 px-4 py-3 border-b border-base">
-        <div class="flex flex-col gap-1">
+      <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
+        <div class="flex items-center justify-between gap-2">
           <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
             {t("instanceShell.leftPanel.sessionsTitle")}
           </span>
-          <div class="session-sidebar-shortcuts">
-            <Show when={keyboardShortcuts().length}>
-              <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
+          <div class="flex items-center gap-2 text-primary">
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={t("instanceShell.leftPanel.instanceInfo")}
+              title={t("instanceShell.leftPanel.instanceInfo")}
+              onClick={() => handleSessionSelect("info")}
+            >
+              <InfoOutlinedIcon fontSize="small" />
+            </IconButton>
+            <Show when={!isPhoneLayout()}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
+                onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
+              >
+                {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              </IconButton>
+            </Show>
+            <Show when={leftDrawerState() === "floating-open"}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={t("instanceShell.leftDrawer.toggle.close")}
+                title={t("instanceShell.leftDrawer.toggle.close")}
+                onClick={closeLeftDrawer}
+              >
+                <MenuOpenIcon fontSize="small" />
+              </IconButton>
             </Show>
           </div>
         </div>
-        <div class="flex items-center gap-2 text-primary">
-          <IconButton
-            size="small"
-            color="inherit"
-            aria-label={t("instanceShell.leftPanel.instanceInfo")}
-            title={t("instanceShell.leftPanel.instanceInfo")}
-            onClick={() => handleSessionSelect("info")}
-          >
-            <InfoOutlinedIcon fontSize="small" />
-          </IconButton>
-          <Show when={!isPhoneLayout()}>
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
-              onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
-            >
-              {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-            </IconButton>
-          </Show>
-          <Show when={leftDrawerState() === "floating-open"}>
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={t("instanceShell.leftDrawer.toggle.close")}
-              title={t("instanceShell.leftDrawer.toggle.close")}
-              onClick={closeLeftDrawer}
-            >
-              <MenuOpenIcon fontSize="small" />
-            </IconButton>
+        <div class="session-sidebar-shortcuts">
+          <Show when={keyboardShortcuts().length}>
+            <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
           </Show>
         </div>
-
       </div>
 
       <div class="session-sidebar flex flex-col flex-1 min-h-0">
