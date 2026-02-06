@@ -923,7 +923,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         <Show when={activeSessionForInstance()}>
           {(activeSession) => (
             <>
-              <ContextUsagePanel instanceId={props.instance.id} sessionId={activeSession().id} />
               <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
                 <AgentSelector
                   instanceId={props.instance.id}
@@ -1091,35 +1090,46 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     return (
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
-        <div class="relative flex items-center px-4 py-2 border-b border-base text-primary">
-          <div class="flex items-center gap-2">
-            <Show when={rightDrawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={t("instanceShell.rightDrawer.toggle.close")}
-                title={t("instanceShell.rightDrawer.toggle.close")}
-                onClick={closeRightDrawer}
-              >
-                <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-              </IconButton>
-            </Show>
-            <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
-                onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
-              >
-                {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
+        <div class="border-b border-base text-primary">
+          <div class="relative flex items-center px-4 py-2">
+            <div class="flex items-center gap-2">
+              <Show when={rightDrawerState() === "floating-open"}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={t("instanceShell.rightDrawer.toggle.close")}
+                  title={t("instanceShell.rightDrawer.toggle.close")}
+                  onClick={closeRightDrawer}
+                >
+                  <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+                </IconButton>
+              </Show>
+              <Show when={!isPhoneLayout()}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
+                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+                >
+                  {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+                </IconButton>
+              </Show>
+            </div>
+            <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
+                {t("instanceShell.rightPanel.title")}
+              </span>
+            </div>
           </div>
-          <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <Typography variant="subtitle2" class="uppercase tracking-wide text-xs font-semibold text-primary">
-              {t("instanceShell.rightPanel.title")}
-            </Typography>
-          </div>
+          <Show when={activeSessionForInstance()}>
+            {(activeSession) => (
+              <ContextUsagePanel
+                instanceId={props.instance.id}
+                sessionId={activeSession().id}
+                class="border-t border-base"
+              />
+            )}
+          </Show>
         </div>
         <div class="flex-1 overflow-y-auto">
           <Accordion.Root
