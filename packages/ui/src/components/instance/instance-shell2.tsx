@@ -12,7 +12,7 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
@@ -149,6 +149,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
+  const [showSessionSearch, setShowSessionSearch] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -848,6 +849,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             <IconButton
               size="small"
               color="inherit"
+              aria-label={t("sessionList.filter.ariaLabel")}
+              title={t("sessionList.filter.ariaLabel")}
+              aria-pressed={showSessionSearch()}
+              onClick={() => setShowSessionSearch((current) => !current)}
+              sx={{
+                color: showSessionSearch() ? "var(--text-primary)" : "inherit",
+                backgroundColor: showSessionSearch() ? "var(--surface-hover)" : "transparent",
+                "&:hover": {
+                  backgroundColor: "var(--surface-hover)",
+                },
+              }}
+            >
+              <Search class={showSessionSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
+            </IconButton>
+            <IconButton
+              size="small"
+              color="inherit"
               aria-label={t("instanceShell.leftPanel.instanceInfo")}
               title={t("instanceShell.leftPanel.instanceInfo")}
               onClick={() => handleSessionSelect("info")}
@@ -896,7 +914,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               void result.catch((error) => log.error("Failed to create session:", error))
             }
           }}
-          enableFilterBar
+          enableFilterBar={showSessionSearch()}
           showHeader={false}
           showFooter={false}
         />

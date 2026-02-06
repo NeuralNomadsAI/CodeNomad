@@ -49,7 +49,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [isRenaming, setIsRenaming] = createSignal(false)
 
   const [filterQuery, setFilterQuery] = createSignal("")
-  const normalizedQuery = createMemo(() => filterQuery().trim().toLowerCase())
+  const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
 
