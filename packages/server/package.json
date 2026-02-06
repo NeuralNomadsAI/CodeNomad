@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run prepare-config",
-    "build:ui": "npm run build --prefix ../ui",
+    "build:ui": "npm run build:pwa --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
     "prepare-config": "node ./scripts/copy-opencode-config.mjs",
     "dev": "cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 tsx src/index.ts",
