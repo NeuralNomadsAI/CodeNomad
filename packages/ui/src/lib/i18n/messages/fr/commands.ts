@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "Effacer la zone de texte du prompt",
   "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
 
-  "commands.thinkingBlocks.label.show": "Afficher les blocs de réflexion",
-  "commands.thinkingBlocks.label.hide": "Masquer les blocs de réflexion",
-  "commands.thinkingBlocks.description": "Afficher/masquer le processus de réflexion de l'IA",
+  "commands.thinkingBlocks.label.show": "Afficher la réflexion",
+  "commands.thinkingBlocks.label.hide": "Masquer la réflexion",
+  "commands.thinkingBlocks.description": "Afficher ou masquer les sections de réflexion de l'IA",
   "commands.thinkingBlocks.keywords": "réflexion, raisonnement, basculer, afficher, masquer",
 
   "commands.timelineToolCalls.label.show": "Afficher les appels d'outil dans la timeline",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "Activé",
   "commands.common.disabled": "Désactivé",
 
-  "commands.thinkingBlocksDefault.label": "Blocs de réflexion par défaut · {state}",
-  "commands.thinkingBlocksDefault.description": "Choisir si les blocs de réflexion démarrent développés",
+  "commands.thinkingBlocksDefault.label": "Vue de la réflexion: {state}",
+  "commands.thinkingBlocksDefault.description": "Réduire / Développer les sections de réflexion de l'IA lorsqu'elles sont affichées",
   "commands.thinkingBlocksDefault.keywords": "réflexion, raisonnement, développer, réduire, défaut",
 
   "commands.diffViewSplit.label": "Utiliser la vue diff côte à côte",

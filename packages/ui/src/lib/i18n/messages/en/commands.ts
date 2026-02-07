@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "Clear the prompt textarea",
   "commands.clearInput.keywords": "clear, reset",
 
-  "commands.thinkingBlocks.label.show": "Show Thinking Blocks",
-  "commands.thinkingBlocks.label.hide": "Hide Thinking Blocks",
-  "commands.thinkingBlocks.description": "Show/hide AI thinking process",
+  "commands.thinkingBlocks.label.show": "Show Thinking",
+  "commands.thinkingBlocks.label.hide": "Hide Thinking",
+  "commands.thinkingBlocks.description": "Show or hide AI thinking sections",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide",
 
   "commands.timelineToolCalls.label.show": "Show Timeline Tool Calls",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "Enabled",
   "commands.common.disabled": "Disabled",
 
-  "commands.thinkingBlocksDefault.label": "Thinking Blocks Default · {state}",
-  "commands.thinkingBlocksDefault.description": "Toggle whether thinking blocks start expanded",
+  "commands.thinkingBlocksDefault.label": "Thinking View: {state}",
+  "commands.thinkingBlocksDefault.description": "Collapse / Expand AI thinking sections when shown",
   "commands.thinkingBlocksDefault.keywords": "thinking, reasoning, expand, collapse, default",
 
   "commands.diffViewSplit.label": "Use Split Diff View",

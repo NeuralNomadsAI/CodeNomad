@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
-  "commands.thinkingBlocks.label.show": "显示思考块",
-  "commands.thinkingBlocks.label.hide": "隐藏思考块",
-  "commands.thinkingBlocks.description": "显示/隐藏 AI 思考过程",
+  "commands.thinkingBlocks.label.show": "显示思考",
+  "commands.thinkingBlocks.label.hide": "隐藏思考",
+  "commands.thinkingBlocks.description": "显示或隐藏 AI 思考部分",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide, 思考, 推理, 切换, 显示, 隐藏",
 
   "commands.timelineToolCalls.label.show": "显示时间轴工具调用",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "启用",
   "commands.common.disabled": "禁用",
 
-  "commands.thinkingBlocksDefault.label": "思考块默认 · {state}",
-  "commands.thinkingBlocksDefault.description": "切换思考块是否默认展开",
+  "commands.thinkingBlocksDefault.label": "思考视图: {state}",
+  "commands.thinkingBlocksDefault.description": "在显示时折叠 / 展开 AI 思考部分",
   "commands.thinkingBlocksDefault.keywords": "thinking, reasoning, expand, collapse, default, 思考, 推理, 展开, 折叠, 默认",
 
   "commands.diffViewSplit.label": "使用分栏 Diff 视图",

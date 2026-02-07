@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
-  "commands.thinkingBlocks.label.show": "Показать блоки размышлений",
-  "commands.thinkingBlocks.label.hide": "Скрыть блоки размышлений",
-  "commands.thinkingBlocks.description": "Показать/скрыть процесс рассуждений AI",
+  "commands.thinkingBlocks.label.show": "Показать размышления",
+  "commands.thinkingBlocks.label.hide": "Скрыть размышления",
+  "commands.thinkingBlocks.description": "Показать или скрыть секции размышлений ИИ",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, переключить, показать, скрыть",
 
   "commands.timelineToolCalls.label.show": "Показать Tool Calls в таймлайне",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "Включено",
   "commands.common.disabled": "Выключено",
 
-  "commands.thinkingBlocksDefault.label": "Блоки размышлений по умолчанию · {state}",
-  "commands.thinkingBlocksDefault.description": "Переключить, разворачивать ли блоки размышлений по умолчанию",
+  "commands.thinkingBlocksDefault.label": "Вид размышлений: {state}",
+  "commands.thinkingBlocksDefault.description": "Свернуть / Развернуть секции размышлений ИИ, когда они показаны",
   "commands.thinkingBlocksDefault.keywords": "thinking, reasoning, развернуть, свернуть, по умолчанию",
 
   "commands.diffViewSplit.label": "Раздельный просмотр diff",

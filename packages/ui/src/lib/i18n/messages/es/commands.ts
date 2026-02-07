@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
-  "commands.thinkingBlocks.label.show": "Mostrar bloques de pensamiento",
-  "commands.thinkingBlocks.label.hide": "Ocultar bloques de pensamiento",
-  "commands.thinkingBlocks.description": "Mostrar/ocultar el proceso de pensamiento de la IA",
+  "commands.thinkingBlocks.label.show": "Mostrar pensamiento",
+  "commands.thinkingBlocks.label.hide": "Ocultar pensamiento",
+  "commands.thinkingBlocks.description": "Mostrar u ocultar secciones de pensamiento de IA",
   "commands.thinkingBlocks.keywords": "pensamiento, razonamiento, alternar, mostrar, ocultar",
 
   "commands.timelineToolCalls.label.show": "Mostrar llamadas de herramienta en la línea de tiempo",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "Activado",
   "commands.common.disabled": "Desactivado",
 
-  "commands.thinkingBlocksDefault.label": "Bloques de pensamiento por defecto · {state}",
-  "commands.thinkingBlocksDefault.description": "Alternar si los bloques de pensamiento empiezan expandidos",
+  "commands.thinkingBlocksDefault.label": "Vista de pensamiento: {state}",
+  "commands.thinkingBlocksDefault.description": "Contraer / Expandir secciones de pensamiento de IA cuando se muestran",
   "commands.thinkingBlocksDefault.keywords": "pensamiento, razonamiento, expandir, colapsar, por defecto",
 
   "commands.diffViewSplit.label": "Usar vista de diff dividida",

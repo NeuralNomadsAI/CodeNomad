@@ -82,9 +82,9 @@ export const commandMessages = {
   "commands.clearInput.description": "プロンプト入力欄をクリア",
   "commands.clearInput.keywords": "クリア, リセット, clear, reset",
 
-  "commands.thinkingBlocks.label.show": "思考ブロックを表示",
-  "commands.thinkingBlocks.label.hide": "思考ブロックを非表示",
-  "commands.thinkingBlocks.description": "AI の思考過程を表示/非表示",
+  "commands.thinkingBlocks.label.show": "思考を表示",
+  "commands.thinkingBlocks.label.hide": "思考を非表示",
+  "commands.thinkingBlocks.description": "AI の思考セクションを表示/非表示",
   "commands.thinkingBlocks.keywords": "思考, 推論, 切り替え, 表示, 非表示, thinking, reasoning, toggle, show, hide",
 
   "commands.timelineToolCalls.label.show": "タイムラインのツールコールを表示",
@@ -99,8 +99,8 @@ export const commandMessages = {
   "commands.common.enabled": "有効",
   "commands.common.disabled": "無効",
 
-  "commands.thinkingBlocksDefault.label": "思考ブロックの既定 · {state}",
-  "commands.thinkingBlocksDefault.description": "思考ブロックを既定で展開するか切り替え",
+  "commands.thinkingBlocksDefault.label": "思考ビュー: {state}",
+  "commands.thinkingBlocksDefault.description": "表示中は AI の思考セクションを折りたたみ / 展開",
   "commands.thinkingBlocksDefault.keywords": "思考, 推論, 展開, 折りたたみ, 既定, thinking, reasoning, expand, collapse, default",
 
   "commands.diffViewSplit.label": "分割 diff 表示を使用",
