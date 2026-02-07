@@ -2,7 +2,7 @@ import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCl
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare } from "lucide-solid"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
@@ -20,6 +20,7 @@ import {
   setActiveSessionFromList,
   toggleSessionParentExpanded,
 } from "../stores/sessions"
+import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 const log = getLogger("session")
@@ -353,6 +354,19 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!session()) {
       return <></>
     }
+
+    const worktreeSlug = createMemo(() => {
+      if (rowProps.isChild) return "root"
+      return getWorktreeSlugForParentSession(props.instanceId, rowProps.sessionId)
+    })
+
+    const showWorktreeBadge = createMemo(() => {
+      if (rowProps.isChild) return false
+      if (getGitRepoStatus(props.instanceId) === false) return false
+      const slug = worktreeSlug()
+      return Boolean(slug) && slug !== "root"
+    })
+
     const isActive = () => props.activeSessionId === rowProps.sessionId
     const title = () => session()?.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
@@ -459,6 +473,12 @@ const SessionList: Component<SessionListProps> = (props) => {
                 {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
                 {statusText()}
               </span>
+              <Show when={showWorktreeBadge()}>
+                <span class="status-indicator session-status-list worktree-indicator" title={`Worktree: ${worktreeSlug()}`}>
+                  <Split class="w-3.5 h-3.5" aria-hidden="true" />
+                  <span class="worktree-indicator-label">{worktreeSlug()}</span>
+                </span>
+              </Show>
             </div>
             <div class="session-item-actions">
               <span
