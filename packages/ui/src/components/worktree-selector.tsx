@@ -182,7 +182,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
               <div class="flex flex-col gap-1 flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <Select.ItemLabel class="selector-option-label flex-1 min-w-0 truncate">
-                    {opt.slug === "root" ? "root" : opt.slug}
+                    {opt.slug === "root" ? "Workspace" : opt.slug}
                   </Select.ItemLabel>
                   <Show when={opt.slug !== "root"}>
                     <button
@@ -249,7 +249,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 }
 
                 const value = state.selectedOption()
-                const label = value && value.kind === "worktree" ? (value.slug === "root" ? "root" : value.slug) : "root"
+                const label = value && value.kind === "worktree" ? (value.slug === "root" ? "Workspace" : value.slug) : "Workspace"
                 return (
                   <div class="selector-trigger-label selector-trigger-label--stacked">
                     <span class="selector-trigger-primary selector-trigger-primary--align-left">Worktree: {label}</span>
