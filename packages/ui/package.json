@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "build:pwa": "vite build -c vite.config.pwa.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

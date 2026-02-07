@@ -71,7 +71,8 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 
 > **TLS requirement**
 > Browsers require a secure (`https://`) connection for PWA installation.
-> If you host CodeNomad on a remote machine, serve it behind a reverse proxy (e.g. Caddy, nginx) with a valid TLS certificate — self-signed certificates will not work.
+> If you host CodeNomad on a remote machine, serve it behind a reverse proxy (e.g. Caddy, nginx) with a valid TLS certificate.
+> Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
 
 ### Data Storage
 - **Config**: `~/.config/codenomad/config.json`
