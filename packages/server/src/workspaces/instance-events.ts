@@ -95,7 +95,7 @@ export class InstanceEventBridge {
   }
 
   private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
-    const url = `http://${INSTANCE_HOST}:${port}/event`
+    const url = `http://${INSTANCE_HOST}:${port}/global/event`
 
     const headers: Record<string, string> = { Accept: "text/event-stream" }
     const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
@@ -165,8 +165,17 @@ export class InstanceEventBridge {
     }
 
     try {
-      const event = JSON.parse(payload) as InstanceStreamEvent
-      this.options.logger.debug({ workspaceId, eventType: event.type }, "Instance SSE event received")
+      const parsed = JSON.parse(payload) as any
+      const event: InstanceStreamEvent | null = parsed && typeof parsed === "object"
+        ? (parsed.payload && parsed.directory && typeof parsed.payload === "object" ? { ...parsed.payload, directory: parsed.directory } : parsed)
+        : null
+
+      if (!event || typeof (event as any).type !== "string") {
+        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
+        return
+      }
+
+      this.options.logger.debug({ workspaceId, eventType: (event as any).type }, "Instance SSE event received")
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }

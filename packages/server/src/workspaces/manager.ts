@@ -91,7 +91,7 @@ export class WorkspaceManager {
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
 
-    const proxyPath = `/workspaces/${id}/instance`
+    const proxyPath = `/workspaces/${id}/worktrees/root/instance`
 
 
     const descriptor: WorkspaceRecord = {

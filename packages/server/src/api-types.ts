@@ -50,6 +50,36 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export type WorktreeKind = "root" | "worktree"
+
+export interface WorktreeDescriptor {
+  /** Stable identifier used by CodeNomad + clients ("root" for repo root). */
+  slug: string
+  /** Absolute directory path on the server host. */
+  directory: string
+  kind: WorktreeKind
+  /** Optional VCS branch name when available. */
+  branch?: string
+}
+
+export interface WorktreeListResponse {
+  worktrees: WorktreeDescriptor[]
+}
+
+export interface WorktreeCreateRequest {
+  slug: string
+  /** Optional branch name (defaults to slug). */
+  branch?: string
+}
+
+export interface WorktreeMap {
+  version: 1
+  /** Default worktree to use for new sessions and as fallback. */
+  defaultWorktreeSlug: string
+  /** Mapping of *parent* session IDs to a worktree slug. */
+  parentSessionWorktreeSlug: Record<string, string>
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export interface WorkspaceLogEntry {

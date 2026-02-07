@@ -4,8 +4,13 @@ import { CODENOMAD_API_BASE } from "./api-client"
 class SDKManager {
   private clients = new Map<string, OpencodeClient>()
 
-  createClient(instanceId: string, proxyPath: string): OpencodeClient {
-    const existing = this.clients.get(instanceId)
+  private key(instanceId: string, worktreeSlug: string): string {
+    return `${instanceId}:${worktreeSlug || "root"}`
+  }
+
+  createClient(instanceId: string, proxyPath: string, worktreeSlug = "root"): OpencodeClient {
+    const key = this.key(instanceId, worktreeSlug)
+    const existing = this.clients.get(key)
     if (existing) {
       return existing
     }
@@ -13,17 +18,25 @@ class SDKManager {
     const baseUrl = buildInstanceBaseUrl(proxyPath)
     const client = createOpencodeClient({ baseUrl })
 
-    this.clients.set(instanceId, client)
+    this.clients.set(key, client)
 
     return client
   }
 
-  getClient(instanceId: string): OpencodeClient | null {
-    return this.clients.get(instanceId) ?? null
+  getClient(instanceId: string, worktreeSlug = "root"): OpencodeClient | null {
+    return this.clients.get(this.key(instanceId, worktreeSlug)) ?? null
   }
 
-  destroyClient(instanceId: string): void {
-    this.clients.delete(instanceId)
+  destroyClient(instanceId: string, worktreeSlug = "root"): void {
+    this.clients.delete(this.key(instanceId, worktreeSlug))
+  }
+
+  destroyClientsForInstance(instanceId: string): void {
+    for (const key of Array.from(this.clients.keys())) {
+      if (key === instanceId || key.startsWith(`${instanceId}:`)) {
+        this.clients.delete(key)
+      }
+    }
   }
 
   destroyAll(): void {

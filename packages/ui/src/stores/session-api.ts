@@ -32,6 +32,13 @@ import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import {
+  getOrCreateWorktreeClient,
+  getRootClient,
+  getWorktreeSlugForSession,
+  removeParentSessionMapping,
+  setWorktreeSlugForParentSession,
+} from "./worktrees"
 
 const log = getLogger("api")
 
@@ -62,6 +69,8 @@ async function fetchSessions(instanceId: string): Promise<void> {
     throw new Error("Instance not ready")
   }
 
+  const rootClient = getRootClient(instanceId)
+
   setLoading((prev) => {
     const next = { ...prev }
     next.fetchingSessions.set(instanceId, true)
@@ -70,7 +79,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
   try {
     log.info("session.list", { instanceId })
-    const response = await instance.client.session.list()
+    const response = await rootClient.session.list()
 
     const sessionMap = new Map<string, Session>()
 
@@ -80,7 +89,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
     let statusById: Record<string, any> = {}
     try {
-      const statusResponse = await instance.client.session.status()
+        const statusResponse = await rootClient.session.status()
       if (statusResponse.data && typeof statusResponse.data === "object") {
         statusById = statusResponse.data as Record<string, any>
       }
@@ -171,6 +180,12 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     throw new Error("Instance not ready")
   }
 
+  // New parent sessions inherit the currently active session's worktree.
+  // If no session is active (fresh instance), fall back to root.
+  const activeId = activeSessionId().get(instanceId)
+  const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   const instanceAgents = agents().get(instanceId) || []
   const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
   const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
@@ -189,7 +204,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
-    const response = await instance.client.session.create()
+    const response = await client.session.create()
 
     if (!response.data) {
       throw new Error("Failed to create session: No data returned")
@@ -260,6 +275,11 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       await cleanupBlankSessions(instanceId, session.id)
     }
 
+    // Persist mapping for this *parent* session (best-effort).
+    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug).catch((error) => {
+      log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
+    })
+
     return session
   } catch (error) {
     log.error("Failed to create session:", error)
@@ -283,6 +303,9 @@ async function forkSession(
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sourceSessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   const request: { sessionID: string; messageID?: string } = {
     sessionID: sourceSessionId,
     messageID: options?.messageId,
@@ -290,7 +313,7 @@ async function forkSession(
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
   const info = await requestData<SessionForkResponse>(
-    instance.client.session.fork(request),
+    client.session.fork(request),
     "session.fork",
   )
   const forkedSession = {
@@ -362,6 +385,11 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
+  const deletingSession = sessions().get(instanceId)?.get(sessionId)
+
   setLoading((prev) => {
     const next = { ...prev }
     const deleting = next.deletingSession.get(instanceId) || new Set()
@@ -372,7 +400,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(instance.client.session.delete({ sessionID: sessionId }), "session.delete")
+    await requestData(client.session.delete({ sessionID: sessionId }), "session.delete")
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -416,6 +444,11 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
         return next
       })
     }
+
+    // Clean up mapping for deleted parent sessions.
+    if (deletingSession?.parentId === null) {
+      await removeParentSessionMapping(instanceId, sessionId).catch(() => undefined)
+    }
   } catch (error) {
     log.error("Failed to delete session:", error)
     throw error
@@ -437,9 +470,11 @@ async function fetchAgents(instanceId: string): Promise<void> {
     throw new Error("Instance not ready")
   }
 
+  const rootClient = getRootClient(instanceId)
+
   try {
     log.info(`[HTTP] GET /app.agents for instance ${instanceId}`)
-    const response = await instance.client.app.agents()
+    const response = await rootClient.app.agents()
     const agentList = (response.data ?? []).map((agent) => ({
       name: agent.name,
       description: agent.description || "",
@@ -468,9 +503,11 @@ async function fetchProviders(instanceId: string): Promise<void> {
     throw new Error("Instance not ready")
   }
 
+  const rootClient = getRootClient(instanceId)
+
   try {
     log.info(`[HTTP] GET /config.providers for instance ${instanceId}`)
-    const response = await instance.client.config.providers()
+    const response = await rootClient.config.providers()
     if (!response.data) return
 
     const providerList = response.data.providers.map((provider) => ({
@@ -524,6 +561,9 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -541,7 +581,7 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const apiMessages = await requestData<any[]>(
-      instance.client.session.messages({ sessionID: sessionId }),
+      client.session.messages({ sessionID: sessionId }),
       "session.messages",
     )
 

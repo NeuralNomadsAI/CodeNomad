@@ -7,6 +7,7 @@ import path from "path"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
+import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
 
 import { ConfigStore } from "../config/store"
 import { BinaryRegistry } from "../config/binaries"
@@ -20,6 +21,7 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
+import { registerWorktreeRoutes } from "./routes/worktrees"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -222,6 +224,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
   registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })
+  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -312,31 +315,36 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
     instance.removeAllContentTypeParsers()
     instance.addContentTypeParser("*", (req, body, done) => done(null, body))
 
-    const proxyBaseHandler = async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      await proxyWorkspaceRequest({
-        request,
-        reply,
-        workspaceManager: deps.workspaceManager,
-        pathSuffix: "",
-        logger: deps.logger,
-      })
-    }
-
-    const proxyWildcardHandler = async (
-      request: FastifyRequest<{ Params: { id: string; "*": string } }>,
+    const proxyBaseHandler = async (
+      request: FastifyRequest<{ Params: { id: string; slug: string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeSlug: request.params.slug,
+        pathSuffix: "",
+        logger: deps.logger,
+      })
+    }
+
+    const proxyWildcardHandler = async (
+      request: FastifyRequest<{ Params: { id: string; slug: string; "*": string } }>,
+      reply: FastifyReply,
+    ) => {
+      await proxyWorkspaceRequest({
+        request,
+        reply,
+        workspaceManager: deps.workspaceManager,
+        worktreeSlug: request.params.slug,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
     }
 
-    instance.all("/workspaces/:id/instance", proxyBaseHandler)
-    instance.all("/workspaces/:id/instance/*", proxyWildcardHandler)
+    instance.all("/workspaces/:id/worktrees/:slug/instance", proxyBaseHandler)
+    instance.all("/workspaces/:id/worktrees/:slug/instance/*", proxyWildcardHandler)
   })
 }
 
@@ -347,9 +355,10 @@ async function proxyWorkspaceRequest(args: {
   reply: FastifyReply
   workspaceManager: WorkspaceManager
   logger: Logger
+  worktreeSlug: string
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger } = args
+  const { request, reply, workspaceManager, logger, worktreeSlug } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
@@ -361,6 +370,23 @@ async function proxyWorkspaceRequest(args: {
   const port = workspaceManager.getInstancePort(workspaceId)
   if (!port) {
     reply.code(502).send({ error: "Workspace instance is not ready" })
+    return
+  }
+
+  if (!isValidWorktreeSlug(worktreeSlug)) {
+    reply.code(400).send({ error: "Invalid worktree slug" })
+    return
+  }
+
+  const directory = await resolveWorktreeDirectory({
+    workspaceId,
+    workspacePath: workspace.path,
+    worktreeSlug,
+    logger,
+  })
+
+  if (!directory) {
+    reply.code(404).send({ error: "Worktree not found" })
     return
   }
 
@@ -381,9 +407,7 @@ async function proxyWorkspaceRequest(args: {
         headers.authorization = instanceAuthHeader
       }
 
-      // Enforce per-workspace directory scoping for all proxied OpenCode requests.
       // OpenCode expects the *full* path; we send it via header to avoid query tampering.
-      const directory = workspace.path
       const isNonASCII = /[^\x00-\x7F]/.test(directory)
       const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
 
@@ -407,6 +431,52 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   }
   const trimmed = pathSuffix.replace(/^\/+/, "")
   return trimmed.length === 0 ? "/" : `/${trimmed}`
+}
+
+type WorktreeCacheEntry = {
+  expiresAt: number
+  repoRoot: string
+  worktrees: Array<{ slug: string; directory: string }>
+}
+
+const WORKTREE_CACHE_TTL_MS = 2000
+const worktreeCache = new Map<string, WorktreeCacheEntry>()
+
+async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger: Logger }) {
+  const cached = worktreeCache.get(params.workspaceId)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) {
+    return cached
+  }
+
+  const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
+  const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
+  const entry: WorktreeCacheEntry = {
+    expiresAt: now + WORKTREE_CACHE_TTL_MS,
+    repoRoot,
+    worktrees: worktrees.map((wt) => ({ slug: wt.slug, directory: wt.directory })),
+  }
+  worktreeCache.set(params.workspaceId, entry)
+  return entry
+}
+
+async function resolveWorktreeDirectory(params: {
+  workspaceId: string
+  workspacePath: string
+  worktreeSlug: string
+  logger: Logger
+}): Promise<string | null> {
+  const { worktreeSlug } = params
+  const cached = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  const match = cached.worktrees.find((wt) => wt.slug === worktreeSlug)
+  if (match) {
+    return match.directory
+  }
+
+  // If the slug is new (e.g., created moments ago), refresh once.
+  worktreeCache.delete(params.workspaceId)
+  const refreshed = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  return refreshed.worktrees.find((wt) => wt.slug === worktreeSlug)?.directory ?? null
 }
 
 function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {

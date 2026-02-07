@@ -18,6 +18,7 @@ import {
   fetchProviders,
   clearInstanceDraftPrompts,
 } from "./sessions"
+import { ensureWorktreesLoaded, ensureWorktreeMapLoaded } from "./worktrees"
 import { fetchCommands, clearCommands } from "./commands"
 import { preferences } from "./preferences"
 import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
@@ -136,10 +137,10 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
-    sdkManager.destroyClient(descriptor.id)
+    sdkManager.destroyClientsForInstance(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath, "root")
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -157,7 +158,7 @@ function releaseInstanceResources(instanceId: string) {
   if (!instance) return
 
   if (instance.client) {
-    sdkManager.destroyClient(instanceId)
+    sdkManager.destroyClientsForInstance(instanceId)
   }
   sseManager.seedStatus(instanceId, "disconnected")
 }
@@ -227,6 +228,8 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
 
 async function hydrateInstanceData(instanceId: string) {
   try {
+    await ensureWorktreesLoaded(instanceId)
+    await ensureWorktreeMapLoaded(instanceId)
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
