@@ -62,6 +62,18 @@ You can configure the server using flags or environment variables:
   Use this only when access is already protected by another layer (SSO proxy, VPN, Coder workspace auth, etc.).
   If you bind to `0.0.0.0` while skipping auth, anyone who can reach the port can access the API.
 
+### Progressive Web App (PWA)
+When running as a server CodeNomad can also be installed as a PWA from any supported browser, giving you a native app experience just like the Electron installation but executing on the remote server instead.
+
+1. Open the CodeNomad UI in a Chromium-based browser (Chrome, Edge, Brave, etc.).
+2. Click the install icon in the address bar, or use the browser menu → "Install CodeNomad".
+3. The app will open in a standalone window and appear in your OS app list.
+
+> **TLS requirement**
+> Browsers require a secure (`https://`) connection for PWA installation.
+> If you host CodeNomad on a remote machine, serve it behind a reverse proxy (e.g. Caddy, nginx) with a valid TLS certificate.
+> Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
+
 ### Data Storage
 - **Config**: `~/.config/codenomad/config.json`
 - **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)
