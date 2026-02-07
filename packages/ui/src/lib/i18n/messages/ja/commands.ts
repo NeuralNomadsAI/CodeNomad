@@ -82,6 +82,11 @@ export const commandMessages = {
   "commands.clearInput.description": "プロンプト入力欄をクリア",
   "commands.clearInput.keywords": "クリア, リセット, clear, reset",
 
+  "commands.promptSubmitShortcut.label.default": "Enter: 改行, Cmd/Ctrl+Enter: プロンプト送信",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: プロンプト送信, Cmd/Ctrl+Enter: 改行",
+  "commands.promptSubmitShortcut.description": "プロンプト入力で Enter と Cmd/Ctrl+Enter の動作を入れ替え",
+  "commands.promptSubmitShortcut.keywords": "enter, 送信, 改行, ショートカット, cmd, ctrl, プロンプト",
+
   "commands.thinkingBlocks.label.show": "思考を表示",
   "commands.thinkingBlocks.label.hide": "思考を非表示",
   "commands.thinkingBlocks.description": "AI の思考セクションを表示/非表示",

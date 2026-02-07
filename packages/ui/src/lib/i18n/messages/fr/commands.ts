@@ -82,6 +82,11 @@ export const commandMessages = {
   "commands.clearInput.description": "Effacer la zone de texte du prompt",
   "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
 
+  "commands.promptSubmitShortcut.label.default": "Entree: Nouvelle ligne, Cmd/Ctrl+Entree: Envoyer le prompt",
+  "commands.promptSubmitShortcut.label.swapped": "Entree: Envoyer le prompt, Cmd/Ctrl+Entree: Nouvelle ligne",
+  "commands.promptSubmitShortcut.description": "Echanger le comportement de Entree et Cmd/Ctrl+Entree dans la saisie du prompt",
+  "commands.promptSubmitShortcut.keywords": "entree, envoyer, nouvelle ligne, raccourci, cmd, ctrl, prompt",
+
   "commands.thinkingBlocks.label.show": "Afficher la réflexion",
   "commands.thinkingBlocks.label.hide": "Masquer la réflexion",
   "commands.thinkingBlocks.description": "Afficher ou masquer les sections de réflexion de l'IA",

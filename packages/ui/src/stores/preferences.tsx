@@ -36,6 +36,7 @@ export interface Preferences {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
+  promptSubmitOnEnter: boolean
   lastUsedBinary?: string
   locale?: string
   environmentVariables: Record<string, string>
@@ -73,6 +74,7 @@ const defaultPreferences: Preferences = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
+  promptSubmitOnEnter: false,
   environmentVariables: {},
   modelRecents: [],
   modelFavorites: [],
@@ -120,6 +122,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultPreferences.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultPreferences.showTimelineTools,
+    promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultPreferences.promptSubmitOnEnter,
     lastUsedBinary: sanitized.lastUsedBinary ?? defaultPreferences.lastUsedBinary,
     locale: sanitized.locale ?? defaultPreferences.locale,
     environmentVariables,
@@ -381,6 +384,10 @@ function toggleUsageMetrics(): void {
   updatePreferences({ showUsageMetrics: !preferences().showUsageMetrics })
 }
 
+function togglePromptSubmitOnEnter(): void {
+  updatePreferences({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
+}
+
 function toggleAutoCleanupBlankSessions(): void {
   const nextValue = !preferences().autoCleanupBlankSessions
   log.info("toggle auto cleanup", { value: nextValue })
@@ -490,6 +497,7 @@ interface ConfigContextValue {
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
+  togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
 
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
@@ -526,6 +534,7 @@ const configContextValue: ConfigContextValue = {
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
+  togglePromptSubmitOnEnter,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
@@ -585,6 +594,7 @@ export {
   toggleShowTimelineTools,
   toggleAutoCleanupBlankSessions,
   toggleUsageMetrics,
+  togglePromptSubmitOnEnter,
   recentFolders,
   addRecentFolder,
   removeRecentFolder,

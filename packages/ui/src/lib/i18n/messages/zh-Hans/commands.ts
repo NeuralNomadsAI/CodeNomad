@@ -82,6 +82,11 @@ export const commandMessages = {
   "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
+  "commands.promptSubmitShortcut.label.default": "Enter: 换行, Cmd/Ctrl+Enter: 提交提示词",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: 提交提示词, Cmd/Ctrl+Enter: 换行",
+  "commands.promptSubmitShortcut.description": "在提示词输入框中交换 Enter 与 Cmd/Ctrl+Enter 的行为",
+  "commands.promptSubmitShortcut.keywords": "enter, 换行, 提交, 发送, 快捷键, cmd, ctrl, 提示词",
+
   "commands.thinkingBlocks.label.show": "显示思考",
   "commands.thinkingBlocks.label.hide": "隐藏思考",
   "commands.thinkingBlocks.description": "显示或隐藏 AI 思考部分",

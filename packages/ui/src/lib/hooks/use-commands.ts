@@ -31,6 +31,7 @@ export interface UseCommandsOptions {
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
+  togglePromptSubmitOnEnter: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: ExpansionPreference) => void
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
@@ -421,6 +422,18 @@ export function useCommands(options: UseCommandsOptions) {
         const textarea = findVisiblePromptTextarea()
         if (textarea) textarea.value = ""
       },
+    })
+
+    commandRegistry.register({
+      id: "prompt-submit-shortcut",
+      label: () =>
+        options.preferences().promptSubmitOnEnter
+          ? tGlobal("commands.promptSubmitShortcut.label.swapped")
+          : tGlobal("commands.promptSubmitShortcut.label.default"),
+      description: () => tGlobal("commands.promptSubmitShortcut.description"),
+      category: "Input & Focus",
+      keywords: () => splitKeywords("commands.promptSubmitShortcut.keywords"),
+      action: options.togglePromptSubmitOnEnter,
     })
 
     commandRegistry.register({

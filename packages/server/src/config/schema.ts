@@ -12,6 +12,7 @@ const PreferencesSchema = z.object({
   showThinkingBlocks: z.boolean().default(false),
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   showTimelineTools: z.boolean().default(true),
+  promptSubmitOnEnter: z.boolean().default(false),
   lastUsedBinary: z.string().optional(),
   locale: z.string().optional(),
   environmentVariables: z.record(z.string()).default({}),

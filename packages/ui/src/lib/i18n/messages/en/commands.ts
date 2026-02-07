@@ -82,6 +82,11 @@ export const commandMessages = {
   "commands.clearInput.description": "Clear the prompt textarea",
   "commands.clearInput.keywords": "clear, reset",
 
+  "commands.promptSubmitShortcut.label.default": "Enter: New Line, Cmd/Ctrl+Enter: Submit Prompt",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: Submit Prompt, Cmd/Ctrl+Enter: New Line",
+  "commands.promptSubmitShortcut.description": "Swap Enter and Cmd/Ctrl+Enter behavior in the prompt input",
+  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, submit, send, newline, shortcut, keybind, prompt",
+
   "commands.thinkingBlocks.label.show": "Show Thinking",
   "commands.thinkingBlocks.label.hide": "Hide Thinking",
   "commands.thinkingBlocks.description": "Show or hide AI thinking sections",
