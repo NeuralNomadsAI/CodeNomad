@@ -101,7 +101,7 @@ export async function listWorktrees(params: {
   const records = parseWorktreePorcelain(result.stdout)
 
   const worktrees: WorktreeDescriptor[] = [rootDescriptor]
-  const slugCounts = new Map<string, number>([["root", 1]])
+  const seen = new Set<string>(["root"])
 
   const normalizeSlug = (record: { branch?: string; head?: string; detached?: boolean; worktree: string }): string => {
     const branch = (record.branch ?? "").trim()
@@ -117,14 +117,6 @@ export async function listWorktrees(params: {
     return base ? `worktree-${base}` : "worktree"
   }
 
-  const uniquify = (slug: string): string => {
-    const count = slugCounts.get(slug) ?? 0
-    slugCounts.set(slug, count + 1)
-    if (count === 0) {
-      return slug
-    }
-    return `${slug}@${count + 1}`
-  }
 
   for (const record of records) {
     const abs = record.worktree
@@ -135,13 +127,14 @@ export async function listWorktrees(params: {
       continue
     }
 
-    const slug = uniquify(normalizeSlug(record))
-    // Never emit a worktree slug that collides with our reserved root slug.
-    if (slug === "root") {
-      worktrees.push({ slug: uniquify("root-worktree"), directory: abs, kind: "worktree", branch: record.branch })
+    const slug = normalizeSlug(record)
+    if (!slug || slug === "root") {
       continue
     }
-
+    if (seen.has(slug)) {
+      continue
+    }
+    seen.add(slug)
     worktrees.push({ slug, directory: abs, kind: "worktree", branch: record.branch })
   }
 

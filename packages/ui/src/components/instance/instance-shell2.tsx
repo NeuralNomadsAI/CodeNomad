@@ -12,7 +12,6 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { Dialog } from "@kobalte/core/dialog"
 import { ChevronDown, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
@@ -65,17 +64,7 @@ import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
-import { showToastNotification } from "../../lib/notifications"
-import {
-  createWorktree,
-  deleteWorktree,
-  getParentSessionId,
-  getWorktreeSlugForParentSession,
-  getWorktrees,
-  reloadWorktrees,
-  reloadWorktreeMap,
-  setWorktreeSlugForParentSession,
-} from "../../stores/worktrees"
+import WorktreeSelector from "../worktree-selector"
 import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
@@ -86,9 +75,6 @@ import {
 } from "../../lib/session-sidebar-events"
 
 const log = getLogger("session")
-
-const CREATE_WORKTREE_VALUE = "__codenomad_create_worktree__"
-const DELETE_WORKTREE_VALUE = "__codenomad_delete_worktree__"
 
 interface InstanceShellProps {
   instance: Instance
@@ -166,13 +152,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
 
-  const [createWorktreeOpen, setCreateWorktreeOpen] = createSignal(false)
-  const [createWorktreeSlug, setCreateWorktreeSlug] = createSignal("")
-  const [isCreatingWorktree, setIsCreatingWorktree] = createSignal(false)
-
-  const [deleteWorktreeOpen, setDeleteWorktreeOpen] = createSignal(false)
-  const [isDeletingWorktree, setIsDeletingWorktree] = createSignal(false)
-  const [forceDeleteWorktree, setForceDeleteWorktree] = createSignal(false)
+  // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
@@ -948,233 +928,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             {(activeSession) => (
               <>
                 <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-                  <div class="space-y-1">
-                    <div class="text-xs font-medium text-muted uppercase tracking-wide">Worktree</div>
-                    <select
-                      class="selector-input w-full"
-                      value={getWorktreeSlugForParentSession(
-                        props.instance.id,
-                        getParentSessionId(props.instance.id, activeSession().id),
-                      )}
-                      disabled={Boolean(activeSession().parentId)}
-                      onChange={(e) => {
-                        const nextSlug = e.currentTarget.value
-                        const sessionId = activeSession().id
-                        const parentId = getParentSessionId(props.instance.id, sessionId)
-
-                        if (nextSlug === CREATE_WORKTREE_VALUE) {
-                          setCreateWorktreeSlug("")
-                          setCreateWorktreeOpen(true)
-                          return
-                        }
-
-                        if (nextSlug === DELETE_WORKTREE_VALUE) {
-                          const currentSlug = getWorktreeSlugForParentSession(props.instance.id, parentId)
-                          if (currentSlug && currentSlug !== "root") {
-                            setForceDeleteWorktree(false)
-                            setDeleteWorktreeOpen(true)
-                          }
-                          return
-                        }
-
-                        void (async () => {
-                          await setWorktreeSlugForParentSession(props.instance.id, parentId, nextSlug)
-                        })().catch((error) => {
-                          log.warn("Failed to apply worktree change", error)
-                        })
-                      }}
-                    >
-                      <For each={getWorktrees(props.instance.id)}>
-                        {(wt) => (
-                          <option value={wt.slug}>{wt.slug === "root" ? "root" : wt.slug}</option>
-                        )}
-                      </For>
-                      <Show when={getWorktrees(props.instance.id).length === 0}>
-                        <option value="root">root</option>
-                      </Show>
-                      <option value={CREATE_WORKTREE_VALUE}>+ Create worktree…</option>
-                      <option
-                        value={DELETE_WORKTREE_VALUE}
-                        disabled={
-                          Boolean(activeSession().parentId) ||
-                          getWorktreeSlugForParentSession(
-                            props.instance.id,
-                            getParentSessionId(props.instance.id, activeSession().id),
-                          ) === "root"
-                        }
-                      >
-                        Delete worktree…
-                      </option>
-                    </select>
-                  </div>
-
-                  <Dialog open={createWorktreeOpen()} onOpenChange={(open) => !open && setCreateWorktreeOpen(false)}>
-                    <Dialog.Portal>
-                      <Dialog.Overlay class="modal-overlay" />
-                      <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                        <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-5">
-                          <div>
-                            <Dialog.Title class="text-xl font-semibold text-primary">Create worktree</Dialog.Title>
-                            <Dialog.Description class="text-sm text-secondary mt-2">
-                              Creates a git worktree under <span class="font-mono">.codenomad/worktrees/&lt;name&gt;</span> from HEAD.
-                            </Dialog.Description>
-                          </div>
-
-                          <div class="space-y-2">
-                            <label class="text-xs font-medium text-muted uppercase tracking-wide">Worktree name</label>
-                            <input
-                              class="form-input w-full"
-                              value={createWorktreeSlug()}
-                              onInput={(e) => setCreateWorktreeSlug(e.currentTarget.value)}
-                              placeholder="feature-x"
-                              disabled={isCreatingWorktree()}
-                              spellcheck={false}
-                              autocapitalize="off"
-                              autocomplete="off"
-                            />
-                            <div class="text-[11px] text-secondary">
-                              Allowed: letters, numbers, <span class="font-mono">_ . - /</span>
-                            </div>
-                          </div>
-
-                          <div class="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              class="selector-button selector-button-secondary"
-                              onClick={() => setCreateWorktreeOpen(false)}
-                              disabled={isCreatingWorktree()}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              class="selector-button selector-button-primary"
-                              disabled={
-                                isCreatingWorktree() ||
-                                !createWorktreeSlug().trim() ||
-                                createWorktreeSlug().trim() === "root" ||
-                                !/^[a-zA-Z0-9_.\/-]+$/.test(createWorktreeSlug().trim())
-                              }
-                              onClick={() => {
-                                const slug = createWorktreeSlug().trim()
-
-                                void (async () => {
-                                  setIsCreatingWorktree(true)
-                                  await createWorktree(props.instance.id, slug)
-                                  await reloadWorktrees(props.instance.id)
-
-                                  const sessionId = activeSession().id
-                                  const parentId = getParentSessionId(props.instance.id, sessionId)
-                                  await setWorktreeSlugForParentSession(props.instance.id, parentId, slug)
-
-                                  setCreateWorktreeOpen(false)
-                                  showToastNotification({ message: `Created worktree ${slug}`, variant: "success" })
-                                })()
-                                  .catch((error) => {
-                                    log.warn("Failed to create worktree", error)
-                                    showToastNotification({
-                                      message: error instanceof Error ? error.message : "Failed to create worktree",
-                                      variant: "error",
-                                    })
-                                  })
-                                  .finally(() => {
-                                    setIsCreatingWorktree(false)
-                                  })
-                              }}
-                            >
-                              {isCreatingWorktree() ? "Creating…" : "Create"}
-                            </button>
-                          </div>
-                        </Dialog.Content>
-                      </div>
-                    </Dialog.Portal>
-                  </Dialog>
-
-                  <Dialog open={deleteWorktreeOpen()} onOpenChange={(open) => !open && setDeleteWorktreeOpen(false)}>
-                    <Dialog.Portal>
-                      <Dialog.Overlay class="modal-overlay" />
-                      <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                        <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-5">
-                          <div>
-                            <Dialog.Title class="text-xl font-semibold text-primary">Delete worktree</Dialog.Title>
-                            <Dialog.Description class="text-sm text-secondary mt-2">
-                              Removes the git worktree checkout directory for this branch.
-                            </Dialog.Description>
-                          </div>
-
-                          <div class="rounded-lg border border-base bg-surface-secondary p-4">
-                            <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Worktree</p>
-                            <p class="text-sm font-mono text-primary break-all">
-                              {getWorktreeSlugForParentSession(
-                                props.instance.id,
-                                getParentSessionId(props.instance.id, activeSession().id),
-                              )}
-                            </p>
-                          </div>
-
-                          <label class="flex items-center gap-2 text-sm text-secondary">
-                            <input
-                              type="checkbox"
-                              checked={forceDeleteWorktree()}
-                              onChange={(e) => setForceDeleteWorktree(e.currentTarget.checked)}
-                              disabled={isDeletingWorktree()}
-                            />
-                            Force delete (discard local changes)
-                          </label>
-
-                          <div class="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              class="selector-button selector-button-secondary"
-                              onClick={() => setDeleteWorktreeOpen(false)}
-                              disabled={isDeletingWorktree()}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              class="selector-button selector-button-primary"
-                              disabled={isDeletingWorktree()}
-                              onClick={() => {
-                                const sessionId = activeSession().id
-                                const parentId = getParentSessionId(props.instance.id, sessionId)
-                                const currentSlug = getWorktreeSlugForParentSession(props.instance.id, parentId)
-                                if (!currentSlug || currentSlug === "root") {
-                                  setDeleteWorktreeOpen(false)
-                                  return
-                                }
-
-                                void (async () => {
-                                  setIsDeletingWorktree(true)
-                                  await deleteWorktree(props.instance.id, currentSlug, { force: forceDeleteWorktree() })
-                                  await reloadWorktrees(props.instance.id)
-                                  await reloadWorktreeMap(props.instance.id)
-
-                                  // If the active session mapped to the deleted worktree, switch to root.
-                                  await setWorktreeSlugForParentSession(props.instance.id, parentId, "root")
-
-                                  setDeleteWorktreeOpen(false)
-                                  showToastNotification({ message: `Deleted worktree ${currentSlug}`, variant: "success" })
-                                })()
-                                  .catch((error) => {
-                                    log.warn("Failed to delete worktree", error)
-                                    showToastNotification({
-                                      message: error instanceof Error ? error.message : "Failed to delete worktree",
-                                      variant: "error",
-                                    })
-                                  })
-                                  .finally(() => {
-                                    setIsDeletingWorktree(false)
-                                  })
-                              }}
-                            >
-                              {isDeletingWorktree() ? "Deleting…" : "Delete"}
-                            </button>
-                          </div>
-                        </Dialog.Content>
-                      </div>
-                    </Dialog.Portal>
-                  </Dialog>
+                  <WorktreeSelector instanceId={props.instance.id} sessionId={activeSession().id} />
 
                   <AgentSelector
                     instanceId={props.instance.id}

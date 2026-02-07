@@ -171,6 +171,15 @@
   ring-color: var(--accent-primary);
 }
 
+/* Worktree selector separators */
+.worktree-selector-item {
+  border-bottom: 1px solid var(--border-base);
+}
+
+.worktree-selector-item:last-of-type {
+  border-bottom: none;
+}
+
 .selector-favorites-toggle {
   @apply p-2 rounded border transition-colors flex items-center justify-center;
   background-color: var(--surface-base);
