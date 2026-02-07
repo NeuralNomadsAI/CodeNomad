@@ -45,6 +45,11 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
         next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
         return next
       })
+
+      // If we already loaded a worktree mapping, drop stale slugs.
+      if (worktreeMapByInstance().has(instanceId)) {
+        void pruneWorktreeMap(instanceId).catch(() => undefined)
+      }
     })
     .catch((error) => {
       log.warn("Failed to load worktrees", { instanceId, error })
@@ -86,6 +91,10 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
         next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
         return next
       })
+
+      if (worktreeMapByInstance().has(instanceId)) {
+        void pruneWorktreeMap(instanceId).catch(() => undefined)
+      }
     })
     .catch((error) => {
       log.warn("Failed to reload worktrees", { instanceId, error })
@@ -132,6 +141,11 @@ async function ensureWorktreeMapLoaded(instanceId: string): Promise<void> {
         next.set(instanceId, normalizeMap(map))
         return next
       })
+
+      // If worktrees are already loaded, prune any mappings that reference missing worktrees.
+      if (worktreesByInstance().has(instanceId)) {
+        void pruneWorktreeMap(instanceId).catch(() => undefined)
+      }
     })
     .catch((error) => {
       log.warn("Failed to load worktree map", { instanceId, error })
@@ -173,14 +187,50 @@ function getWorktreeMap(instanceId: string): WorktreeMap {
   return worktreeMapByInstance().get(instanceId) ?? normalizeMap(null)
 }
 
-function getDefaultWorktreeSlug(instanceId: string): string {
-  return getWorktreeMap(instanceId).defaultWorktreeSlug || "root"
+function isWorktreeSlugAvailable(instanceId: string, slug: string): boolean {
+  const normalized = (slug ?? "").trim() || "root"
+  if (normalized === "root") return true
+
+  const list = getWorktrees(instanceId)
+  // If worktrees aren't loaded yet, don't force root incorrectly.
+  if (list.length === 0) return true
+  return list.some((wt) => wt.slug === normalized)
 }
 
-async function setDefaultWorktreeSlug(instanceId: string, slug: string): Promise<void> {
-  await ensureWorktreeMapLoaded(instanceId)
+function normalizeWorktreeSlug(instanceId: string, slug: string): string {
+  const normalized = (slug ?? "").trim() || "root"
+  if (normalized === "root") return "root"
+  return isWorktreeSlugAvailable(instanceId, normalized) ? normalized : "root"
+}
+
+async function pruneWorktreeMap(instanceId: string): Promise<boolean> {
   const current = getWorktreeMap(instanceId)
-  const next: WorktreeMap = { ...current, defaultWorktreeSlug: slug }
+  const available = new Set(getWorktrees(instanceId).map((wt) => wt.slug))
+  available.add("root")
+
+  let changed = false
+  let nextDefault = current.defaultWorktreeSlug || "root"
+  if (!available.has(nextDefault)) {
+    nextDefault = "root"
+    changed = true
+  }
+
+  const nextMapping: Record<string, string> = { ...(current.parentSessionWorktreeSlug ?? {}) }
+  for (const [sessionId, slug] of Object.entries(nextMapping)) {
+    if (!available.has(slug)) {
+      delete nextMapping[sessionId]
+      changed = true
+    }
+  }
+
+  if (!changed) return false
+
+  const next: WorktreeMap = {
+    version: 1,
+    defaultWorktreeSlug: nextDefault,
+    parentSessionWorktreeSlug: nextMapping,
+  }
+
   setWorktreeMapByInstance((prev) => {
     const map = new Map(prev)
     map.set(instanceId, next)
@@ -188,7 +238,29 @@ async function setDefaultWorktreeSlug(instanceId: string, slug: string): Promise
   })
 
   await serverApi.writeWorktreeMap(instanceId, next).catch((error) => {
-    log.warn("Failed to persist default worktree", { instanceId, slug, error })
+    log.warn("Failed to persist pruned worktree map", { instanceId, error })
+  })
+
+  return true
+}
+
+function getDefaultWorktreeSlug(instanceId: string): string {
+  return normalizeWorktreeSlug(instanceId, getWorktreeMap(instanceId).defaultWorktreeSlug || "root")
+}
+
+async function setDefaultWorktreeSlug(instanceId: string, slug: string): Promise<void> {
+  await ensureWorktreeMapLoaded(instanceId)
+  const current = getWorktreeMap(instanceId)
+  const nextSlug = normalizeWorktreeSlug(instanceId, slug)
+  const next: WorktreeMap = { ...current, defaultWorktreeSlug: nextSlug }
+  setWorktreeMapByInstance((prev) => {
+    const map = new Map(prev)
+    map.set(instanceId, next)
+    return map
+  })
+
+  await serverApi.writeWorktreeMap(instanceId, next).catch((error) => {
+    log.warn("Failed to persist default worktree", { instanceId, slug: nextSlug, error })
   })
 }
 
@@ -200,7 +272,8 @@ function getParentSessionId(instanceId: string, sessionId: string): string {
 
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
   const map = getWorktreeMap(instanceId)
-  return map.parentSessionWorktreeSlug[parentSessionId] ?? map.defaultWorktreeSlug ?? "root"
+  const candidate = map.parentSessionWorktreeSlug[parentSessionId] ?? map.defaultWorktreeSlug ?? "root"
+  return normalizeWorktreeSlug(instanceId, candidate)
 }
 
 function getWorktreeSlugForSession(instanceId: string, sessionId: string): string {
@@ -211,8 +284,9 @@ function getWorktreeSlugForSession(instanceId: string, sessionId: string): strin
 async function setWorktreeSlugForParentSession(instanceId: string, parentSessionId: string, slug: string): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
+  const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
   const nextMapping = { ...(current.parentSessionWorktreeSlug ?? {}) }
-  nextMapping[parentSessionId] = slug
+  nextMapping[parentSessionId] = normalizedSlug
   const next: WorktreeMap = { ...current, parentSessionWorktreeSlug: nextMapping }
   setWorktreeMapByInstance((prev) => {
     const map = new Map(prev)
@@ -221,7 +295,7 @@ async function setWorktreeSlugForParentSession(instanceId: string, parentSession
   })
 
   await serverApi.writeWorktreeMap(instanceId, next).catch((error) => {
-    log.warn("Failed to persist session worktree mapping", { instanceId, parentSessionId, slug, error })
+    log.warn("Failed to persist session worktree mapping", { instanceId, parentSessionId, slug: normalizedSlug, error })
   })
 }
 
@@ -251,13 +325,14 @@ function getWorktreeSlugForDirectory(instanceId: string, directory: string | und
 }
 
 function buildWorktreeProxyPath(instanceId: string, slug: string): string {
-  const normalizedSlug = slug || "root"
+  const normalizedSlug = normalizeWorktreeSlug(instanceId, slug || "root")
   return `/workspaces/${encodeURIComponent(instanceId)}/worktrees/${encodeURIComponent(normalizedSlug)}/instance`
 }
 
 function getOrCreateWorktreeClient(instanceId: string, slug: string): OpencodeClient {
-  const proxyPath = buildWorktreeProxyPath(instanceId, slug)
-  return sdkManager.createClient(instanceId, proxyPath, slug)
+  const normalized = normalizeWorktreeSlug(instanceId, slug || "root")
+  const proxyPath = buildWorktreeProxyPath(instanceId, normalized)
+  return sdkManager.createClient(instanceId, proxyPath, normalized)
 }
 
 function getRootClient(instanceId: string): OpencodeClient {
