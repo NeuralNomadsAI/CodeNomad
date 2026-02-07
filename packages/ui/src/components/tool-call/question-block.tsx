@@ -132,9 +132,16 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
     if (!multi) {
       // When switching a radio to custom, clear existing selection first.
       updateAnswer(questionIndex, [])
+      toggleOption(questionIndex, value)
+      return
     }
 
-    toggleOption(questionIndex, value)
+    // For multi-select, focusing the input should never toggle an existing custom value off.
+    // Ensure the current input value is selected; removal is handled by unchecking Custom.
+    const existing = answers()[questionIndex] ?? []
+    if (!existing.includes(value)) {
+      updateAnswer(questionIndex, [...existing, value])
+    }
   }
 
   const clearCustomAnswer = (questionIndex: number, valuesToRemove: string[]) => {
