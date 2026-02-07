@@ -1,5 +1,7 @@
-import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron"
+import { BrowserWindow, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
 import type { CliProcessManager, CliStatus } from "./process-manager"
+
+let wakeLockId: number | null = null
 
 interface DialogOpenRequest {
   mode: "directory" | "file"
@@ -61,5 +63,32 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       : await dialog.showOpenDialog(dialogOptions)
 
     return { canceled: result.canceled, paths: result.filePaths }
+  })
+
+  ipcMain.handle("power:setWakeLock", async (_event, enabled: boolean): Promise<{ enabled: boolean }> => {
+    const next = Boolean(enabled)
+    if (next) {
+      if (wakeLockId !== null && powerSaveBlocker.isStarted(wakeLockId)) {
+        return { enabled: true }
+      }
+      try {
+        wakeLockId = powerSaveBlocker.start("prevent-display-sleep")
+      } catch {
+        wakeLockId = null
+        return { enabled: false }
+      }
+      return { enabled: true }
+    }
+
+    if (wakeLockId !== null) {
+      try {
+        if (powerSaveBlocker.isStarted(wakeLockId)) {
+          powerSaveBlocker.stop(wakeLockId)
+        }
+      } finally {
+        wakeLockId = null
+      }
+    }
+    return { enabled: false }
   })
 }

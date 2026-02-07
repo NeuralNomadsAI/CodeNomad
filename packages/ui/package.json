@@ -27,7 +27,8 @@
     "qrcode": "^1.5.3",
     "shiki": "^3.13.0",
     "solid-js": "^1.8.0",
-    "solid-toast": "^0.5.0"
+    "solid-toast": "^0.5.0",
+    "tauri-plugin-keepawake-api": "^0.1.0"
   },
   "devDependencies": {
     "@vite-pwa/assets-generator": "^1.0.2",
