@@ -166,9 +166,24 @@ export class InstanceEventBridge {
 
     try {
       const parsed = JSON.parse(payload) as any
-      const event: InstanceStreamEvent | null = parsed && typeof parsed === "object"
-        ? (parsed.payload && parsed.directory && typeof parsed.payload === "object" ? { ...parsed.payload, directory: parsed.directory } : parsed)
-        : null
+      if (!parsed || typeof parsed !== "object") {
+        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
+        return
+      }
+
+      // OpenCode SSE payload shapes vary across versions.
+      // Common variants:
+      // - { type, properties, ... }
+      // - { payload: { type, properties, ... }, directory: "/abs/path" }
+      // - { payload: { type, properties, ... } }
+      const base = parsed.payload && typeof parsed.payload === "object" ? parsed.payload : parsed
+
+      const event: InstanceStreamEvent | null = base && typeof base === "object" ? ({ ...base } as any) : null
+
+      // Attach directory when available (don't overwrite if already present).
+      if (event && !(event as any).directory && typeof (parsed as any).directory === "string") {
+        ;(event as any).directory = (parsed as any).directory
+      }
 
       if (!event || typeof (event as any).type !== "string") {
         this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
