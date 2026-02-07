@@ -9,6 +9,7 @@ const log = getLogger("api")
 
 const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, WorktreeDescriptor[]>>(new Map())
 const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<string, WorktreeMap>>(new Map())
+const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
 const worktreeLoads = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
@@ -26,7 +27,7 @@ function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
 
 async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
   if (!instanceId) return
-  if (worktreesByInstance().has(instanceId)) return
+  if (worktreesByInstance().has(instanceId) && gitRepoStatusByInstance().has(instanceId)) return
   const existing = worktreeLoads.get(instanceId)
   if (existing) return existing
 
@@ -38,12 +39,26 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
         next.set(instanceId, response.worktrees ?? [])
         return next
       })
+
+      setGitRepoStatusByInstance((prev) => {
+        const next = new Map(prev)
+        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
+        return next
+      })
     })
     .catch((error) => {
       log.warn("Failed to load worktrees", { instanceId, error })
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, [])
+        return next
+      })
+
+      // Preserve any previous value; if unknown, keep it unknown.
+      setGitRepoStatusByInstance((prev) => {
+        if (prev.has(instanceId)) return prev
+        const next = new Map(prev)
+        next.set(instanceId, null)
         return next
       })
     })
@@ -65,10 +80,20 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
         next.set(instanceId, response.worktrees ?? [])
         return next
       })
+
+      setGitRepoStatusByInstance((prev) => {
+        const next = new Map(prev)
+        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
+        return next
+      })
     })
     .catch((error) => {
       log.warn("Failed to reload worktrees", { instanceId, error })
     })
+}
+
+function getGitRepoStatus(instanceId: string): boolean | null {
+  return gitRepoStatusByInstance().get(instanceId) ?? null
 }
 
 async function createWorktree(instanceId: string, slug: string): Promise<{ slug: string; directory: string; branch?: string }> {
@@ -242,10 +267,12 @@ function getRootClient(instanceId: string): OpencodeClient {
 export {
   worktreesByInstance,
   worktreeMapByInstance,
+  gitRepoStatusByInstance,
   ensureWorktreesLoaded,
   reloadWorktrees,
   reloadWorktreeMap,
   ensureWorktreeMapLoaded,
+  getGitRepoStatus,
   getWorktrees,
   getWorktreeMap,
   getDefaultWorktreeSlug,

@@ -34,9 +34,9 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { error: "Workspace not found" }
     }
 
-    const { repoRoot } = await resolveRepoRoot(workspace.path, request.log)
+    const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
     const worktrees = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
-    const response: WorktreeListResponse = { worktrees }
+    const response: WorktreeListResponse = { worktrees, isGitRepo }
     return response
   })
 

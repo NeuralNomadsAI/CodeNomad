@@ -10,6 +10,7 @@ import {
   createWorktree,
   deleteWorktree,
   getParentSessionId,
+  getGitRepoStatus,
   getWorktreeSlugForParentSession,
   getWorktrees,
   reloadWorktreeMap,
@@ -85,6 +86,10 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const parentId = createMemo(() => getParentSessionId(props.instanceId, props.sessionId))
   const currentSlug = createMemo(() => getWorktreeSlugForParentSession(props.instanceId, parentId()))
 
+  const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
+  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
+  const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable())
+
   const worktreeOptions = createMemo<WorktreeOption[]>(() => {
     const list = getWorktrees(props.instanceId)
     const mapped: WorktreeOption[] = list.map((wt) => ({
@@ -134,6 +139,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   }
 
   const handleChange = async (value: WorktreeOption | null) => {
+    if (worktreesUnavailable()) return
     if (!value) return
     if (value.kind === "action") {
       setIsOpen(false)
@@ -157,7 +163,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         optionValue="key"
         optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.slug)}
         placeholder="Worktree"
-        disabled={isChildSession()}
+        disabled={dropdownDisabled()}
         itemComponent={(itemProps) => {
           const opt = itemProps.item.rawValue
           if (opt.kind === "action") {
@@ -234,6 +240,14 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           <div class="flex-1 min-w-0">
             <Select.Value<WorktreeOption>>
               {(state) => {
+                if (worktreesUnavailable()) {
+                  return (
+                    <div class="selector-trigger-label selector-trigger-label--stacked">
+                      <span class="selector-trigger-primary selector-trigger-primary--align-left">Worktree: Unavailable</span>
+                    </div>
+                  )
+                }
+
                 const value = state.selectedOption()
                 const label = value && value.kind === "worktree" ? (value.slug === "root" ? "root" : value.slug) : "root"
                 return (

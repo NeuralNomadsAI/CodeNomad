@@ -64,6 +64,8 @@ export interface WorktreeDescriptor {
 
 export interface WorktreeListResponse {
   worktrees: WorktreeDescriptor[]
+  /** True when the workspace folder resolves to a Git repository. */
+  isGitRepo?: boolean
 }
 
 export interface WorktreeCreateRequest {
