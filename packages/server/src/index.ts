@@ -423,7 +423,11 @@ async function main() {
   const localProtocol: "http" | "https" = httpStart ? "http" : "https"
   const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
 
-  const localUrl = `${localProtocol}://localhost:${localStart.port}`
+  // Use an explicit IPv4 loopback address for the "local" URL.
+  // On macOS, `localhost` often resolves to ::1 first, and it is possible to have
+  // another instance bound on IPv6 while this instance binds IPv4 (or vice versa),
+  // which can lead clients to talk to the wrong process.
+  const localUrl = `${localProtocol}://127.0.0.1:${localStart.port}`
   let remoteUrl: string | undefined
   if (remoteStart) {
     const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
