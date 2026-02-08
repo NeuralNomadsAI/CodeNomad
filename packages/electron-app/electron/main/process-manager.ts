@@ -347,38 +347,27 @@ export class CliProcessManager extends EventEmitter {
       console.info(`[cli][${stream}] ${trimmed}`)
       this.emit("log", { stream, message: trimmed })
 
-      const port = this.extractPort(trimmed)
-      if (port && this.status.state === "starting") {
-        const url = `http://127.0.0.1:${port}`
-        console.info(`[cli] ready on ${url}`)
-        this.updateStatus({ state: "ready", port, url })
+      const localUrl = this.extractLocalUrl(trimmed)
+      if (localUrl && this.status.state === "starting") {
+        let port: number | undefined
+        try {
+          port = Number(new URL(localUrl).port) || undefined
+        } catch {
+          port = undefined
+        }
+        console.info(`[cli] ready on ${localUrl}`)
+        this.updateStatus({ state: "ready", port, url: localUrl })
         this.emit("ready", this.status)
       }
     }
   }
 
-  private extractPort(line: string): number | null {
-    const readyMatch = line.match(/CodeNomad Server is ready at http:\/\/[^:]+:(\d+)/i)
-    if (readyMatch) {
-      return parseInt(readyMatch[1], 10)
+  private extractLocalUrl(line: string): string | null {
+    const match = line.match(/^Local\s+Connection\s+URL\s*:\s*(https?:\/\/\S+)\s*$/i)
+    if (!match) {
+      return null
     }
-
-    if (line.toLowerCase().includes("http server listening")) {
-      const httpMatch = line.match(/:(\d{2,5})(?!.*:\d)/)
-      if (httpMatch) {
-        return parseInt(httpMatch[1], 10)
-      }
-      try {
-        const parsed = JSON.parse(line)
-        if (typeof parsed.port === "number") {
-          return parsed.port
-        }
-      } catch {
-        // not JSON, ignore
-      }
-    }
-
-    return null
+    return match[1] ?? null
   }
 
   private updateStatus(patch: Partial<CliStatus>) {
@@ -387,7 +376,15 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCliArgs(options: StartOptions, host: string): string[] {
-    const args = ["serve", "--host", host, "--port", "0", "--generate-token"]
+    const args = ["serve", "--host", host, "--generate-token"]
+
+    if (options.dev) {
+      // Dev: run plain HTTP + Vite dev server proxy.
+      args.push("--https", "false", "--http", "true")
+    } else {
+      // Prod desktop: always keep loopback HTTP enabled.
+      args.push("--https", "true", "--http", "true")
+    }
 
     if (options.dev) {
       args.push("--ui-dev-server", "http://localhost:3000", "--log-level", "debug")

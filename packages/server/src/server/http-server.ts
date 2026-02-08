@@ -30,8 +30,12 @@ import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 
 interface HttpServerDeps {
-  host: string
-  port: number
+  bindHost: string
+  bindPort: number
+  /** When bindPort is 0, try this first. */
+  defaultPort: number
+  protocol: "http" | "https"
+  httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
   configStore: ConfigStore
   binaryRegistry: BinaryRegistry
@@ -51,10 +55,15 @@ interface HttpServerStartResult {
   displayHost: string
 }
 
-const DEFAULT_HTTP_PORT = 9898
-
 export function createHttpServer(deps: HttpServerDeps) {
-  const app = Fastify({ logger: false })
+  // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
+  // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
+  const app = Fastify(
+    ({
+      logger: false,
+      ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
+    } as unknown) as any,
+  ) as unknown as FastifyInstance
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
@@ -97,6 +106,27 @@ export function createHttpServer(deps: HttpServerDeps) {
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
+  const getSelfOrigins = (): Set<string> => {
+    const origins = new Set<string>()
+    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      try {
+        origins.add(new URL(candidate).origin)
+      } catch {
+        // ignore
+      }
+    }
+    for (const addr of deps.serverMeta.addresses ?? []) {
+      try {
+        origins.add(new URL(addr.remoteUrl).origin)
+      } catch {
+        // ignore
+      }
+    }
+    return origins
+  }
+
   app.register(cors, {
     origin: (origin, cb) => {
       if (!origin) {
@@ -104,14 +134,8 @@ export function createHttpServer(deps: HttpServerDeps) {
         return
       }
 
-      let selfOrigin: string | null = null
-      try {
-        selfOrigin = new URL(deps.serverMeta.httpBaseUrl).origin
-      } catch {
-        selfOrigin = null
-      }
-
-      if (selfOrigin && origin === selfOrigin) {
+      const selfOrigins = getSelfOrigins()
+      if (selfOrigins.has(origin)) {
         cb(null, true)
         return
       }
@@ -122,7 +146,7 @@ export function createHttpServer(deps: HttpServerDeps) {
        }
 
        // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (deps.host === "0.0.0.0" || !isLoopbackHost(deps.host)) {
+       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
          cb(null, true)
          return
        }
@@ -245,12 +269,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     instance: app,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
-        const addressInfo = await app.listen({ port: requestedPort, host: deps.host })
+        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost })
         return { addressInfo, requestedPort }
       }
 
-      const autoPortRequested = deps.port === 0
-      const primaryPort = autoPortRequested ? DEFAULT_HTTP_PORT : deps.port
+      const autoPortRequested = deps.bindPort === 0
+      const primaryPort = autoPortRequested ? deps.defaultPort : deps.bindPort
 
       const shouldRetryWithEphemeral = (error: unknown) => {
         if (!autoPortRequested) return false
@@ -286,15 +310,10 @@ export function createHttpServer(deps: HttpServerDeps) {
         }
       }
 
-      const displayHost = deps.host === "127.0.0.1" ? "localhost" : deps.host
-      const serverUrl = `http://${displayHost}:${actualPort}`
+      const displayHost = deps.bindHost === "127.0.0.1" ? "localhost" : deps.bindHost
+      const serverUrl = `${deps.protocol}://${displayHost}:${actualPort}`
 
-      deps.serverMeta.httpBaseUrl = serverUrl
-      deps.serverMeta.host = deps.host
-      deps.serverMeta.port = actualPort
-      deps.serverMeta.listeningMode = deps.host === "0.0.0.0" || !isLoopbackHost(deps.host) ? "all" : "local"
-      deps.logger.info({ port: actualPort, host: deps.host }, "HTTP server listening")
-      console.log(`CodeNomad Server is ready at ${serverUrl}`)
+      deps.logger.info({ port: actualPort, host: deps.bindHost, protocol: deps.protocol }, "HTTP server listening")
 
       return { port: actualPort, url: serverUrl, displayHost }
     },

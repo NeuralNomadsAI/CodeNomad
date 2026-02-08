@@ -119,8 +119,16 @@ export class AuthManager {
     reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId))
   }
 
+  setSessionCookieWithOptions(reply: FastifyReply, sessionId: string, options?: { secure?: boolean }) {
+    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, options))
+  }
+
   clearSessionCookie(reply: FastifyReply) {
     reply.header("Set-Cookie", buildSessionCookie(this.cookieName, "", { maxAgeSeconds: 0 }))
+  }
+
+  clearSessionCookieWithOptions(reply: FastifyReply, options?: { secure?: boolean }) {
+    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, "", { maxAgeSeconds: 0, ...options }))
   }
 
   private requireAuthStore(): AuthStore {
@@ -143,8 +151,11 @@ function resolvePath(filePath: string) {
   return path.resolve(filePath)
 }
 
-function buildSessionCookie(name: string, value: string, options?: { maxAgeSeconds?: number }) {
+function buildSessionCookie(name: string, value: string, options?: { maxAgeSeconds?: number; secure?: boolean }) {
   const parts = [`${name}=${encodeURIComponent(value)}`, "HttpOnly", "Path=/", "SameSite=Lax"]
+  if (options?.secure) {
+    parts.push("Secure")
+  }
   if (options?.maxAgeSeconds !== undefined) {
     parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAgeSeconds))}`)
   }

@@ -236,7 +236,8 @@ export interface NetworkAddress {
   ip: string
   family: "ipv4" | "ipv6"
   scope: "external" | "internal" | "loopback"
-  url: string
+  /** Remote URL using the server's remote protocol/port for this IP. */
+  remoteUrl: string
 }
 
 export interface LatestReleaseInfo {
@@ -262,16 +263,20 @@ export interface SupportMeta {
 }
 
 export interface ServerMeta {
-  /** Base URL clients should target for REST calls (useful for Electron embedding). */
-  httpBaseUrl: string
+  /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
+  localUrl: string
+  /** URL remote clients should use (prefers HTTPS when enabled). */
+  remoteUrl?: string
   /** SSE endpoint advertised to clients (`/api/events` by default). */
   eventsUrl: string
   /** Host the server is bound to (e.g., 127.0.0.1 or 0.0.0.0). */
   host: string
   /** Listening mode derived from host binding. */
   listeningMode: "local" | "all"
-  /** Actual port in use after binding. */
-  port: number
+  /** Actual local port in use after binding. */
+  localPort: number
+  /** Actual remote port in use after binding (when remoteUrl is set). */
+  remotePort?: number
   /** Display label for the host (e.g., hostname or friendly name). */
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */

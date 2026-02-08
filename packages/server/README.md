@@ -31,6 +31,11 @@ You can run CodeNomad directly without installing it:
 npx @neuralnomads/codenomad --launch
 ```
 
+On startup, CodeNomad prints two URLs:
+
+- `Local Connection URL : ...` (used by desktop shells)
+- `Remote Connection URL : ...` (used by browsers/other machines when remote access is enabled)
+
 ### Install Globally
 Or install it globally to use the `codenomad` command:
 
@@ -44,7 +49,14 @@ You can configure the server using flags or environment variables:
 
 | Flag | Env Variable | Description |
 |------|--------------|-------------|
-| `--port <number>` | `CLI_PORT` | HTTP port (default 9898) |
+| `--https <enabled>` | `CLI_HTTPS` | Enable HTTPS listener (default `true`) |
+| `--http <enabled>` | `CLI_HTTP` | Enable HTTP listener (default `false`) |
+| `--https-port <number>` | `CLI_HTTPS_PORT` | HTTPS port (default `9898`, use `0` for auto) |
+| `--http-port <number>` | `CLI_HTTP_PORT` | HTTP port (default `9899`, use `0` for auto) |
+| `--tls-key <path>` | `CLI_TLS_KEY` | TLS private key (PEM). Requires `--tls-cert`. |
+| `--tls-cert <path>` | `CLI_TLS_CERT` | TLS certificate (PEM). Requires `--tls-key`. |
+| `--tls-ca <path>` | `CLI_TLS_CA` | Optional CA chain/bundle (PEM) |
+| `--tlsSANs <list>` | `CLI_TLS_SANS` | Additional TLS SANs (comma-separated) |
 | `--host <addr>` | `CLI_HOST` | Interface to bind (default 127.0.0.1) |
 | `--workspace-root <path>` | `CLI_WORKSPACE_ROOT` | Default root for new workspaces |
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | Allow full-filesystem browsing |
@@ -55,6 +67,42 @@ You can configure the server using flags or environment variables:
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
 | `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows |
 | `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | Disable CodeNomad's internal auth (use only behind a trusted perimeter) |
+
+### HTTP vs HTTPS
+
+- Default: `--https=true --http=false` (HTTPS only).
+- To run plain HTTP only (useful for development):
+
+```sh
+codenomad --https=false --http=true
+```
+
+- To run both HTTPS (for remote) and HTTP loopback (for desktop):
+
+```sh
+codenomad --https=true --http=true
+```
+
+### Remote Access Binding Rules
+
+- When remote access is enabled (bind host is non-loopback, e.g. `--host 0.0.0.0`):
+  - HTTP listens on `127.0.0.1` only.
+  - HTTPS listens on `--host` (LAN/all interfaces).
+- When remote access is disabled (bind host is loopback, e.g. `--host 127.0.0.1`):
+  - Both HTTP and HTTPS listen on `127.0.0.1`.
+
+### Self-Signed Certificates
+
+If `--https=true` and you do not provide `--tls-key/--tls-cert`, CodeNomad generates a local certificate automatically under your config directory:
+
+- `~/.config/codenomad/tls/ca-cert.pem`
+- `~/.config/codenomad/tls/server-cert.pem`
+
+Certificates are valid for about 30 days and rotate automatically on startup when needed. You can add extra SANs via:
+
+```sh
+codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
+```
 
 ### Authentication
 - Default behavior: CodeNomad requires a login (username/password) and stores a session cookie in the browser.
@@ -71,8 +119,7 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 
 > **TLS requirement**
 > Browsers require a secure (`https://`) connection for PWA installation.
-> If you host CodeNomad on a remote machine, serve it behind a reverse proxy (e.g. Caddy, nginx) with a valid TLS certificate.
-> Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
+> If you host CodeNomad on a remote machine, use HTTPS. Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
 
 ### Data Storage
 - **Config**: `~/.config/codenomad/config.json`
