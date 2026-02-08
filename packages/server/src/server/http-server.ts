@@ -381,6 +381,68 @@ async function proxyWorkspaceRequest(args: {
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
+  const bodyToJson = (body: unknown): unknown => {
+    if (body == null) return null
+
+    const anyBody = body as any
+    if (anyBody && typeof anyBody.pipe === "function") {
+      // Don't consume streams (would break proxying).
+      // Best-effort: if the stream already has buffered chunks, parse those.
+      try {
+        const buffered = anyBody?._readableState?.buffer
+        if (Array.isArray(buffered) && buffered.length > 0) {
+          const chunks: Buffer[] = []
+          for (const entry of buffered) {
+            if (!entry) continue
+            if (Buffer.isBuffer(entry)) {
+              chunks.push(entry)
+              continue
+            }
+            const data = (entry as any).data
+            if (Buffer.isBuffer(data)) {
+              chunks.push(data)
+            }
+          }
+
+          if (chunks.length > 0) {
+            const text = Buffer.concat(chunks).toString("utf-8")
+            try {
+              return JSON.parse(text)
+            } catch {
+              return { __raw: text }
+            }
+          }
+        }
+      } catch {
+        // fall through
+      }
+
+      return { __stream: true }
+    }
+
+    const maybeParse = (input: string): unknown => {
+      try {
+        return JSON.parse(input)
+      } catch {
+        return { __raw: input }
+      }
+    }
+
+    if (Buffer.isBuffer(body)) {
+      return maybeParse(body.toString("utf-8"))
+    }
+
+    if (typeof body === "string") {
+      return maybeParse(body)
+    }
+
+    if (typeof body === "object") {
+      return body
+    }
+
+    return body
+  }
+
   if (!workspace) {
     reply.code(404).send({ error: "Workspace not found" })
     return
@@ -432,6 +494,35 @@ async function proxyWorkspaceRequest(args: {
 
       // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
       ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
+
+      if (logger.isLevelEnabled("trace")) {
+        const outgoing: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+          outgoing[key] = value
+        }
+
+        // Redact sensitive headers.
+        for (const key of Object.keys(outgoing)) {
+          const lower = key.toLowerCase()
+          if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
+            outgoing[key] = "<redacted>"
+          }
+        }
+
+        logger.trace(
+          {
+            workspaceId,
+            method: request.method,
+            targetUrl,
+            worktreeSlug,
+            directory,
+            contentType: request.headers["content-type"],
+            body: bodyToJson(request.body),
+            headers: outgoing,
+          },
+          "Proxy -> OpenCode request",
+        )
+      }
 
       return headers
     },
