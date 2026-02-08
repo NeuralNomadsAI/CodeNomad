@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process"
+import { spawn, spawnSync, type ChildProcess } from "child_process"
 import { app } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
@@ -82,6 +82,7 @@ export class CliProcessManager extends EventEmitter {
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private bootstrapToken: string | null = null
+  private requestedStop = false
 
   async start(options: StartOptions): Promise<CliStatus> {
     if (this.child) {
@@ -91,6 +92,7 @@ export class CliProcessManager extends EventEmitter {
     this.stdoutBuffer = ""
     this.stderrBuffer = ""
     this.bootstrapToken = null
+    this.requestedStop = false
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
     const cliEntry = this.resolveCliEntry(options)
@@ -109,11 +111,13 @@ export class CliProcessManager extends EventEmitter {
       ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
       : this.buildDirectSpawn(cliEntry, args)
 
+    const detached = process.platform !== "win32"
     const child = spawn(spawnDetails.command, spawnDetails.args, {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
       env,
       shell: false,
+      detached,
     })
 
     console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
@@ -175,12 +179,89 @@ export class CliProcessManager extends EventEmitter {
       return
     }
 
+    this.requestedStop = true
+
+    const pid = child.pid
+    if (!pid) {
+      this.child = undefined
+      this.updateStatus({ state: "stopped" })
+      return
+    }
+
+    const isAlreadyExited = () => child.exitCode !== null || child.signalCode !== null
+
+    const tryKillPosixGroup = (signal: NodeJS.Signals) => {
+      try {
+        // Negative PID targets the process group (POSIX).
+        process.kill(-pid, signal)
+        return true
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException
+        if (err?.code === "ESRCH") {
+          return true
+        }
+        return false
+      }
+    }
+
+    const tryKillSinglePid = (signal: NodeJS.Signals) => {
+      try {
+        process.kill(pid, signal)
+        return true
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException
+        if (err?.code === "ESRCH") {
+          return true
+        }
+        return false
+      }
+    }
+
+    const tryTaskkill = (force: boolean) => {
+      const args = ["/PID", String(pid), "/T"]
+      if (force) {
+        args.push("/F")
+      }
+
+      try {
+        const result = spawnSync("taskkill", args, { encoding: "utf8" })
+        const exitCode = result.status
+        if (exitCode === 0) {
+          return true
+        }
+
+        // If the PID is already gone, treat it as success.
+        const stderr = (result.stderr ?? "").toString().toLowerCase()
+        const stdout = (result.stdout ?? "").toString().toLowerCase()
+        const combined = `${stdout}\n${stderr}`
+        if (combined.includes("not found") || combined.includes("no running instance")) {
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
+    }
+
+    const sendStopSignal = (signal: NodeJS.Signals) => {
+      if (process.platform === "win32") {
+        tryTaskkill(signal === "SIGKILL")
+        return
+      }
+
+      // Prefer process-group signaling so wrapper launchers (shell/tsx) don't outlive Electron.
+      const groupOk = tryKillPosixGroup(signal)
+      if (!groupOk) {
+        tryKillSinglePid(signal)
+      }
+    }
+
     return new Promise((resolve) => {
       const killTimeout = setTimeout(() => {
         console.warn(
           `[cli] stop timed out after 30000ms; sending SIGKILL (pid=${child.pid ?? "unknown"})`,
         )
-        child.kill("SIGKILL")
+        sendStopSignal("SIGKILL")
       }, 30000)
 
       child.on("exit", () => {
@@ -191,7 +272,15 @@ export class CliProcessManager extends EventEmitter {
         resolve()
       })
 
-      child.kill("SIGTERM")
+      if (isAlreadyExited()) {
+        clearTimeout(killTimeout)
+        this.child = undefined
+        this.updateStatus({ state: "stopped" })
+        resolve()
+        return
+      }
+
+      sendStopSignal("SIGTERM")
     })
   }
 
@@ -205,7 +294,16 @@ export class CliProcessManager extends EventEmitter {
 
   private handleTimeout() {
     if (this.child) {
-      this.child.kill("SIGKILL")
+      const pid = this.child.pid
+      if (pid && process.platform !== "win32") {
+        try {
+          process.kill(-pid, "SIGKILL")
+        } catch {
+          this.child.kill("SIGKILL")
+        }
+      } else {
+        this.child.kill("SIGKILL")
+      }
       this.child = undefined
     }
     this.updateStatus({ state: "error", error: "CLI did not start in time" })
@@ -249,38 +347,27 @@ export class CliProcessManager extends EventEmitter {
       console.info(`[cli][${stream}] ${trimmed}`)
       this.emit("log", { stream, message: trimmed })
 
-      const port = this.extractPort(trimmed)
-      if (port && this.status.state === "starting") {
-        const url = `http://127.0.0.1:${port}`
-        console.info(`[cli] ready on ${url}`)
-        this.updateStatus({ state: "ready", port, url })
+      const localUrl = this.extractLocalUrl(trimmed)
+      if (localUrl && this.status.state === "starting") {
+        let port: number | undefined
+        try {
+          port = Number(new URL(localUrl).port) || undefined
+        } catch {
+          port = undefined
+        }
+        console.info(`[cli] ready on ${localUrl}`)
+        this.updateStatus({ state: "ready", port, url: localUrl })
         this.emit("ready", this.status)
       }
     }
   }
 
-  private extractPort(line: string): number | null {
-    const readyMatch = line.match(/CodeNomad Server is ready at http:\/\/[^:]+:(\d+)/i)
-    if (readyMatch) {
-      return parseInt(readyMatch[1], 10)
+  private extractLocalUrl(line: string): string | null {
+    const match = line.match(/^Local\s+Connection\s+URL\s*:\s*(https?:\/\/\S+)\s*$/i)
+    if (!match) {
+      return null
     }
-
-    if (line.toLowerCase().includes("http server listening")) {
-      const httpMatch = line.match(/:(\d{2,5})(?!.*:\d)/)
-      if (httpMatch) {
-        return parseInt(httpMatch[1], 10)
-      }
-      try {
-        const parsed = JSON.parse(line)
-        if (typeof parsed.port === "number") {
-          return parsed.port
-        }
-      } catch {
-        // not JSON, ignore
-      }
-    }
-
-    return null
+    return match[1] ?? null
   }
 
   private updateStatus(patch: Partial<CliStatus>) {
@@ -289,7 +376,15 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCliArgs(options: StartOptions, host: string): string[] {
-    const args = ["serve", "--host", host, "--port", "0", "--generate-token"]
+    const args = ["serve", "--host", host, "--generate-token"]
+
+    if (options.dev) {
+      // Dev: run plain HTTP + Vite dev server proxy.
+      args.push("--https", "false", "--http", "true")
+    } else {
+      // Prod desktop: always keep loopback HTTP enabled.
+      args.push("--https", "true", "--http", "true")
+    }
 
     if (options.dev) {
       args.push("--ui-dev-server", "http://localhost:3000", "--log-level", "debug")

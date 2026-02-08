@@ -1,5 +1,6 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { instances } from "./instances"
+import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { providers, sessions, withSession } from "./session-state"
@@ -82,6 +83,9 @@ async function sendMessage(
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
+
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -204,7 +208,7 @@ async function sendMessage(
   try {
     log.info("session.promptAsync", { instanceId, sessionId, requestBody })
     await requestData(
-      instance.client.session.promptAsync({
+      client.session.promptAsync({
         sessionID: sessionId,
         ...(requestBody as any),
       }),
@@ -226,6 +230,9 @@ async function executeCustomCommand(
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
+
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -256,7 +263,7 @@ async function executeCustomCommand(
   }
 
   await requestData(
-    instance.client.session.command({
+    client.session.command({
       sessionID: sessionId,
       ...(body as any),
     }),
@@ -270,6 +277,9 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
@@ -278,7 +288,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   const agent = session.agent || "build"
 
   await requestData(
-    instance.client.session.shell({
+    client.session.shell({
       sessionID: sessionId,
       agent,
       command,
@@ -293,12 +303,15 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   log.info("abortSession", { instanceId, sessionId })
 
   try {
     log.info("session.abort", { instanceId, sessionId })
     await requestData(
-      instance.client.session.abort({
+      client.session.abort({
         sessionID: sessionId,
       }),
       "session.abort",
@@ -370,6 +383,9 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
@@ -381,7 +397,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   }
 
   await requestData(
-    instance.client.session.update({
+    client.session.update({
       sessionID: sessionId,
       title: trimmedTitle,
     }),
@@ -403,8 +419,11 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
     throw new Error("Instance not ready")
   }
 
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
   await requestData(
-    instance.client.part.delete({
+    client.part.delete({
       sessionID: sessionId,
       messageID: messageId,
       partID: partId,

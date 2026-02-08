@@ -12,7 +12,7 @@ import {
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
@@ -20,7 +20,6 @@ import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
 import Typography from "@suid/material/Typography"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import CloseIcon from "@suid/icons-material/Close"
 import MenuIcon from "@suid/icons-material/Menu"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -36,6 +35,7 @@ import {
   getSessionFamily,
   getSessionInfo,
   getSessionThreads,
+  loadMessages,
   sessions,
   setActiveParentSession,
   setActiveSession,
@@ -64,6 +64,7 @@ import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
+import WorktreeSelector from "../worktree-selector"
 import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
@@ -94,7 +95,6 @@ const RIGHT_DRAWER_WIDTH = 260
 const MIN_RIGHT_DRAWER_WIDTH = 200
 const MAX_RIGHT_DRAWER_WIDTH = 380
 const SESSION_CACHE_LIMIT = 5
-const APP_BAR_HEIGHT = 56
 const LEFT_DRAWER_STORAGE_KEY = "opencode-session-sidebar-width-v8"
 const RIGHT_DRAWER_STORAGE_KEY = "opencode-session-right-drawer-width-v1"
 const LEFT_PIN_STORAGE_KEY = "opencode-session-left-drawer-pinned-v1"
@@ -151,6 +151,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
+
+  // Worktree selector manages its own dialogs.
+  const [showSessionSearch, setShowSessionSearch] = createSignal(false)
 
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
 
@@ -214,10 +217,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const host = drawerHost()
     if (!host) return
     const rect = host.getBoundingClientRect()
-    const toolbar = host.querySelector<HTMLElement>(".session-toolbar")
-    const toolbarHeight = toolbar?.offsetHeight ?? APP_BAR_HEIGHT
-    setFloatingDrawerTop(rect.top + toolbarHeight)
-    setFloatingDrawerHeight(Math.max(0, rect.height - toolbarHeight))
+    setFloatingDrawerTop(rect.top)
+    setFloatingDrawerHeight(Math.max(0, rect.height))
   }
 
   onMount(() => {
@@ -617,7 +618,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return undefined
   }
 
-  const fallbackDrawerTop = () => APP_BAR_HEIGHT + props.tabBarOffset
+  const fallbackDrawerTop = () => props.tabBarOffset
   const floatingTop = () => {
     const measured = floatingDrawerTop()
     if (measured > 0) return measured
@@ -727,27 +728,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const leftAppBarButtonLabel = () => {
     const state = leftDrawerState()
     if (state === "pinned") return t("instanceShell.leftDrawer.toggle.pinned")
-    if (state === "floating-closed") return t("instanceShell.leftDrawer.toggle.open")
-    return t("instanceShell.leftDrawer.toggle.close")
+    return t("instanceShell.leftDrawer.toggle.open")
   }
 
   const rightAppBarButtonLabel = () => {
     const state = rightDrawerState()
     if (state === "pinned") return t("instanceShell.rightDrawer.toggle.pinned")
-    if (state === "floating-closed") return t("instanceShell.rightDrawer.toggle.open")
-    return t("instanceShell.rightDrawer.toggle.close")
+    return t("instanceShell.rightDrawer.toggle.open")
   }
 
   const leftAppBarButtonIcon = () => {
-    const state = leftDrawerState()
-    if (state === "floating-closed") return <MenuIcon fontSize="small" />
-    return <MenuOpenIcon fontSize="small" />
+    return <MenuIcon fontSize="small" />
   }
 
   const rightAppBarButtonIcon = () => {
-    const state = rightDrawerState()
-    if (state === "floating-closed") return <MenuIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-    return <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+    return <MenuIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
   }
 
 
@@ -795,29 +790,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const handleLeftAppBarButtonClick = () => {
     const state = leftDrawerState()
-    if (state === "pinned") return
-    if (state === "floating-closed") {
-      setLeftOpen(true)
-      measureDrawerHost()
-      return
-    }
-    blurIfInside(leftDrawerContentEl())
-    setLeftOpen(false)
-    focusTarget(leftToggleButtonEl())
+    if (state !== "floating-closed") return
+    setLeftOpen(true)
     measureDrawerHost()
   }
 
   const handleRightAppBarButtonClick = () => {
     const state = rightDrawerState()
-    if (state === "pinned") return
-    if (state === "floating-closed") {
-      setRightOpen(true)
-      measureDrawerHost()
-      return
-    }
-    blurIfInside(rightDrawerContentEl())
-    setRightOpen(false)
-    focusTarget(rightToggleButtonEl())
+    if (state !== "floating-closed") return
+    setRightOpen(true)
     measureDrawerHost()
   }
 
@@ -863,39 +844,66 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const LeftDrawerContent = () => (
     <div class="flex flex-col h-full min-h-0" ref={setLeftDrawerContentEl}>
-      <div class="flex items-start justify-between gap-2 px-4 py-3 border-b border-base">
-        <div class="flex flex-col gap-1">
+      <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
+        <div class="flex items-center justify-between gap-2">
           <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
             {t("instanceShell.leftPanel.sessionsTitle")}
           </span>
-          <div class="session-sidebar-shortcuts">
-            <Show when={keyboardShortcuts().length}>
-              <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
-            </Show>
-          </div>
-        </div>
-        <div class="flex items-center gap-2 text-primary">
-          <IconButton
-            size="small"
-            color="inherit"
-            aria-label={t("instanceShell.leftPanel.instanceInfo")}
-            title={t("instanceShell.leftPanel.instanceInfo")}
-            onClick={() => handleSessionSelect("info")}
-          >
-            <InfoOutlinedIcon fontSize="small" />
-          </IconButton>
-          <Show when={!isPhoneLayout()}>
+          <div class="flex items-center gap-2 text-primary">
             <IconButton
               size="small"
               color="inherit"
-              aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
-              onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
+              aria-label={t("sessionList.filter.ariaLabel")}
+              title={t("sessionList.filter.ariaLabel")}
+              aria-pressed={showSessionSearch()}
+              onClick={() => setShowSessionSearch((current) => !current)}
+              sx={{
+                color: showSessionSearch() ? "var(--text-primary)" : "inherit",
+                backgroundColor: showSessionSearch() ? "var(--surface-hover)" : "transparent",
+                "&:hover": {
+                  backgroundColor: "var(--surface-hover)",
+                },
+              }}
             >
-              {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              <Search class={showSessionSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
             </IconButton>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={t("instanceShell.leftPanel.instanceInfo")}
+              title={t("instanceShell.leftPanel.instanceInfo")}
+              onClick={() => handleSessionSelect("info")}
+            >
+              <InfoOutlinedIcon fontSize="small" />
+            </IconButton>
+            <Show when={!isPhoneLayout()}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
+                onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
+              >
+                {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              </IconButton>
+            </Show>
+            <Show when={leftDrawerState() === "floating-open"}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={t("instanceShell.leftDrawer.toggle.close")}
+                title={t("instanceShell.leftDrawer.toggle.close")}
+                onClick={closeLeftDrawer}
+              >
+                <MenuOpenIcon fontSize="small" />
+              </IconButton>
+            </Show>
+          </div>
+        </div>
+        <div class="session-sidebar-shortcuts">
+          <Show when={keyboardShortcuts().length}>
+            <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
           </Show>
         </div>
-
       </div>
 
       <div class="session-sidebar flex flex-col flex-1 min-h-0">
@@ -910,23 +918,24 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               void result.catch((error) => log.error("Failed to create session:", error))
             }
           }}
-          enableFilterBar
+          enableFilterBar={showSessionSearch()}
           showHeader={false}
           showFooter={false}
         />
 
         <div class="session-sidebar-separator" />
-        <Show when={activeSessionForInstance()}>
-          {(activeSession) => (
-            <>
-              <ContextUsagePanel instanceId={props.instance.id} sessionId={activeSession().id} />
-              <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-                <AgentSelector
-                  instanceId={props.instance.id}
-                  sessionId={activeSession().id}
-                  currentAgent={activeSession().agent}
-                  onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
-                />
+          <Show when={activeSessionForInstance()}>
+            {(activeSession) => (
+              <>
+                <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
+                  <WorktreeSelector instanceId={props.instance.id} sessionId={activeSession().id} />
+
+                  <AgentSelector
+                    instanceId={props.instance.id}
+                    sessionId={activeSession().id}
+                    currentAgent={activeSession().agent}
+                    onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
+                  />
 
                 <ModelSelector
                   instanceId={props.instance.id}
@@ -1087,22 +1096,46 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     return (
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
-        <div class="flex items-center justify-between px-4 py-2 border-b border-base text-primary">
-          <Typography variant="subtitle2" class="uppercase tracking-wide text-xs font-semibold text-primary">
-            {t("instanceShell.rightPanel.title")}
-          </Typography>
-          <div class="flex items-center gap-2">
-            <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
-                onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
-              >
-                {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
+        <div class="border-b border-base text-primary">
+          <div class="relative flex items-center px-4 py-2">
+            <div class="flex items-center gap-2">
+              <Show when={rightDrawerState() === "floating-open"}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={t("instanceShell.rightDrawer.toggle.close")}
+                  title={t("instanceShell.rightDrawer.toggle.close")}
+                  onClick={closeRightDrawer}
+                >
+                  <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+                </IconButton>
+              </Show>
+              <Show when={!isPhoneLayout()}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
+                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+                >
+                  {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+                </IconButton>
+              </Show>
+            </div>
+            <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
+                {t("instanceShell.rightPanel.title")}
+              </span>
+            </div>
           </div>
+          <Show when={activeSessionForInstance()}>
+            {(activeSession) => (
+              <ContextUsagePanel
+                instanceId={props.instance.id}
+                sessionId={activeSession().id}
+                class="border-t border-base"
+              />
+            )}
+          </Show>
         </div>
         <div class="flex-1 overflow-y-auto">
           <Accordion.Root
@@ -1263,19 +1296,93 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const sessionLayout = (
     <div
-      class="session-shell-panels flex flex-col flex-1 min-h-0 overflow-x-hidden"
+      class="session-shell-panels flex flex-1 min-h-0 overflow-x-hidden"
       ref={(element) => {
         setDrawerHost(element)
         measureDrawerHost()
       }}
     >
-      <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-        <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
-          <Show
-            when={!isPhoneLayout()}
-            fallback={
-              <div class="flex flex-col w-full gap-1.5">
-                <div class="flex flex-wrap items-center justify-between gap-2 w-full">
+      {renderLeftPanel()}
+
+      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
+        <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
+          <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
+            <Show
+              when={!isPhoneLayout()}
+              fallback={
+                <div class="flex flex-col w-full gap-1.5">
+                  <div class="flex flex-wrap items-center justify-between gap-2 w-full">
+                    <Show when={leftDrawerState() === "floating-closed"}>
+                      <IconButton
+                        ref={setLeftToggleButtonEl}
+                        color="inherit"
+                        onClick={handleLeftAppBarButtonClick}
+                        aria-label={leftAppBarButtonLabel()}
+                        size="small"
+                        aria-expanded={leftDrawerState() !== "floating-closed"}
+                      >
+                        {leftAppBarButtonIcon()}
+                      </IconButton>
+                    </Show>
+
+                    <div class="flex flex-wrap items-center gap-1 justify-center">
+                      <PermissionNotificationBanner
+                        instanceId={props.instance.id}
+                        onClick={() => setPermissionModalOpen(true)}
+                      />
+                      <button
+                        type="button"
+                        class="connection-status-button px-2 py-0.5 text-xs"
+                        onClick={handleCommandPaletteClick}
+                        aria-label={t("instanceShell.commandPalette.openAriaLabel")}
+                        style={{ flex: "0 0 auto", width: "auto" }}
+                      >
+                        {t("instanceShell.commandPalette.button")}
+                      </button>
+                      <span class="connection-status-shortcut-hint">
+                        <Kbd shortcut="cmd+shift+p" />
+                      </span>
+                      <span
+                        class={`status-indicator ${connectionStatusClass()}`}
+                        aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
+                      >
+                        <span class="status-dot" />
+                      </span>
+                    </div>
+
+                    <Show when={rightDrawerState() === "floating-closed"}>
+                      <IconButton
+                        ref={setRightToggleButtonEl}
+                        color="inherit"
+                        onClick={handleRightAppBarButtonClick}
+                        aria-label={rightAppBarButtonLabel()}
+                        size="small"
+                        aria-expanded={rightDrawerState() !== "floating-closed"}
+                      >
+                        {rightAppBarButtonIcon()}
+                      </IconButton>
+                    </Show>
+                  </div>
+
+                  <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
+                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                      <span class="uppercase text-[10px] tracking-wide text-muted">
+                        {t("instanceShell.metrics.usedLabel")}
+                      </span>
+                      <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                    </div>
+                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
+                      <span class="uppercase text-[10px] tracking-wide text-muted">
+                        {t("instanceShell.metrics.availableLabel")}
+                      </span>
+                      <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
+                    </div>
+                  </div>
+                </div>
+              }
+            >
+              <div class="session-toolbar-left flex items-center gap-3 min-w-0">
+                <Show when={leftDrawerState() === "floating-closed"}>
                   <IconButton
                     ref={setLeftToggleButtonEl}
                     color="inherit"
@@ -1283,52 +1390,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     aria-label={leftAppBarButtonLabel()}
                     size="small"
                     aria-expanded={leftDrawerState() !== "floating-closed"}
-                    disabled={leftDrawerState() === "pinned"}
                   >
                     {leftAppBarButtonIcon()}
                   </IconButton>
+                </Show>
 
-                  <div class="flex flex-wrap items-center gap-1 justify-center">
-                    <PermissionNotificationBanner
-                      instanceId={props.instance.id}
-                      onClick={() => setPermissionModalOpen(true)}
-                    />
-                    <button
-                      type="button"
-                      class="connection-status-button px-2 py-0.5 text-xs"
-                      onClick={handleCommandPaletteClick}
-                      aria-label={t("instanceShell.commandPalette.openAriaLabel")}
-                      style={{ flex: "0 0 auto", width: "auto" }}
-                    >
-                      {t("instanceShell.commandPalette.button")}
-                    </button>
-                    <span class="connection-status-shortcut-hint">
-                      <Kbd shortcut="cmd+shift+p" />
-                    </span>
-                    <span
-                      class={`status-indicator ${connectionStatusClass()}`}
-                      aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
-                    >
-                      <span class="status-dot" />
-                    </span>
-
-
-                  </div>
-
-                  <IconButton
-                    ref={setRightToggleButtonEl}
-                    color="inherit"
-                    onClick={handleRightAppBarButtonClick}
-                    aria-label={rightAppBarButtonLabel()}
-                    size="small"
-                    aria-expanded={rightDrawerState() !== "floating-closed"}
-                    disabled={rightDrawerState() === "pinned"}
-                  >
-                    {rightAppBarButtonIcon()}
-                  </IconButton>
-                </div>
-
-                <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
+                <Show when={!showingInfoView()}>
                   <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
                     <span class="uppercase text-[10px] tracking-wide text-muted">
                       {t("instanceShell.metrics.usedLabel")}
@@ -1341,101 +1408,65 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </span>
                     <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
                   </div>
-                </div>
-              </div>
-            }
-          >
-            <div class="session-toolbar-left flex items-center gap-3 min-w-0">
-              <IconButton
-                ref={setLeftToggleButtonEl}
-                color="inherit"
-                onClick={handleLeftAppBarButtonClick}
-                aria-label={leftAppBarButtonLabel()}
-                size="small"
-                aria-expanded={leftDrawerState() !== "floating-closed"}
-                disabled={leftDrawerState() === "pinned"}
-              >
-                {leftAppBarButtonIcon()}
-              </IconButton>
-
-              <Show when={!showingInfoView()}>
-                <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                  <span class="uppercase text-[10px] tracking-wide text-muted">
-                    {t("instanceShell.metrics.usedLabel")}
-                  </span>
-                  <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-                </div>
-                <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                  <span class="uppercase text-[10px] tracking-wide text-muted">
-                    {t("instanceShell.metrics.availableLabel")}
-                  </span>
-                  <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                </div>
-              </Show>
-            </div>
-
-
-            <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-              <PermissionNotificationBanner
-                instanceId={props.instance.id}
-                onClick={() => setPermissionModalOpen(true)}
-              />
-              <button
-                type="button"
-                class="connection-status-button px-2 py-0.5 text-xs"
-                onClick={handleCommandPaletteClick}
-                aria-label={t("instanceShell.commandPalette.openAriaLabel")}
-                style={{ flex: "0 0 auto", width: "auto" }}
-              >
-                {t("instanceShell.commandPalette.button")}
-              </button>
-              <span class="connection-status-shortcut-hint">
-                <Kbd shortcut="cmd+shift+p" />
-              </span>
-
-
-            </div>
-
-
-            <div class="session-toolbar-right flex items-center gap-3">
-              <div class="connection-status-meta flex items-center gap-3">
-                <Show when={connectionStatus() === "connected"}>
-                  <span class="status-indicator connected">
-                    <span class="status-dot" />
-                    <span class="status-text">{t("instanceShell.connection.connected")}</span>
-                  </span>
-                </Show>
-                <Show when={connectionStatus() === "connecting"}>
-                  <span class="status-indicator connecting">
-                    <span class="status-dot" />
-                    <span class="status-text">{t("instanceShell.connection.connecting")}</span>
-                  </span>
-                </Show>
-                <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                  <span class="status-indicator disconnected">
-                    <span class="status-dot" />
-                    <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
-                  </span>
                 </Show>
               </div>
-              <IconButton
-                ref={setRightToggleButtonEl}
-                color="inherit"
-                onClick={handleRightAppBarButtonClick}
-                aria-label={rightAppBarButtonLabel()}
-                size="small"
-                aria-expanded={rightDrawerState() !== "floating-closed"}
-                disabled={rightDrawerState() === "pinned"}
-              >
-                {rightAppBarButtonIcon()}
-              </IconButton>
-            </div>
-          </Show>
-        </Toolbar>
-      </AppBar>
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0, overflowX: "hidden" }}>
-        {renderLeftPanel()}
+              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
+                <PermissionNotificationBanner
+                  instanceId={props.instance.id}
+                  onClick={() => setPermissionModalOpen(true)}
+                />
+                <button
+                  type="button"
+                  class="connection-status-button px-2 py-0.5 text-xs"
+                  onClick={handleCommandPaletteClick}
+                  aria-label={t("instanceShell.commandPalette.openAriaLabel")}
+                  style={{ flex: "0 0 auto", width: "auto" }}
+                >
+                  {t("instanceShell.commandPalette.button")}
+                </button>
+                <span class="connection-status-shortcut-hint">
+                  <Kbd shortcut="cmd+shift+p" />
+                </span>
+              </div>
+
+              <div class="session-toolbar-right flex items-center gap-3">
+                <div class="connection-status-meta flex items-center gap-3">
+                  <Show when={connectionStatus() === "connected"}>
+                    <span class="status-indicator connected">
+                      <span class="status-dot" />
+                      <span class="status-text">{t("instanceShell.connection.connected")}</span>
+                    </span>
+                  </Show>
+                  <Show when={connectionStatus() === "connecting"}>
+                    <span class="status-indicator connecting">
+                      <span class="status-dot" />
+                      <span class="status-text">{t("instanceShell.connection.connecting")}</span>
+                    </span>
+                  </Show>
+                  <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
+                    <span class="status-indicator disconnected">
+                      <span class="status-dot" />
+                      <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
+                    </span>
+                  </Show>
+                </div>
+                <Show when={rightDrawerState() === "floating-closed"}>
+                  <IconButton
+                    ref={setRightToggleButtonEl}
+                    color="inherit"
+                    onClick={handleRightAppBarButtonClick}
+                    aria-label={rightAppBarButtonLabel()}
+                    size="small"
+                    aria-expanded={rightDrawerState() !== "floating-closed"}
+                  >
+                    {rightAppBarButtonIcon()}
+                  </IconButton>
+                </Show>
+              </div>
+            </Show>
+          </Toolbar>
+        </AppBar>
 
         <Box
           component="main"
@@ -1489,9 +1520,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             </div>
           </Show>
         </Box>
-
-        {renderRightPanel()}
       </Box>
+
+      {renderRightPanel()}
     </div>
   )
 

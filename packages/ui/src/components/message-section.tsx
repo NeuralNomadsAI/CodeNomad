@@ -7,6 +7,8 @@ import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useScrollCache } from "../lib/hooks/use-scroll-cache"
 import { useI18n } from "../lib/i18n"
+import { copyToClipboard } from "../lib/clipboard"
+import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 
 const SCROLL_SCOPE = "session"
@@ -375,7 +377,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const anchorRect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
     const shellRect = shell.getBoundingClientRect()
     const relativeTop = Math.max(anchorRect.top - shellRect.top - 40, 8)
-    const maxLeft = Math.max(shell.clientWidth - 180, 8)
+    // Keep the popover within the stream shell. The quote popover currently
+    // renders 3 actions; keep enough horizontal room for the pill.
+    const maxLeft = Math.max(shell.clientWidth - 260, 8)
     const relativeLeft = Math.min(Math.max(anchorRect.left - shellRect.left, 8), maxLeft)
     setQuoteSelection({ text: limited, top: relativeTop, left: relativeLeft })
   }
@@ -388,6 +392,24 @@ export default function MessageSection(props: MessageSectionProps) {
     const info = quoteSelection()
     if (!info || !props.onQuoteSelection) return
     props.onQuoteSelection(info.text, mode)
+    clearQuoteSelection()
+    if (typeof window !== "undefined") {
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+    }
+  }
+
+  async function handleCopySelectionRequest() {
+    const info = quoteSelection()
+    if (!info) return
+
+    const success = await copyToClipboard(info.text)
+    showToastNotification({
+      message: success ? t("messageSection.quote.copied") : t("messageSection.quote.copyFailed"),
+      variant: success ? "success" : "error",
+      duration: success ? 2000 : 6000,
+    })
+
     clearQuoteSelection()
     if (typeof window !== "undefined") {
       const selection = window.getSelection()
@@ -834,6 +856,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   </button>
                   <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("code")}>
                     {t("messageSection.quote.addAsCode")}
+                  </button>
+                  <button type="button" class="message-quote-button" onClick={() => void handleCopySelectionRequest()}>
+                    {t("messageSection.quote.copy")}
                   </button>
                 </div>
               </div>

@@ -8,6 +8,7 @@ import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { tGlobal } from "../lib/i18n"
 
 const log = getLogger("session")
@@ -602,12 +603,14 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     return isFreshSession
   }
   let messages: any[] = []
-  try {
-    messages = await requestData<any[]>(
-      instance.client.session.messages({ sessionID: session.id }),
-      "session.messages",
-    )
-  } catch (error) {
+    try {
+      const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
+      const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+      messages = await requestData<any[]>(
+        client.session.messages({ sessionID: session.id }),
+        "session.messages",
+      )
+    } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
   }

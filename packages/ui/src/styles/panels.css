@@ -245,6 +245,29 @@
   border: 1px solid transparent;
 }
 
+/* Session list worktree pill */
+.status-indicator.worktree-indicator {
+  /* Match session title in selected state. */
+  color: var(--text-primary);
+  /* Use inactive session title color as the tint source. */
+  background-color: color-mix(in oklab, var(--text-secondary) 18%, transparent);
+  border-color: color-mix(in oklab, var(--text-secondary) 28%, transparent);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.session-item-active .status-indicator.worktree-indicator {
+  background-color: color-mix(in oklab, var(--text-primary) 14%, transparent);
+  border-color: color-mix(in oklab, var(--text-primary) 22%, transparent);
+}
+
+.status-indicator.worktree-indicator .worktree-indicator-label {
+  white-space: nowrap;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Empty state */
 .empty-state {
   @apply flex-1 flex items-center justify-center p-12;

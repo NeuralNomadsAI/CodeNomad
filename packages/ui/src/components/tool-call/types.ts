@@ -53,12 +53,26 @@ export interface ToolRendererContext {
   toolCall: Accessor<ToolCallPart>
   toolState: Accessor<ToolState | undefined>
   toolName: Accessor<string>
+  instanceId: string
+  sessionId: string
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
   renderMarkdown(options: MarkdownRenderOptions): JSXElement | null
   renderAnsi(options: AnsiRenderOptions): JSXElement | null
   renderDiff(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null
+  /**
+   * Render another tool call inline. This is provided by the ToolCall shell
+   * to avoid renderer-level imports that would create cyclic dependencies.
+   */
+  renderToolCall?: (options: {
+    toolCall: ToolCallPart
+    messageId?: string
+    messageVersion?: number
+    partVersion?: number
+    sessionId: string
+    forceCollapsed?: boolean
+  }) => JSXElement | null
   scrollHelpers?: ToolScrollHelpers
 }
 

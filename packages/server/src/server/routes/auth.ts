@@ -88,7 +88,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const session = deps.authManager.createSession(body.username)
-    deps.authManager.setSessionCookie(reply, session.id)
+    deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 
@@ -112,12 +112,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     const username = deps.authManager.getStatus().username
     const session = deps.authManager.createSession(username)
-    deps.authManager.setSessionCookie(reply, session.id)
+    deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 
-  app.post("/api/auth/logout", async (_request, reply) => {
-    deps.authManager.clearSessionCookie(reply)
+  app.post("/api/auth/logout", async (request, reply) => {
+    deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 
@@ -137,6 +137,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.code(409).type("text/plain").send(message)
     }
   })
+}
+
+function isSecureRequest(request: any) {
+  if (request.protocol === "https") {
+    return true
+  }
+  return Boolean(request.raw?.socket && request.raw.socket.encrypted)
 }
 
 function escapeHtml(value: string) {

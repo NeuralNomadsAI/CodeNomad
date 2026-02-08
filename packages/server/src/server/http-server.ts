@@ -7,6 +7,7 @@ import path from "path"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
+import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
 
 import { ConfigStore } from "../config/store"
 import { BinaryRegistry } from "../config/binaries"
@@ -20,6 +21,7 @@ import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
+import { registerWorktreeRoutes } from "./routes/worktrees"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -28,8 +30,12 @@ import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 
 interface HttpServerDeps {
-  host: string
-  port: number
+  bindHost: string
+  bindPort: number
+  /** When bindPort is 0, try this first. */
+  defaultPort: number
+  protocol: "http" | "https"
+  httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
   configStore: ConfigStore
   binaryRegistry: BinaryRegistry
@@ -49,10 +55,15 @@ interface HttpServerStartResult {
   displayHost: string
 }
 
-const DEFAULT_HTTP_PORT = 9898
-
 export function createHttpServer(deps: HttpServerDeps) {
-  const app = Fastify({ logger: false })
+  // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
+  // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
+  const app = Fastify(
+    ({
+      logger: false,
+      ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
+    } as unknown) as any,
+  ) as unknown as FastifyInstance
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
@@ -95,6 +106,27 @@ export function createHttpServer(deps: HttpServerDeps) {
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
+  const getSelfOrigins = (): Set<string> => {
+    const origins = new Set<string>()
+    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      try {
+        origins.add(new URL(candidate).origin)
+      } catch {
+        // ignore
+      }
+    }
+    for (const addr of deps.serverMeta.addresses ?? []) {
+      try {
+        origins.add(new URL(addr.remoteUrl).origin)
+      } catch {
+        // ignore
+      }
+    }
+    return origins
+  }
+
   app.register(cors, {
     origin: (origin, cb) => {
       if (!origin) {
@@ -102,14 +134,8 @@ export function createHttpServer(deps: HttpServerDeps) {
         return
       }
 
-      let selfOrigin: string | null = null
-      try {
-        selfOrigin = new URL(deps.serverMeta.httpBaseUrl).origin
-      } catch {
-        selfOrigin = null
-      }
-
-      if (selfOrigin && origin === selfOrigin) {
+      const selfOrigins = getSelfOrigins()
+      if (selfOrigins.has(origin)) {
         cb(null, true)
         return
       }
@@ -120,7 +146,7 @@ export function createHttpServer(deps: HttpServerDeps) {
        }
 
        // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (deps.host === "0.0.0.0" || !isLoopbackHost(deps.host)) {
+       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
          cb(null, true)
          return
        }
@@ -222,6 +248,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
   registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })
+  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -242,12 +269,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     instance: app,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
-        const addressInfo = await app.listen({ port: requestedPort, host: deps.host })
+        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost })
         return { addressInfo, requestedPort }
       }
 
-      const autoPortRequested = deps.port === 0
-      const primaryPort = autoPortRequested ? DEFAULT_HTTP_PORT : deps.port
+      const autoPortRequested = deps.bindPort === 0
+      const primaryPort = autoPortRequested ? deps.defaultPort : deps.bindPort
 
       const shouldRetryWithEphemeral = (error: unknown) => {
         if (!autoPortRequested) return false
@@ -283,15 +310,10 @@ export function createHttpServer(deps: HttpServerDeps) {
         }
       }
 
-      const displayHost = deps.host === "127.0.0.1" ? "localhost" : deps.host
-      const serverUrl = `http://${displayHost}:${actualPort}`
+      const displayHost = deps.bindHost === "127.0.0.1" ? "localhost" : deps.bindHost
+      const serverUrl = `${deps.protocol}://${displayHost}:${actualPort}`
 
-      deps.serverMeta.httpBaseUrl = serverUrl
-      deps.serverMeta.host = deps.host
-      deps.serverMeta.port = actualPort
-      deps.serverMeta.listeningMode = deps.host === "0.0.0.0" || !isLoopbackHost(deps.host) ? "all" : "local"
-      deps.logger.info({ port: actualPort, host: deps.host }, "HTTP server listening")
-      console.log(`CodeNomad Server is ready at ${serverUrl}`)
+      deps.logger.info({ port: actualPort, host: deps.bindHost, protocol: deps.protocol }, "HTTP server listening")
 
       return { port: actualPort, url: serverUrl, displayHost }
     },
@@ -312,31 +334,36 @@ function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDe
     instance.removeAllContentTypeParsers()
     instance.addContentTypeParser("*", (req, body, done) => done(null, body))
 
-    const proxyBaseHandler = async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      await proxyWorkspaceRequest({
-        request,
-        reply,
-        workspaceManager: deps.workspaceManager,
-        pathSuffix: "",
-        logger: deps.logger,
-      })
-    }
-
-    const proxyWildcardHandler = async (
-      request: FastifyRequest<{ Params: { id: string; "*": string } }>,
+    const proxyBaseHandler = async (
+      request: FastifyRequest<{ Params: { id: string; slug: string } }>,
       reply: FastifyReply,
     ) => {
       await proxyWorkspaceRequest({
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeSlug: request.params.slug,
+        pathSuffix: "",
+        logger: deps.logger,
+      })
+    }
+
+    const proxyWildcardHandler = async (
+      request: FastifyRequest<{ Params: { id: string; slug: string; "*": string } }>,
+      reply: FastifyReply,
+    ) => {
+      await proxyWorkspaceRequest({
+        request,
+        reply,
+        workspaceManager: deps.workspaceManager,
+        worktreeSlug: request.params.slug,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
     }
 
-    instance.all("/workspaces/:id/instance", proxyBaseHandler)
-    instance.all("/workspaces/:id/instance/*", proxyWildcardHandler)
+    instance.all("/workspaces/:id/worktrees/:slug/instance", proxyBaseHandler)
+    instance.all("/workspaces/:id/worktrees/:slug/instance/*", proxyWildcardHandler)
   })
 }
 
@@ -347,11 +374,74 @@ async function proxyWorkspaceRequest(args: {
   reply: FastifyReply
   workspaceManager: WorkspaceManager
   logger: Logger
+  worktreeSlug: string
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger } = args
+  const { request, reply, workspaceManager, logger, worktreeSlug } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
+
+  const bodyToJson = (body: unknown): unknown => {
+    if (body == null) return null
+
+    const anyBody = body as any
+    if (anyBody && typeof anyBody.pipe === "function") {
+      // Don't consume streams (would break proxying).
+      // Best-effort: if the stream already has buffered chunks, parse those.
+      try {
+        const buffered = anyBody?._readableState?.buffer
+        if (Array.isArray(buffered) && buffered.length > 0) {
+          const chunks: Buffer[] = []
+          for (const entry of buffered) {
+            if (!entry) continue
+            if (Buffer.isBuffer(entry)) {
+              chunks.push(entry)
+              continue
+            }
+            const data = (entry as any).data
+            if (Buffer.isBuffer(data)) {
+              chunks.push(data)
+            }
+          }
+
+          if (chunks.length > 0) {
+            const text = Buffer.concat(chunks).toString("utf-8")
+            try {
+              return JSON.parse(text)
+            } catch {
+              return { __raw: text }
+            }
+          }
+        }
+      } catch {
+        // fall through
+      }
+
+      return { __stream: true }
+    }
+
+    const maybeParse = (input: string): unknown => {
+      try {
+        return JSON.parse(input)
+      } catch {
+        return { __raw: input }
+      }
+    }
+
+    if (Buffer.isBuffer(body)) {
+      return maybeParse(body.toString("utf-8"))
+    }
+
+    if (typeof body === "string") {
+      return maybeParse(body)
+    }
+
+    if (typeof body === "object") {
+      return body
+    }
+
+    return body
+  }
 
   if (!workspace) {
     reply.code(404).send({ error: "Workspace not found" })
@@ -361,6 +451,23 @@ async function proxyWorkspaceRequest(args: {
   const port = workspaceManager.getInstancePort(workspaceId)
   if (!port) {
     reply.code(502).send({ error: "Workspace instance is not ready" })
+    return
+  }
+
+  if (!isValidWorktreeSlug(worktreeSlug)) {
+    reply.code(400).send({ error: "Invalid worktree slug" })
+    return
+  }
+
+  const directory = await resolveWorktreeDirectory({
+    workspaceId,
+    workspacePath: workspace.path,
+    worktreeSlug,
+    logger,
+  })
+
+  if (!directory) {
+    reply.code(404).send({ error: "Worktree not found" })
     return
   }
 
@@ -381,14 +488,41 @@ async function proxyWorkspaceRequest(args: {
         headers.authorization = instanceAuthHeader
       }
 
-      // Enforce per-workspace directory scoping for all proxied OpenCode requests.
       // OpenCode expects the *full* path; we send it via header to avoid query tampering.
-      const directory = workspace.path
       const isNonASCII = /[^\x00-\x7F]/.test(directory)
       const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
 
       // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
       ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
+
+      if (logger.isLevelEnabled("trace")) {
+        const outgoing: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+          outgoing[key] = value
+        }
+
+        // Redact sensitive headers.
+        for (const key of Object.keys(outgoing)) {
+          const lower = key.toLowerCase()
+          if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
+            outgoing[key] = "<redacted>"
+          }
+        }
+
+        logger.trace(
+          {
+            workspaceId,
+            method: request.method,
+            targetUrl,
+            worktreeSlug,
+            directory,
+            contentType: request.headers["content-type"],
+            body: bodyToJson(request.body),
+            headers: outgoing,
+          },
+          "Proxy -> OpenCode request",
+        )
+      }
 
       return headers
     },
@@ -407,6 +541,52 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   }
   const trimmed = pathSuffix.replace(/^\/+/, "")
   return trimmed.length === 0 ? "/" : `/${trimmed}`
+}
+
+type WorktreeCacheEntry = {
+  expiresAt: number
+  repoRoot: string
+  worktrees: Array<{ slug: string; directory: string }>
+}
+
+const WORKTREE_CACHE_TTL_MS = 2000
+const worktreeCache = new Map<string, WorktreeCacheEntry>()
+
+async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger: Logger }) {
+  const cached = worktreeCache.get(params.workspaceId)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) {
+    return cached
+  }
+
+  const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
+  const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
+  const entry: WorktreeCacheEntry = {
+    expiresAt: now + WORKTREE_CACHE_TTL_MS,
+    repoRoot,
+    worktrees: worktrees.map((wt) => ({ slug: wt.slug, directory: wt.directory })),
+  }
+  worktreeCache.set(params.workspaceId, entry)
+  return entry
+}
+
+async function resolveWorktreeDirectory(params: {
+  workspaceId: string
+  workspacePath: string
+  worktreeSlug: string
+  logger: Logger
+}): Promise<string | null> {
+  const { worktreeSlug } = params
+  const cached = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  const match = cached.worktrees.find((wt) => wt.slug === worktreeSlug)
+  if (match) {
+    return match.directory
+  }
+
+  // If the slug is new (e.g., created moments ago), refresh once.
+  worktreeCache.delete(params.workspaceId)
+  const refreshed = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  return refreshed.worktrees.find((wt) => wt.slug === worktreeSlug)?.directory ?? null
 }
 
 function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {

@@ -28,6 +28,8 @@ interface WorkspaceManagerOptions {
   eventBus: EventBus
   logger: Logger
   getServerBaseUrl: () => string
+  /** Optional CA bundle path to trust CodeNomad HTTPS certs. */
+  nodeExtraCaCertsPath?: string
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
@@ -91,7 +93,7 @@ export class WorkspaceManager {
 
     this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
 
-    const proxyPath = `/workspaces/${id}/instance`
+    const proxyPath = `/workspaces/${id}/worktrees/root/instance`
 
 
     const descriptor: WorkspaceRecord = {
@@ -132,6 +134,7 @@ export class WorkspaceManager {
       OPENCODE_CONFIG_DIR: this.opencodeConfigDir,
       CODENOMAD_INSTANCE_ID: id,
       CODENOMAD_BASE_URL: this.options.getServerBaseUrl(),
+      ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
       [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }

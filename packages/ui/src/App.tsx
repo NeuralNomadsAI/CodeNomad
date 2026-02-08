@@ -19,6 +19,7 @@ import { getLogger } from "./lib/logger"
 import { initReleaseNotifications } from "./stores/releases"
 import { runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
+import { setWakeLockDesired } from "./lib/native/wake-lock"
 import {
   hasInstances,
   isSelectingFolder,
@@ -48,6 +49,8 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 
+import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
+
 const log = getLogger("actions")
 
 const App: Component = () => {
@@ -60,6 +63,7 @@ const App: Component = () => {
     toggleShowTimelineTools,
     toggleAutoCleanupBlankSessions,
     toggleUsageMetrics,
+    togglePromptSubmitOnEnter,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,
@@ -88,6 +92,26 @@ const App: Component = () => {
 
   createEffect(() => {
     initReleaseNotifications()
+  })
+
+  const shouldHoldWakeLock = createMemo(() => {
+    const map = instances()
+    for (const id of map.keys()) {
+      const status = getInstanceSessionIndicatorStatus(id)
+      if (status !== "idle") {
+        return true
+      }
+    }
+    return false
+  })
+
+  createEffect(() => {
+    const hold = shouldHoldWakeLock()
+    void setWakeLockDesired(hold)
+  })
+
+  onCleanup(() => {
+    void setWakeLockDesired(false)
   })
 
   createEffect(() => {
@@ -271,6 +295,7 @@ const App: Component = () => {
     toggleShowThinkingBlocks,
     toggleShowTimelineTools,
     toggleUsageMetrics,
+    togglePromptSubmitOnEnter,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,

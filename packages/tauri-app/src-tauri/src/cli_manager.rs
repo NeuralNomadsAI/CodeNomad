@@ -531,7 +531,7 @@ impl CliProcessManager {
         bootstrap_token: &Arc<Mutex<Option<String>>>,
     ) {
         let mut buffer = String::new();
-        let port_regex = Regex::new(r"CodeNomad Server is ready at http://[^:]+:(\d+)").ok();
+        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)").ok();
         let http_regex = Regex::new(r":(\d{2,5})(?!.*:\d)").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
@@ -559,12 +559,12 @@ impl CliProcessManager {
                             continue;
                         }
 
-                        if let Some(port) = port_regex
+                        if let Some(url) = local_url_regex
                             .as_ref()
                             .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
-                            .and_then(|m| m.as_str().parse::<u16>().ok())
+                            .map(|m| m.as_str().to_string())
                         {
-                            Self::mark_ready(app, status, ready, bootstrap_token, port);
+                            Self::mark_ready(app, status, ready, bootstrap_token, url);
                             continue;
                         }
 
@@ -574,13 +574,13 @@ impl CliProcessManager {
                                 .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
                                 .and_then(|m| m.as_str().parse::<u16>().ok())
                             {
-                                Self::mark_ready(app, status, ready, bootstrap_token, port);
+                                Self::mark_ready(app, status, ready, bootstrap_token, format!("http://localhost:{port}"));
                                 continue;
                             }
 
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                                 if let Some(port) = value.get("port").and_then(|p| p.as_u64()) {
-                                    Self::mark_ready(app, status, ready, bootstrap_token, port as u16);
+                                    Self::mark_ready(app, status, ready, bootstrap_token, format!("http://localhost:{}", port));
                                     continue;
                                 }
                             }
@@ -597,12 +597,15 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
-        port: u16,
+        base_url: String,
     ) {
         ready.store(true, Ordering::SeqCst);
-        let base_url = format!("http://127.0.0.1:{port}");
+        let port = Url::parse(&base_url)
+            .ok()
+            .and_then(|u| u.port_or_known_default())
+            .map(|p| p as u16);
         let mut locked = status.lock();
-        locked.port = Some(port);
+        locked.port = port;
         locked.url = Some(base_url.clone());
         locked.state = CliState::Ready;
         locked.error = None;
@@ -611,22 +614,29 @@ impl CliProcessManager {
         let token = bootstrap_token.lock().take();
 
         if let Some(token) = token {
-            match exchange_bootstrap_token(&base_url, &token) {
-                Ok(Some(session_id)) => {
-                    if let Err(err) = set_session_cookie(app, &base_url, &session_id) {
-                        log_line(&format!("failed to set session cookie: {err}"));
-                        navigate_main(app, &format!("{base_url}/login"));
-                    } else {
-                        navigate_main(app, &base_url);
+            // Token exchange is only implemented for loopback HTTP. If localUrl is HTTPS,
+            // skip the exchange and let the user authenticate normally.
+            let scheme = Url::parse(&base_url).ok().map(|u| u.scheme().to_string());
+            if scheme.as_deref() != Some("http") {
+                navigate_main(app, &base_url);
+            } else {
+                match exchange_bootstrap_token(&base_url, &token) {
+                    Ok(Some(session_id)) => {
+                        if let Err(err) = set_session_cookie(app, &base_url, &session_id) {
+                            log_line(&format!("failed to set session cookie: {err}"));
+                            navigate_main(app, &format!("{base_url}/login"));
+                        } else {
+                            navigate_main(app, &base_url);
+                        }
                     }
-                }
-                Ok(None) => {
-                    log_line("bootstrap token exchange failed (invalid token)");
-                    navigate_main(app, &format!("{base_url}/login"));
-                }
-                Err(err) => {
-                    log_line(&format!("bootstrap token exchange failed: {err}"));
-                    navigate_main(app, &format!("{base_url}/login"));
+                    Ok(None) => {
+                        log_line("bootstrap token exchange failed (invalid token)");
+                        navigate_main(app, &format!("{base_url}/login"));
+                    }
+                    Err(err) => {
+                        log_line(&format!("bootstrap token exchange failed: {err}"));
+                        navigate_main(app, &format!("{base_url}/login"));
+                    }
                 }
             }
         } else {
@@ -709,19 +719,24 @@ impl CliEntry {
     }
 
     fn build_args(&self, dev: bool, host: &str) -> Vec<String> {
-        let mut args = vec![
-            "serve".to_string(),
-            "--host".to_string(),
-            host.to_string(),
-            "--port".to_string(),
-            "0".to_string(),
-            "--generate-token".to_string(),
-        ];
+        let mut args = vec!["serve".to_string(), "--host".to_string(), host.to_string(), "--generate-token".to_string()];
+
         if dev {
+            // Dev: plain HTTP + Vite dev server proxy.
+            args.push("--https".to_string());
+            args.push("false".to_string());
+            args.push("--http".to_string());
+            args.push("true".to_string());
             args.push("--ui-dev-server".to_string());
             args.push("http://localhost:3000".to_string());
             args.push("--log-level".to_string());
             args.push("debug".to_string());
+        } else {
+            // Prod desktop: always keep loopback HTTP enabled.
+            args.push("--https".to_string());
+            args.push("true".to_string());
+            args.push("--http".to_string());
+            args.push("true".to_string());
         }
         args
     }

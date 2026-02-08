@@ -76,6 +76,42 @@
   margin: 0;
 }
 
+/* Nested tool calls (child session tool timeline) */
+.tool-call-task-summary .tool-call {
+  /* Tool calls inside the main message stream are borderless.
+     Use an overlay stripe so hover backgrounds don't hide it. */
+  position: relative;
+}
+
+.tool-call-task-summary .tool-call::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--task-tool-call-stripe, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tool-call-task-summary .tool-call.tool-call-status-completed,
+.tool-call-task-summary .tool-call.tool-call-status-success {
+  --task-tool-call-stripe: var(--status-success);
+}
+
+.tool-call-task-summary .tool-call.tool-call-status-running {
+  --task-tool-call-stripe: var(--status-warning);
+}
+
+.tool-call-task-summary .tool-call.tool-call-status-pending {
+  --task-tool-call-stripe: var(--accent-primary);
+}
+
+.tool-call-task-summary .tool-call.tool-call-status-error {
+  --task-tool-call-stripe: var(--status-error);
+}
+
 .tool-call-task-item {
   display: flex;
   align-items: center;
@@ -85,7 +121,7 @@
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   line-height: 1.35;
-  background-color: var(--surface-code);
+  background-color: var(--surface-secondary);
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 

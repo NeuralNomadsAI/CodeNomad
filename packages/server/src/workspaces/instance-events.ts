@@ -95,7 +95,7 @@ export class InstanceEventBridge {
   }
 
   private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
-    const url = `http://${INSTANCE_HOST}:${port}/event`
+    const url = `http://${INSTANCE_HOST}:${port}/global/event`
 
     const headers: Record<string, string> = { Accept: "text/event-stream" }
     const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
@@ -165,8 +165,32 @@ export class InstanceEventBridge {
     }
 
     try {
-      const event = JSON.parse(payload) as InstanceStreamEvent
-      this.options.logger.debug({ workspaceId, eventType: event.type }, "Instance SSE event received")
+      const parsed = JSON.parse(payload) as any
+      if (!parsed || typeof parsed !== "object") {
+        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
+        return
+      }
+
+      // OpenCode SSE payload shapes vary across versions.
+      // Common variants:
+      // - { type, properties, ... }
+      // - { payload: { type, properties, ... }, directory: "/abs/path" }
+      // - { payload: { type, properties, ... } }
+      const base = parsed.payload && typeof parsed.payload === "object" ? parsed.payload : parsed
+
+      const event: InstanceStreamEvent | null = base && typeof base === "object" ? ({ ...base } as any) : null
+
+      // Attach directory when available (don't overwrite if already present).
+      if (event && !(event as any).directory && typeof (parsed as any).directory === "string") {
+        ;(event as any).directory = (parsed as any).directory
+      }
+
+      if (!event || typeof (event as any).type !== "string") {
+        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
+        return
+      }
+
+      this.options.logger.debug({ workspaceId, eventType: (event as any).type }, "Instance SSE event received")
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }

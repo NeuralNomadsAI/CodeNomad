@@ -20,6 +20,9 @@ export const messagingMessages = {
   "messageSection.scroll.toLatestAriaLabel": "滚动到最新消息",
   "messageSection.quote.addAsQuote": "作为引用添加",
   "messageSection.quote.addAsCode": "作为代码添加",
+  "messageSection.quote.copy": "复制",
+  "messageSection.quote.copied": "已复制！",
+  "messageSection.quote.copyFailed": "无法复制",
 
   "messageTimeline.ariaLabel": "消息时间线",
   "messageTimeline.segment.user.label": "你",

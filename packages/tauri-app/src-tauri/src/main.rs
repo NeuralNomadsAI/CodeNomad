@@ -35,6 +35,7 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
     Ok(state.manager.status())
 }
 
+
 fn is_dev_mode() -> bool {
     cfg!(debug_assertions) || std::env::var("TAURI_DEV").is_ok()
 }
@@ -73,6 +74,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_keepawake::init())
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),

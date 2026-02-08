@@ -84,36 +84,59 @@
 }
 
 .tool-call-header {
+  @apply flex items-stretch w-full;
+  background-color: transparent;
+  color: var(--text-primary);
+}
+
+.tool-call-header:hover {
+  background-color: var(--surface-hover);
+}
+
+.tool-call-header-toggle {
   @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-left;
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
   color: var(--text-primary);
+  flex: 1;
 }
 
-.tool-call-header::before {
+.tool-call-header-toggle::before {
   content: "▶";
   font-size: 11px;
   margin-right: 0.35rem;
   color: var(--text-secondary);
 }
 
-.tool-call-header[aria-expanded="true"]::before {
+.tool-call-header-toggle[aria-expanded="true"]::before {
   content: "▼";
 }
 
-.tool-call-header::after {
-  content: attr(data-status-icon);
+.tool-call-header-toggle:hover {
+  background-color: transparent;
+}
+
+.tool-call-header-copy {
+  @apply inline-flex items-center justify-center;
+  background-color: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0 0.5rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.tool-call-header-copy:hover {
+  background-color: transparent;
+  color: var(--text-primary);
+}
+
+.tool-call-header-status {
+  @apply inline-flex items-center justify-center;
   font-size: 0.95rem;
-  margin-left: 0.5rem;
-}
-
-.tool-call-header[data-status-icon=""]::after {
-  margin-left: 0;
-}
-
-.tool-call-header:hover {
-  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+  padding: 0 0.5rem;
 }
 
 .tool-call-summary {
@@ -306,6 +329,10 @@
   background-color: var(--message-tool-bg);
 }
 
+.tool-call-permission.tool-call-permission-answered {
+  border-color: transparent;
+}
+
 .tool-call-permission-header {
   @apply flex items-center justify-between gap-3;
 }
@@ -322,6 +349,7 @@
   border-radius: 0.375rem;
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   background-color: var(--surface-code);
+  color: var(--text-primary);
 }
 
 .tool-call-permission-title code {

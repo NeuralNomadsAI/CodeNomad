@@ -50,6 +50,38 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export type WorktreeKind = "root" | "worktree"
+
+export interface WorktreeDescriptor {
+  /** Stable identifier used by CodeNomad + clients ("root" for repo root). */
+  slug: string
+  /** Absolute directory path on the server host. */
+  directory: string
+  kind: WorktreeKind
+  /** Optional VCS branch name when available. */
+  branch?: string
+}
+
+export interface WorktreeListResponse {
+  worktrees: WorktreeDescriptor[]
+  /** True when the workspace folder resolves to a Git repository. */
+  isGitRepo?: boolean
+}
+
+export interface WorktreeCreateRequest {
+  slug: string
+  /** Optional branch name (defaults to slug). */
+  branch?: string
+}
+
+export interface WorktreeMap {
+  version: 1
+  /** Default worktree to use for new sessions and as fallback. */
+  defaultWorktreeSlug: string
+  /** Mapping of *parent* session IDs to a worktree slug. */
+  parentSessionWorktreeSlug: Record<string, string>
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export interface WorkspaceLogEntry {
@@ -204,7 +236,8 @@ export interface NetworkAddress {
   ip: string
   family: "ipv4" | "ipv6"
   scope: "external" | "internal" | "loopback"
-  url: string
+  /** Remote URL using the server's remote protocol/port for this IP. */
+  remoteUrl: string
 }
 
 export interface LatestReleaseInfo {
@@ -230,16 +263,20 @@ export interface SupportMeta {
 }
 
 export interface ServerMeta {
-  /** Base URL clients should target for REST calls (useful for Electron embedding). */
-  httpBaseUrl: string
+  /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
+  localUrl: string
+  /** URL remote clients should use (prefers HTTPS when enabled). */
+  remoteUrl?: string
   /** SSE endpoint advertised to clients (`/api/events` by default). */
   eventsUrl: string
   /** Host the server is bound to (e.g., 127.0.0.1 or 0.0.0.0). */
   host: string
   /** Listening mode derived from host binding. */
   listeningMode: "local" | "all"
-  /** Actual port in use after binding. */
-  port: number
+  /** Actual local port in use after binding. */
+  localPort: number
+  /** Actual remote port in use after binding (when remoteUrl is set). */
+  remotePort?: number
   /** Display label for the host (e.g., hostname or friendly name). */
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */

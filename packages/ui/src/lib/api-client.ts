@@ -20,12 +20,14 @@ import type {
   WorkspaceLogEntry,
   WorkspaceEventPayload,
   WorkspaceEventType,
+  WorktreeListResponse,
+  WorktreeMap,
+  WorktreeCreateRequest,
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
 
-const FALLBACK_API_BASE = "http://127.0.0.1:9898"
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE ?? FALLBACK_API_BASE : FALLBACK_API_BASE
+const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -126,6 +128,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const serverApi = {
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
+  },
+
+  fetchWorktrees(id: string): Promise<WorktreeListResponse> {
+    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`)
+  },
+
+  createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
+    return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deleteWorktree(id: string, slug: string, options?: { force?: boolean }): Promise<void> {
+    const params = new URLSearchParams()
+    if (options?.force) {
+      params.set("force", "true")
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : ""
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
+      method: "DELETE",
+    })
+  },
+
+  readWorktreeMap(id: string): Promise<WorktreeMap> {
+    return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`)
+  },
+
+  writeWorktreeMap(id: string, map: WorktreeMap): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`, {
+      method: "PUT",
+      body: JSON.stringify(map),
+    })
   },
   createWorkspace(payload: WorkspaceCreateRequest): Promise<WorkspaceDescriptor> {
     return request<WorkspaceDescriptor>("/api/workspaces", {

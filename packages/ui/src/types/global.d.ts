@@ -26,6 +26,7 @@ declare global {
     onCliError?: (callback: (data: unknown) => void) => () => void
     getCliStatus?: () => Promise<unknown>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
+    setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
   }
 
   interface TauriDialogModule {
@@ -46,5 +47,4 @@ declare global {
      codenomadLogger?: LoggerControls
    }
  }
-
 

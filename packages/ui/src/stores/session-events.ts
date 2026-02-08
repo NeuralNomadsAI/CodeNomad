@@ -37,6 +37,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
 import { loadMessages } from "./session-api"
+import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import {
   applyPartUpdateV2,
   replaceMessageIdV2,
@@ -81,19 +82,34 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
   })
 }
 
-async function fetchSessionInfo(instanceId: string, sessionId: string): Promise<Session | null> {
+async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
+  const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
+  const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, slug)
+  const rootClient = getRootClient(instanceId)
+
   try {
     const info = await requestData<any>(
-      instance.client.session.get({ sessionID: sessionId }),
+      client.session.get({ sessionID: sessionId }),
       "session.get",
     )
 
     let fetchedStatus: SessionStatus = "idle"
     try {
-      const statuses = await requestData<Record<string, any>>(instance.client.session.status(), "session.status")
+      let statuses: Record<string, any> = {}
+      try {
+        statuses = await requestData<Record<string, any>>(rootClient.session.status(), "session.status")
+      } catch {
+        statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
+      }
+      // Session status is global-ish; prefer the root context when available.
+      // (OpenCode may scope status by directory in older builds.)
+      // If root fails, fall back to the worktree-scoped client.
+      //
+      // Note: requestData throws on error, so we catch below.
       const rawStatus = (info as any)?.status ?? statuses?.[sessionId]
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
       fetchedStatus = hasType ? mapSdkSessionStatus(rawStatus) : "idle"
@@ -132,7 +148,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string): Promise<
   }
 }
 
-function ensureSessionStatus(instanceId: string, sessionId: string, status: SessionStatus) {
+function ensureSessionStatus(instanceId: string, sessionId: string, status: SessionStatus, directory?: string) {
   const instanceSessions = sessions().get(instanceId)
   const existing = instanceSessions?.get(sessionId)
   if (existing) {
@@ -149,7 +165,7 @@ function ensureSessionStatus(instanceId: string, sessionId: string, status: Sess
   }
 
   const pending = (async () => {
-    const fetched = await fetchSessionInfo(instanceId, sessionId)
+    const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
     applySessionStatus(instanceId, sessionId, status)
   })()
@@ -197,7 +213,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
     if (part.type === "compaction") {
-      ensureSessionStatus(instanceId, sessionId, "compacting")
+      ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
 
     const store = messageStoreBus.getOrCreate(instanceId)
@@ -381,7 +397,7 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
-  ensureSessionStatus(instanceId, sessionId, "idle")
+  ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
@@ -390,7 +406,7 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   if (!sessionId) return
 
   const status = mapSdkSessionStatus(event.properties.status)
-  ensureSessionStatus(instanceId, sessionId, status)
+  ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory)
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
@@ -406,7 +422,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
       session.status = "working"
     })
   } else {
-    ensureSessionStatus(instanceId, sessionID, "working")
+    ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
   }
 
   loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload session after compaction", error))

@@ -16,6 +16,7 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { preferences } from "../stores/preferences"
 const log = getLogger("actions")
 
 
@@ -542,13 +543,46 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
 
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      if (showPicker()) {
-        handlePickerClose()
+    if (e.key === "Enter") {
+      const isModified = e.metaKey || e.ctrlKey
+
+      // If the picker is open, Enter should select from it.
+      if (!isModified && showPicker()) {
+        return
       }
-      handleSend()
-      return
+
+      if (submitOnEnter()) {
+        // Swapped mode: Enter submits, Cmd/Ctrl+Enter inserts a newline.
+        if (isModified) {
+          e.preventDefault()
+          e.stopPropagation()
+          insertNewlineAtCursor()
+          return
+        }
+
+        // Shift+Enter always inserts a newline.
+        if (e.shiftKey) {
+          // If the picker is open, avoid selecting an item on Enter.
+          if (showPicker()) {
+            e.stopPropagation()
+          }
+          return
+        }
+
+        e.preventDefault()
+        handleSend()
+        return
+      }
+
+      // Default: Cmd/Ctrl+Enter submits.
+      if (isModified) {
+        e.preventDefault()
+        if (showPicker()) {
+          handlePickerClose()
+        }
+        handleSend()
+        return
+      }
     }
 
     if (e.key === "ArrowUp") {
@@ -1021,7 +1055,7 @@ export default function PromptInput(props: PromptInputProps) {
     const blockquote = lines.map((line) => `> ${line}`).join("\n")
     if (!blockquote) return
 
-    insertBlockContent(`${blockquote}\n\n`)
+    insertBlockContent(`${blockquote}\n`)
   }
 
   function insertCodeSelection(rawText: string) {
@@ -1055,6 +1089,25 @@ export default function PromptInput(props: PromptInputProps) {
       ? { key: "Esc", text: t("promptInput.hints.shell.exit") }
       : { key: "!", text: t("promptInput.hints.shell.enable") }
   const commandHint = () => ({ key: "/", text: t("promptInput.hints.commands") })
+
+  const submitOnEnter = () => preferences().promptSubmitOnEnter
+
+  function insertNewlineAtCursor() {
+    const textarea = textareaRef
+    const current = prompt()
+    const start = textarea ? textarea.selectionStart : current.length
+    const end = textarea ? textarea.selectionEnd : current.length
+    const nextValue = current.substring(0, start) + "\n" + current.substring(end)
+    const nextCursor = start + 1
+
+    setPrompt(nextValue)
+
+    setTimeout(() => {
+      if (!textareaRef) return
+      textareaRef.focus()
+      textareaRef.setSelectionRange(nextCursor, nextCursor)
+    }, 0)
+  }
 
   const shouldShowOverlay = () => prompt().length === 0
 
@@ -1142,7 +1195,19 @@ export default function PromptInput(props: PromptInputProps) {
                     fallback={
                       <>
                         <span class="prompt-overlay-text">
-                          <Kbd>Enter</Kbd> {t("promptInput.overlay.newLine")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.send")} • <Kbd>@</Kbd> {t("promptInput.overlay.filesAgents")} • <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
+                          <Show
+                            when={submitOnEnter()}
+                            fallback={
+                              <>
+                                <Kbd>Enter</Kbd> {t("promptInput.overlay.newLine")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.send")}
+                              </>
+                            }
+                          >
+                            <>
+                              <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
+                            </>
+                          </Show>
+                          {" "}• <Kbd>@</Kbd> {t("promptInput.overlay.filesAgents")} • <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
                         </span>
                         <Show when={attachments().length > 0}>
                           <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
