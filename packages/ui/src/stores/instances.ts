@@ -18,7 +18,7 @@ import {
   fetchProviders,
   clearInstanceDraftPrompts,
 } from "./sessions"
-import { ensureWorktreesLoaded, ensureWorktreeMapLoaded } from "./worktrees"
+import { ensureWorktreesLoaded, ensureWorktreeMapLoaded, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { fetchCommands, clearCommands } from "./commands"
 import { preferences } from "./preferences"
 import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
@@ -41,6 +41,8 @@ const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boole
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequestLike[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 const permissionSessionCounts = new Map<string, Map<string, number>>()
+// Track which worktree a permission was enqueued under (by permission request id).
+const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
 const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
@@ -676,6 +678,16 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
   if (sessionId) {
     incrementSessionPendingCount(instanceId, sessionId)
     setSessionPendingPermission(instanceId, sessionId, true)
+
+    // Record the worktree slug at the time the permission is enqueued.
+    // This is used to respond in the same worktree context even from the global permission center.
+    const slug = getWorktreeSlugForSession(instanceId, sessionId)
+    let byPermissionId = permissionWorktreeSlugByInstance.get(instanceId)
+    if (!byPermissionId) {
+      byPermissionId = new Map()
+      permissionWorktreeSlugByInstance.set(instanceId, byPermissionId)
+    }
+    byPermissionId.set(permission.id, slug)
   }
 }
 
@@ -709,6 +721,8 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 
   const removed = removedPermission
   if (removed) {
+    // Use the id we were asked to remove (avoids type inference edge cases).
+    permissionWorktreeSlugByInstance.get(instanceId)?.delete(permissionId)
     const removedSessionId = getPermissionSessionId(removed)
     if (removedSessionId) {
       const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
@@ -729,6 +743,7 @@ function clearPermissionQueue(instanceId: string): void {
     return next
   })
   clearSessionPendingCounts(instanceId)
+  permissionWorktreeSlugByInstance.delete(instanceId)
   recomputeActiveInterruption(instanceId)
 }
 
@@ -877,8 +892,13 @@ async function sendPermissionResponse(
   }
 
   try {
+    const stored = permissionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
+    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
+    const worktreeSlug = stored ?? fallback
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
     await requestData(
-      instance.client.permission.reply({
+      client.permission.reply({
         requestID: requestId,
         reply,
       }),
