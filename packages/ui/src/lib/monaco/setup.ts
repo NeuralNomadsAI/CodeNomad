@@ -53,15 +53,22 @@ function ensureLoaderScript(): Promise<void> {
 
 function configureWorkers() {
   const globalAny = globalThis as any
-  if (globalAny.MonacoEnvironment?.getWorkerUrl) return
+  const prevEnv = globalAny.MonacoEnvironment ?? {}
+
+  // Monaco's AMD build no longer ships `editor.worker.js` (and language workers are
+  // `jsonWorker.js`, `cssWorker.js`, etc). The robust approach is to always boot
+  // `vs/base/worker/workerMain.js` and let it `require(...)` the requested module.
+  //
+  // Important: `workerMain.js` expects `MonacoEnvironment.baseUrl` to be the
+  // directory containing the `vs/` folder (so `/monaco/`, not `/monaco/vs`).
+  // Use a static worker bootstrap script rather than a `data:` URL.
+  // This avoids CSP issues and makes worker requests visible in DevTools.
+  const workerUrl = "/monaco.worker.js"
 
   globalAny.MonacoEnvironment = {
-    getWorkerUrl(_moduleId: string, label: string) {
-      if (label === "json") return `${LOCAL_VS_ROOT}/language/json/json.worker.js`
-      if (label === "css" || label === "scss" || label === "less") return `${LOCAL_VS_ROOT}/language/css/css.worker.js`
-      if (label === "html" || label === "handlebars" || label === "razor") return `${LOCAL_VS_ROOT}/language/html/html.worker.js`
-      if (label === "typescript" || label === "javascript") return `${LOCAL_VS_ROOT}/language/typescript/ts.worker.js`
-      return `${LOCAL_VS_ROOT}/editor/editor.worker.js`
+    ...prevEnv,
+    getWorkerUrl(_moduleId: string, _label: string) {
+      return workerUrl
     },
   }
 }
