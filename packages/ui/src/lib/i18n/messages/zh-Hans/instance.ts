@@ -87,6 +87,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "状态面板",
   "instanceShell.rightPanel.tabs.changes": "更改",
+  "instanceShell.rightPanel.tabs.files": "文件",
   "instanceShell.rightPanel.tabs.status": "状态",
   "instanceShell.rightPanel.tabs.ariaLabel": "右侧面板标签页",
   "instanceShell.rightPanel.sections.sessionChanges": "会话更改",

@@ -25,6 +25,7 @@
     "github-markdown-css": "^5.8.1",
     "lucide-solid": "^0.300.0",
     "marked": "^12.0.0",
+    "monaco-editor": "^0.52.2",
     "qrcode": "^1.5.3",
     "shiki": "^3.13.0",
     "solid-js": "^1.8.0",

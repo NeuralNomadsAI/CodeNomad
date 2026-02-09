@@ -87,6 +87,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "Panel de estado",
   "instanceShell.rightPanel.tabs.changes": "Cambios",
+  "instanceShell.rightPanel.tabs.files": "Archivos",
   "instanceShell.rightPanel.tabs.status": "Estado",
   "instanceShell.rightPanel.tabs.ariaLabel": "Pestañas del panel derecho",
   "instanceShell.rightPanel.sections.sessionChanges": "Cambios de sesion",

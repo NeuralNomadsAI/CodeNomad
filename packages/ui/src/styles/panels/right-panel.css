@@ -184,6 +184,26 @@
   background-color: var(--surface-secondary);
 }
 
+.file-viewer-toolbar {
+  @apply ml-auto flex items-center gap-1;
+}
+
+.file-viewer-toolbar-button {
+  @apply text-[11px] px-2 py-1 rounded border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+}
+
+.file-viewer-toolbar-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.file-viewer-toolbar-button.active {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
 .file-viewer-title {
   @apply text-[11px] font-semibold uppercase tracking-wide;
   color: var(--text-muted);
@@ -191,6 +211,16 @@
 
 .file-viewer-content {
   @apply flex-1 p-4 overflow-auto min-h-0;
+}
+
+.file-viewer-content--monaco {
+  @apply flex-1 overflow-hidden min-h-0;
+  padding: 0;
+}
+
+.monaco-viewer {
+  width: 100%;
+  height: 100%;
 }
 
 .file-viewer-empty {

@@ -12,6 +12,81 @@ export default defineConfig({
   plugins: [
     solid(),
     {
+      name: "prepare-monaco-public-assets",
+      buildStart() {
+        const publicDir = resolve(__dirname, "src/renderer/public")
+        const destRoot = resolve(publicDir, "monaco/vs")
+
+        const candidates = [
+          resolve(__dirname, "../../node_modules/monaco-editor/min/vs"),
+          resolve(__dirname, "node_modules/monaco-editor/min/vs"),
+        ]
+        const sourceRoot = candidates.find((p) => fs.existsSync(resolve(p, "loader.js")))
+        if (!sourceRoot) {
+          this.warn("Monaco source directory not found; skipping copy")
+          return
+        }
+
+        fs.mkdirSync(destRoot, { recursive: true })
+
+        const copyRecursive = (src: string, dest: string) => {
+          const stat = fs.statSync(src)
+          if (stat.isDirectory()) {
+            fs.mkdirSync(dest, { recursive: true })
+            for (const entry of fs.readdirSync(src)) {
+              copyRecursive(resolve(src, entry), resolve(dest, entry))
+            }
+            return
+          }
+          fs.copyFileSync(src, dest)
+        }
+
+        // Keep the working tree clean; these assets are generated.
+        try {
+          fs.rmSync(destRoot, { recursive: true, force: true })
+        } catch {
+          // ignore
+        }
+        fs.mkdirSync(destRoot, { recursive: true })
+
+        // Copy core Monaco runtime.
+        for (const dir of ["base", "editor", "platform"] as const) {
+          const src = resolve(sourceRoot, dir)
+          if (fs.existsSync(src)) {
+            copyRecursive(src, resolve(destRoot, dir))
+          }
+        }
+        // loader.js is required.
+        copyRecursive(resolve(sourceRoot, "loader.js"), resolve(destRoot, "loader.js"))
+
+        // Copy baseline rich language packages + workers.
+        for (const lang of ["typescript", "html", "json", "css"] as const) {
+          const src = resolve(sourceRoot, "language", lang)
+          if (fs.existsSync(src)) {
+            copyRecursive(src, resolve(destRoot, "language", lang))
+          }
+        }
+
+        // Copy baseline basic tokenizers.
+        for (const lang of ["python", "markdown", "cpp", "kotlin"] as const) {
+          const src = resolve(sourceRoot, "basic-languages", lang)
+          if (fs.existsSync(src)) {
+            copyRecursive(src, resolve(destRoot, "basic-languages", lang))
+          }
+        }
+
+        // Copy monaco.contribution.js entrypoints (needed by some loads).
+        const monacoContribution = resolve(sourceRoot, "basic-languages", "monaco.contribution.js")
+        if (fs.existsSync(monacoContribution)) {
+          copyRecursive(monacoContribution, resolve(destRoot, "basic-languages", "monaco.contribution.js"))
+        }
+        const underscoreContribution = resolve(sourceRoot, "basic-languages", "_.contribution.js")
+        if (fs.existsSync(underscoreContribution)) {
+          copyRecursive(underscoreContribution, resolve(destRoot, "basic-languages", "_.contribution.js"))
+        }
+      },
+    },
+    {
       name: "emit-ui-version",
       generateBundle() {
         this.emitFile({
@@ -51,14 +126,20 @@ export default defineConfig({
         theme_color: "#1a1a1a",
       },
       workbox: {
-        // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
-        navigateFallback: null,
-        // Only precache static assets (avoid caching HTML documents / routes).
-        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
-        globIgnores: ["**/*.html"],
-        // Only cache static UI assets; never cache API traffic.
-        runtimeCaching: [
-          {
+         // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
+         navigateFallback: null,
+         // Only precache static assets (avoid caching HTML documents / routes).
+         globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+         // Monaco assets can be large; cache them at runtime instead.
+         globIgnores: [
+           "**/*.html",
+           "**/assets/*worker-*.js",
+           "**/assets/editor.api-*.js",
+           "**/monaco/vs/**/*",
+         ],
+         // Only cache static UI assets; never cache API traffic.
+         runtimeCaching: [
+           {
             urlPattern: ({ url, request }) => {
               if (url.pathname.startsWith("/api/")) return false
               if (request.destination === "document") return false

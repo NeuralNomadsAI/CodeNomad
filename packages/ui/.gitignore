@@ -2,3 +2,4 @@ node_modules/
 dist/
 .vite/
 src/renderer/public/logo.png
+src/renderer/public/monaco/
