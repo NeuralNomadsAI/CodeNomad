@@ -86,6 +86,9 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Выберите сессию, чтобы просмотреть сообщения",
 
   "instanceShell.rightPanel.title": "Панель состояния",
+  "instanceShell.rightPanel.tabs.changes": "Изменения",
+  "instanceShell.rightPanel.tabs.status": "Статус",
+  "instanceShell.rightPanel.tabs.ariaLabel": "Вкладки правой панели",
   "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
   "instanceShell.rightPanel.sections.plan": "План",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые Shell",
@@ -98,6 +101,13 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "Пока нет изменений.",
   "instanceShell.sessionChanges.filesChanged": "Изменено файлов: {count}",
   "instanceShell.sessionChanges.actions.show": "Показать изменения",
+
+  "instanceShell.filesShell.fileListTitle": "Список файлов",
+  "instanceShell.filesShell.mobileSelectorLabel": "Выбрать файл",
+  "instanceShell.filesShell.mobileSelectorEmpty": "Выберите файл",
+  "instanceShell.filesShell.viewerTitle": "Просмотр изменений",
+  "instanceShell.filesShell.viewerPlaceholder": "Подробный рендер изменений будет добавлен на следующем этапе.",
+  "instanceShell.filesShell.viewerEmpty": "Файл не выбран.",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",

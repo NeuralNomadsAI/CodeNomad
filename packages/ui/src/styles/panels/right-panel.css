@@ -1,0 +1,358 @@
+/* Right Panel / Drawer specific styles */
+
+/* Right panel tab bar - browser-style tabs */
+.right-panel-tab-bar {
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-base);
+  position: relative;
+}
+
+.right-panel-tab-bar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-color: var(--border-base);
+  z-index: 0;
+}
+
+.right-panel-tab-bar .tab-container {
+  @apply flex items-center justify-between gap-1 px-2 pt-2 pb-0;
+}
+
+/* Shortcuts on the left side - match left drawer icon colors */
+.tab-strip-shortcuts {
+  @apply flex items-center gap-1 flex-shrink-0;
+  color: var(--text-primary);
+}
+
+/* Browser-style tabs - using INSTANCE tab color scheme */
+.right-panel-tab {
+  @apply inline-flex items-center gap-2 px-4 py-2 text-xs font-medium transition-all duration-150 relative;
+  font-family: var(--font-family-sans);
+  outline: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  margin-right: 2px;
+  z-index: 1;
+}
+
+.right-panel-tab:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
+}
+
+.right-panel-tab-active {
+  background-color: var(--tab-active-bg);
+  border-color: transparent;
+  border-bottom: 2px solid var(--accent-primary);
+  color: var(--tab-active-text);
+  z-index: 2;
+}
+
+.right-panel-tab-inactive {
+  background-color: var(--tab-inactive-bg);
+  color: var(--tab-inactive-text);
+  border-color: transparent;
+  border-bottom: 2px solid var(--tab-active-bg);
+}
+
+.right-panel-tab-inactive:hover {
+  background-color: var(--tab-inactive-hover-bg);
+  color: var(--text-secondary);
+  border-color: var(--border-base);
+  border-bottom-color: transparent;
+}
+
+/* Files tab layout */
+.files-tab-container {
+  @apply flex flex-col h-full min-h-0 p-3 gap-3;
+}
+
+.files-tab-header {
+  @apply flex items-center justify-between gap-2 px-1;
+}
+
+.files-tab-stats {
+  @apply flex items-center gap-3 text-[11px];
+  color: var(--text-muted);
+}
+
+.files-tab-stat {
+  @apply flex items-center gap-1.5;
+}
+
+.files-tab-stat-value {
+  @apply font-semibold;
+}
+
+.files-tab-stat-additions {
+  color: var(--session-status-idle-fg);
+}
+
+.files-tab-stat-deletions {
+  color: var(--session-status-working-fg);
+}
+
+/* File list panel */
+.file-list-panel {
+  @apply rounded-lg border flex flex-col min-h-0;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+}
+
+.file-list-header {
+  @apply flex items-center justify-between gap-2 px-3 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.file-list-title {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+  color: var(--text-muted);
+}
+
+.file-list-count {
+  @apply text-[10px] px-1.5 py-0.5 rounded-full;
+  background-color: var(--surface-base);
+  color: var(--text-muted);
+  border: 1px solid var(--border-base);
+}
+
+.file-list-scroll {
+  @apply flex-1 overflow-y-auto min-h-0;
+}
+
+.file-list-item {
+  @apply px-3 py-2.5 border-b cursor-pointer transition-all duration-150;
+  border-color: var(--border-base);
+  background-color: transparent;
+}
+
+.file-list-item:last-child {
+  @apply border-b-0;
+}
+
+.file-list-item:hover {
+  background-color: var(--surface-hover);
+}
+
+.file-list-item-active {
+  background-color: var(--surface-base);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.file-list-item-content {
+  @apply flex items-center justify-between gap-3;
+}
+
+.file-list-item-path {
+  @apply text-xs font-mono min-w-0 flex-1 overflow-hidden whitespace-nowrap;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+.file-list-item-stats {
+  @apply flex items-center gap-2 text-[11px] flex-shrink-0;
+}
+
+.file-list-item-additions {
+  color: var(--session-status-idle-fg);
+}
+
+.file-list-item-deletions {
+  color: var(--session-status-working-fg);
+}
+
+/* File viewer panel */
+.file-viewer-panel {
+  @apply rounded-lg border flex flex-col min-h-0;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+}
+
+.file-viewer-header {
+  @apply flex items-center gap-2 px-3 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.file-viewer-title {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+  color: var(--text-muted);
+}
+
+.file-viewer-content {
+  @apply flex-1 p-4 overflow-auto min-h-0;
+}
+
+.file-viewer-empty {
+  @apply flex flex-col items-center justify-center h-full gap-3 text-center;
+  color: var(--text-muted);
+}
+
+.file-viewer-empty-icon {
+  @apply w-8 h-8 opacity-40;
+  color: var(--text-muted);
+}
+
+.file-viewer-empty-text {
+  @apply text-xs;
+}
+
+.file-viewer-placeholder {
+  @apply text-xs leading-relaxed;
+  color: var(--text-muted);
+}
+
+.file-viewer-selected-file {
+  @apply flex flex-col gap-2;
+}
+
+.file-viewer-file-name {
+  @apply text-xs font-mono px-2 py-1.5 rounded border;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+/* Mobile file selector */
+.mobile-file-selector {
+  @apply rounded-lg border flex flex-col gap-3 p-3;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+}
+
+.mobile-file-selector-label {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+  color: var(--text-muted);
+}
+
+.mobile-file-selector-trigger {
+  @apply w-full;
+}
+
+.mobile-file-viewer {
+  @apply rounded-lg border flex flex-col min-h-[220px];
+  background-color: var(--surface-secondary);
+  border-color: var(--border-base);
+}
+
+/* Status tab layout */
+.status-tab-container {
+  @apply flex flex-col h-full min-h-0;
+}
+
+.status-tab-context-panel {
+  @apply border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+/* Accordion improvements for right panel */
+.right-panel-accordion {
+  @apply flex flex-col;
+}
+
+.right-panel-accordion-item {
+  @apply border-b last:border-b-0;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.right-panel-accordion-trigger {
+  @apply w-full flex items-center justify-between gap-3 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
+  color: var(--text-secondary);
+  background-color: transparent;
+}
+
+.right-panel-accordion-trigger:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.right-panel-accordion-chevron {
+  @apply h-4 w-4 transition-transform duration-200;
+  color: var(--text-muted);
+}
+
+.right-panel-accordion-chevron-expanded {
+  transform: rotate(180deg);
+}
+
+.right-panel-accordion-content {
+  @apply w-full px-3 pb-3 text-sm;
+  color: var(--text-primary);
+  min-height: 0;
+}
+
+.right-panel-accordion-content [data-accordion-content] {
+  min-height: 0;
+}
+
+/* Background process cards in status panel */
+.status-process-card {
+  @apply rounded-lg border flex flex-col gap-2 p-3 transition-all duration-150;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+}
+
+.status-process-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.status-process-header {
+  @apply flex flex-col gap-1;
+}
+
+.status-process-title {
+  @apply text-xs font-semibold;
+  color: var(--text-primary);
+}
+
+.status-process-meta {
+  @apply flex flex-wrap gap-2 text-[11px];
+  color: var(--text-muted);
+}
+
+.status-process-actions {
+  @apply grid grid-cols-3 gap-2;
+}
+
+/* Empty states */
+.right-panel-empty {
+  @apply flex flex-col items-center justify-center text-center gap-2;
+  color: var(--text-muted);
+}
+
+.right-panel-empty--left {
+  @apply items-start justify-start text-left w-full;
+}
+
+.right-panel-empty-text {
+  @apply text-xs;
+}
+
+/* Dark mode adjustments */
+[data-theme="dark"] .right-panel-tab-active {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .file-list-item-active {
+  box-shadow: inset 0 0 0 1px var(--accent-primary), 0 0 0 1px var(--surface-secondary);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .right-panel-tab-active {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+}

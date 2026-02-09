@@ -58,11 +58,13 @@
 .tab-active {
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
+  border-bottom: 2px solid var(--accent-primary);
 }
 
 .tab-inactive {
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
+  border-bottom: 2px solid var(--tab-active-bg);
 }
 
 .tab-inactive:hover {

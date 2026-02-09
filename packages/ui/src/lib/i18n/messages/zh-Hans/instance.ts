@@ -86,6 +86,9 @@ export const instanceMessages = {
   "instanceShell.empty.description": "选择会话以查看消息",
 
   "instanceShell.rightPanel.title": "状态面板",
+  "instanceShell.rightPanel.tabs.changes": "更改",
+  "instanceShell.rightPanel.tabs.status": "状态",
+  "instanceShell.rightPanel.tabs.ariaLabel": "右侧面板标签页",
   "instanceShell.rightPanel.sections.sessionChanges": "会话更改",
   "instanceShell.rightPanel.sections.plan": "计划",
   "instanceShell.rightPanel.sections.backgroundProcesses": "后台 Shell",
@@ -98,6 +101,13 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "暂无会话更改。",
   "instanceShell.sessionChanges.filesChanged": "已更改 {count} 个文件",
   "instanceShell.sessionChanges.actions.show": "显示更改",
+
+  "instanceShell.filesShell.fileListTitle": "文件列表",
+  "instanceShell.filesShell.mobileSelectorLabel": "选择文件",
+  "instanceShell.filesShell.mobileSelectorEmpty": "请选择文件",
+  "instanceShell.filesShell.viewerTitle": "更改查看器",
+  "instanceShell.filesShell.viewerPlaceholder": "详细更改渲染将在下一步中添加。",
+  "instanceShell.filesShell.viewerEmpty": "未选择文件。",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",

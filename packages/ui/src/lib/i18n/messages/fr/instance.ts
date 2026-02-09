@@ -86,6 +86,9 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Sélectionnez une session pour voir les messages",
 
   "instanceShell.rightPanel.title": "Panneau d'état",
+  "instanceShell.rightPanel.tabs.changes": "Modifications",
+  "instanceShell.rightPanel.tabs.status": "Statut",
+  "instanceShell.rightPanel.tabs.ariaLabel": "Onglets du panneau droit",
   "instanceShell.rightPanel.sections.sessionChanges": "Changements de session",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Shells en arrière-plan",
@@ -98,6 +101,13 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "Aucun changement pour l'instant.",
   "instanceShell.sessionChanges.filesChanged": "{count} fichiers modifiés",
   "instanceShell.sessionChanges.actions.show": "Afficher les changements",
+
+  "instanceShell.filesShell.fileListTitle": "Liste des fichiers",
+  "instanceShell.filesShell.mobileSelectorLabel": "Sélectionner un fichier",
+  "instanceShell.filesShell.mobileSelectorEmpty": "Sélectionnez un fichier",
+  "instanceShell.filesShell.viewerTitle": "Visionneuse de changements",
+  "instanceShell.filesShell.viewerPlaceholder": "Le rendu détaillé sera ajouté à l'étape suivante.",
+  "instanceShell.filesShell.viewerEmpty": "Aucun fichier sélectionné.",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

@@ -86,6 +86,9 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Selecciona una sesión para ver mensajes",
 
   "instanceShell.rightPanel.title": "Panel de estado",
+  "instanceShell.rightPanel.tabs.changes": "Cambios",
+  "instanceShell.rightPanel.tabs.status": "Estado",
+  "instanceShell.rightPanel.tabs.ariaLabel": "Pestañas del panel derecho",
   "instanceShell.rightPanel.sections.sessionChanges": "Cambios de sesion",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Shells en segundo plano",
@@ -98,6 +101,13 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "Aun no hay cambios.",
   "instanceShell.sessionChanges.filesChanged": "{count} archivos cambiados",
   "instanceShell.sessionChanges.actions.show": "Mostrar cambios",
+
+  "instanceShell.filesShell.fileListTitle": "Lista de archivos",
+  "instanceShell.filesShell.mobileSelectorLabel": "Seleccionar archivo",
+  "instanceShell.filesShell.mobileSelectorEmpty": "Selecciona un archivo",
+  "instanceShell.filesShell.viewerTitle": "Visor de cambios",
+  "instanceShell.filesShell.viewerPlaceholder": "La vista detallada se agregará en el siguiente paso.",
+  "instanceShell.filesShell.viewerEmpty": "Ningún archivo seleccionado.",
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",
