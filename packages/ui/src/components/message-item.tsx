@@ -305,19 +305,6 @@ export default function MessageItem(props: MessageItemProps) {
               >
                 <Copy class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
-              <Show when={deletableTextPartId()}>
-                {(partId) => (
-                  <button
-                    class="message-action-button"
-                    onClick={() => void handleDeletePart(partId())}
-                    disabled={isDeletingPart(partId())}
-                    title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                    aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                  >
-                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
-                )}
-              </Show>
             </div>
           </Show>
           <Show when={!isUser()}>

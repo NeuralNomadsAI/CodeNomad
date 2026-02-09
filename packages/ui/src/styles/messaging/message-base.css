@@ -298,11 +298,20 @@
   gap: 0;
 }
 
+.message-reasoning-header {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .message-reasoning-toggle {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.65rem;
   background: none;
   border: none;
@@ -312,6 +321,13 @@
   text-align: left;
   cursor: pointer;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-reasoning-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem 0.25rem 0;
 }
 
 .message-reasoning-toggle:hover {
