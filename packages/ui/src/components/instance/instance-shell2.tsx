@@ -1207,7 +1207,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 {(item) => (
                   <button
                     type="button"
-                    class="py-2 border-b border-base last:border-b-0 text-left hover:bg-surface-muted rounded-sm"
+                    class="border-b border-base last:border-b-0 text-left hover:bg-surface-muted rounded-sm"
                     onClick={() => openChangesTab(item.file)}
                     title={t("instanceShell.sessionChanges.actions.show")}
                   >
