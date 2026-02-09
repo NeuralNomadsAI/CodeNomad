@@ -75,6 +75,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_keepawake::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),

@@ -13,6 +13,7 @@ const electronAPI = {
   restartCli: () => ipcRenderer.invoke("cli:restart"),
   openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
+  showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
 }
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI)

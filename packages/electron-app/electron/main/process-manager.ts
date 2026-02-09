@@ -381,6 +381,9 @@ export class CliProcessManager extends EventEmitter {
     if (options.dev) {
       // Dev: run plain HTTP + Vite dev server proxy.
       args.push("--https", "false", "--http", "true")
+      // Avoid collisions with an already-running server (and dual-stack ::/0.0.0.0 quirks)
+      // by forcing an ephemeral port in dev.
+      args.push("--http-port", "0")
     } else {
       // Prod desktop: always keep loopback HTTP enabled.
       args.push("--https", "true", "--http", "true")

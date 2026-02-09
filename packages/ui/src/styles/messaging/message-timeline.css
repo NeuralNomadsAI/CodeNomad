@@ -211,7 +211,8 @@
 .message-timeline-tooltip {
   position: fixed;
   z-index: 1000;
-  pointer-events: none;
+  /* Allow interacting with the preview (copy/delete/etc). */
+  pointer-events: auto;
 }
 
 .message-preview {

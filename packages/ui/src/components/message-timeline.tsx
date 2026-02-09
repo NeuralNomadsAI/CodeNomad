@@ -276,6 +276,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 420 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
+  let closeTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
  
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
@@ -292,10 +293,30 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       hoverTimer = null
     }
   }
+
+  const clearCloseTimer = () => {
+    if (closeTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(closeTimer)
+      closeTimer = null
+    }
+  }
+
+  const scheduleClose = () => {
+    if (typeof window === "undefined") return
+    clearHoverTimer()
+    clearCloseTimer()
+    // Small delay so the pointer can travel from the segment to the tooltip.
+    closeTimer = window.setTimeout(() => {
+      closeTimer = null
+      setHoveredSegment(null)
+      setHoverAnchorRect(null)
+    }, 160)
+  }
  
   const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
     if (typeof window === "undefined") return
     clearHoverTimer()
+    clearCloseTimer()
     const target = event.currentTarget as HTMLButtonElement
     hoverTimer = window.setTimeout(() => {
       const rect = target.getBoundingClientRect()
@@ -305,9 +326,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   }
 
   const handleMouseLeave = () => {
-    clearHoverTimer()
-    setHoveredSegment(null)
-    setHoverAnchorRect(null)
+    scheduleClose()
   }
  
   createEffect(() => {
@@ -326,7 +345,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     setTooltipCoords({ top: clampedTop, left: clampedLeft })
   })
 
-  onCleanup(() => clearHoverTimer())
+  onCleanup(() => {
+    clearHoverTimer()
+    clearCloseTimer()
+  })
 
   createEffect(() => {
     const activeId = props.activeMessageId
@@ -432,6 +454,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               ref={(element) => setTooltipElement(element)}
               class="message-timeline-tooltip"
               style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
+              onMouseEnter={() => clearCloseTimer()}
+              onMouseLeave={() => scheduleClose()}
             >
               <MessagePreview
                 messageId={data().messageId}

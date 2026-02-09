@@ -11,6 +11,10 @@
     "core:menu:default",
     "dialog:allow-open",
     "opener:allow-default-urls",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "notification:allow-show",
     "core:webview:allow-set-webview-zoom"
   ]
 }

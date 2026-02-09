@@ -16,12 +16,19 @@ import type { MessageStatus } from "./message-v2/types"
 
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import { getPermissionId, getPermissionKind, getRequestIdFromPermissionReply } from "../types/permission"
+import {
+  getPermissionId,
+  getPermissionKind,
+  getPermissionSessionId,
+  getRequestIdFromPermissionReply,
+} from "../types/permission"
 import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "../types/permission"
-import { getQuestionId, getRequestIdFromQuestionReply } from "../types/question"
+import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
 import type { QuestionRequest } from "../types/question"
 import type { EventQuestionReplied, EventQuestionRejected } from "@opencode-ai/sdk/v2"
 import { showToastNotification, ToastVariant } from "../lib/notifications"
+import { sendOsNotification } from "../lib/os-notifications"
+import { preferences } from "./preferences"
 import {
   instances,
   addPermissionToQueue,
@@ -56,6 +63,34 @@ import type { InstanceMessageStore } from "./message-v2/instance-store"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
+
+function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
+  if (typeof document === "undefined") return false
+  const pref = preferences()
+  if (!pref.osNotificationsEnabled) return false
+  if (!pref.osNotificationsAllowWhenVisible && document.visibilityState === "visible") return false
+  if (kind === "needsInput") return Boolean(pref.notifyOnNeedsInput)
+  if (kind === "idle") return Boolean(pref.notifyOnIdle)
+  return false
+}
+
+function getInstanceDisplayName(instanceId: string): string {
+  const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
+  return instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
+}
+
+function getSessionTitle(instanceId: string, sessionId: string | undefined | null): string {
+  if (!sessionId) return ""
+  const session = sessions().get(instanceId)?.get(sessionId)
+  const title = session?.title?.trim()
+  return title && title.length > 0 ? title : sessionId
+}
+
+function fireOsNotification(payload: { title: string; body: string }) {
+  void sendOsNotification(payload).catch((error) => {
+    log.warn("Failed to send OS notification", error)
+  })
+}
 
 interface TuiToastEvent {
   type: "tui.toast.show"
@@ -397,6 +432,13 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
+  if (shouldSendOsNotification("idle")) {
+    const title = getInstanceDisplayName(instanceId)
+    const label = getSessionTitle(instanceId, sessionId)
+    const body = label ? `Session "${label}" is idle` : "Session is idle"
+    fireOsNotification({ title, body })
+  }
+
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
@@ -504,6 +546,14 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   log.info(`[SSE] Permission request: ${getPermissionId(permission)} (${getPermissionKind(permission)})`)
   addPermissionToQueue(instanceId, permission)
   upsertPermissionV2(instanceId, permission)
+
+  if (shouldSendOsNotification("needsInput")) {
+    const title = getInstanceDisplayName(instanceId)
+    const sessionId = getPermissionSessionId(permission)
+    const label = getSessionTitle(instanceId, sessionId)
+    const body = label ? `Session "${label}" needs permission` : "Session needs permission"
+    fireOsNotification({ title, body })
+  }
 }
 
 function handlePermissionReplied(instanceId: string, event: { type: string; properties?: PermissionReplyEventPropertiesLike } | any): void {
@@ -523,6 +573,14 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
   log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
   addQuestionToQueue(instanceId, request)
   upsertQuestionV2(instanceId, request)
+
+  if (shouldSendOsNotification("needsInput")) {
+    const title = getInstanceDisplayName(instanceId)
+    const sessionId = getQuestionSessionId(request)
+    const label = getSessionTitle(instanceId, sessionId)
+    const body = label ? `Session "${label}" needs input` : "Session needs input"
+    fireOsNotification({ title, body })
+  }
 }
 
 function handleQuestionAnswered(

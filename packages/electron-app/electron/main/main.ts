@@ -473,6 +473,14 @@ if (isMac) {
 }
 
 app.whenReady().then(() => {
+  // Required for Windows notifications / taskbar grouping.
+  // Keep in sync with desktop app identifier.
+  try {
+    app.setAppUserModelId("ai.neuralnomads.codenomad.client")
+  } catch {
+    // ignore
+  }
+
   startCli()
 
   if (isMac) {

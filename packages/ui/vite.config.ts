@@ -53,11 +53,15 @@ export default defineConfig({
       workbox: {
         // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
         navigateFallback: null,
+        // Only precache static assets (avoid caching HTML documents / routes).
+        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+        globIgnores: ["**/*.html"],
         // Only cache static UI assets; never cache API traffic.
         runtimeCaching: [
           {
             urlPattern: ({ url, request }) => {
               if (url.pathname.startsWith("/api/")) return false
+              if (request.destination === "document") return false
               return ["script", "style", "image", "font"].includes(request.destination)
             },
             handler: "CacheFirst",
