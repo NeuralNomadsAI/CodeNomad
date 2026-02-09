@@ -25,6 +25,12 @@ const PreferencesSchema = z.object({
   showUsageMetrics: z.boolean().default(true),
   autoCleanupBlankSessions: z.boolean().default(true),
   listeningMode: z.enum(["local", "all"]).default("local"),
+
+  // OS notifications
+  osNotificationsEnabled: z.boolean().default(false),
+  osNotificationsAllowWhenVisible: z.boolean().default(false),
+  notifyOnNeedsInput: z.boolean().default(true),
+  notifyOnIdle: z.boolean().default(true),
 })
 
 const RecentFolderSchema = z.object({

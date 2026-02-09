@@ -49,6 +49,12 @@ export interface Preferences {
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
   listeningMode: ListeningMode
+
+  // OS notifications
+  osNotificationsEnabled: boolean
+  osNotificationsAllowWhenVisible: boolean
+  notifyOnNeedsInput: boolean
+  notifyOnIdle: boolean
 }
 
 
@@ -85,6 +91,11 @@ const defaultPreferences: Preferences = {
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
   listeningMode: "local",
+
+  osNotificationsEnabled: false,
+  osNotificationsAllowWhenVisible: false,
+  notifyOnNeedsInput: true,
+  notifyOnIdle: true,
 }
 
 
@@ -135,6 +146,12 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultPreferences.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultPreferences.autoCleanupBlankSessions,
     listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
+
+    osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultPreferences.osNotificationsEnabled,
+    osNotificationsAllowWhenVisible:
+      sanitized.osNotificationsAllowWhenVisible ?? defaultPreferences.osNotificationsAllowWhenVisible,
+    notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultPreferences.notifyOnNeedsInput,
+    notifyOnIdle: sanitized.notifyOnIdle ?? defaultPreferences.notifyOnIdle,
   }
 }
 

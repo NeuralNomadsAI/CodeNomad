@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
 import type { CliProcessManager, CliStatus } from "./process-manager"
 
 let wakeLockId: number | null = null
@@ -91,4 +91,23 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
     }
     return { enabled: false }
   })
+
+  ipcMain.handle(
+    "notifications:show",
+    async (_event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
+      if (!Notification.isSupported()) {
+        return { ok: false, reason: "unsupported" }
+      }
+
+      const title = typeof payload?.title === "string" ? payload.title : "CodeNomad"
+      const body = typeof payload?.body === "string" ? payload.body : ""
+      try {
+        const notification = new Notification({ title, body })
+        notification.show()
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+      }
+    },
+  )
 }
