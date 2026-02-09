@@ -86,11 +86,18 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Выберите сессию, чтобы просмотреть сообщения",
 
   "instanceShell.rightPanel.title": "Панель состояния",
+  "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
   "instanceShell.rightPanel.sections.plan": "План",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые Shell",
   "instanceShell.rightPanel.sections.mcp": "MCP-серверы",
   "instanceShell.rightPanel.sections.lsp": "LSP-серверы",
   "instanceShell.rightPanel.sections.plugins": "Плагины",
+
+  "instanceShell.sessionChanges.noSessionSelected": "Выберите сессию, чтобы просмотреть изменения.",
+  "instanceShell.sessionChanges.loading": "Загрузка изменений...",
+  "instanceShell.sessionChanges.empty": "Пока нет изменений.",
+  "instanceShell.sessionChanges.filesChanged": "Изменено файлов: {count}",
+  "instanceShell.sessionChanges.actions.show": "Показать изменения",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",

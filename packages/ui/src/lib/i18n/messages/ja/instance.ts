@@ -86,11 +86,18 @@ export const instanceMessages = {
   "instanceShell.empty.description": "メッセージを表示するにはセッションを選択してください",
 
   "instanceShell.rightPanel.title": "ステータスパネル",
+  "instanceShell.rightPanel.sections.sessionChanges": "セッション変更",
   "instanceShell.rightPanel.sections.plan": "計画",
   "instanceShell.rightPanel.sections.backgroundProcesses": "バックグラウンドシェル",
   "instanceShell.rightPanel.sections.mcp": "MCP サーバー",
   "instanceShell.rightPanel.sections.lsp": "LSP サーバー",
   "instanceShell.rightPanel.sections.plugins": "プラグイン",
+
+  "instanceShell.sessionChanges.noSessionSelected": "変更を表示するにはセッションを選択してください。",
+  "instanceShell.sessionChanges.loading": "変更を取得中...",
+  "instanceShell.sessionChanges.empty": "まだ変更はありません。",
+  "instanceShell.sessionChanges.filesChanged": "{count} 個のファイルが変更されました",
+  "instanceShell.sessionChanges.actions.show": "変更を表示",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",

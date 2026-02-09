@@ -86,11 +86,18 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Select a session to view messages",
 
   "instanceShell.rightPanel.title": "Status Panel",
+  "instanceShell.rightPanel.sections.sessionChanges": "Session Changes",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Background Shells",
   "instanceShell.rightPanel.sections.mcp": "MCP Servers",
   "instanceShell.rightPanel.sections.lsp": "LSP Servers",
   "instanceShell.rightPanel.sections.plugins": "Plugins",
+
+  "instanceShell.sessionChanges.noSessionSelected": "Select a session to view changes.",
+  "instanceShell.sessionChanges.loading": "Fetching session changes...",
+  "instanceShell.sessionChanges.empty": "No session changes yet.",
+  "instanceShell.sessionChanges.filesChanged": "{count} files changed",
+  "instanceShell.sessionChanges.actions.show": "Show changes",
 
   "instanceShell.plan.noSessionSelected": "Select a session to view plan.",
   "instanceShell.plan.empty": "Nothing planned yet.",

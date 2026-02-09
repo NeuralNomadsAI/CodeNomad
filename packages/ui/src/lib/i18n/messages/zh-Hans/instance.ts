@@ -86,11 +86,18 @@ export const instanceMessages = {
   "instanceShell.empty.description": "选择会话以查看消息",
 
   "instanceShell.rightPanel.title": "状态面板",
+  "instanceShell.rightPanel.sections.sessionChanges": "会话更改",
   "instanceShell.rightPanel.sections.plan": "计划",
   "instanceShell.rightPanel.sections.backgroundProcesses": "后台 Shell",
   "instanceShell.rightPanel.sections.mcp": "MCP 服务器",
   "instanceShell.rightPanel.sections.lsp": "LSP 服务器",
   "instanceShell.rightPanel.sections.plugins": "插件",
+
+  "instanceShell.sessionChanges.noSessionSelected": "选择会话以查看更改。",
+  "instanceShell.sessionChanges.loading": "正在获取会话更改...",
+  "instanceShell.sessionChanges.empty": "暂无会话更改。",
+  "instanceShell.sessionChanges.filesChanged": "已更改 {count} 个文件",
+  "instanceShell.sessionChanges.actions.show": "显示更改",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",

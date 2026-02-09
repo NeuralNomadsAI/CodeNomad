@@ -304,6 +304,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return activeSessions().get(sessionId) ?? null
   })
 
+  const activeSessionDiffs = createMemo(() => {
+    const session = activeSessionForInstance()
+    return session?.diff
+  })
+
   const activeSessionUsage = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId) return null
@@ -960,6 +965,70 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   )
 
   const RightDrawerContent = () => {
+    const renderSessionChanges = () => {
+      const sessionId = activeSessionIdForInstance()
+      if (!sessionId || sessionId === "info") {
+        return <p class="text-xs text-secondary">{t("instanceShell.sessionChanges.noSessionSelected")}</p>
+      }
+
+      const diffs = activeSessionDiffs()
+      if (diffs === undefined) {
+        return <p class="text-xs text-secondary">{t("instanceShell.sessionChanges.loading")}</p>
+      }
+
+      if (!Array.isArray(diffs) || diffs.length === 0) {
+        return <p class="text-xs text-secondary">{t("instanceShell.sessionChanges.empty")}</p>
+      }
+
+      const sorted = [...diffs].sort((a, b) => String(a.file || "").localeCompare(String(b.file || "")))
+      const totals = sorted.reduce(
+        (acc, item) => {
+          acc.additions += typeof item.additions === "number" ? item.additions : 0
+          acc.deletions += typeof item.deletions === "number" ? item.deletions : 0
+          return acc
+        },
+        { additions: 0, deletions: 0 },
+      )
+
+      return (
+        <div class="flex flex-col gap-3 min-h-0">
+          <div class="flex items-center justify-between gap-2 text-[11px] text-secondary">
+            <span>{t("instanceShell.sessionChanges.filesChanged", { count: sorted.length })}</span>
+            <span class="flex items-center gap-2">
+              <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${totals.additions}`}</span>
+              <span style={{ color: "var(--session-status-working-fg)" }}>{`-${totals.deletions}`}</span>
+            </span>
+          </div>
+
+          <div class="rounded-md border border-base bg-surface-secondary p-2 max-h-[40vh] overflow-y-auto">
+            <div class="flex flex-col">
+              <For each={sorted}>
+                {(item) => (
+                  <div class="py-2 border-b border-base last:border-b-0">
+                    <div class="text-xs font-mono text-primary truncate" title={item.file}>
+                      {item.file}
+                    </div>
+                    <div class="flex items-center gap-2 text-[11px]">
+                      <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${item.additions}`}</span>
+                      <span style={{ color: "var(--session-status-working-fg)" }}>{`-${item.deletions}`}</span>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="button-tertiary w-full p-1.5 inline-flex items-center justify-center"
+            onClick={() => undefined}
+          >
+            {t("instanceShell.sessionChanges.actions.show")}
+          </button>
+        </div>
+      )
+    }
+
     const renderPlanSectionContent = () => {
       const sessionId = activeSessionIdForInstance()
       if (!sessionId || sessionId === "info") {
@@ -1034,6 +1103,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
 
     const sections = [
+      {
+        id: "session-changes",
+        labelKey: "instanceShell.rightPanel.sections.sessionChanges",
+        render: renderSessionChanges,
+      },
       {
         id: "plan",
         labelKey: "instanceShell.rightPanel.sections.plan",
