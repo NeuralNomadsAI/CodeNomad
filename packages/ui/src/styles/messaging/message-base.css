@@ -310,11 +310,6 @@
   background-color: var(--surface-hover);
 }
 
-.message-reasoning-header:focus-within {
-  outline: none;
-  box-shadow: 0 0 0 1px var(--accent-primary);
-}
-
 .message-reasoning-toggle {
   flex: 1 1 auto;
   min-width: 0;
@@ -346,7 +341,7 @@
 
 .message-reasoning-toggle:focus-visible {
   outline: none;
-  box-shadow: none;
+  box-shadow: 0 0 0 1px var(--border-base);
 }
 
 .message-reasoning-label {
