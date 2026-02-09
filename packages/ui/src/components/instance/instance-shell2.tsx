@@ -1005,12 +1005,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <For each={sorted}>
                 {(item) => (
                   <div class="py-2 border-b border-base last:border-b-0">
-                    <div class="text-xs font-mono text-primary truncate" title={item.file}>
-                      {item.file}
-                    </div>
-                    <div class="flex items-center gap-2 text-[11px]">
-                      <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${item.additions}`}</span>
-                      <span style={{ color: "var(--session-status-working-fg)" }}>{`-${item.deletions}`}</span>
+                    <div class="flex items-center justify-between gap-3">
+                      <div
+                        class="text-xs font-mono text-primary min-w-0 flex-1 overflow-hidden whitespace-nowrap"
+                        title={item.file}
+                        style="text-overflow: ellipsis; direction: rtl; text-align: left; unicode-bidi: plaintext;"
+                      >
+                        {item.file}
+                      </div>
+                      <div class="flex items-center gap-2 text-[11px] flex-shrink-0">
+                        <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${item.additions}`}</span>
+                        <span style={{ color: "var(--session-status-working-fg)" }}>{`-${item.deletions}`}</span>
+                      </div>
                     </div>
                   </div>
                 )}
