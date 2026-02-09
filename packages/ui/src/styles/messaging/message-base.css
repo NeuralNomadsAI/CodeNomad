@@ -303,6 +303,16 @@
   align-items: stretch;
   justify-content: space-between;
   gap: 0.5rem;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-reasoning-header:hover {
+  background-color: var(--surface-hover);
+}
+
+.message-reasoning-header:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
 .message-reasoning-toggle {
@@ -331,12 +341,12 @@
 }
 
 .message-reasoning-toggle:hover {
-  background-color: var(--surface-hover);
+  background-color: transparent;
 }
 
 .message-reasoning-toggle:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--accent-primary);
+  box-shadow: none;
 }
 
 .message-reasoning-label {
