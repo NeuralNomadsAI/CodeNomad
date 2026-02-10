@@ -77,10 +77,13 @@ export default defineConfig({
         theme_color: "#1a1a1a",
       },
       workbox: {
-         // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
-         navigateFallback: null,
-         // Only precache static assets (avoid caching HTML documents / routes).
-         globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+         // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
+         // This is a build-time limit for the precache manifest, not a hard runtime cap.
+         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+          // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
+          navigateFallback: null,
+          // Only precache static assets (avoid caching HTML documents / routes).
+          globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
          // Monaco assets can be large; cache them at runtime instead.
          globIgnores: [
            "**/*.html",
