@@ -104,13 +104,22 @@ const LEFT_DRAWER_STORAGE_KEY = "opencode-session-sidebar-width-v8"
 const RIGHT_DRAWER_STORAGE_KEY = "opencode-session-right-drawer-width-v1"
 const LEFT_PIN_STORAGE_KEY = "opencode-session-left-drawer-pinned-v1"
 const RIGHT_PIN_STORAGE_KEY = "opencode-session-right-drawer-pinned-v1"
-const RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v1"
+const RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v2"
+const LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v1"
+const RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-changes-split-width-v1"
+const RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-files-split-width-v1"
+const RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-changes-list-open-nonphone-v1"
+const RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY = "opencode-session-right-panel-changes-list-open-phone-v1"
+const RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-files-list-open-nonphone-v1"
+const RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY = "opencode-session-right-panel-files-list-open-phone-v1"
+const RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY = "opencode-session-right-panel-changes-diff-view-mode-v1"
+const RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY = "opencode-session-right-panel-changes-diff-context-mode-v1"
 
 
 
 
 type LayoutMode = "desktop" | "tablet" | "phone"
-type RightPanelTab = "files" | "browser" | "status"
+type RightPanelTab = "changes" | "files" | "status"
 
 const clampWidth = (value: number) => Math.min(MAX_SESSION_SIDEBAR_WIDTH, Math.max(MIN_SESSION_SIDEBAR_WIDTH, value))
 const clampRightWidth = (value: number) => {
@@ -133,10 +142,42 @@ function persistPinState(side: "left" | "right", value: boolean) {
 
 function readStoredRightPanelTab(defaultValue: RightPanelTab): RightPanelTab {
   if (typeof window === "undefined") return defaultValue
+
   const stored = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
   if (stored === "status") return "status"
-  if (stored === "browser") return "browser"
+  if (stored === "changes") return "changes"
+  if (stored === "files") return "files"
+
+  // Migrate from v1 (where the stored values were the internal tab ids).
+  const legacy = window.localStorage.getItem(LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY)
+  if (legacy === "status") return "status"
+  if (legacy === "browser") return "files"
+  if (legacy === "files") return "changes"
+
   return defaultValue
+}
+
+function readStoredPanelWidth(key: string, fallback: number) {
+  if (typeof window === "undefined") return fallback
+  const stored = window.localStorage.getItem(key)
+  if (!stored) return fallback
+  const parsed = Number.parseInt(stored, 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function readStoredBool(key: string): boolean | null {
+  if (typeof window === "undefined") return null
+  const stored = window.localStorage.getItem(key)
+  if (stored === "true") return true
+  if (stored === "false") return false
+  return null
+}
+
+function readStoredEnum<T extends string>(key: string, allowed: readonly T[]): T | null {
+  if (typeof window === "undefined") return null
+  const stored = window.localStorage.getItem(key)
+  if (!stored) return null
+  return (allowed as readonly string[]).includes(stored) ? (stored as T) : null
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
@@ -162,7 +203,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("files"))
+  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
     "plan",
     "background-processes",
@@ -181,8 +222,33 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [browserSelectedLoading, setBrowserSelectedLoading] = createSignal(false)
   const [browserSelectedError, setBrowserSelectedError] = createSignal<string | null>(null)
 
-  const [diffViewMode, setDiffViewMode] = createSignal<"split" | "unified">("split")
-  const [diffContextMode, setDiffContextMode] = createSignal<"expanded" | "collapsed">("collapsed")
+  const [diffViewMode, setDiffViewMode] = createSignal<"split" | "unified">(
+    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
+  )
+  const [diffContextMode, setDiffContextMode] = createSignal<"expanded" | "collapsed">(
+    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, ["expanded", "collapsed"] as const) ?? "collapsed",
+  )
+
+  const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
+  const [filesSplitWidth, setFilesSplitWidth] = createSignal(320)
+  const [activeSplitResize, setActiveSplitResize] = createSignal<"changes" | "files" | null>(null)
+  const [splitResizeStartX, setSplitResizeStartX] = createSignal(0)
+  const [splitResizeStartWidth, setSplitResizeStartWidth] = createSignal(0)
+
+  const [filesListOpen, setFilesListOpen] = createSignal(true)
+  const [filesListTouched, setFilesListTouched] = createSignal(false)
+  const [changesListOpen, setChangesListOpen] = createSignal(true)
+  const [changesListTouched, setChangesListTouched] = createSignal(false)
+
+  createEffect(() => {
+    // Default behavior: when nothing is selected, keep the file list open.
+    // Once the user explicitly toggles it, we stop auto-opening.
+    if (rightPanelTab() !== "files") return
+    if (filesListTouched()) return
+    if (!browserSelectedPath()) {
+      setFilesListOpen(true)
+    }
+  })
 
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
@@ -206,6 +272,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
+
+  const listLayoutKey = createMemo(() => (isPhoneLayout() ? "phone" : "nonphone"))
+
+  const listOpenStorageKey = (tab: "changes" | "files") => {
+    const layout = listLayoutKey()
+    if (tab === "changes") {
+      return layout === "phone" ? RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY
+    }
+    return layout === "phone" ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY
+  }
+
+  const persistListOpen = (tab: "changes" | "files", value: boolean) => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
+  }
+
+  createEffect(() => {
+    // Refresh persisted visibility when layout changes (phone vs non-phone).
+    const layout = listLayoutKey()
+    layout
+
+    const filesPersisted = readStoredBool(listOpenStorageKey("files"))
+    if (filesPersisted !== null) {
+      setFilesListOpen(filesPersisted)
+      setFilesListTouched(true)
+    } else {
+      setFilesListOpen(true)
+      setFilesListTouched(false)
+    }
+
+    const changesPersisted = readStoredBool(listOpenStorageKey("changes"))
+    if (changesPersisted !== null) {
+      setChangesListOpen(changesPersisted)
+      setChangesListTouched(true)
+    } else {
+      setChangesListOpen(true)
+      setChangesListTouched(false)
+    }
+  })
 
   const persistPinIfSupported = (side: "left" | "right", value: boolean) => {
     if (side === "left" && !leftPinningSupported()) return
@@ -281,6 +386,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       setRightDrawerWidth(clampRightWidth(window.innerWidth * 0.35))
     }
 
+    setChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY, 320)))
+    setFilesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY, 320)))
+
     const handleResize = () => {
       const width = clampWidth(window.innerWidth * 0.3)
       setSessionSidebarWidth((current) => clampWidth(current || width))
@@ -318,6 +426,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   createEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, diffViewMode())
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode())
   })
 
   createEffect(() => {
@@ -765,6 +883,95 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     stopDrawerResize()
   })
 
+  const clampSplitWidth = (value: number) => {
+    const min = 200
+    const maxByDrawer = Math.max(min, Math.floor(rightDrawerWidth() * 0.65))
+    const max = Math.min(560, maxByDrawer)
+    return Math.min(max, Math.max(min, Math.floor(value)))
+  }
+
+  const persistSplitWidth = (mode: "changes" | "files", width: number) => {
+    if (typeof window === "undefined") return
+    const key = mode === "changes" ? RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
+    window.localStorage.setItem(key, String(width))
+  }
+
+  function stopSplitResize() {
+    setActiveSplitResize(null)
+    if (typeof document === "undefined") return
+    document.removeEventListener("mousemove", splitMouseMove)
+    document.removeEventListener("mouseup", splitMouseUp)
+    document.removeEventListener("touchmove", splitTouchMove)
+    document.removeEventListener("touchend", splitTouchEnd)
+  }
+
+  function splitMouseMove(event: MouseEvent) {
+    const mode = activeSplitResize()
+    if (!mode) return
+    event.preventDefault()
+    const delta = event.clientX - splitResizeStartX()
+    const next = clampSplitWidth(splitResizeStartWidth() + delta)
+    if (mode === "changes") setChangesSplitWidth(next)
+    else setFilesSplitWidth(next)
+  }
+
+  function splitMouseUp() {
+    const mode = activeSplitResize()
+    if (mode) {
+      const width = mode === "changes" ? changesSplitWidth() : filesSplitWidth()
+      persistSplitWidth(mode, width)
+    }
+    stopSplitResize()
+  }
+
+  function splitTouchMove(event: TouchEvent) {
+    const mode = activeSplitResize()
+    if (!mode) return
+    const touch = event.touches[0]
+    if (!touch) return
+    event.preventDefault()
+    const delta = touch.clientX - splitResizeStartX()
+    const next = clampSplitWidth(splitResizeStartWidth() + delta)
+    if (mode === "changes") setChangesSplitWidth(next)
+    else setFilesSplitWidth(next)
+  }
+
+  function splitTouchEnd() {
+    const mode = activeSplitResize()
+    if (mode) {
+      const width = mode === "changes" ? changesSplitWidth() : filesSplitWidth()
+      persistSplitWidth(mode, width)
+    }
+    stopSplitResize()
+  }
+
+  const startSplitResize = (mode: "changes" | "files", clientX: number) => {
+    if (typeof document === "undefined") return
+    setActiveSplitResize(mode)
+    setSplitResizeStartX(clientX)
+    setSplitResizeStartWidth(mode === "changes" ? changesSplitWidth() : filesSplitWidth())
+    document.addEventListener("mousemove", splitMouseMove)
+    document.addEventListener("mouseup", splitMouseUp)
+    document.addEventListener("touchmove", splitTouchMove, { passive: false })
+    document.addEventListener("touchend", splitTouchEnd)
+  }
+
+  const handleSplitResizeMouseDown = (mode: "changes" | "files") => (event: MouseEvent) => {
+    event.preventDefault()
+    startSplitResize(mode, event.clientX)
+  }
+
+  const handleSplitResizeTouchStart = (mode: "changes" | "files") => (event: TouchEvent) => {
+    const touch = event.touches[0]
+    if (!touch) return
+    event.preventDefault()
+    startSplitResize(mode, touch.clientX)
+  }
+
+  onCleanup(() => {
+    stopSplitResize()
+  })
+
   type DrawerViewState = "pinned" | "floating-open" | "floating-closed"
 
 
@@ -1035,6 +1242,36 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instance.id, worktreeSlugForViewer()))
 
+    const bestDiffFile = createMemo<string | null>(() => {
+      const diffs = activeSessionDiffs()
+      if (!Array.isArray(diffs) || diffs.length === 0) return null
+      const best = diffs.reduce((currentBest, item) => {
+        const bestAdd = typeof (currentBest as any)?.additions === "number" ? (currentBest as any).additions : 0
+        const bestDel = typeof (currentBest as any)?.deletions === "number" ? (currentBest as any).deletions : 0
+        const bestScore = bestAdd + bestDel
+
+        const add = typeof (item as any)?.additions === "number" ? (item as any).additions : 0
+        const del = typeof (item as any)?.deletions === "number" ? (item as any).deletions : 0
+        const score = add + del
+
+        if (score > bestScore) return item
+        if (score < bestScore) return currentBest
+        return String(item.file || "").localeCompare(String((currentBest as any)?.file || "")) < 0 ? item : currentBest
+      }, diffs[0])
+      return typeof (best as any)?.file === "string" ? (best as any).file : null
+    })
+
+    createEffect(() => {
+      const next = bestDiffFile()
+      if (!next) return
+      const diffs = activeSessionDiffs()
+      if (!Array.isArray(diffs) || diffs.length === 0) return
+
+      const current = selectedFile()
+      if (current && diffs.some((d) => d.file === current)) return
+      setSelectedFile(next)
+    })
+
     const normalizeBrowserPath = (input: string) => {
       const raw = String(input || ".").trim()
       if (!raw || raw === "./") return "."
@@ -1071,6 +1308,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       setBrowserSelectedLoading(true)
       setBrowserSelectedError(null)
       setBrowserSelectedContent(null)
+
+      // Phone: treat file selection as a commit action and close the overlay.
+      if (isPhoneLayout()) {
+        setFilesListOpen(false)
+      }
       try {
         const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
         const type = (content as any)?.type
@@ -1094,7 +1336,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
 
     createEffect(() => {
-      if (rightPanelTab() !== "browser") return
+      if (rightPanelTab() !== "files") return
       if (browserLoading()) return
       if (browserEntries() !== null) return
       void loadBrowserEntries(browserPath())
@@ -1137,9 +1379,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         { additions: 0, deletions: 0 },
       )
 
-      // Select first file by default if none selected
+      const mostChanged = sorted.reduce((best, item) => {
+        const bestAdd = typeof (best as any)?.additions === "number" ? (best as any).additions : 0
+        const bestDel = typeof (best as any)?.deletions === "number" ? (best as any).deletions : 0
+        const bestScore = bestAdd + bestDel
+
+        const add = typeof (item as any)?.additions === "number" ? (item as any).additions : 0
+        const del = typeof (item as any)?.deletions === "number" ? (item as any).deletions : 0
+        const score = add + del
+
+        if (score > bestScore) return item
+        if (score < bestScore) return best
+        return String(item.file || "").localeCompare(String((best as any)?.file || "")) < 0 ? item : best
+      }, sorted[0])
+
+      // Auto-select the most-changed file if none selected.
       const currentSelected = selectedFile()
-      const selectedFileData = sorted.find((f) => f.file === currentSelected) || sorted[0]
+      const selectedFileData = sorted.find((f) => f.file === currentSelected) || mostChanged
 
       const scopeKey = `${props.instance.id}:${sessionId}`
 
@@ -1153,230 +1409,272 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         return false
       }
 
-      if (isPhoneLayout()) {
-        return (
-          <div class="files-tab-container">
-            <div class="rounded-lg border border-base bg-surface-secondary p-2 max-h-[32vh] overflow-y-auto">
-              <div class="flex flex-col">
-                <For each={sorted}>
-                  {(item) => (
-                    <button
-                      type="button"
-                      class={`border-b border-base last:border-b-0 text-left hover:bg-surface-muted rounded-sm ${selectedFileData?.file === item.file ? "bg-surface-base" : ""}`}
-                      onClick={() => setSelectedFile(item.file)}
-                      title={item.file}
-                    >
-                      <div class="flex items-center justify-between gap-3">
-                        <div
-                          class="text-xs font-mono text-primary min-w-0 flex-1 overflow-hidden whitespace-nowrap"
-                          title={item.file}
-                          style="text-overflow: ellipsis; direction: rtl; text-align: left; unicode-bidi: plaintext;"
-                        >
-                          {item.file}
-                        </div>
-                        <div class="flex items-center gap-2 text-[11px] flex-shrink-0">
-                          <span style={{ color: "var(--session-status-idle-fg)" }}>{`+${item.additions}`}</span>
-                          <span style={{ color: "var(--session-status-working-fg)" }}>{`-${item.deletions}`}</span>
-                        </div>
-                      </div>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
-
-            <div class="file-viewer-panel flex-1">
-              <div class="file-viewer-header">
-                <span class="file-viewer-title">{t("instanceShell.filesShell.viewerTitle")}</span>
-                <div class="file-viewer-toolbar">
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
-                    aria-pressed={diffViewMode() === "split"}
-                    onClick={() => setDiffViewMode("split")}
-                  >
-                    Split
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
-                    aria-pressed={diffViewMode() === "unified"}
-                    onClick={() => setDiffViewMode("unified")}
-                  >
-                    Unified
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
-                    aria-pressed={diffContextMode() === "collapsed"}
-                    onClick={() => setDiffContextMode("collapsed")}
-                    title="Hide unchanged regions"
-                  >
-                    Collapsed
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
-                    aria-pressed={diffContextMode() === "expanded"}
-                    onClick={() => setDiffContextMode("expanded")}
-                    title="Show full file"
-                  >
-                    Expanded
-                  </button>
-                </div>
-              </div>
-              <div class="file-viewer-content file-viewer-content--monaco">
-                <Show
-                  when={selectedFileData}
-                  fallback={
-                    <div class="file-viewer-empty">
-                      <span class="file-viewer-empty-text">{t("instanceShell.filesShell.viewerEmpty")}</span>
-                    </div>
-                  }
-                >
-                  {(file) => (
-                    <Show
-                      when={!isBinaryDiff(file())}
-                      fallback={
-                        <div class="file-viewer-empty">
-                          <span class="file-viewer-empty-text">Binary file cannot be displayed</span>
-                        </div>
-                      }
-                    >
-                      <MonacoDiffViewer
-                        scopeKey={scopeKey}
-                        path={String(file().file || "")}
-                        before={String((file() as any).before || "")}
-                        after={String((file() as any).after || "")}
-                        viewMode={diffViewMode()}
-                        contextMode={diffContextMode()}
-                      />
-                    </Show>
-                  )}
-                </Show>
-              </div>
-            </div>
-          </div>
-        )
-      }
-
       return (
         <div class="files-tab-container">
           <div class="files-tab-header">
-            <div class="files-tab-stats">
-              <span class="files-tab-stat">
-                <span class="files-tab-stat-value">{sorted.length}</span>
-                <span>files</span>
+            <div class="files-tab-header-row">
+              <button
+                type="button"
+                class="files-toggle-button"
+                onClick={() => {
+                  setChangesListTouched(true)
+                  setChangesListOpen((current) => {
+                    const next = !current
+                    persistListOpen("changes", next)
+                    return next
+                  })
+                }}
+              >
+                {changesListOpen() ? "Hide files" : "Show files"}
+              </button>
+
+              <span class="files-tab-selected-path" title={selectedFileData?.file || ""}>
+                {selectedFileData?.file || ""}
               </span>
-              <span class="files-tab-stat files-tab-stat-additions">
-                <span class="files-tab-stat-value">+{totals.additions}</span>
-                <span>additions</span>
-              </span>
-              <span class="files-tab-stat files-tab-stat-deletions">
-                <span class="files-tab-stat-value">-{totals.deletions}</span>
-                <span>deletions</span>
-              </span>
+
+              <div class="files-tab-stats" style={{ "flex": "0 0 auto" }}>
+                <span class="files-tab-stat files-tab-stat-additions">
+                  <span class="files-tab-stat-value">+{totals.additions}</span>
+                </span>
+                <span class="files-tab-stat files-tab-stat-deletions">
+                  <span class="files-tab-stat-value">-{totals.deletions}</span>
+                </span>
+              </div>
             </div>
           </div>
 
-          <div class="flex min-h-0 gap-3 flex-1">
-            <div class="file-list-panel">
-              <div class="file-list-header">
-                <span class="file-list-title">{t("instanceShell.filesShell.fileListTitle")}</span>
-                <span class="file-list-count">{sorted.length}</span>
-              </div>
-              <div class="file-list-scroll">
-                <For each={sorted}>
-                  {(item) => (
-                    <div
-                      class={`file-list-item ${selectedFileData?.file === item.file ? "file-list-item-active" : ""}`}
-                      onClick={() => setSelectedFile(item.file)}
-                    >
-                      <div class="file-list-item-content">
-                        <div class="file-list-item-path" title={item.file}>
-                          {item.file}
-                        </div>
-                        <div class="file-list-item-stats">
-                          <span class="file-list-item-additions">+{item.additions}</span>
-                          <span class="file-list-item-deletions">-{item.deletions}</span>
-                        </div>
-                      </div>
+          <div class="files-tab-body">
+            <Show
+              when={!isPhoneLayout() && changesListOpen()}
+              fallback={
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-header">
+                    <div class="file-viewer-toolbar">
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "split"}
+                        onClick={() => setDiffViewMode("split")}
+                      >
+                        Split
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "unified"}
+                        onClick={() => setDiffViewMode("unified")}
+                      >
+                        Unified
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "collapsed"}
+                        onClick={() => setDiffContextMode("collapsed")}
+                        title="Hide unchanged regions"
+                      >
+                        Collapsed
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "expanded"}
+                        onClick={() => setDiffContextMode("expanded")}
+                        title="Show full file"
+                      >
+                        Expanded
+                      </button>
                     </div>
-                  )}
-                </For>
-              </div>
-            </div>
-            <div class="file-viewer-panel flex-1">
-              <div class="file-viewer-header">
-                <span class="file-viewer-title">{t("instanceShell.filesShell.viewerTitle")}</span>
-                <div class="file-viewer-toolbar">
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
-                    aria-pressed={diffViewMode() === "split"}
-                    onClick={() => setDiffViewMode("split")}
-                  >
-                    Split
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
-                    aria-pressed={diffViewMode() === "unified"}
-                    onClick={() => setDiffViewMode("unified")}
-                  >
-                    Unified
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
-                    aria-pressed={diffContextMode() === "collapsed"}
-                    onClick={() => setDiffContextMode("collapsed")}
-                    title="Hide unchanged regions"
-                  >
-                    Collapsed
-                  </button>
-                  <button
-                    type="button"
-                    class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
-                    aria-pressed={diffContextMode() === "expanded"}
-                    onClick={() => setDiffContextMode("expanded")}
-                    title="Show full file"
-                  >
-                    Expanded
-                  </button>
-                </div>
-              </div>
-              <div class="file-viewer-content file-viewer-content--monaco">
-                <Show
-                  when={selectedFileData}
-                  fallback={
-                    <div class="file-viewer-empty">
-                      <span class="file-viewer-empty-text">{t("instanceShell.filesShell.viewerEmpty")}</span>
-                    </div>
-                  }
-                >
-                  {(file) => (
+                  </div>
+                  <div class="file-viewer-content file-viewer-content--monaco">
                     <Show
-                      when={!isBinaryDiff(file())}
+                      when={selectedFileData}
                       fallback={
                         <div class="file-viewer-empty">
-                          <span class="file-viewer-empty-text">Binary file cannot be displayed</span>
+                          <span class="file-viewer-empty-text">{t("instanceShell.filesShell.viewerEmpty")}</span>
                         </div>
                       }
                     >
-                      <MonacoDiffViewer
-                        scopeKey={scopeKey}
-                        path={String(file().file || "")}
-                        before={String((file() as any).before || "")}
-                        after={String((file() as any).after || "")}
-                        viewMode={diffViewMode()}
-                        contextMode={diffContextMode()}
-                      />
+                      {(file) => (
+                        <Show
+                          when={!isBinaryDiff(file())}
+                          fallback={
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">Binary file cannot be displayed</span>
+                            </div>
+                          }
+                        >
+                          <MonacoDiffViewer
+                            scopeKey={scopeKey}
+                            path={String(file().file || "")}
+                            before={String((file() as any).before || "")}
+                            after={String((file() as any).after || "")}
+                            viewMode={diffViewMode()}
+                            contextMode={diffContextMode()}
+                          />
+                        </Show>
+                      )}
                     </Show>
-                  )}
-                </Show>
+                  </div>
+                </div>
+              }
+            >
+              <div class="files-split" style={{ "--files-pane-width": `${changesSplitWidth()}px` }}>
+                <div class="file-list-panel">
+                  <div class="file-list-scroll">
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${selectedFileData?.file === item.file ? "file-list-item-active" : ""}`}
+                          onClick={() => {
+                            setSelectedFile(item.file)
+                            if (isPhoneLayout()) {
+                              setChangesListOpen(false)
+                            }
+                          }}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.file}>
+                              {item.file}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <span class="file-list-item-additions">+{item.additions}</span>
+                              <span class="file-list-item-deletions">-{item.deletions}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+                <div
+                  class="file-split-handle"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize file list"
+                  onMouseDown={handleSplitResizeMouseDown("changes")}
+                  onTouchStart={handleSplitResizeTouchStart("changes")}
+                />
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-header">
+                    <div class="file-viewer-toolbar">
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "split"}
+                        onClick={() => setDiffViewMode("split")}
+                      >
+                        Split
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "unified"}
+                        onClick={() => setDiffViewMode("unified")}
+                      >
+                        Unified
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "collapsed"}
+                        onClick={() => setDiffContextMode("collapsed")}
+                        title="Hide unchanged regions"
+                      >
+                        Collapsed
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "expanded"}
+                        onClick={() => setDiffContextMode("expanded")}
+                        title="Show full file"
+                      >
+                        Expanded
+                      </button>
+                    </div>
+                  </div>
+                  <div class="file-viewer-content file-viewer-content--monaco">
+                    <Show
+                      when={selectedFileData}
+                      fallback={
+                        <div class="file-viewer-empty">
+                          <span class="file-viewer-empty-text">{t("instanceShell.filesShell.viewerEmpty")}</span>
+                        </div>
+                      }
+                    >
+                      {(file) => (
+                        <Show
+                          when={!isBinaryDiff(file())}
+                          fallback={
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">Binary file cannot be displayed</span>
+                            </div>
+                          }
+                        >
+                          <MonacoDiffViewer
+                            scopeKey={scopeKey}
+                            path={String(file().file || "")}
+                            before={String((file() as any).before || "")}
+                            after={String((file() as any).after || "")}
+                            viewMode={diffViewMode()}
+                            contextMode={diffContextMode()}
+                          />
+                        </Show>
+                      )}
+                    </Show>
+                  </div>
+                </div>
               </div>
-            </div>
+            </Show>
+
+            <Show when={isPhoneLayout()}>
+              <Show when={changesListOpen()}>
+                <div class="file-list-overlay" role="dialog" aria-label="Changes">
+                  <div class="file-list-overlay-header">
+                    <span class="files-tab-selected-path" title={selectedFileData?.file || ""}>
+                      {selectedFileData?.file || ""}
+                    </span>
+                    <button
+                      type="button"
+                      class="files-toggle-button"
+                      onClick={() => {
+                        setChangesListTouched(true)
+                        setChangesListOpen(false)
+                        persistListOpen("changes", false)
+                      }}
+                      aria-label="Close files"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div class="file-list-scroll">
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${selectedFileData?.file === item.file ? "file-list-item-active" : ""}`}
+                          onClick={() => {
+                            setSelectedFile(item.file)
+                            setChangesListOpen(false)
+                          }}
+                          title={item.file}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.file}>
+                              {item.file}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <span class="file-list-item-additions">+{item.additions}</span>
+                              <span class="file-list-item-deletions">-{item.deletions}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+            </Show>
           </div>
         </div>
       )
@@ -1402,113 +1700,245 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       const parent = getParentPath(browserPath())
       const scopeKey = `${props.instance.id}:${worktreeSlugForViewer()}`
 
+      const toggleFilesList = () => {
+        setFilesListTouched(true)
+        setFilesListOpen((current) => {
+          const next = !current
+          persistListOpen("files", next)
+          return next
+        })
+      }
+
+      const headerDisplayedPath = () => browserSelectedPath() || browserPath()
+
       return (
         <div class="files-tab-container">
           <div class="files-tab-header">
-            <div class="files-tab-stats">
-              <span class="files-tab-stat">
-                <span class="files-tab-stat-value">{browserPath()}</span>
-              </span>
-              <Show when={browserLoading()}>
-                <span>Loading…</span>
-              </Show>
-              <Show when={browserError()}>
-                {(err) => <span class="text-error">{err()}</span>}
-              </Show>
+            <div class="files-tab-header-row">
+              <button type="button" class="files-toggle-button" onClick={toggleFilesList}>
+                {filesListOpen() ? "Hide files" : "Show files"}
+              </button>
+
+              <div class="files-tab-stats">
+                <span class="files-tab-stat">
+                  <span class="files-tab-selected-path" title={headerDisplayedPath()}>
+                    {headerDisplayedPath()}
+                  </span>
+                </span>
+                <Show when={browserLoading()}>
+                  <span>Loading…</span>
+                </Show>
+                <Show when={browserError()}>
+                  {(err) => <span class="text-error">{err()}</span>}
+                </Show>
+              </div>
             </div>
           </div>
 
-          <div class="flex min-h-0 gap-3 flex-1">
-            <div class="file-list-panel">
-              <div class="file-list-header">
-                <span class="file-list-title">Files</span>
-                <span class="file-list-count">{sorted.length}</span>
-              </div>
-              <div class="file-list-scroll">
-                <Show when={parent}>
-                  {(p) => (
-                    <div class="file-list-item" onClick={() => void loadBrowserEntries(p())}>
-                      <div class="file-list-item-content">
-                        <div class="file-list-item-path" title={p()}>
-                          ..
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </Show>
-
-                <For each={sorted}>
-                  {(item) => (
-                    <div
-                      class={`file-list-item ${browserSelectedPath() === item.path ? "file-list-item-active" : ""}`}
-                      onClick={() => {
-                        if (item.type === "directory") {
-                          void loadBrowserEntries(item.path)
-                          return
-                        }
-                        void openBrowserFile(item.path)
-                      }}
-                      title={item.path}
-                    >
-                      <div class="file-list-item-content">
-                        <div class="file-list-item-path" title={item.path}>
-                          {item.name}
-                        </div>
-                        <div class="file-list-item-stats">
-                          <span class="text-[10px] text-secondary">{item.type}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </div>
-
-            <div class="file-viewer-panel flex-1">
-              <div class="file-viewer-header">
-                <span class="file-viewer-title">Viewer</span>
-              </div>
-              <div class="file-viewer-content file-viewer-content--monaco">
-                <Show
-                  when={browserSelectedLoading()}
-                  fallback={
+          <div class="files-tab-body">
+            <Show
+              when={!isPhoneLayout() && filesListOpen()}
+              fallback={
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-content file-viewer-content--monaco">
                     <Show
-                      when={browserSelectedError()}
+                      when={browserSelectedLoading()}
                       fallback={
                         <Show
-                          when={browserSelectedPath() && browserSelectedContent() !== null
-                            ? { path: browserSelectedPath() as string, content: browserSelectedContent() as string }
-                            : null}
+                          when={browserSelectedError()}
                           fallback={
-                            <div class="file-viewer-empty">
-                              <span class="file-viewer-empty-text">Select a file to preview</span>
-                            </div>
+                            <Show
+                              when={browserSelectedPath() && browserSelectedContent() !== null
+                                ? { path: browserSelectedPath() as string, content: browserSelectedContent() as string }
+                                : null}
+                              fallback={
+                                <div class="file-viewer-empty">
+                                  <span class="file-viewer-empty-text">Select a file to preview</span>
+                                </div>
+                              }
+                            >
+                              {(payload) => (
+                                <MonacoFileViewer
+                                  scopeKey={scopeKey}
+                                  path={payload().path}
+                                  content={payload().content}
+                                />
+                              )}
+                            </Show>
                           }
                         >
-                          {(payload) => (
-                            <MonacoFileViewer
-                              scopeKey={scopeKey}
-                              path={payload().path}
-                              content={payload().content}
-                            />
+                          {(err) => (
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">{err()}</span>
+                            </div>
                           )}
                         </Show>
                       }
                     >
-                      {(err) => (
-                        <div class="file-viewer-empty">
-                          <span class="file-viewer-empty-text">{err()}</span>
+                      <div class="file-viewer-empty">
+                        <span class="file-viewer-empty-text">Loading…</span>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              }
+            >
+              <div class="files-split" style={{ "--files-pane-width": `${filesSplitWidth()}px` }}>
+                <div class="file-list-panel">
+                  <div class="file-list-scroll">
+                    <Show when={parent}>
+                      {(p) => (
+                        <div class="file-list-item" onClick={() => void loadBrowserEntries(p())}>
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={p()}>
+                              ..
+                            </div>
+                          </div>
                         </div>
                       )}
                     </Show>
-                  }
-                >
-                  <div class="file-viewer-empty">
-                    <span class="file-viewer-empty-text">Loading…</span>
+
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${browserSelectedPath() === item.path ? "file-list-item-active" : ""}`}
+                          onClick={() => {
+                            if (item.type === "directory") {
+                              void loadBrowserEntries(item.path)
+                              return
+                            }
+                            void openBrowserFile(item.path)
+                          }}
+                          title={item.path}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.path}>
+                              {item.name}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <span class="text-[10px] text-secondary">{item.type}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
                   </div>
-                </Show>
+                </div>
+                <div
+                  class="file-split-handle"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize file list"
+                  onMouseDown={handleSplitResizeMouseDown("files")}
+                  onTouchStart={handleSplitResizeTouchStart("files")}
+                />
+
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-content file-viewer-content--monaco">
+                    <Show
+                      when={browserSelectedLoading()}
+                      fallback={
+                        <Show
+                          when={browserSelectedError()}
+                          fallback={
+                            <Show
+                              when={browserSelectedPath() && browserSelectedContent() !== null
+                                ? { path: browserSelectedPath() as string, content: browserSelectedContent() as string }
+                                : null}
+                              fallback={
+                                <div class="file-viewer-empty">
+                                  <span class="file-viewer-empty-text">Select a file to preview</span>
+                                </div>
+                              }
+                            >
+                              {(payload) => (
+                                <MonacoFileViewer
+                                  scopeKey={scopeKey}
+                                  path={payload().path}
+                                  content={payload().content}
+                                />
+                              )}
+                            </Show>
+                          }
+                        >
+                          {(err) => (
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">{err()}</span>
+                            </div>
+                          )}
+                        </Show>
+                      }
+                    >
+                      <div class="file-viewer-empty">
+                        <span class="file-viewer-empty-text">Loading…</span>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
               </div>
-            </div>
+            </Show>
+
+            <Show when={isPhoneLayout()}>
+              <Show when={filesListOpen()}>
+                <div class="file-list-overlay" role="dialog" aria-label="Files">
+                  <div class="file-list-overlay-header">
+                    <span class="files-tab-selected-path" title={browserPath()}>
+                      {browserPath()}
+                    </span>
+                    <button
+                      type="button"
+                      class="files-toggle-button"
+                      onClick={() => {
+                        setFilesListTouched(true)
+                        setFilesListOpen(false)
+                        persistListOpen("files", false)
+                      }}
+                      aria-label="Close files"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div class="file-list-scroll">
+                    <Show when={parent}>
+                      {(p) => (
+                        <div class="file-list-item" onClick={() => void loadBrowserEntries(p())}>
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={p()}>
+                              ..
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </Show>
+
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${browserSelectedPath() === item.path ? "file-list-item-active" : ""}`}
+                          onClick={() => {
+                            if (item.type === "directory") {
+                              void loadBrowserEntries(item.path)
+                              return
+                            }
+                            void openBrowserFile(item.path)
+                          }}
+                          title={item.path}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.path}>
+                              {item.name}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <span class="text-[10px] text-secondary">{item.type}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+            </Show>
           </div>
         </div>
       )
@@ -1555,7 +1985,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         if (file) {
           setSelectedFile(file)
         }
-        setRightPanelTab("files")
+        setRightPanelTab("changes")
       }
 
       return (
@@ -1831,18 +2261,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   <button
                     type="button"
                     role="tab"
-                    class={tabClass("files")}
-                    aria-selected={rightPanelTab() === "files"}
-                    onClick={() => setRightPanelTab("files")}
+                    class={tabClass("changes")}
+                    aria-selected={rightPanelTab() === "changes"}
+                    onClick={() => setRightPanelTab("changes")}
                   >
                     <span class="tab-label">{t("instanceShell.rightPanel.tabs.changes")}</span>
                   </button>
                   <button
                     type="button"
                     role="tab"
-                    class={tabClass("browser")}
-                    aria-selected={rightPanelTab() === "browser"}
-                    onClick={() => setRightPanelTab("browser")}
+                    class={tabClass("files")}
+                    aria-selected={rightPanelTab() === "files"}
+                    onClick={() => setRightPanelTab("files")}
                   >
                     <span class="tab-label">{t("instanceShell.rightPanel.tabs.files")}</span>
                   </button>
@@ -1864,8 +2294,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         </div>
 
         <div class="flex-1 overflow-y-auto">
-          <Show when={rightPanelTab() === "files"}>{renderFilesTabContent()}</Show>
-          <Show when={rightPanelTab() === "browser"}>{renderBrowserTabContent()}</Show>
+          <Show when={rightPanelTab() === "changes"}>{renderFilesTabContent()}</Show>
+          <Show when={rightPanelTab() === "files"}>{renderBrowserTabContent()}</Show>
           <Show when={rightPanelTab() === "status"}>{renderStatusTabContent()}</Show>
         </div>
       </div>

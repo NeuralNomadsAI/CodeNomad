@@ -70,16 +70,85 @@
 
 /* Files tab layout */
 .files-tab-container {
-  @apply flex flex-col h-full min-h-0 p-3 gap-3;
+  @apply flex flex-col h-full min-h-0;
+}
+
+/* Split view (file list + viewer) */
+.files-split {
+  display: grid;
+  grid-template-columns: var(--files-pane-width, 320px) 10px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.file-split-handle {
+  cursor: col-resize;
+  background-color: transparent;
+  border-left: 1px solid var(--border-base);
+  border-right: 1px solid var(--border-base);
+  user-select: none;
+  touch-action: none;
+}
+
+.file-split-handle:hover {
+  background-color: var(--surface-hover);
 }
 
 .files-tab-header {
-  @apply flex items-center justify-between gap-2 px-1;
+  @apply flex items-center justify-between gap-2 px-3 py-2 border-b;
+  border-color: var(--border-base);
 }
+
+.files-tab-header-row {
+  @apply flex items-center gap-2 w-full min-w-0;
+}
+
+.files-toggle-button {
+  @apply text-[11px] px-2 py-1 border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+}
+
+.files-toggle-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.files-tab-body {
+  @apply flex flex-col flex-1 min-h-0;
+  position: relative;
+}
+
+.file-list-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-secondary);
+  border-left: 1px solid var(--border-base);
+  z-index: 5;
+}
+
+.file-list-overlay-header {
+  @apply flex items-center justify-between gap-2 px-3 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+/* Overlay title intentionally unused; header shows current path instead. */
 
 .files-tab-stats {
   @apply flex items-center gap-3 text-[11px];
   color: var(--text-muted);
+}
+
+.files-tab-selected-path {
+  @apply text-xs font-mono min-w-0 flex-1 overflow-hidden whitespace-nowrap;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
 }
 
 .files-tab-stat {
@@ -100,15 +169,14 @@
 
 /* File list panel */
 .file-list-panel {
-  @apply rounded-lg border flex flex-col min-h-0;
-  background-color: var(--surface-secondary);
-  border-color: var(--border-base);
+  @apply flex flex-col min-h-0;
+  background-color: transparent;
 }
 
 .file-list-header {
   @apply flex items-center justify-between gap-2 px-3 py-2 border-b;
   border-color: var(--border-base);
-  background-color: var(--surface-secondary);
+  background-color: transparent;
 }
 
 .file-list-title {
@@ -173,15 +241,14 @@
 
 /* File viewer panel */
 .file-viewer-panel {
-  @apply rounded-lg border flex flex-col min-h-0;
-  background-color: var(--surface-secondary);
-  border-color: var(--border-base);
+  @apply flex flex-col min-h-0;
+  background-color: transparent;
 }
 
 .file-viewer-header {
   @apply flex items-center gap-2 px-3 py-2 border-b;
   border-color: var(--border-base);
-  background-color: var(--surface-secondary);
+  background-color: transparent;
 }
 
 .file-viewer-toolbar {
