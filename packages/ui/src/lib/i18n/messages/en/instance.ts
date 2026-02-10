@@ -86,10 +86,12 @@ export const instanceMessages = {
   "instanceShell.empty.description": "Select a session to view messages",
 
   "instanceShell.rightPanel.title": "Status Panel",
-  "instanceShell.rightPanel.tabs.changes": "Changes",
+  "instanceShell.rightPanel.tabs.changes": "Session Changes",
+  "instanceShell.rightPanel.tabs.gitChanges": "Git Changes",
   "instanceShell.rightPanel.tabs.files": "Files",
   "instanceShell.rightPanel.tabs.status": "Status",
   "instanceShell.rightPanel.tabs.ariaLabel": "Right panel tabs",
+  "instanceShell.rightPanel.actions.refresh": "Refresh",
   "instanceShell.rightPanel.sections.sessionChanges": "Session Changes",
   "instanceShell.rightPanel.sections.plan": "Plan",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Background Shells",

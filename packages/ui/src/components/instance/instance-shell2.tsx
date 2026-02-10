@@ -11,9 +11,9 @@ import {
   type Component,
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
-import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
+import type { FileContent, FileNode, File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 import { Accordion } from "@kobalte/core"
-import { ChevronDown, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, RefreshCw, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
@@ -73,6 +73,7 @@ import { useI18n } from "../../lib/i18n"
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../stores/worktrees"
 import { MonacoDiffViewer } from "../file-viewer/monaco-diff-viewer"
 import { MonacoFileViewer } from "../file-viewer/monaco-file-viewer"
+import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../lib/unified-diff-reverse"
 import {
   SESSION_SIDEBAR_EVENT,
   type SessionSidebarRequestAction,
@@ -108,10 +109,13 @@ const RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v2"
 const LEGACY_RIGHT_PANEL_TAB_STORAGE_KEY = "opencode-session-right-panel-tab-v1"
 const RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-changes-split-width-v1"
 const RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-files-split-width-v1"
+const RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY = "opencode-session-right-panel-git-changes-split-width-v1"
 const RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-changes-list-open-nonphone-v1"
 const RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY = "opencode-session-right-panel-changes-list-open-phone-v1"
 const RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-files-list-open-nonphone-v1"
 const RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY = "opencode-session-right-panel-files-list-open-phone-v1"
+const RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY = "opencode-session-right-panel-git-changes-list-open-nonphone-v1"
+const RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY = "opencode-session-right-panel-git-changes-list-open-phone-v1"
 const RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY = "opencode-session-right-panel-changes-diff-view-mode-v1"
 const RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY = "opencode-session-right-panel-changes-diff-context-mode-v1"
 
@@ -119,7 +123,7 @@ const RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY = "opencode-session-right-panel-
 
 
 type LayoutMode = "desktop" | "tablet" | "phone"
-type RightPanelTab = "changes" | "files" | "status"
+type RightPanelTab = "changes" | "git-changes" | "files" | "status"
 
 const clampWidth = (value: number) => Math.min(MAX_SESSION_SIDEBAR_WIDTH, Math.max(MIN_SESSION_SIDEBAR_WIDTH, value))
 const clampRightWidth = (value: number) => {
@@ -146,6 +150,7 @@ function readStoredRightPanelTab(defaultValue: RightPanelTab): RightPanelTab {
   const stored = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
   if (stored === "status") return "status"
   if (stored === "changes") return "changes"
+  if (stored === "git-changes") return "git-changes"
   if (stored === "files") return "files"
 
   // Migrate from v1 (where the stored values were the internal tab ids).
@@ -231,7 +236,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
   const [filesSplitWidth, setFilesSplitWidth] = createSignal(320)
-  const [activeSplitResize, setActiveSplitResize] = createSignal<"changes" | "files" | null>(null)
+  const [gitChangesSplitWidth, setGitChangesSplitWidth] = createSignal(320)
+  const [activeSplitResize, setActiveSplitResize] = createSignal<"changes" | "git-changes" | "files" | null>(null)
   const [splitResizeStartX, setSplitResizeStartX] = createSignal(0)
   const [splitResizeStartWidth, setSplitResizeStartWidth] = createSignal(0)
 
@@ -239,6 +245,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [filesListTouched, setFilesListTouched] = createSignal(false)
   const [changesListOpen, setChangesListOpen] = createSignal(true)
   const [changesListTouched, setChangesListTouched] = createSignal(false)
+
+  const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
+  const [gitChangesListTouched, setGitChangesListTouched] = createSignal(false)
 
   createEffect(() => {
     // Default behavior: when nothing is selected, keep the file list open.
@@ -275,15 +284,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const listLayoutKey = createMemo(() => (isPhoneLayout() ? "phone" : "nonphone"))
 
-  const listOpenStorageKey = (tab: "changes" | "files") => {
+  const listOpenStorageKey = (tab: "changes" | "git-changes" | "files") => {
     const layout = listLayoutKey()
     if (tab === "changes") {
       return layout === "phone" ? RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY
     }
+    if (tab === "git-changes") {
+      return layout === "phone" ? RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY
+    }
     return layout === "phone" ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY
   }
 
-  const persistListOpen = (tab: "changes" | "files", value: boolean) => {
+  const persistListOpen = (tab: "changes" | "git-changes" | "files", value: boolean) => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
   }
@@ -309,6 +321,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     } else {
       setChangesListOpen(true)
       setChangesListTouched(false)
+    }
+
+    const gitPersisted = readStoredBool(listOpenStorageKey("git-changes"))
+    if (gitPersisted !== null) {
+      setGitChangesListOpen(gitPersisted)
+      setGitChangesListTouched(true)
+    } else {
+      setGitChangesListOpen(true)
+      setGitChangesListTouched(false)
     }
   })
 
@@ -388,6 +409,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     setChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY, 320)))
     setFilesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY, 320)))
+    setGitChangesSplitWidth(clampSplitWidth(readStoredPanelWidth(RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY, 320)))
 
     const handleResize = () => {
       const width = clampWidth(window.innerWidth * 0.3)
@@ -890,9 +912,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return Math.min(max, Math.max(min, Math.floor(value)))
   }
 
-  const persistSplitWidth = (mode: "changes" | "files", width: number) => {
+  const persistSplitWidth = (mode: "changes" | "git-changes" | "files", width: number) => {
     if (typeof window === "undefined") return
-    const key = mode === "changes" ? RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
+    const key =
+      mode === "changes"
+        ? RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY
+        : mode === "git-changes"
+          ? RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY
+          : RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY
     window.localStorage.setItem(key, String(width))
   }
 
@@ -912,13 +939,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const delta = event.clientX - splitResizeStartX()
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
+    else if (mode === "git-changes") setGitChangesSplitWidth(next)
     else setFilesSplitWidth(next)
   }
 
   function splitMouseUp() {
     const mode = activeSplitResize()
     if (mode) {
-      const width = mode === "changes" ? changesSplitWidth() : filesSplitWidth()
+      const width = mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
       persistSplitWidth(mode, width)
     }
     stopSplitResize()
@@ -933,35 +961,38 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const delta = touch.clientX - splitResizeStartX()
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
+    else if (mode === "git-changes") setGitChangesSplitWidth(next)
     else setFilesSplitWidth(next)
   }
 
   function splitTouchEnd() {
     const mode = activeSplitResize()
     if (mode) {
-      const width = mode === "changes" ? changesSplitWidth() : filesSplitWidth()
+      const width = mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth()
       persistSplitWidth(mode, width)
     }
     stopSplitResize()
   }
 
-  const startSplitResize = (mode: "changes" | "files", clientX: number) => {
+  const startSplitResize = (mode: "changes" | "git-changes" | "files", clientX: number) => {
     if (typeof document === "undefined") return
     setActiveSplitResize(mode)
     setSplitResizeStartX(clientX)
-    setSplitResizeStartWidth(mode === "changes" ? changesSplitWidth() : filesSplitWidth())
+    setSplitResizeStartWidth(
+      mode === "changes" ? changesSplitWidth() : mode === "git-changes" ? gitChangesSplitWidth() : filesSplitWidth(),
+    )
     document.addEventListener("mousemove", splitMouseMove)
     document.addEventListener("mouseup", splitMouseUp)
     document.addEventListener("touchmove", splitTouchMove, { passive: false })
     document.addEventListener("touchend", splitTouchEnd)
   }
 
-  const handleSplitResizeMouseDown = (mode: "changes" | "files") => (event: MouseEvent) => {
+  const handleSplitResizeMouseDown = (mode: "changes" | "git-changes" | "files") => (event: MouseEvent) => {
     event.preventDefault()
     startSplitResize(mode, event.clientX)
   }
 
-  const handleSplitResizeTouchStart = (mode: "changes" | "files") => (event: TouchEvent) => {
+  const handleSplitResizeTouchStart = (mode: "changes" | "git-changes" | "files") => (event: TouchEvent) => {
     const touch = event.touches[0]
     if (!touch) return
     event.preventDefault()
@@ -1228,8 +1259,34 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       return getDefaultWorktreeSlug(props.instance.id)
     })
 
+    const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instance.id, worktreeSlugForViewer()))
+
+    const [gitStatusEntries, setGitStatusEntries] = createSignal<GitFileStatus[] | null>(null)
+    const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
+    const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
+    const [gitSelectedPath, setGitSelectedPath] = createSignal<string | null>(null)
+    const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
+    const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
+    const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
+    const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
+
+    const gitMostChangedPath = createMemo<string | null>(() => {
+      const entries = gitStatusEntries()
+      if (!Array.isArray(entries) || entries.length === 0) return null
+      const candidates = entries.filter((item) => item && item.status !== "deleted")
+      if (candidates.length === 0) return null
+      const best = candidates.reduce((currentBest, item) => {
+        const bestScore = (currentBest?.added ?? 0) + (currentBest?.removed ?? 0)
+        const score = (item?.added ?? 0) + (item?.removed ?? 0)
+        if (score > bestScore) return item
+        if (score < bestScore) return currentBest
+        return String(item.path || "").localeCompare(String(currentBest?.path || "")) < 0 ? item : currentBest
+      }, candidates[0])
+      return typeof best?.path === "string" ? best.path : null
+    })
+
     createEffect(() => {
-      // Reset browser state when worktree context changes.
+      // Reset tab state when worktree context changes.
       worktreeSlugForViewer()
       setBrowserPath(".")
       setBrowserEntries(null)
@@ -1238,9 +1295,110 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       setBrowserSelectedContent(null)
       setBrowserSelectedError(null)
       setBrowserSelectedLoading(false)
+
+      setGitStatusEntries(null)
+      setGitStatusError(null)
+      setGitStatusLoading(false)
+      setGitSelectedPath(null)
+      setGitSelectedLoading(false)
+      setGitSelectedError(null)
+      setGitSelectedBefore(null)
+      setGitSelectedAfter(null)
     })
 
-    const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instance.id, worktreeSlugForViewer()))
+    const loadGitStatus = async (force = false) => {
+      if (!force && gitStatusEntries() !== null) return
+      setGitStatusLoading(true)
+      setGitStatusError(null)
+      try {
+        const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
+        setGitStatusEntries(Array.isArray(list) ? list : [])
+      } catch (error) {
+        setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
+        setGitStatusEntries([])
+      } finally {
+        setGitStatusLoading(false)
+      }
+    }
+
+    async function openGitFile(path: string) {
+      setGitSelectedPath(path)
+      setGitSelectedLoading(true)
+      setGitSelectedError(null)
+      setGitSelectedBefore(null)
+      setGitSelectedAfter(null)
+
+      const list = gitStatusEntries() || []
+      const entry = list.find((item) => item.path === path) || null
+      if (entry?.status === "deleted") {
+        setGitSelectedError("Deleted file diff is not available yet")
+        setGitSelectedLoading(false)
+        return
+      }
+
+      // Phone: treat file selection as a commit action and close the overlay.
+      if (isPhoneLayout()) {
+        setGitChangesListOpen(false)
+      }
+
+      try {
+        const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
+        const type = (content as any)?.type
+        const encoding = (content as any)?.encoding
+        if (type && type !== "text") {
+          throw new Error("Binary file cannot be displayed")
+        }
+        if (encoding === "base64") {
+          throw new Error("Binary file cannot be displayed")
+        }
+        const afterText = typeof (content as any)?.content === "string" ? ((content as any).content as string) : null
+        if (afterText === null) {
+          throw new Error("Unsupported file type")
+        }
+
+        setGitSelectedAfter(afterText)
+
+        if (entry?.status === "added") {
+          setGitSelectedBefore("")
+          return
+        }
+
+        const diffText =
+          typeof (content as any)?.diff === "string" && String((content as any).diff).trim().length > 0
+            ? String((content as any).diff)
+            : (content as any)?.patch
+              ? buildUnifiedDiffFromSdkPatch((content as any).patch)
+              : ""
+
+        const beforeText = tryReverseApplyUnifiedDiff(afterText, diffText)
+        if (beforeText === null) {
+          throw new Error("Unable to calculate diff for this file")
+        }
+        setGitSelectedBefore(beforeText)
+      } catch (error) {
+        setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
+      } finally {
+        setGitSelectedLoading(false)
+      }
+    }
+
+    createEffect(() => {
+      if (rightPanelTab() !== "git-changes") return
+      const entries = gitStatusEntries()
+      if (entries === null) return
+      if (gitSelectedPath()) return
+      const next = gitMostChangedPath()
+      if (!next) return
+      void openGitFile(next)
+    })
+
+    const refreshGitStatus = async () => {
+      await loadGitStatus(true)
+      const selected = gitSelectedPath()
+      if (selected) {
+        void openGitFile(selected)
+      }
+    }
 
     const bestDiffFile = createMemo<string | null>(() => {
       const diffs = activeSessionDiffs()
@@ -1340,6 +1498,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (browserLoading()) return
       if (browserEntries() !== null) return
       void loadBrowserEntries(browserPath())
+    })
+
+    createEffect(() => {
+      if (rightPanelTab() !== "git-changes") return
+      if (gitStatusLoading()) return
+      if (gitStatusEntries() !== null) return
+      void loadGitStatus()
     })
 
     const renderFilesTabContent = () => {
@@ -1694,6 +1859,36 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
       const headerDisplayedPath = () => browserSelectedPath() || browserPath()
 
+      const refreshFilesTab = async () => {
+        void loadBrowserEntries(browserPath())
+        const selected = browserSelectedPath()
+        if (selected) {
+          // Refresh file content without altering overlay state.
+          setBrowserSelectedLoading(true)
+          setBrowserSelectedError(null)
+          try {
+            const content = await requestData<FileContent>(browserClient().file.read({ path: selected }), "file.read")
+            const type = (content as any)?.type
+            const encoding = (content as any)?.encoding
+            if (type && type !== "text") {
+              throw new Error("Binary file cannot be displayed")
+            }
+            if (encoding === "base64") {
+              throw new Error("Binary file cannot be displayed")
+            }
+            const text = (content as any)?.content
+            if (typeof text !== "string") {
+              throw new Error("Unsupported file type")
+            }
+            setBrowserSelectedContent(text)
+          } catch (error) {
+            setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
+          } finally {
+            setBrowserSelectedLoading(false)
+          }
+        }
+      }
+
       return (
         <div class="files-tab-container">
           <div class="files-tab-header">
@@ -1715,6 +1910,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   {(err) => <span class="text-error">{err()}</span>}
                 </Show>
               </div>
+
+              <button
+                type="button"
+                class="files-header-icon-button"
+                title={t("instanceShell.rightPanel.actions.refresh")}
+                aria-label={t("instanceShell.rightPanel.actions.refresh")}
+                disabled={browserLoading()}
+                style={{ "margin-left": "auto" }}
+                onClick={() => void refreshFilesTab()}
+              >
+                <RefreshCw class={`h-4 w-4${browserLoading() ? " animate-spin" : ""}`} />
+              </button>
             </div>
           </div>
 
@@ -1896,6 +2103,369 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             </div>
                             <div class="file-list-item-stats">
                               <span class="text-[10px] text-secondary">{item.type}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+            </Show>
+          </div>
+        </div>
+      )
+    }
+
+    const renderGitChangesTabContent = () => {
+      const sessionId = activeSessionIdForInstance()
+      if (!sessionId || sessionId === "info") {
+        return (
+          <div class="right-panel-empty">
+            <span class="text-xs">Select a session to view changes.</span>
+          </div>
+        )
+      }
+
+      const entries = gitStatusEntries()
+      if (entries === null) {
+        return (
+          <div class="right-panel-empty">
+            <span class="text-xs">Loading git changes…</span>
+          </div>
+        )
+      }
+
+      const nonDeleted = entries.filter((item) => item && item.status !== "deleted")
+      if (nonDeleted.length === 0) {
+        return (
+          <div class="right-panel-empty">
+            <span class="text-xs">No git changes yet.</span>
+          </div>
+        )
+      }
+
+      const sorted = [...entries].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
+      const totals = sorted.reduce(
+        (acc, item) => {
+          acc.additions += typeof item.added === "number" ? item.added : 0
+          acc.deletions += typeof item.removed === "number" ? item.removed : 0
+          return acc
+        },
+        { additions: 0, deletions: 0 },
+      )
+
+      const selectedPath = gitSelectedPath()
+      const fallbackPath = gitMostChangedPath()
+      const selectedEntry =
+        sorted.find((item) => item.path === selectedPath) || (fallbackPath ? sorted.find((item) => item.path === fallbackPath) : null)
+      const scopeKey = `${props.instance.id}:git:${worktreeSlugForViewer()}`
+
+      const toggleGitList = () => {
+        setGitChangesListTouched(true)
+        setGitChangesListOpen((current) => {
+          const next = !current
+          persistListOpen("git-changes", next)
+          return next
+        })
+      }
+
+      return (
+        <div class="files-tab-container">
+          <div class="files-tab-header">
+            <div class="files-tab-header-row">
+              <button type="button" class="files-toggle-button" onClick={toggleGitList}>
+                {gitChangesListOpen() ? "Hide files" : "Show files"}
+              </button>
+
+              <span class="files-tab-selected-path" title={selectedEntry?.path || ""}>
+                {selectedEntry?.path || ""}
+              </span>
+
+              <div class="files-tab-stats" style={{ "flex": "0 0 auto" }}>
+                <span class="files-tab-stat files-tab-stat-additions">
+                  <span class="files-tab-stat-value">+{totals.additions}</span>
+                </span>
+                <span class="files-tab-stat files-tab-stat-deletions">
+                  <span class="files-tab-stat-value">-{totals.deletions}</span>
+                </span>
+                <Show when={gitStatusError()}>
+                  {(err) => <span class="text-error">{err()}</span>}
+                </Show>
+              </div>
+
+              <button
+                type="button"
+                class="files-header-icon-button"
+                title={t("instanceShell.rightPanel.actions.refresh")}
+                aria-label={t("instanceShell.rightPanel.actions.refresh")}
+                disabled={gitStatusLoading()}
+                style={{ "margin-left": "auto" }}
+                onClick={() => void refreshGitStatus()}
+              >
+                <RefreshCw class={`h-4 w-4${gitStatusLoading() ? " animate-spin" : ""}`} />
+              </button>
+            </div>
+          </div>
+
+          <div class="files-tab-body">
+            <Show
+              when={!isPhoneLayout() && gitChangesListOpen()}
+              fallback={
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-header">
+                    <div class="file-viewer-toolbar">
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "split"}
+                        onClick={() => setDiffViewMode("split")}
+                      >
+                        Split
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "unified"}
+                        onClick={() => setDiffViewMode("unified")}
+                      >
+                        Unified
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "collapsed"}
+                        onClick={() => setDiffContextMode("collapsed")}
+                        title="Hide unchanged regions"
+                      >
+                        Collapsed
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "expanded"}
+                        onClick={() => setDiffContextMode("expanded")}
+                        title="Show full file"
+                      >
+                        Expanded
+                      </button>
+                    </div>
+                  </div>
+                  <div class="file-viewer-content file-viewer-content--monaco">
+                    <Show
+                      when={gitSelectedLoading()}
+                      fallback={
+                        <Show
+                          when={gitSelectedError()}
+                          fallback={
+                            <Show
+                              when={
+                                selectedEntry &&
+                                gitSelectedBefore() !== null &&
+                                gitSelectedAfter() !== null &&
+                                selectedEntry.status !== "deleted"
+                                  ? {
+                                      path: selectedEntry.path,
+                                      before: gitSelectedBefore() as string,
+                                      after: gitSelectedAfter() as string,
+                                    }
+                                  : null
+                              }
+                              fallback={
+                                <div class="file-viewer-empty">
+                                  <span class="file-viewer-empty-text">No file selected.</span>
+                                </div>
+                              }
+                            >
+                              {(file) => (
+                                <MonacoDiffViewer
+                                  scopeKey={scopeKey}
+                                  path={String(file().path || "")}
+                                  before={String((file() as any).before || "")}
+                                  after={String((file() as any).after || "")}
+                                  viewMode={diffViewMode()}
+                                  contextMode={diffContextMode()}
+                                />
+                              )}
+                            </Show>
+                          }
+                        >
+                          {(err) => (
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">{err()}</span>
+                            </div>
+                          )}
+                        </Show>
+                      }
+                    >
+                      <div class="file-viewer-empty">
+                        <span class="file-viewer-empty-text">Loading…</span>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              }
+            >
+              <div class="files-split" style={{ "--files-pane-width": `${gitChangesSplitWidth()}px` }}>
+                <div class="file-list-panel">
+                  <div class="file-list-scroll">
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${gitSelectedPath() === item.path ? "file-list-item-active" : ""}`}
+                          onClick={() => {
+                            void openGitFile(item.path)
+                          }}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.path}>
+                              {item.path}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <Show when={item.status === "deleted"}>
+                                <span class="text-[10px] text-secondary">deleted</span>
+                              </Show>
+                              <Show when={item.status !== "deleted"}>
+                                <>
+                                  <span class="file-list-item-additions">+{item.added}</span>
+                                  <span class="file-list-item-deletions">-{item.removed}</span>
+                                </>
+                              </Show>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+                <div
+                  class="file-split-handle"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize file list"
+                  onMouseDown={handleSplitResizeMouseDown("git-changes")}
+                  onTouchStart={handleSplitResizeTouchStart("git-changes")}
+                />
+                <div class="file-viewer-panel flex-1">
+                  <div class="file-viewer-header">
+                    <div class="file-viewer-toolbar">
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "split" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "split"}
+                        onClick={() => setDiffViewMode("split")}
+                      >
+                        Split
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffViewMode() === "unified" ? " active" : ""}`}
+                        aria-pressed={diffViewMode() === "unified"}
+                        onClick={() => setDiffViewMode("unified")}
+                      >
+                        Unified
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "collapsed" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "collapsed"}
+                        onClick={() => setDiffContextMode("collapsed")}
+                        title="Hide unchanged regions"
+                      >
+                        Collapsed
+                      </button>
+                      <button
+                        type="button"
+                        class={`file-viewer-toolbar-button${diffContextMode() === "expanded" ? " active" : ""}`}
+                        aria-pressed={diffContextMode() === "expanded"}
+                        onClick={() => setDiffContextMode("expanded")}
+                        title="Show full file"
+                      >
+                        Expanded
+                      </button>
+                    </div>
+                  </div>
+                  <div class="file-viewer-content file-viewer-content--monaco">
+                    <Show
+                      when={gitSelectedLoading()}
+                      fallback={
+                        <Show
+                          when={gitSelectedError()}
+                          fallback={
+                            <Show
+                              when={
+                                selectedEntry &&
+                                gitSelectedBefore() !== null &&
+                                gitSelectedAfter() !== null &&
+                                selectedEntry.status !== "deleted"
+                                  ? {
+                                      path: selectedEntry.path,
+                                      before: gitSelectedBefore() as string,
+                                      after: gitSelectedAfter() as string,
+                                    }
+                                  : null
+                              }
+                              fallback={
+                                <div class="file-viewer-empty">
+                                  <span class="file-viewer-empty-text">No file selected.</span>
+                                </div>
+                              }
+                            >
+                              {(file) => (
+                                <MonacoDiffViewer
+                                  scopeKey={scopeKey}
+                                  path={String(file().path || "")}
+                                  before={String((file() as any).before || "")}
+                                  after={String((file() as any).after || "")}
+                                  viewMode={diffViewMode()}
+                                  contextMode={diffContextMode()}
+                                />
+                              )}
+                            </Show>
+                          }
+                        >
+                          {(err) => (
+                            <div class="file-viewer-empty">
+                              <span class="file-viewer-empty-text">{err()}</span>
+                            </div>
+                          )}
+                        </Show>
+                      }
+                    >
+                      <div class="file-viewer-empty">
+                        <span class="file-viewer-empty-text">Loading…</span>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={isPhoneLayout()}>
+              <Show when={gitChangesListOpen()}>
+                <div class="file-list-overlay" role="dialog" aria-label="Git Changes">
+                  <div class="file-list-scroll">
+                    <For each={sorted}>
+                      {(item) => (
+                        <div
+                          class={`file-list-item ${gitSelectedPath() === item.path ? "file-list-item-active" : ""}`}
+                          onClick={() => void openGitFile(item.path)}
+                          title={item.path}
+                        >
+                          <div class="file-list-item-content">
+                            <div class="file-list-item-path" title={item.path}>
+                              {item.path}
+                            </div>
+                            <div class="file-list-item-stats">
+                              <Show when={item.status === "deleted"}>
+                                <span class="text-[10px] text-secondary">deleted</span>
+                              </Show>
+                              <Show when={item.status !== "deleted"}>
+                                <>
+                                  <span class="file-list-item-additions">+{item.added}</span>
+                                  <span class="file-list-item-deletions">-{item.removed}</span>
+                                </>
+                              </Show>
                             </div>
                           </div>
                         </div>
@@ -2197,32 +2767,31 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
         <div class="right-panel-tab-bar">
           <div class="tab-container">
+            <div class="tab-strip-shortcuts text-primary">
+              <Show when={rightDrawerState() === "floating-open"}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={t("instanceShell.rightDrawer.toggle.close")}
+                  title={t("instanceShell.rightDrawer.toggle.close")}
+                  onClick={closeRightDrawer}
+                >
+                  <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+                </IconButton>
+              </Show>
+              <Show when={!isPhoneLayout()}>
+                <IconButton
+                  size="small"
+                  color="inherit"
+                  aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
+                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
+                >
+                  {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+                </IconButton>
+              </Show>
+            </div>
             <div class="tab-scroll">
               <div class="tab-strip">
-                <div class="tab-strip-shortcuts text-primary">
-                  <Show when={rightDrawerState() === "floating-open"}>
-                    <IconButton
-                      size="small"
-                      color="inherit"
-                      aria-label={t("instanceShell.rightDrawer.toggle.close")}
-                      title={t("instanceShell.rightDrawer.toggle.close")}
-                      onClick={closeRightDrawer}
-                    >
-                      <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-                    </IconButton>
-                  </Show>
-                  <Show when={!isPhoneLayout()}>
-                    <IconButton
-                      size="small"
-                      color="inherit"
-                      aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
-                      onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
-                    >
-                      {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-                    </IconButton>
-                  </Show>
-                </div>
-
                 <div class="tab-strip-tabs" role="tablist" aria-label={t("instanceShell.rightPanel.tabs.ariaLabel")}>
                   <button
                     type="button"
@@ -2232,6 +2801,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     onClick={() => setRightPanelTab("changes")}
                   >
                     <span class="tab-label">{t("instanceShell.rightPanel.tabs.changes")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    class={tabClass("git-changes")}
+                    aria-selected={rightPanelTab() === "git-changes"}
+                    onClick={() => setRightPanelTab("git-changes")}
+                  >
+                    <span class="tab-label">{t("instanceShell.rightPanel.tabs.gitChanges")}</span>
                   </button>
                   <button
                     type="button"
@@ -2261,6 +2839,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
         <div class="flex-1 overflow-y-auto">
           <Show when={rightPanelTab() === "changes"}>{renderFilesTabContent()}</Show>
+          <Show when={rightPanelTab() === "git-changes"}>{renderGitChangesTabContent()}</Show>
           <Show when={rightPanelTab() === "files"}>{renderBrowserTabContent()}</Show>
           <Show when={rightPanelTab() === "status"}>{renderStatusTabContent()}</Show>
         </div>

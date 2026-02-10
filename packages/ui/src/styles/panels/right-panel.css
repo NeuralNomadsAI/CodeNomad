@@ -22,6 +22,12 @@
   @apply flex items-center justify-between gap-1 px-2 pt-2 pb-0;
 }
 
+/* Keep the shortcuts (close/pin) fixed; only the tabs should scroll. */
+.right-panel-tab-bar .tab-scroll {
+  @apply flex-1;
+  width: auto;
+}
+
 /* Shortcuts on the left side - match left drawer icon colors */
 .tab-strip-shortcuts {
   @apply flex items-center gap-1 flex-shrink-0;
@@ -112,6 +118,22 @@
 .files-toggle-button:hover {
   background-color: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.files-header-icon-button {
+  @apply inline-flex items-center justify-center shrink-0 w-7 h-7 border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+}
+
+.files-header-icon-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.files-header-icon-button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .files-tab-body {
