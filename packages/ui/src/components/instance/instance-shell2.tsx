@@ -1631,23 +1631,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             <Show when={isPhoneLayout()}>
               <Show when={changesListOpen()}>
                 <div class="file-list-overlay" role="dialog" aria-label="Changes">
-                  <div class="file-list-overlay-header">
-                    <span class="files-tab-selected-path" title={selectedFileData?.file || ""}>
-                      {selectedFileData?.file || ""}
-                    </span>
-                    <button
-                      type="button"
-                      class="files-toggle-button"
-                      onClick={() => {
-                        setChangesListTouched(true)
-                        setChangesListOpen(false)
-                        persistListOpen("changes", false)
-                      }}
-                      aria-label="Close files"
-                    >
-                      Close
-                    </button>
-                  </div>
                   <div class="file-list-scroll">
                     <For each={sorted}>
                       {(item) => (
@@ -1881,23 +1864,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             <Show when={isPhoneLayout()}>
               <Show when={filesListOpen()}>
                 <div class="file-list-overlay" role="dialog" aria-label="Files">
-                  <div class="file-list-overlay-header">
-                    <span class="files-tab-selected-path" title={browserPath()}>
-                      {browserPath()}
-                    </span>
-                    <button
-                      type="button"
-                      class="files-toggle-button"
-                      onClick={() => {
-                        setFilesListTouched(true)
-                        setFilesListOpen(false)
-                        persistListOpen("files", false)
-                      }}
-                      aria-label="Close files"
-                    >
-                      Close
-                    </button>
-                  </div>
                   <div class="file-list-scroll">
                     <Show when={parent}>
                       {(p) => (

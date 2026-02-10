@@ -117,6 +117,7 @@
 .files-tab-body {
   @apply flex flex-col flex-1 min-h-0;
   position: relative;
+  isolation: isolate;
 }
 
 .file-list-overlay {
@@ -126,16 +127,11 @@
   flex-direction: column;
   background-color: var(--surface-secondary);
   border-left: 1px solid var(--border-base);
-  z-index: 5;
+  /* Monaco uses layered positioned elements; keep overlay well above it. */
+  z-index: 200;
 }
 
-.file-list-overlay-header {
-  @apply flex items-center justify-between gap-2 px-3 py-2 border-b;
-  border-color: var(--border-base);
-  background-color: var(--surface-secondary);
-}
-
-/* Overlay title intentionally unused; header shows current path instead. */
+/* Phone overlay: header removed; use main header toggle. */
 
 .files-tab-stats {
   @apply flex items-center gap-3 text-[11px];
