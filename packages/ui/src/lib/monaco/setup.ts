@@ -118,8 +118,10 @@ function getContributionModuleId(languageId: string): string | null {
   if (id === "html") return "vs/language/html/monaco.contribution"
 
   // Basic tokenizers
-  if (id === "toml") return "vs/basic-languages/toml/toml.contribution"
-  return `vs/basic-languages/${id}/${id}.contribution`
+  // Monaco's `min/vs/basic-languages/<id>/` ships `<id>.js` (no `*.contribution.js`).
+  // Loading the tokenizer module is enough; it registers itself with the language service.
+  if (id === "toml") return "vs/basic-languages/toml/toml"
+  return `vs/basic-languages/${id}/${id}`
 }
 
 const loadedContributions = new Set<string>()
@@ -134,12 +136,14 @@ export async function ensureMonacoLanguageLoaded(languageId: string): Promise<vo
   if (pending) return pending
 
   const task = (async () => {
+    let loaded = false
     try {
       await requireAsync([moduleId])
+      loaded = true
     } catch {
       // ignore
     } finally {
-      loadedContributions.add(moduleId)
+      if (loaded) loadedContributions.add(moduleId)
       pendingContributions.delete(moduleId)
     }
   })()
