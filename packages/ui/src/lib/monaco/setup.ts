@@ -167,10 +167,6 @@ export async function loadMonaco(): Promise<MonacoApi> {
       paths["vs/basic-languages"] = `${CDN_VS_ROOT}/basic-languages`
       paths["vs/language"] = `${CDN_VS_ROOT}/language`
 
-      // Keep Monaco's language metadata available offline.
-      paths["vs/basic-languages/monaco.contribution"] = `${LOCAL_VS_ROOT}/basic-languages/monaco.contribution`
-      paths["vs/basic-languages/_.contribution"] = `${LOCAL_VS_ROOT}/basic-languages/_.contribution`
-
       // Baseline languages should remain available offline too.
       paths["vs/basic-languages/python"] = `${LOCAL_VS_ROOT}/basic-languages/python`
       paths["vs/basic-languages/markdown"] = `${LOCAL_VS_ROOT}/basic-languages/markdown`
@@ -193,7 +189,12 @@ export async function loadMonaco(): Promise<MonacoApi> {
 
     // Load language metadata so we can infer language IDs from paths.
     // (This is small and should remain local for offline support.)
-    await requireAsync(["vs/basic-languages/monaco.contribution", "vs/basic-languages/_.contribution"]).catch(() => [])
+    // Note: In Monaco 0.52.x, `vs/basic-languages/monaco.contribution` is bundled
+    // into `vs/editor/editor.main` already. Older builds had additional
+    // `vs/basic-languages/_.contribution` metadata, but that module isn't present
+    // in the current AMD bundle; attempting to load it can trigger a hard
+    // `Unexpected token '<'` if the server falls back to `index.html`.
+    await requireAsync(["vs/basic-languages/monaco.contribution"]).catch(() => [])
 
     return (globalThis as any).monaco ?? monaco
   })()
