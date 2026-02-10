@@ -399,7 +399,8 @@ async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<b
 
 async function startCli() {
   try {
-    const devMode = process.env.NODE_ENV === "development"
+    const devMode =
+      !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL || process.env.ELECTRON_RENDERER_URL || process.env.NODE_ENV === "development")
     console.info("[cli] start requested (dev mode:", devMode, ")")
     await cliManager.start({ dev: devMode })
   } catch (error) {
