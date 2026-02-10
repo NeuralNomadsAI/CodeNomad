@@ -51,6 +51,20 @@ function ensureLoaderScript(): Promise<void> {
   })
 }
 
+function ensureEditorCss(): void {
+  if (typeof document === "undefined") return
+  const existing = document.querySelector('link[data-monaco-editor-css="true"]')
+  if (existing) return
+
+  // Some environments don't reliably load `vs/css!` plugin resources.
+  // Loading the core stylesheet explicitly keeps Monaco visible.
+  const link = document.createElement("link")
+  link.rel = "stylesheet"
+  link.href = `${LOCAL_VS_ROOT}/editor/editor.main.css`
+  ;(link as any).dataset.monacoEditorCss = "true"
+  document.head.appendChild(link)
+}
+
 function configureWorkers() {
   const globalAny = globalThis as any
   const prevEnv = globalAny.MonacoEnvironment ?? {}
@@ -140,6 +154,7 @@ export async function loadMonaco(): Promise<MonacoApi> {
   monacoPromise = (async () => {
     await ensureLoaderScript()
     configureWorkers()
+    ensureEditorCss()
 
     const online = await canReachCdn()
     const requireConfig = getRequireConfig()
