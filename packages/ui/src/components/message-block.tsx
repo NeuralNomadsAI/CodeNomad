@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import { ExternalLink, FoldVertical, Trash2 } from "lucide-solid"
+import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, Trash2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -1010,10 +1010,13 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const toggle = () => setExpanded((prev) => !prev)
 
+  const viewHideLabel = () =>
+    expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
+
   const hasDeleteTarget = () => Boolean(props.partId)
   const canDelete = () => hasDeleteTarget() && !deleting()
 
-  const handleDelete = async (event: Event) => {
+  const handleDelete = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     if (!canDelete()) return
@@ -1033,56 +1036,66 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   return (
     <div class="message-reasoning-card">
-      <button
-        type="button"
-        class="message-reasoning-toggle"
-        onClick={toggle}
-        aria-expanded={expanded()}
-        aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
-      >
-        <span class="message-reasoning-label flex flex-wrap items-center gap-2">
-          <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
-          <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
-            <span class="message-step-meta-inline">
-              <Show when={agentIdentifier()}>
-                {(value) => (
-                  <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
-                )}
-              </Show>
-              <Show when={modelIdentifier()}>
-                {(value) => (
-                  <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
-                )}
-              </Show>
-            </span>
-          </Show>
-        </span>
-        <span class="message-reasoning-meta">
-          <span class="message-reasoning-indicator">
-            {expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")}
+      <div class="message-reasoning-header">
+        <button
+          type="button"
+          class="message-reasoning-toggle"
+          onClick={toggle}
+          aria-expanded={expanded()}
+          aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
+        >
+          <span class="message-reasoning-label flex flex-wrap items-center gap-2">
+            <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
+            <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
+              <span class="message-step-meta-inline">
+                <Show when={agentIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+                  )}
+                </Show>
+                <Show when={modelIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+                  )}
+                </Show>
+              </span>
+            </Show>
           </span>
+        </button>
+
+        <div class="message-reasoning-actions">
+          <button
+            type="button"
+            class="message-action-button"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              toggle()
+            }}
+            aria-label={viewHideLabel()}
+            title={viewHideLabel()}
+          >
+            <Show when={expanded()} fallback={<ChevronsUpDown class="w-3.5 h-3.5" aria-hidden="true" />}>
+              <ChevronsDownUp class="w-3.5 h-3.5" aria-hidden="true" />
+            </Show>
+          </button>
 
           <Show when={hasDeleteTarget()}>
-            <span
-              class={`message-reasoning-indicator${canDelete() ? "" : " opacity-50 pointer-events-none"}`}
-              role="button"
-              tabIndex={0}
+            <button
+              type="button"
+              class="message-action-button"
               onClick={handleDelete}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  handleDelete(event)
-                }
-              }}
+              disabled={!canDelete()}
               aria-label={t("messagePart.actions.deleteTitle")}
               title={t("messagePart.actions.deleteTitle")}
             >
-              {deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-            </span>
+              <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
           </Show>
 
           <span class="message-reasoning-time">{timestamp()}</span>
-        </span>
-      </button>
+        </div>
+      </div>
 
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">

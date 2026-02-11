@@ -1,5 +1,6 @@
 import { mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
+import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -19,6 +20,7 @@ import {
   setSessionInfoByInstance,
   setSessions,
   sessions,
+  withSession,
   loading,
   setLoading,
   cleanupBlankSessions,
@@ -41,6 +43,49 @@ import {
 } from "./worktrees"
 
 const log = getLogger("api")
+
+const pendingSessionDiffFetches = new Map<string, Promise<void>>()
+
+async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
+  if (!instanceId || !sessionId) return
+
+  const key = `${instanceId}:${sessionId}`
+  if (!force) {
+    const existing = sessions().get(instanceId)?.get(sessionId)
+    if (existing?.diff !== undefined) return
+    const pending = pendingSessionDiffFetches.get(key)
+    if (pending) return pending
+  }
+
+  const promise = (async () => {
+    const instance = instances().get(instanceId)
+    if (!instance?.client) return
+
+    const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
+    try {
+      const diffs = await requestData<FileDiff[]>(
+        client.session.diff({ sessionID: sessionId }),
+        "session.diff",
+      )
+
+      if (!Array.isArray(diffs)) {
+        return
+      }
+
+      withSession(instanceId, sessionId, (session) => {
+        session.diff = diffs
+      })
+    } catch (error) {
+      log.warn("Failed to fetch session diff", { instanceId, sessionId, error })
+    }
+  })()
+
+  pendingSessionDiffFetches.set(key, promise)
+  void promise.finally(() => pendingSessionDiffFetches.delete(key))
+  return promise
+}
 
 interface SessionForkResponse {
   id: string
@@ -569,6 +614,11 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   if (!session) {
     throw new Error("Session not found")
   }
+
+  // Fetch session-level diffs in the background once the session is opened.
+  void loadSessionDiff(instanceId, sessionId).catch((error) => {
+    log.warn("Failed to load session diff", { instanceId, sessionId, error })
+  })
 
   setLoading((prev) => {
     const next = { ...prev }

@@ -4,7 +4,19 @@
 }
 
 .message-item-header {
+  @apply flex flex-col gap-0.5;
+}
+
+.message-item-header-row {
+  @apply w-full;
+}
+
+.message-item-header-row--top {
   @apply flex justify-between items-start gap-2.5;
+}
+
+.message-item-header-row--bottom {
+  @apply flex items-start;
 }
 
 .message-speaker {
@@ -13,6 +25,7 @@
 
 .message-speaker-label {
   font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
 }
 
 .message-speaker-label[data-role="user"] {
@@ -298,11 +311,25 @@
   gap: 0;
 }
 
+.message-reasoning-header {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.5rem;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-reasoning-header:hover {
+  background-color: var(--surface-hover);
+}
+
 .message-reasoning-toggle {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.65rem;
   background: none;
   border: none;
@@ -314,13 +341,20 @@
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.message-reasoning-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem 0.25rem 0;
+}
+
 .message-reasoning-toggle:hover {
-  background-color: var(--surface-hover);
+  background-color: transparent;
 }
 
 .message-reasoning-toggle:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--border-base);
 }
 
 .message-reasoning-label {

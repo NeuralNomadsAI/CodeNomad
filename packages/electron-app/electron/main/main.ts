@@ -399,7 +399,11 @@ async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<b
 
 async function startCli() {
   try {
-    const devMode = process.env.NODE_ENV === "development"
+    // In desktop dev workflows we always want the CLI to run in dev mode so it:
+    // - uses plain HTTP
+    // - proxies UI requests to the renderer dev server
+    // Monaco's AMD assets are served from that dev server.
+    const devMode = !app.isPackaged
     console.info("[cli] start requested (dev mode:", devMode, ")")
     await cliManager.start({ dev: devMode })
   } catch (error) {

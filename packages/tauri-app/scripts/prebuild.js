@@ -2,6 +2,7 @@
 const fs = require("fs")
 const path = require("path")
 const { execSync } = require("child_process")
+const { pathToFileURL } = require("url")
 
 const root = path.resolve(__dirname, "..")
 const workspaceRoot = path.resolve(root, "..", "..")
@@ -36,6 +37,20 @@ const braceExpansionPath = path.join(
 )
 
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
+
+async function ensureMonacoAssets() {
+  const helperPath = path.join(uiRoot, "scripts", "monaco-public-assets.js")
+  const helperUrl = pathToFileURL(helperPath).href
+  const { copyMonacoPublicAssets } = await import(helperUrl)
+  copyMonacoPublicAssets({
+    uiRendererRoot: path.join(uiRoot, "src", "renderer"),
+    warn: (msg) => console.warn(`[prebuild] ${msg}`),
+    sourceRoots: [
+      path.resolve(workspaceRoot, "node_modules", "monaco-editor", "min", "vs"),
+      path.resolve(uiRoot, "node_modules", "monaco-editor", "min", "vs"),
+    ],
+  })
+}
 
 function ensureServerBuild() {
   const distPath = path.join(serverRoot, "dist")
@@ -223,12 +238,18 @@ function copyUiLoadingAssets() {
   console.log(`[prebuild] prepared UI loading assets from ${uiDist}`)
 }
 
-ensureServerDevDependencies()
-ensureUiDevDependencies()
-ensureRollupPlatformBinary()
-ensureServerDependencies()
-ensureServerBuild()
-ensureUiBuild()
-copyServerArtifacts()
-stripNodeModuleBins()
-copyUiLoadingAssets()
+;(async () => {
+  ensureServerDevDependencies()
+  ensureUiDevDependencies()
+  await ensureMonacoAssets()
+  ensureRollupPlatformBinary()
+  ensureServerDependencies()
+  ensureServerBuild()
+  ensureUiBuild()
+  copyServerArtifacts()
+  stripNodeModuleBins()
+  copyUiLoadingAssets()
+})().catch((err) => {
+  console.error("[prebuild] failed:", err)
+  process.exit(1)
+})

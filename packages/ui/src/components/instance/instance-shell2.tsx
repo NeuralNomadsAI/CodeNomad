@@ -1,7 +1,6 @@
 import {
   For,
   Show,
-  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -10,69 +9,53 @@ import {
   type Accessor,
   type Component,
 } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
-import { Accordion } from "@kobalte/core"
-import { ChevronDown, Search, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
 import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
-import Typography from "@suid/material/Typography"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import MenuIcon from "@suid/icons-material/Menu"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
-import PushPinIcon from "@suid/icons-material/PushPin"
-import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
-import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import type { BackgroundProcess } from "../../../../server/src/api-types"
-import type { Session } from "../../types/session"
-import {
-  activeParentSessionId,
-  activeSessionId as activeSessionMap,
-  getSessionFamily,
-  getSessionInfo,
-  getSessionThreads,
-  loadMessages,
-  sessions,
-  setActiveParentSession,
-  setActiveSession,
-} from "../../stores/sessions"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
-import { messageStoreBus } from "../../stores/message-v2/bus"
-import { clearSessionRenderCache } from "../message-block"
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
-import SessionList from "../session-list"
-import KeyboardHint from "../keyboard-hint"
 import Kbd from "../kbd"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
-import InstanceServiceStatus from "../instance-service-status"
-import AgentSelector from "../agent-selector"
-import ModelSelector from "../model-selector"
-import ThinkingSelector from "../thinking-selector"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
-import { TodoListView } from "../tool-call/renderers/todo"
-import ContextUsagePanel from "../session/context-usage-panel"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
-import WorktreeSelector from "../worktree-selector"
-import { getBackgroundProcesses, loadBackgroundProcesses } from "../../stores/background-processes"
+import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
+import SessionSidebar from "./shell/SessionSidebar"
+import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
+import RightPanel from "./shell/right-panel/RightPanel"
+import { useDrawerChrome } from "./shell/useDrawerChrome"
+import { getSessionStatus } from "../../stores/session-status"
+import { ShieldAlert } from "lucide-solid"
+
+import type { LayoutMode } from "./shell/types"
 import {
-  SESSION_SIDEBAR_EVENT,
-  type SessionSidebarRequestAction,
-  type SessionSidebarRequestDetail,
-} from "../../lib/session-sidebar-events"
+  DEFAULT_SESSION_SIDEBAR_WIDTH,
+  LEFT_DRAWER_STORAGE_KEY,
+  RIGHT_DRAWER_STORAGE_KEY,
+  RIGHT_DRAWER_WIDTH,
+  clampRightWidth,
+  clampWidth,
+} from "./shell/storage"
+import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
+import { useDrawerResize } from "./shell/useDrawerResize"
+import { useSessionCache } from "./shell/useSessionCache"
+import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 
 const log = getLogger("session")
 
@@ -88,66 +71,19 @@ interface InstanceShellProps {
   tabBarOffset: number
 }
 
-const DEFAULT_SESSION_SIDEBAR_WIDTH = 340
-const MIN_SESSION_SIDEBAR_WIDTH = 220
-const MAX_SESSION_SIDEBAR_WIDTH = 400
-const RIGHT_DRAWER_WIDTH = 260
-const MIN_RIGHT_DRAWER_WIDTH = 200
-const MAX_RIGHT_DRAWER_WIDTH = 380
-const SESSION_CACHE_LIMIT = 5
-const LEFT_DRAWER_STORAGE_KEY = "opencode-session-sidebar-width-v8"
-const RIGHT_DRAWER_STORAGE_KEY = "opencode-session-right-drawer-width-v1"
-const LEFT_PIN_STORAGE_KEY = "opencode-session-left-drawer-pinned-v1"
-const RIGHT_PIN_STORAGE_KEY = "opencode-session-right-drawer-pinned-v1"
-
-
-
-
-type LayoutMode = "desktop" | "tablet" | "phone"
-
-const clampWidth = (value: number) => Math.min(MAX_SESSION_SIDEBAR_WIDTH, Math.max(MIN_SESSION_SIDEBAR_WIDTH, value))
-const clampRightWidth = (value: number) => Math.min(MAX_RIGHT_DRAWER_WIDTH, Math.max(MIN_RIGHT_DRAWER_WIDTH, value))
-const getPinStorageKey = (side: "left" | "right") => (side === "left" ? LEFT_PIN_STORAGE_KEY : RIGHT_PIN_STORAGE_KEY)
-function readStoredPinState(side: "left" | "right", defaultValue: boolean) {
-  if (typeof window === "undefined") return defaultValue
-  const stored = window.localStorage.getItem(getPinStorageKey(side))
-  if (stored === "true") return true
-  if (stored === "false") return false
-  return defaultValue
-}
-function persistPinState(side: "left" | "right", value: boolean) {
-  if (typeof window === "undefined") return
-  window.localStorage.setItem(getPinStorageKey(side), value ? "true" : "false")
-}
-
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const { t } = useI18n()
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
-  const [rightDrawerWidth, setRightDrawerWidth] = createSignal(RIGHT_DRAWER_WIDTH)
-  const [leftPinned, setLeftPinned] = createSignal(true)
-  const [leftOpen, setLeftOpen] = createSignal(true)
-  const [rightPinned, setRightPinned] = createSignal(true)
-  const [rightOpen, setRightOpen] = createSignal(true)
-  const [cachedSessionIds, setCachedSessionIds] = createSignal<string[]>([])
-  const [pendingEvictions, setPendingEvictions] = createSignal<string[]>([])
-  const [drawerHost, setDrawerHost] = createSignal<HTMLElement | null>(null)
-  const [floatingDrawerTop, setFloatingDrawerTop] = createSignal(0)
-  const [floatingDrawerHeight, setFloatingDrawerHeight] = createSignal(0)
+  const [rightDrawerWidth, setRightDrawerWidth] = createSignal(
+    typeof window !== "undefined" ? clampRightWidth(window.innerWidth * 0.35) : RIGHT_DRAWER_WIDTH,
+  )
+  const [rightDrawerWidthInitialized, setRightDrawerWidthInitialized] = createSignal(false)
   const [leftDrawerContentEl, setLeftDrawerContentEl] = createSignal<HTMLElement | null>(null)
   const [rightDrawerContentEl, setRightDrawerContentEl] = createSignal<HTMLElement | null>(null)
   const [leftToggleButtonEl, setLeftToggleButtonEl] = createSignal<HTMLElement | null>(null)
   const [rightToggleButtonEl, setRightToggleButtonEl] = createSignal<HTMLElement | null>(null)
-  const [activeResizeSide, setActiveResizeSide] = createSignal<"left" | "right" | null>(null)
-  const [resizeStartX, setResizeStartX] = createSignal(0)
-  const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
-    "plan",
-    "background-processes",
-    "mcp",
-    "lsp",
-    "plugins",
-  ])
+
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
@@ -155,7 +91,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
 
-  const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instance.id))
+  const {
+    allInstanceSessions,
+    sessionThreads,
+    activeSessions,
+    activeSessionIdForInstance,
+    activeSessionForInstance,
+    activeSessionDiffs,
+    latestTodoState,
+    tokenStats,
+    backgroundProcessList,
+    handleSessionSelect,
+  } = useInstanceSessionContext({
+    instanceId: () => props.instance.id,
+  })
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
@@ -168,14 +117,47 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
-  const leftPinningSupported = createMemo(() => layoutMode() === "desktop")
+  const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
 
-  const persistPinIfSupported = (side: "left" | "right", value: boolean) => {
-    if (side === "left" && !leftPinningSupported()) return
-    if (side === "right" && !rightPinningSupported()) return
-    persistPinState(side, value)
-  }
+  const { setDrawerHost, drawerContainer, measureDrawerHost, floatingTopPx, floatingHeight } = useDrawerHostMeasure(
+    () => props.tabBarOffset,
+  )
+
+  const drawerChrome = useDrawerChrome({
+    t,
+    layoutMode,
+    leftPinningSupported,
+    rightPinningSupported,
+    leftDrawerContentEl,
+    rightDrawerContentEl,
+    leftToggleButtonEl,
+    rightToggleButtonEl,
+    measureDrawerHost,
+  })
+
+  const {
+    leftPinned,
+    leftOpen,
+    rightPinned,
+    rightOpen,
+    setLeftOpen,
+    setRightOpen,
+    leftDrawerState,
+    rightDrawerState,
+    pinLeft: pinLeftDrawer,
+    unpinLeft: unpinLeftDrawer,
+    pinRight: pinRightDrawer,
+    unpinRight: unpinRightDrawer,
+    closeLeft: closeLeftDrawer,
+    closeRight: closeRightDrawer,
+    leftAppBarButtonLabel,
+    rightAppBarButtonLabel,
+    leftAppBarButtonIcon,
+    rightAppBarButtonIcon,
+    handleLeftAppBarButtonClick,
+    handleRightAppBarButtonClick,
+  } = drawerChrome
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -183,43 +165,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       log.warn("Failed to load background processes", error)
     })
   })
-
-  createEffect(() => {
-    switch (layoutMode()) {
-      case "desktop": {
-        const leftSaved = readStoredPinState("left", true)
-        const rightSaved = readStoredPinState("right", true)
-        setLeftPinned(leftSaved)
-        setLeftOpen(leftSaved)
-        setRightPinned(rightSaved)
-        setRightOpen(rightSaved)
-        break
-      }
-      case "tablet": {
-        const rightSaved = readStoredPinState("right", true)
-        setLeftPinned(false)
-        setLeftOpen(false)
-        setRightPinned(rightSaved)
-        setRightOpen(rightSaved)
-        break
-      }
-      default:
-        setLeftPinned(false)
-        setLeftOpen(false)
-        setRightPinned(false)
-        setRightOpen(false)
-        break
-    }
-  })
-
-  const measureDrawerHost = () => {
-    if (typeof window === "undefined") return
-    const host = drawerHost()
-    if (!host) return
-    const rect = host.getBoundingClientRect()
-    setFloatingDrawerTop(rect.top)
-    setFloatingDrawerHeight(Math.max(0, rect.height))
-  }
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -232,17 +177,27 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       }
     }
 
+    let didLoadRightWidth = false
     const savedRight = window.localStorage.getItem(RIGHT_DRAWER_STORAGE_KEY)
     if (savedRight) {
       const parsed = Number.parseInt(savedRight, 10)
       if (Number.isFinite(parsed)) {
         setRightDrawerWidth(clampRightWidth(parsed))
+        didLoadRightWidth = true
       }
     }
+
+    if (!didLoadRightWidth) {
+      setRightDrawerWidth(clampRightWidth(window.innerWidth * 0.35))
+    }
+
+    setRightDrawerWidthInitialized(true)
 
     const handleResize = () => {
       const width = clampWidth(window.innerWidth * 0.3)
       setSessionSidebarWidth((current) => clampWidth(current || width))
+      const fallbackRight = window.innerWidth * 0.35
+      setRightDrawerWidth((current) => clampRightWidth(current || fallbackRight))
       measureDrawerHost()
     }
 
@@ -251,106 +206,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => window.removeEventListener("resize", handleResize))
   })
 
-  onMount(() => {
-    if (typeof window === "undefined") return
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<SessionSidebarRequestDetail>).detail
-      if (!detail || detail.instanceId !== props.instance.id) return
-      handleSidebarRequest(detail.action)
-    }
-    window.addEventListener(SESSION_SIDEBAR_EVENT, handler)
-    onCleanup(() => window.removeEventListener(SESSION_SIDEBAR_EVENT, handler))
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    window.localStorage.setItem(LEFT_DRAWER_STORAGE_KEY, sessionSidebarWidth().toString())
-  })
+   createEffect(() => {
+     if (typeof window === "undefined") return
+     window.localStorage.setItem(LEFT_DRAWER_STORAGE_KEY, sessionSidebarWidth().toString())
+   })
 
   createEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(RIGHT_DRAWER_STORAGE_KEY, rightDrawerWidth().toString())
   })
-
-  createEffect(() => {
-    props.tabBarOffset
-    requestAnimationFrame(() => measureDrawerHost())
-  })
-
-  const allInstanceSessions = createMemo<Map<string, Session>>(() => {
-    return sessions().get(props.instance.id) ?? new Map()
-  })
-
-  const sessionThreads = createMemo(() => getSessionThreads(props.instance.id))
-
-  const activeSessions = createMemo(() => {
-    const parentId = activeParentSessionId().get(props.instance.id)
-    if (!parentId) return new Map<string, ReturnType<typeof getSessionFamily>[number]>()
-    const sessionFamily = getSessionFamily(props.instance.id, parentId)
-    return new Map(sessionFamily.map((s) => [s.id, s]))
-  })
-
-  const activeSessionIdForInstance = createMemo(() => {
-    return activeSessionMap().get(props.instance.id) || null
-  })
-
-  const parentSessionIdForInstance = createMemo(() => {
-    return activeParentSessionId().get(props.instance.id) || null
-  })
-
-  const activeSessionForInstance = createMemo(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info") return null
-    return activeSessions().get(sessionId) ?? null
-  })
-
-  const activeSessionUsage = createMemo(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId) return null
-    const store = messageStore()
-    return store?.getSessionUsage(sessionId) ?? null
-  })
-
-  const activeSessionInfoDetails = createMemo(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId) return null
-    return getSessionInfo(props.instance.id, sessionId) ?? null
-  })
-
-  const tokenStats = createMemo(() => {
-    const usage = activeSessionUsage()
-    const info = activeSessionInfoDetails()
-    return {
-      used: usage?.actualUsageTokens ?? info?.actualUsageTokens ?? 0,
-      avail: info?.contextAvailableTokens ?? null,
-    }
-  })
-
-  const latestTodoSnapshot = createMemo(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info") return null
-    const store = messageStore()
-    if (!store) return null
-    const snapshot = store.state.latestTodos[sessionId]
-    return snapshot ?? null
-  })
-
-  const latestTodoState = createMemo<ToolState | null>(() => {
-    const snapshot = latestTodoSnapshot()
-    if (!snapshot) return null
-    const store = messageStore()
-    if (!store) return null
-    const message = store.getMessage(snapshot.messageId)
-    if (!message) return null
-    const partRecord = message.parts?.[snapshot.partId]
-    const part = partRecord?.data as { type?: string; tool?: string; state?: ToolState }
-    if (!part || part.type !== "tool" || part.tool !== "todowrite") return null
-    const state = part.state
-    if (!state || state.status !== "completed") return null
-    return state
-  })
-
-  const backgroundProcessList = createMemo(() => getBackgroundProcesses(props.instance.id))
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
@@ -366,6 +230,57 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (status === "connecting") return t("instanceShell.connection.connecting")
     if (status === "error" || status === "disconnected") return t("instanceShell.connection.disconnected")
     return t("instanceShell.connection.unknown")
+  }
+
+  const hasPendingRequests = createMemo(() => {
+    const permissions = getPermissionQueueLength(props.instance.id)
+    const questions = getQuestionQueueLength(props.instance.id)
+    return permissions + questions > 0
+  })
+
+  const activeSessionStatusPill = createMemo(() => {
+    const activeSessionId = activeSessionIdForInstance()
+    if (!activeSessionId || activeSessionId === "info") return null
+
+    const activeSession = activeSessionForInstance()
+    const needsPermission = Boolean(activeSession?.pendingPermission)
+    const needsQuestion = Boolean(activeSession?.pendingQuestion)
+    const needsInput = needsPermission || needsQuestion
+
+    if (needsInput) {
+      return {
+        className: "session-permission",
+        text: needsPermission
+          ? t("sessionList.status.needsPermission")
+          : t("sessionList.status.needsInput"),
+        showAlertIcon: true,
+      }
+    }
+
+    const status = getSessionStatus(props.instance.id, activeSessionId)
+    const text =
+      status === "working"
+        ? t("sessionList.status.working")
+        : status === "compacting"
+          ? t("sessionList.status.compacting")
+          : t("sessionList.status.idle")
+
+    return {
+      className: `session-${status}`,
+      text,
+      showAlertIcon: false,
+    }
+  })
+
+  const renderActiveSessionStatusPill = () => {
+    const pill = activeSessionStatusPill()
+    if (!pill) return null
+    return (
+      <span class={`status-indicator session-status session-status-list ${pill.className}`}>
+        {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
+        {pill.text}
+      </span>
+    )
   }
 
   const handleCommandPaletteClick = () => {
@@ -401,435 +316,38 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
 
-  const keyboardShortcuts = createMemo(() =>
-    [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
-      (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
-    ),
-  )
+   const keyboardShortcuts = createMemo(() =>
+     [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
+       (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
+     ),
+   )
 
-  interface PendingSidebarAction {
-    action: SessionSidebarRequestAction
-    id: number
-  }
+   useSessionSidebarRequests({
+     instanceId: () => props.instance.id,
+     sidebarContentEl: leftDrawerContentEl,
+     leftPinned,
+     leftOpen,
+     setLeftOpen,
+     measureDrawerHost,
+   })
 
-  let sidebarActionId = 0
-  const [pendingSidebarAction, setPendingSidebarAction] = createSignal<PendingSidebarAction | null>(null)
-
-  const triggerKeyboardEvent = (target: HTMLElement, options: { key: string; code: string; keyCode: number }) => {
-    target.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: options.key,
-        code: options.code,
-        keyCode: options.keyCode,
-        which: options.keyCode,
-        bubbles: true,
-        cancelable: true,
-      }),
-    )
-  }
-
-  const focusAgentSelectorControl = () => {
-    const agentTrigger = leftDrawerContentEl()?.querySelector("[data-agent-selector]") as HTMLElement | null
-    if (!agentTrigger) return false
-    agentTrigger.focus()
-    setTimeout(() => triggerKeyboardEvent(agentTrigger, { key: "Enter", code: "Enter", keyCode: 13 }), 10)
-    return true
-  }
-
-  const focusModelSelectorControl = () => {
-    const input = leftDrawerContentEl()?.querySelector<HTMLInputElement>("[data-model-selector]")
-    if (!input) return false
-    input.focus()
-    setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
-    return true
-  }
-
-  const focusVariantSelectorControl = () => {
-    const input = leftDrawerContentEl()?.querySelector<HTMLInputElement>("[data-thinking-selector]")
-    if (!input) return false
-    input.focus()
-    setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
-    return true
-  }
-
-  createEffect(() => {
-    const pending = pendingSidebarAction()
-    if (!pending) return
-    const action = pending.action
-    const contentReady = Boolean(leftDrawerContentEl())
-    if (!contentReady) {
-      return
-    }
-    if (action === "show-session-list") {
-      setPendingSidebarAction(null)
-      return
-    }
-    const handled =
-      action === "focus-agent-selector"
-        ? focusAgentSelectorControl()
-        : action === "focus-model-selector"
-          ? focusModelSelectorControl()
-          : focusVariantSelectorControl()
-    if (handled) {
-      setPendingSidebarAction(null)
-    }
-  })
-
-  const handleSidebarRequest = (action: SessionSidebarRequestAction) => {
-    setPendingSidebarAction({ action, id: sidebarActionId++ })
-    if (!leftPinned() && !leftOpen()) {
-      setLeftOpen(true)
-      measureDrawerHost()
-    }
-  }
-
-  const closeFloatingDrawersIfAny = () => {
-    let handled = false
-    if (!leftPinned() && leftOpen()) {
-      setLeftOpen(false)
-      blurIfInside(leftDrawerContentEl())
-      focusTarget(leftToggleButtonEl())
-      handled = true
-    }
-    if (!rightPinned() && rightOpen()) {
-      setRightOpen(false)
-      blurIfInside(rightDrawerContentEl())
-      focusTarget(rightToggleButtonEl())
-      handled = true
-    }
-    return handled
-  }
-
-  onMount(() => {
-    if (typeof window === "undefined") return
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
-      if (!closeFloatingDrawersIfAny()) return
-      event.preventDefault()
-      event.stopPropagation()
-    }
-    window.addEventListener("keydown", handleEscape, true)
-    onCleanup(() => window.removeEventListener("keydown", handleEscape, true))
-  })
-
-  const handleSessionSelect = (sessionId: string) => {
-    if (sessionId === "info") {
-      setActiveSession(props.instance.id, sessionId)
-      return
-    }
-
-    const session = allInstanceSessions().get(sessionId)
-    if (!session) return
-
-    if (session.parentId === null) {
-      setActiveParentSession(props.instance.id, sessionId)
-      return
-    }
-
-    const parentId = session.parentId
-    if (!parentId) return
-
-    batch(() => {
-      setActiveParentSession(props.instance.id, parentId)
-      setActiveSession(props.instance.id, sessionId)
-    })
-  }
-
-
-  const evictSession = (sessionId: string) => {
-    if (!sessionId) return
-    log.info("Evicting cached session", { instanceId: props.instance.id, sessionId })
-    const store = messageStoreBus.getInstance(props.instance.id)
-    store?.clearSession(sessionId)
-    clearSessionRenderCache(props.instance.id, sessionId)
-  }
-
-  const scheduleEvictions = (ids: string[]) => {
-    if (!ids.length) return
-    setPendingEvictions((current) => {
-      const existing = new Set(current)
-      const next = [...current]
-      ids.forEach((id) => {
-        if (!existing.has(id)) {
-          next.push(id)
-          existing.add(id)
-        }
-      })
-      return next
-    })
-  }
-
-  createEffect(() => {
-    const pending = pendingEvictions()
-    if (!pending.length) return
-    const cached = new Set(cachedSessionIds())
-    const remaining: string[] = []
-    pending.forEach((id) => {
-      if (cached.has(id)) {
-        remaining.push(id)
-      } else {
-        evictSession(id)
-      }
-    })
-    if (remaining.length !== pending.length) {
-      setPendingEvictions(remaining)
-    }
-  })
-
-  createEffect(() => {
-    const instanceSessions = allInstanceSessions()
-    const activeId = activeSessionIdForInstance()
-
-    setCachedSessionIds((current) => {
-      const next = current.filter((id) => id !== "info" && instanceSessions.has(id))
-
-      const touch = (id: string | null) => {
-        if (!id || id === "info") return
-        if (!instanceSessions.has(id)) return
-
-        const index = next.indexOf(id)
-        if (index !== -1) {
-          next.splice(index, 1)
-        }
-        next.unshift(id)
-      }
-
-      touch(activeId)
-
-      const trimmed = next.length > SESSION_CACHE_LIMIT ? next.slice(0, SESSION_CACHE_LIMIT) : next
-
-      const trimmedSet = new Set(trimmed)
-      const removed = current.filter((id) => !trimmedSet.has(id))
-      if (removed.length) {
-        scheduleEvictions(removed)
-      }
-      return trimmed
-    })
+  const { cachedSessionIds } = useSessionCache({
+    instanceId: () => props.instance.id,
+    instanceSessions: allInstanceSessions,
+    activeSessionId: activeSessionIdForInstance,
   })
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
 
-  const drawerContainer = () => {
-    const host = drawerHost()
-    if (host) return host
-    if (typeof document !== "undefined") {
-      return document.body
-    }
-    return undefined
-  }
-
-  const fallbackDrawerTop = () => props.tabBarOffset
-  const floatingTop = () => {
-    const measured = floatingDrawerTop()
-    if (measured > 0) return measured
-    return fallbackDrawerTop()
-  }
-  const floatingTopPx = () => `${floatingTop()}px`
-  const floatingHeight = () => {
-    const measured = floatingDrawerHeight()
-    if (measured > 0) return `${measured}px`
-    return `calc(100% - ${floatingTop()}px)`
-  }
-
-  const scheduleDrawerMeasure = () => {
-    if (typeof window === "undefined") {
-      measureDrawerHost()
-      return
-    }
-    requestAnimationFrame(() => measureDrawerHost())
-  }
-
-  const applyDrawerWidth = (side: "left" | "right", width: number) => {
-    if (side === "left") {
-      setSessionSidebarWidth(width)
-    } else {
-      setRightDrawerWidth(width)
-    }
-    scheduleDrawerMeasure()
-  }
-
-  const handleDrawerPointerMove = (clientX: number) => {
-    const side = activeResizeSide()
-    if (!side) return
-    const startWidth = resizeStartWidth()
-    const clamp = side === "left" ? clampWidth : clampRightWidth
-    const delta = side === "left" ? clientX - resizeStartX() : resizeStartX() - clientX
-    const nextWidth = clamp(startWidth + delta)
-    applyDrawerWidth(side, nextWidth)
-  }
-
-  function stopDrawerResize() {
-    setActiveResizeSide(null)
-    document.removeEventListener("mousemove", drawerMouseMove)
-    document.removeEventListener("mouseup", drawerMouseUp)
-    document.removeEventListener("touchmove", drawerTouchMove)
-    document.removeEventListener("touchend", drawerTouchEnd)
-  }
-
-  function drawerMouseMove(event: MouseEvent) {
-    event.preventDefault()
-    handleDrawerPointerMove(event.clientX)
-  }
-
-  function drawerMouseUp() {
-    stopDrawerResize()
-  }
-
-  function drawerTouchMove(event: TouchEvent) {
-    const touch = event.touches[0]
-    if (!touch) return
-    event.preventDefault()
-    handleDrawerPointerMove(touch.clientX)
-  }
-
-  function drawerTouchEnd() {
-    stopDrawerResize()
-  }
-
-  const startDrawerResize = (side: "left" | "right", clientX: number) => {
-    setActiveResizeSide(side)
-    setResizeStartX(clientX)
-    setResizeStartWidth(side === "left" ? sessionSidebarWidth() : rightDrawerWidth())
-    document.addEventListener("mousemove", drawerMouseMove)
-    document.addEventListener("mouseup", drawerMouseUp)
-    document.addEventListener("touchmove", drawerTouchMove, { passive: false })
-    document.addEventListener("touchend", drawerTouchEnd)
-  }
-
-  const handleDrawerResizeMouseDown = (side: "left" | "right") => (event: MouseEvent) => {
-    event.preventDefault()
-    startDrawerResize(side, event.clientX)
-  }
-
-  const handleDrawerResizeTouchStart = (side: "left" | "right") => (event: TouchEvent) => {
-    const touch = event.touches[0]
-    if (!touch) return
-    event.preventDefault()
-    startDrawerResize(side, touch.clientX)
-  }
-
-  onCleanup(() => {
-    stopDrawerResize()
+  const { handleDrawerResizeMouseDown, handleDrawerResizeTouchStart } = useDrawerResize({
+    sessionSidebarWidth,
+    rightDrawerWidth,
+    setSessionSidebarWidth,
+    setRightDrawerWidth,
+    clampLeft: clampWidth,
+    clampRight: clampRightWidth,
+    measureDrawerHost,
   })
-
-  type DrawerViewState = "pinned" | "floating-open" | "floating-closed"
-
-
-  const leftDrawerState = createMemo<DrawerViewState>(() => {
-    if (leftPinned()) return "pinned"
-    return leftOpen() ? "floating-open" : "floating-closed"
-  })
-
-  const rightDrawerState = createMemo<DrawerViewState>(() => {
-    if (rightPinned()) return "pinned"
-    return rightOpen() ? "floating-open" : "floating-closed"
-  })
-
-  const leftAppBarButtonLabel = () => {
-    const state = leftDrawerState()
-    if (state === "pinned") return t("instanceShell.leftDrawer.toggle.pinned")
-    return t("instanceShell.leftDrawer.toggle.open")
-  }
-
-  const rightAppBarButtonLabel = () => {
-    const state = rightDrawerState()
-    if (state === "pinned") return t("instanceShell.rightDrawer.toggle.pinned")
-    return t("instanceShell.rightDrawer.toggle.open")
-  }
-
-  const leftAppBarButtonIcon = () => {
-    return <MenuIcon fontSize="small" />
-  }
-
-  const rightAppBarButtonIcon = () => {
-    return <MenuIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-  }
-
-
-
-
-  const pinLeftDrawer = () => {
-    blurIfInside(leftDrawerContentEl())
-    batch(() => {
-      setLeftPinned(true)
-      setLeftOpen(true)
-    })
-    persistPinIfSupported("left", true)
-    measureDrawerHost()
-  }
-
-  const unpinLeftDrawer = () => {
-    blurIfInside(leftDrawerContentEl())
-    batch(() => {
-      setLeftPinned(false)
-      setLeftOpen(true)
-    })
-    persistPinIfSupported("left", false)
-    measureDrawerHost()
-  }
-
-  const pinRightDrawer = () => {
-    blurIfInside(rightDrawerContentEl())
-    batch(() => {
-      setRightPinned(true)
-      setRightOpen(true)
-    })
-    persistPinIfSupported("right", true)
-    measureDrawerHost()
-  }
-
-  const unpinRightDrawer = () => {
-    blurIfInside(rightDrawerContentEl())
-    batch(() => {
-      setRightPinned(false)
-      setRightOpen(true)
-    })
-    persistPinIfSupported("right", false)
-    measureDrawerHost()
-  }
-
-  const handleLeftAppBarButtonClick = () => {
-    const state = leftDrawerState()
-    if (state !== "floating-closed") return
-    setLeftOpen(true)
-    measureDrawerHost()
-  }
-
-  const handleRightAppBarButtonClick = () => {
-    const state = rightDrawerState()
-    if (state !== "floating-closed") return
-    setRightOpen(true)
-    measureDrawerHost()
-  }
-
-
-  const focusTarget = (element: HTMLElement | null) => {
-    if (!element) return
-    requestAnimationFrame(() => {
-      element.focus()
-    })
-  }
-
-  const blurIfInside = (element: HTMLElement | null) => {
-    if (typeof document === "undefined" || !element) return
-    const active = document.activeElement as HTMLElement | null
-    if (active && element.contains(active)) {
-      active.blur()
-    }
-  }
-
-  const closeLeftDrawer = () => {
-    if (leftDrawerState() === "pinned") return
-    blurIfInside(leftDrawerContentEl())
-    setLeftOpen(false)
-    focusTarget(leftToggleButtonEl())
-  }
-  const closeRightDrawer = () => {
-    if (rightDrawerState() === "pinned") return
-    blurIfInside(rightDrawerContentEl())
-    setRightOpen(false)
-    focusTarget(rightToggleButtonEl())
-  }
 
   const formattedUsedTokens = () => formatTokenTotal(tokenStats().used)
 
@@ -840,335 +358,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       return formatTokenTotal(avail)
     }
     return "--"
-  }
-
-  const LeftDrawerContent = () => (
-    <div class="flex flex-col h-full min-h-0" ref={setLeftDrawerContentEl}>
-      <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
-        <div class="flex items-center justify-between gap-2">
-          <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
-            {t("instanceShell.leftPanel.sessionsTitle")}
-          </span>
-          <div class="flex items-center gap-2 text-primary">
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={t("sessionList.filter.ariaLabel")}
-              title={t("sessionList.filter.ariaLabel")}
-              aria-pressed={showSessionSearch()}
-              onClick={() => setShowSessionSearch((current) => !current)}
-              sx={{
-                color: showSessionSearch() ? "var(--text-primary)" : "inherit",
-                backgroundColor: showSessionSearch() ? "var(--surface-hover)" : "transparent",
-                "&:hover": {
-                  backgroundColor: "var(--surface-hover)",
-                },
-              }}
-            >
-              <Search class={showSessionSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
-            </IconButton>
-            <IconButton
-              size="small"
-              color="inherit"
-              aria-label={t("instanceShell.leftPanel.instanceInfo")}
-              title={t("instanceShell.leftPanel.instanceInfo")}
-              onClick={() => handleSessionSelect("info")}
-            >
-              <InfoOutlinedIcon fontSize="small" />
-            </IconButton>
-            <Show when={!isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={leftPinned() ? t("instanceShell.leftDrawer.unpin") : t("instanceShell.leftDrawer.pin")}
-                onClick={() => (leftPinned() ? unpinLeftDrawer() : pinLeftDrawer())}
-              >
-                {leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
-            <Show when={leftDrawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={t("instanceShell.leftDrawer.toggle.close")}
-                title={t("instanceShell.leftDrawer.toggle.close")}
-                onClick={closeLeftDrawer}
-              >
-                <MenuOpenIcon fontSize="small" />
-              </IconButton>
-            </Show>
-          </div>
-        </div>
-        <div class="session-sidebar-shortcuts">
-          <Show when={keyboardShortcuts().length}>
-            <KeyboardHint shortcuts={keyboardShortcuts()} separator=" " showDescription={false} />
-          </Show>
-        </div>
-      </div>
-
-      <div class="session-sidebar flex flex-col flex-1 min-h-0">
-        <SessionList
-          instanceId={props.instance.id}
-          threads={sessionThreads()}
-          activeSessionId={activeSessionIdForInstance()}
-          onSelect={handleSessionSelect}
-          onNew={() => {
-            const result = props.onNewSession()
-            if (result instanceof Promise) {
-              void result.catch((error) => log.error("Failed to create session:", error))
-            }
-          }}
-          enableFilterBar={showSessionSearch()}
-          showHeader={false}
-          showFooter={false}
-        />
-
-        <div class="session-sidebar-separator" />
-          <Show when={activeSessionForInstance()}>
-            {(activeSession) => (
-              <>
-                <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-                  <WorktreeSelector instanceId={props.instance.id} sessionId={activeSession().id} />
-
-                  <AgentSelector
-                    instanceId={props.instance.id}
-                    sessionId={activeSession().id}
-                    currentAgent={activeSession().agent}
-                    onAgentChange={(agent) => props.handleSidebarAgentChange(activeSession().id, agent)}
-                  />
-
-                <ModelSelector
-                  instanceId={props.instance.id}
-                  sessionId={activeSession().id}
-                  currentModel={activeSession().model}
-                  onModelChange={(model) => props.handleSidebarModelChange(activeSession().id, model)}
-                />
-
-                <ThinkingSelector instanceId={props.instance.id} currentModel={activeSession().model} />
-
-                <div class="session-sidebar-selector-hints" aria-hidden="true">
-                  <Kbd shortcut="cmd+shift+a" />
-                  <Kbd shortcut="cmd+shift+m" />
-                  <Kbd shortcut="cmd+shift+t" />
-                </div>
-              </div>
-            </>
-          )}
-        </Show>
-      </div>
-    </div>
-  )
-
-  const RightDrawerContent = () => {
-    const renderPlanSectionContent = () => {
-      const sessionId = activeSessionIdForInstance()
-      if (!sessionId || sessionId === "info") {
-        return <p class="text-xs text-secondary">{t("instanceShell.plan.noSessionSelected")}</p>
-      }
-      const todoState = latestTodoState()
-      if (!todoState) {
-        return <p class="text-xs text-secondary">{t("instanceShell.plan.empty")}</p>
-      }
-      return <TodoListView state={todoState} emptyLabel={t("instanceShell.plan.empty")} showStatusLabel={false} />
-    }
-
-    const renderBackgroundProcesses = () => {
-      const processes = backgroundProcessList()
-      if (processes.length === 0) {
-        return <p class="text-xs text-secondary">{t("instanceShell.backgroundProcesses.empty")}</p>
-      }
-
-      return (
-        <div class="flex flex-col gap-2">
-          <For each={processes}>
-            {(process) => (
-              <div class="rounded-md border border-base bg-surface-secondary p-2 flex flex-col gap-2">
-                <div class="flex flex-col gap-1">
-                  <span class="text-xs font-semibold text-primary">{process.title}</span>
-                  <div class="flex flex-wrap gap-2 text-[11px] text-secondary">
-                    <span>{t("instanceShell.backgroundProcesses.status", { status: process.status })}</span>
-                    <Show when={typeof process.outputSizeBytes === "number"}>
-                      <span>
-                        {t("instanceShell.backgroundProcesses.output", {
-                          sizeKb: Math.round((process.outputSizeBytes ?? 0) / 1024),
-                        })}
-                      </span>
-                    </Show>
-                  </div>
-                </div>
-                <div class="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                    onClick={() => openBackgroundOutput(process)}
-                    aria-label={t("instanceShell.backgroundProcesses.actions.output")}
-                    title={t("instanceShell.backgroundProcesses.actions.output")}
-                  >
-                    <TerminalSquare class="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                    disabled={process.status !== "running"}
-                    onClick={() => stopBackgroundProcess(process.id)}
-                    aria-label={t("instanceShell.backgroundProcesses.actions.stop")}
-                    title={t("instanceShell.backgroundProcesses.actions.stop")}
-                  >
-                    <XOctagon class="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                    onClick={() => terminateBackgroundProcess(process.id)}
-                    aria-label={t("instanceShell.backgroundProcesses.actions.terminate")}
-                    title={t("instanceShell.backgroundProcesses.actions.terminate")}
-                  >
-                    <Trash2 class="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
-      )
-    }
-
-    const sections = [
-      {
-        id: "plan",
-        labelKey: "instanceShell.rightPanel.sections.plan",
-        render: renderPlanSectionContent,
-      },
-      {
-        id: "background-processes",
-        labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
-        render: renderBackgroundProcesses,
-      },
-      {
-        id: "mcp",
-        labelKey: "instanceShell.rightPanel.sections.mcp",
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["mcp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
-      {
-        id: "lsp",
-        labelKey: "instanceShell.rightPanel.sections.lsp",
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["lsp"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
-      {
-        id: "plugins",
-        labelKey: "instanceShell.rightPanel.sections.plugins",
-        render: () => (
-          <InstanceServiceStatus
-            initialInstance={props.instance}
-            sections={["plugins"]}
-            showSectionHeadings={false}
-            class="space-y-2"
-          />
-        ),
-      },
-    ]
-
-    createEffect(() => {
-      const currentExpanded = new Set(rightPanelExpandedItems())
-      if (sections.every((section) => currentExpanded.has(section.id))) return
-      setRightPanelExpandedItems(sections.map((section) => section.id))
-    })
-
-    const handleAccordionChange = (values: string[]) => {
-      setRightPanelExpandedItems(values)
-    }
-
-    const isSectionExpanded = (id: string) => rightPanelExpandedItems().includes(id)
-
-    return (
-      <div class="flex flex-col h-full" ref={setRightDrawerContentEl}>
-        <div class="border-b border-base text-primary">
-          <div class="relative flex items-center px-4 py-2">
-            <div class="flex items-center gap-2">
-              <Show when={rightDrawerState() === "floating-open"}>
-                <IconButton
-                  size="small"
-                  color="inherit"
-                  aria-label={t("instanceShell.rightDrawer.toggle.close")}
-                  title={t("instanceShell.rightDrawer.toggle.close")}
-                  onClick={closeRightDrawer}
-                >
-                  <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-                </IconButton>
-              </Show>
-              <Show when={!isPhoneLayout()}>
-                <IconButton
-                  size="small"
-                  color="inherit"
-                  aria-label={rightPinned() ? t("instanceShell.rightDrawer.unpin") : t("instanceShell.rightDrawer.pin")}
-                  onClick={() => (rightPinned() ? unpinRightDrawer() : pinRightDrawer())}
-                >
-                  {rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-                </IconButton>
-              </Show>
-            </div>
-            <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
-                {t("instanceShell.rightPanel.title")}
-              </span>
-            </div>
-          </div>
-          <Show when={activeSessionForInstance()}>
-            {(activeSession) => (
-              <ContextUsagePanel
-                instanceId={props.instance.id}
-                sessionId={activeSession().id}
-                class="border-t border-base"
-              />
-            )}
-          </Show>
-        </div>
-        <div class="flex-1 overflow-y-auto">
-          <Accordion.Root
-            class="flex flex-col"
-            collapsible
-            multiple
-            value={rightPanelExpandedItems()}
-            onChange={handleAccordionChange}
-          >
-            <For each={sections}>
-              {(section) => (
-                <Accordion.Item
-                  value={section.id}
-                  class="w-full border border-base bg-surface-secondary text-primary"
-                >
-                  <Accordion.Header>
-                    <Accordion.Trigger class="w-full flex items-center justify-between gap-3 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">
-                      <span>{t(section.labelKey)}</span>
-                      <ChevronDown
-                        class={`h-4 w-4 transition-transform duration-150 ${isSectionExpanded(section.id) ? "rotate-180" : ""}`}
-                      />
-                    </Accordion.Trigger>
-                  </Accordion.Header>
-                  <Accordion.Content class="w-full px-3 pb-3 text-sm text-primary">
-                    {section.render()}
-                  </Accordion.Content>
-                </Accordion.Item>
-              )}
-            </For>
-          </Accordion.Root>
-        </div>
-      </div>
-    )
   }
 
   const renderLeftPanel = () => {
@@ -1193,7 +382,27 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             role="presentation"
             aria-hidden="true"
           />
-          <LeftDrawerContent />
+          <SessionSidebar
+            t={t}
+            instanceId={props.instance.id}
+            threads={sessionThreads}
+            activeSessionId={activeSessionIdForInstance}
+            activeSession={activeSessionForInstance}
+            showSearch={showSessionSearch}
+            onToggleSearch={() => setShowSessionSearch((current) => !current)}
+            keyboardShortcuts={keyboardShortcuts}
+            isPhoneLayout={isPhoneLayout}
+            drawerState={leftDrawerState}
+            leftPinned={leftPinned}
+            onSelectSession={handleSessionSelect}
+            onNewSession={props.onNewSession}
+            onSidebarAgentChange={props.handleSidebarAgentChange}
+            onSidebarModelChange={props.handleSidebarModelChange}
+            onPinLeftDrawer={pinLeftDrawer}
+            onUnpinLeftDrawer={unpinLeftDrawer}
+            onCloseLeftDrawer={closeLeftDrawer}
+            setContentEl={setLeftDrawerContentEl}
+          />
         </Box>
       )
     }
@@ -1225,7 +434,36 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           },
         }}
       >
-        <LeftDrawerContent />
+        <Show when={!isPhoneLayout()}>
+          <div
+            class="session-resize-handle session-resize-handle--left"
+            onMouseDown={handleDrawerResizeMouseDown("left")}
+            onTouchStart={handleDrawerResizeTouchStart("left")}
+            role="presentation"
+            aria-hidden="true"
+          />
+        </Show>
+        <SessionSidebar
+          t={t}
+          instanceId={props.instance.id}
+          threads={sessionThreads}
+          activeSessionId={activeSessionIdForInstance}
+          activeSession={activeSessionForInstance}
+          showSearch={showSessionSearch}
+          onToggleSearch={() => setShowSessionSearch((current) => !current)}
+          keyboardShortcuts={keyboardShortcuts}
+          isPhoneLayout={isPhoneLayout}
+          drawerState={leftDrawerState}
+          leftPinned={leftPinned}
+          onSelectSession={handleSessionSelect}
+          onNewSession={props.onNewSession}
+          onSidebarAgentChange={props.handleSidebarAgentChange}
+          onSidebarModelChange={props.handleSidebarModelChange}
+          onPinLeftDrawer={pinLeftDrawer}
+          onUnpinLeftDrawer={unpinLeftDrawer}
+          onCloseLeftDrawer={closeLeftDrawer}
+          setContentEl={setLeftDrawerContentEl}
+        />
       </Drawer>
     )
   }
@@ -1253,7 +491,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             role="presentation"
             aria-hidden="true"
           />
-          <RightDrawerContent />
+          <RightPanel
+            t={t}
+            instanceId={props.instance.id}
+            instance={props.instance}
+            activeSessionId={activeSessionIdForInstance}
+            activeSession={activeSessionForInstance}
+            activeSessionDiffs={activeSessionDiffs}
+            latestTodoState={latestTodoState}
+            backgroundProcessList={backgroundProcessList}
+            onOpenBackgroundOutput={openBackgroundOutput}
+            onStopBackgroundProcess={stopBackgroundProcess}
+            onTerminateBackgroundProcess={terminateBackgroundProcess}
+            isPhoneLayout={isPhoneLayout}
+            rightDrawerWidth={rightDrawerWidth}
+            rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+            rightDrawerState={rightDrawerState}
+            rightPinned={rightPinned}
+            onCloseRightDrawer={closeRightDrawer}
+            onPinRightDrawer={pinRightDrawer}
+            onUnpinRightDrawer={unpinRightDrawer}
+            setContentEl={setRightDrawerContentEl}
+          />
         </Box>
       )
     }
@@ -1284,7 +543,37 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           },
         }}
       >
-        <RightDrawerContent />
+        <Show when={!isPhoneLayout()}>
+          <div
+            class="session-resize-handle session-resize-handle--right"
+            onMouseDown={handleDrawerResizeMouseDown("right")}
+            onTouchStart={handleDrawerResizeTouchStart("right")}
+            role="presentation"
+            aria-hidden="true"
+          />
+        </Show>
+        <RightPanel
+          t={t}
+          instanceId={props.instance.id}
+          instance={props.instance}
+          activeSessionId={activeSessionIdForInstance}
+          activeSession={activeSessionForInstance}
+          activeSessionDiffs={activeSessionDiffs}
+          latestTodoState={latestTodoState}
+          backgroundProcessList={backgroundProcessList}
+          onOpenBackgroundOutput={openBackgroundOutput}
+          onStopBackgroundProcess={stopBackgroundProcess}
+          onTerminateBackgroundProcess={terminateBackgroundProcess}
+          isPhoneLayout={isPhoneLayout}
+          rightDrawerWidth={rightDrawerWidth}
+          rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+          rightDrawerState={rightDrawerState}
+          rightPinned={rightPinned}
+          onCloseRightDrawer={closeRightDrawer}
+          onPinRightDrawer={pinRightDrawer}
+          onUnpinRightDrawer={unpinRightDrawer}
+          setContentEl={setRightDrawerContentEl}
+        />
       </Drawer>
 
     )
@@ -1321,15 +610,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         size="small"
                         aria-expanded={leftDrawerState() !== "floating-closed"}
                       >
-                        {leftAppBarButtonIcon()}
+                       {leftAppBarButtonIcon()}
                       </IconButton>
                     </Show>
 
-                    <div class="flex flex-wrap items-center gap-1 justify-center">
-                      <PermissionNotificationBanner
-                        instanceId={props.instance.id}
-                        onClick={() => setPermissionModalOpen(true)}
-                      />
+                    <div class="flex-1 flex items-center justify-center min-w-0">
+                      <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
+                        <PermissionNotificationBanner
+                          instanceId={props.instance.id}
+                          onClick={() => setPermissionModalOpen(true)}
+                        />
+                      </Show>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-center gap-1">
                       <button
                         type="button"
                         class="connection-status-button px-2 py-0.5 text-xs"
@@ -1342,6 +636,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       <span class="connection-status-shortcut-hint">
                         <Kbd shortcut="cmd+shift+p" />
                       </span>
+                    </div>
+
+                    <div class="flex-1 flex items-center justify-center min-w-0">
                       <span
                         class={`status-indicator ${connectionStatusClass()}`}
                         aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
@@ -1381,7 +678,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </div>
               }
             >
-              <div class="session-toolbar-left flex items-center gap-3 min-w-0">
+              <div class="session-toolbar-left flex-1 flex items-center gap-3 min-w-0">
                 <Show when={leftDrawerState() === "floating-closed"}>
                   <IconButton
                     ref={setLeftToggleButtonEl}
@@ -1409,13 +706,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
                   </div>
                 </Show>
+
+                <div class="ml-auto flex items-center session-header-hints">
+                  <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
+                    <PermissionNotificationBanner
+                      instanceId={props.instance.id}
+                      onClick={() => setPermissionModalOpen(true)}
+                    />
+                  </Show>
+                </div>
               </div>
 
-              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                <PermissionNotificationBanner
-                  instanceId={props.instance.id}
-                  onClick={() => setPermissionModalOpen(true)}
-                />
+              <div class="session-toolbar-center flex items-center justify-center gap-2 min-w-[160px]">
                 <button
                   type="button"
                   class="connection-status-button px-2 py-0.5 text-xs"
@@ -1425,44 +727,47 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 >
                   {t("instanceShell.commandPalette.button")}
                 </button>
+              </div>
+
+              <div class="session-toolbar-right flex-1 flex items-center gap-3">
                 <span class="connection-status-shortcut-hint">
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
-              </div>
 
-              <div class="session-toolbar-right flex items-center gap-3">
-                <div class="connection-status-meta flex items-center gap-3">
-                  <Show when={connectionStatus() === "connected"}>
-                    <span class="status-indicator connected">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.connected")}</span>
-                    </span>
-                  </Show>
-                  <Show when={connectionStatus() === "connecting"}>
-                    <span class="status-indicator connecting">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.connecting")}</span>
-                    </span>
-                  </Show>
-                  <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                    <span class="status-indicator disconnected">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
-                    </span>
+                <div class="ml-auto flex items-center gap-3">
+                  <div class="connection-status-meta flex items-center gap-3">
+                    <Show when={connectionStatus() === "connected"}>
+                      <span class="status-indicator connected">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.connected")}</span>
+                      </span>
+                    </Show>
+                    <Show when={connectionStatus() === "connecting"}>
+                      <span class="status-indicator connecting">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.connecting")}</span>
+                      </span>
+                    </Show>
+                    <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
+                      <span class="status-indicator disconnected">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
+                      </span>
+                    </Show>
+                  </div>
+                  <Show when={rightDrawerState() === "floating-closed"}>
+                    <IconButton
+                      ref={setRightToggleButtonEl}
+                      color="inherit"
+                      onClick={handleRightAppBarButtonClick}
+                      aria-label={rightAppBarButtonLabel()}
+                      size="small"
+                      aria-expanded={rightDrawerState() !== "floating-closed"}
+                    >
+                      {rightAppBarButtonIcon()}
+                    </IconButton>
                   </Show>
                 </div>
-                <Show when={rightDrawerState() === "floating-closed"}>
-                  <IconButton
-                    ref={setRightToggleButtonEl}
-                    color="inherit"
-                    onClick={handleRightAppBarButtonClick}
-                    aria-label={rightAppBarButtonLabel()}
-                    size="small"
-                    aria-expanded={rightDrawerState() !== "floating-closed"}
-                  >
-                    {rightAppBarButtonIcon()}
-                  </IconButton>
-                </Show>
               </div>
             </Show>
           </Toolbar>

@@ -1,56 +1,29 @@
-import { createSignal, Show, onMount, For, onCleanup, createEffect, on, untrack } from "solid-js"
+import { createSignal, Show, onMount, onCleanup, createEffect, on, untrack } from "solid-js"
 import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
 import UnifiedPicker from "./unified-picker"
 import ExpandButton from "./expand-button"
-import { addToHistory, getHistory } from "../stores/message-history"
-import { getAttachments, addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
+import { getAttachments, clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
-import { createFileAttachment, createTextAttachment, createAgentAttachment } from "../types/attachment"
-import type { Attachment } from "../types/attachment"
-import type { Agent } from "../types/session"
-import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
-import { agents, getSessionDraftPrompt, setSessionDraftPrompt, clearSessionDraftPrompt, executeCustomCommand } from "../stores/sessions"
+import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { preferences } from "../stores/preferences"
+import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
+import { usePromptState } from "./prompt-input/usePromptState"
+import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
+import { usePromptPicker } from "./prompt-input/usePromptPicker"
+import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 const log = getLogger("actions")
-
-
-interface PromptInputProps {
-  instanceId: string
-  instanceFolder: string
-  sessionId: string
-  onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
-  onRunShell?: (command: string) => Promise<void>
-  disabled?: boolean
-  escapeInDebounce?: boolean
-  isSessionBusy?: boolean
-  onAbortSession?: () => Promise<void>
-  registerQuoteHandler?: (handler: (text: string, mode: "quote" | "code") => void) => void | (() => void)
-}
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
-  const [prompt, setPromptInternal] = createSignal("")
-  const [history, setHistory] = createSignal<string[]>([])
-  const HISTORY_LIMIT = 100
-  const [historyIndex, setHistoryIndex] = createSignal(-1)
-  const [historyDraft, setHistoryDraft] = createSignal<string | null>(null)
   const [, setIsFocused] = createSignal(false)
-  const [showPicker, setShowPicker] = createSignal(false)
-  const [pickerMode, setPickerMode] = createSignal<"mention" | "command">("mention")
-  const [searchQuery, setSearchQuery] = createSignal("")
-  const [atPosition, setAtPosition] = createSignal<number | null>(null)
-  const [isDragging, setIsDragging] = createSignal(false)
-  const [ignoredAtPositions, setIgnoredAtPositions] = createSignal<Set<number>>(new Set<number>())
-  const [pasteCount, setPasteCount] = createSignal(0)
-  const [imageCount, setImageCount] = createSignal(0)
-  const [mode, setMode] = createSignal<"normal" | "shell">("normal")
-  const [expandState, setExpandState] = createSignal<"normal" | "expanded">("normal")
+  const [mode, setMode] = createSignal<PromptMode>("normal")
+  const [expandState, setExpandState] = createSignal<ExpandState>("normal")
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
 
@@ -61,21 +34,92 @@ export default function PromptInput(props: PromptInputProps) {
     return t("promptInput.placeholder.default")
   }
 
+  const promptState = usePromptState({
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    instanceFolder: () => props.instanceFolder,
+  })
 
+  const {
+    prompt,
+    setPrompt,
+    clearPrompt,
+    draftLoadedNonce,
+    history,
+    historyIndex,
+    recordHistoryEntry,
+    clearHistoryDraft,
+    resetHistoryNavigation,
+    selectPreviousHistory,
+    selectNextHistory,
+  } = promptState
 
-
-  const attachments = () => getAttachments(props.instanceId, props.sessionId)
-  const instanceAgents = () => agents().get(props.instanceId) || []
+  const {
+    attachments,
+    isDragging,
+    handlePaste,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+    syncAttachmentCounters,
+    handleExpandTextAttachment,
+  } = usePromptAttachments({
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    instanceFolder: () => props.instanceFolder,
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+  })
 
   createEffect(() => {
-    if (!props.registerQuoteHandler) return
-    const cleanup = props.registerQuoteHandler((text, mode) => {
-      if (mode === "code") {
-        insertCodeSelection(text)
-      } else {
-        insertQuotedSelection(text)
-      }
-    })
+    if (!props.registerPromptInputApi) return
+    const api: PromptInputApi = {
+      insertSelection: (text: string, mode: PromptInsertMode) => {
+        if (mode === "code") {
+          insertCodeSelection(text)
+        } else {
+          insertQuotedSelection(text)
+        }
+      },
+      expandTextAttachment: (attachmentId: string) => {
+        const attachment = attachments().find((a) => a.id === attachmentId)
+        if (!attachment) return
+        handleExpandTextAttachment(attachment)
+      },
+      setPromptText: (text: string, opts?: { focus?: boolean }) => {
+        const textarea = textareaRef
+        if (textarea) {
+          textarea.value = text
+          textarea.dispatchEvent(new Event("input", { bubbles: true }))
+          if (opts?.focus) {
+            try {
+              textarea.focus({ preventScroll: true } as any)
+            } catch {
+              textarea.focus()
+            }
+          }
+          return
+        }
+
+        setPrompt(text)
+        if (opts?.focus) {
+          setTimeout(() => {
+            api.focus()
+          }, 0)
+        }
+      },
+      focus: () => {
+        const textarea = textareaRef
+        if (!textarea || textarea.disabled) return
+        try {
+          textarea.focus({ preventScroll: true } as any)
+        } catch {
+          textarea.focus()
+        }
+      },
+    }
+    const cleanup = props.registerPromptInputApi(api)
     onCleanup(() => {
       if (typeof cleanup === "function") {
         cleanup()
@@ -83,264 +127,53 @@ export default function PromptInput(props: PromptInputProps) {
     })
   })
 
-  const setPrompt = (value: string) => {
-    setPromptInternal(value)
-    setSessionDraftPrompt(props.instanceId, props.sessionId, value)
-  }
+  const instanceAgents = () => agents().get(props.instanceId) || []
 
-  const clearPrompt = () => {
-    clearSessionDraftPrompt(props.instanceId, props.sessionId)
-    setPromptInternal("")
-    setHistoryDraft(null)
-    setMode("normal")
-  }
+  const promptPicker = usePromptPicker({
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    instanceFolder: () => props.instanceFolder,
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    instanceAgents,
+    commands: () => getCommands(props.instanceId),
+  })
 
-  function syncAttachmentCounters(currentPrompt: string, sessionAttachments: Attachment[]) {
-    let highestPaste = 0
-    let highestImage = 0
-
-    for (const match of currentPrompt.matchAll(/\[pasted #(\d+)\]/g)) {
-      const value = Number.parseInt(match[1], 10)
-      if (!Number.isNaN(value)) {
-        highestPaste = Math.max(highestPaste, value)
-      }
-    }
-
-    for (const attachment of sessionAttachments) {
-      if (attachment.source.type === "text") {
-        const placeholderMatch = attachment.display.match(/pasted #(\d+)/)
-        if (placeholderMatch) {
-          const value = Number.parseInt(placeholderMatch[1], 10)
-          if (!Number.isNaN(value)) {
-            highestPaste = Math.max(highestPaste, value)
-          }
-        }
-      }
-      if (attachment.source.type === "file" && attachment.mediaType.startsWith("image/")) {
-        const imageMatch = attachment.display.match(/Image #(\d+)/)
-        if (imageMatch) {
-          const value = Number.parseInt(imageMatch[1], 10)
-          if (!Number.isNaN(value)) {
-            highestImage = Math.max(highestImage, value)
-          }
-        }
-      }
-    }
-
-    for (const match of currentPrompt.matchAll(/\[Image #(\d+)\]/g)) {
-      const value = Number.parseInt(match[1], 10)
-      if (!Number.isNaN(value)) {
-        highestImage = Math.max(highestImage, value)
-      }
-    }
-
-    setPasteCount(highestPaste)
-    setImageCount(highestImage)
-  }
+  const {
+    showPicker,
+    pickerMode,
+    searchQuery,
+    ignoredAtPositions,
+    setShowPicker,
+    setPickerMode,
+    setSearchQuery,
+    setAtPosition,
+    setIgnoredAtPositions,
+    handleInput,
+    handlePickerSelect,
+    handlePickerClose,
+  } = promptPicker
 
   createEffect(
     on(
-      () => `${props.instanceId}:${props.sessionId}`,
+      draftLoadedNonce,
       () => {
-        const instanceId = props.instanceId
-        const sessionId = props.sessionId
-
-        onCleanup(() => {
-          setSessionDraftPrompt(instanceId, sessionId, prompt())
-        })
-
-        const storedPrompt = getSessionDraftPrompt(instanceId, sessionId)
-        const currentAttachments = untrack(() => getAttachments(instanceId, sessionId))
-
-        setPromptInternal(storedPrompt)
-        setSessionDraftPrompt(instanceId, sessionId, storedPrompt)
-        setHistoryIndex(-1)
-        setHistoryDraft(null)
+        // Session switch resets (picker/counters/ignored positions) stay in the component.
         setIgnoredAtPositions(new Set<number>())
         setShowPicker(false)
+        setPickerMode("mention")
         setAtPosition(null)
         setSearchQuery("")
-        syncAttachmentCounters(storedPrompt, currentAttachments)
-      }
-    )
+
+        const instanceId = props.instanceId
+        const sessionId = props.sessionId
+        const currentAttachments = untrack(() => getAttachments(instanceId, sessionId))
+        syncAttachmentCounters(prompt(), currentAttachments)
+      },
+      { defer: true },
+    ),
   )
-
-  function handleRemoveAttachment(attachmentId: string) {
-    const currentAttachments = attachments()
-    const attachment = currentAttachments.find((a) => a.id === attachmentId)
-
-    removeAttachment(props.instanceId, props.sessionId, attachmentId)
-
-    if (attachment) {
-      const currentPrompt = prompt()
-      let newPrompt = currentPrompt
-
-      if (attachment.source.type === "file") {
-        if (attachment.mediaType.startsWith("image/")) {
-          const imageMatch = attachment.display.match(/\[Image #(\d+)\]/)
-          if (imageMatch) {
-            const placeholder = `[Image #${imageMatch[1]}]`
-            newPrompt = currentPrompt.replace(placeholder, "").replace(/\s+/g, " ").trim()
-          }
-        } else {
-          const filename = attachment.filename
-          newPrompt = currentPrompt.replace(`@${filename}`, "").replace(/\s+/g, " ").trim()
-        }
-      } else if (attachment.source.type === "agent") {
-        const agentName = attachment.filename
-        newPrompt = currentPrompt.replace(`@${agentName}`, "").replace(/\s+/g, " ").trim()
-      } else if (attachment.source.type === "text") {
-        const placeholderMatch = attachment.display.match(/pasted #(\d+)/)
-        if (placeholderMatch) {
-          const placeholder = `[pasted #${placeholderMatch[1]}]`
-          newPrompt = currentPrompt.replace(placeholder, "").replace(/\s+/g, " ").trim()
-        }
-      }
-
-      setPrompt(newPrompt)
-    }
-  }
-
-  function handleExpandTextAttachment(attachment: Attachment) {
-    if (attachment.source.type !== "text") return
-
-    const textarea = textareaRef
-    const value = attachment.source.value
-    const match = attachment.display.match(/pasted #(\d+)/)
-    const placeholder = match ? `[pasted #${match[1]}]` : null
-    const currentText = prompt()
-
-    let nextText = currentText
-    let selectionTarget: number | null = null
-
-    if (placeholder) {
-      const placeholderIndex = currentText.indexOf(placeholder)
-      if (placeholderIndex !== -1) {
-        nextText =
-          currentText.substring(0, placeholderIndex) +
-          value +
-          currentText.substring(placeholderIndex + placeholder.length)
-        selectionTarget = placeholderIndex + value.length
-      }
-    }
-
-    if (nextText === currentText) {
-      if (textarea) {
-        const start = textarea.selectionStart
-        const end = textarea.selectionEnd
-        nextText = currentText.substring(0, start) + value + currentText.substring(end)
-        selectionTarget = start + value.length
-      } else {
-        nextText = currentText + value
-      }
-    }
-
-    setPrompt(nextText)
-    removeAttachment(props.instanceId, props.sessionId, attachment.id)
-
-    if (textarea) {
-      setTimeout(() => {
-        textarea.focus()
-        if (selectionTarget !== null) {
-          textarea.setSelectionRange(selectionTarget, selectionTarget)
-        }
-      }, 0)
-    }
-  }
-
-  async function handlePaste(e: ClipboardEvent) {
-    const items = e.clipboardData?.items
-    if (!items) return
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-
-      if (item.type.startsWith("image/")) {
-        e.preventDefault()
-
-        const blob = item.getAsFile()
-        if (!blob) continue
-
-        const count = imageCount() + 1
-        setImageCount(count)
-
-        const reader = new FileReader()
-        reader.onload = () => {
-          const base64Data = (reader.result as string).split(",")[1]
-          const display = `[Image #${count}]`
-          const filename = `image-${count}.png`
-
-          const attachment = createFileAttachment(
-            filename,
-            filename,
-            "image/png",
-            new TextEncoder().encode(base64Data),
-            props.instanceFolder,
-          )
-          attachment.url = `data:image/png;base64,${base64Data}`
-          attachment.display = display
-          addAttachment(props.instanceId, props.sessionId, attachment)
-
-          const textarea = textareaRef
-          if (textarea) {
-            const start = textarea.selectionStart
-            const end = textarea.selectionEnd
-            const currentText = prompt()
-            const placeholder = `[Image #${count}]`
-            const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-            setPrompt(newText)
-
-            setTimeout(() => {
-              const newCursorPos = start + placeholder.length
-              textarea.setSelectionRange(newCursorPos, newCursorPos)
-              textarea.focus()
-            }, 0)
-          }
-        }
-        reader.readAsDataURL(blob)
-
-        return
-      }
-    }
-
-    const pastedText = e.clipboardData?.getData("text/plain")
-    if (!pastedText) return
-
-    const lineCount = pastedText.split("\n").length
-    const charCount = pastedText.length
-
-    const isLongPaste = charCount > 150 || lineCount > 3
-
-    if (isLongPaste) {
-      e.preventDefault()
-
-      const count = pasteCount() + 1
-      setPasteCount(count)
-
-      const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
-      const display = `pasted #${count} (${summary})`
-      const filename = `paste-${count}.txt`
-
-      const attachment = createTextAttachment(pastedText, display, filename)
-      addAttachment(props.instanceId, props.sessionId, attachment)
-
-      const textarea = textareaRef
-      if (textarea) {
-        const start = textarea.selectionStart
-        const end = textarea.selectionEnd
-        const currentText = prompt()
-        const placeholder = `[pasted #${count}]`
-        const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-        setPrompt(newText)
-
-        setTimeout(() => {
-          const newCursorPos = start + placeholder.length
-          textarea.setSelectionRange(newCursorPos, newCursorPos)
-          textarea.focus()
-        }, 0)
-      }
-    }
-  }
 
   onMount(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -371,236 +204,7 @@ export default function PromptInput(props: PromptInputProps) {
     onCleanup(() => {
       document.removeEventListener("keydown", handleGlobalKeyDown)
     })
-
-    void (async () => {
-      const loaded = await getHistory(props.instanceFolder)
-      setHistory(loaded)
-    })()
   })
-
-  function handleKeyDown(e: KeyboardEvent) {
-    const textarea = textareaRef
-    if (!textarea) {
-      return
-    }
-
-    const currentText = prompt()
-    const cursorAtBufferStart = textarea.selectionStart === 0 && textarea.selectionEnd === 0
-    const isShellMode = mode() === "shell"
-
-    if (!isShellMode && e.key === "!" && cursorAtBufferStart && currentText.length === 0 && !props.disabled) {
-      e.preventDefault()
-      setMode("shell")
-      return
-    }
-
-    if (showPicker() && e.key === "Escape") {
-      e.preventDefault()
-      e.stopPropagation()
-      handlePickerClose()
-      return
-    }
-
-    if (isShellMode) {
-      if (e.key === "Escape") {
-        e.preventDefault()
-        e.stopPropagation()
-        setMode("normal")
-        return
-      }
-      if (e.key === "Backspace" && cursorAtBufferStart && currentText.length === 0) {
-        e.preventDefault()
-        setMode("normal")
-        return
-      }
-    }
-
-    if (e.key === "Backspace" || e.key === "Delete") {
-      const cursorPos = textarea.selectionStart
-      const text = currentText
-
-      const pastePlaceholderRegex = /\[pasted #(\d+)\]/g
-      let pasteMatch
-
-      while ((pasteMatch = pastePlaceholderRegex.exec(text)) !== null) {
-        const placeholderStart = pasteMatch.index
-        const placeholderEnd = pasteMatch.index + pasteMatch[0].length
-        const pasteNumber = pasteMatch[1]
-
-        const isDeletingFromEnd = e.key === "Backspace" && cursorPos === placeholderEnd
-        const isDeletingFromStart = e.key === "Delete" && cursorPos === placeholderStart
-        const isSelected =
-          textarea.selectionStart <= placeholderStart &&
-          textarea.selectionEnd >= placeholderEnd &&
-          textarea.selectionStart !== textarea.selectionEnd
-
-        if (isDeletingFromEnd || isDeletingFromStart || isSelected) {
-          e.preventDefault()
-
-          const currentAttachments = attachments()
-          const attachment = currentAttachments.find(
-            (a) => a.source.type === "text" && a.display.includes(`pasted #${pasteNumber}`),
-          )
-
-          if (attachment) {
-            removeAttachment(props.instanceId, props.sessionId, attachment.id)
-          }
-
-          const newText = text.substring(0, placeholderStart) + text.substring(placeholderEnd)
-          setPrompt(newText)
-
-          setTimeout(() => {
-            textarea.setSelectionRange(placeholderStart, placeholderStart)
-          }, 0)
-
-          return
-        }
-      }
-
-      const imagePlaceholderRegex = /\[Image #(\d+)\]/g
-      let imageMatch
-
-      while ((imageMatch = imagePlaceholderRegex.exec(text)) !== null) {
-        const placeholderStart = imageMatch.index
-        const placeholderEnd = imageMatch.index + imageMatch[0].length
-        const imageNumber = imageMatch[1]
-
-        const isDeletingFromEnd = e.key === "Backspace" && cursorPos === placeholderEnd
-        const isDeletingFromStart = e.key === "Delete" && cursorPos === placeholderStart
-        const isSelected =
-          textarea.selectionStart <= placeholderStart &&
-          textarea.selectionEnd >= placeholderEnd &&
-          textarea.selectionStart !== textarea.selectionEnd
-
-        if (isDeletingFromEnd || isDeletingFromStart || isSelected) {
-          e.preventDefault()
-
-          const currentAttachments = attachments()
-          const attachment = currentAttachments.find(
-            (a) =>
-              a.source.type === "file" &&
-              a.mediaType.startsWith("image/") &&
-              a.display.includes(`Image #${imageNumber}`),
-          )
-
-          if (attachment) {
-            removeAttachment(props.instanceId, props.sessionId, attachment.id)
-          }
-
-          const newText = text.substring(0, placeholderStart) + text.substring(placeholderEnd)
-          setPrompt(newText)
-
-          setTimeout(() => {
-            textarea.setSelectionRange(placeholderStart, placeholderStart)
-          }, 0)
-
-          return
-        }
-      }
-
-      const mentionRegex = /@(\S+)/g
-      let mentionMatch
-
-      while ((mentionMatch = mentionRegex.exec(text)) !== null) {
-        const mentionStart = mentionMatch.index
-        const mentionEnd = mentionMatch.index + mentionMatch[0].length
-        const name = mentionMatch[1]
-
-        const isDeletingFromEnd = e.key === "Backspace" && cursorPos === mentionEnd
-        const isDeletingFromStart = e.key === "Delete" && cursorPos === mentionStart
-        const isSelected =
-          textarea.selectionStart <= mentionStart &&
-          textarea.selectionEnd >= mentionEnd &&
-          textarea.selectionStart !== textarea.selectionEnd
-
-        if (isDeletingFromEnd || isDeletingFromStart || isSelected) {
-          const currentAttachments = attachments()
-          const attachment = currentAttachments.find(
-            (a) => (a.source.type === "file" || a.source.type === "agent") && a.filename === name,
-          )
-
-          if (attachment) {
-            e.preventDefault()
-
-            removeAttachment(props.instanceId, props.sessionId, attachment.id)
-
-            setIgnoredAtPositions((prev) => {
-              const next = new Set(prev)
-              next.delete(mentionStart)
-              return next
-            })
-
-            const newText = text.substring(0, mentionStart) + text.substring(mentionEnd)
-            setPrompt(newText)
-
-            setTimeout(() => {
-              textarea.setSelectionRange(mentionStart, mentionStart)
-            }, 0)
-
-            return
-          }
-        }
-      }
-    }
-
-    if (e.key === "Enter") {
-      const isModified = e.metaKey || e.ctrlKey
-
-      // If the picker is open, Enter should select from it.
-      if (!isModified && showPicker()) {
-        return
-      }
-
-      if (submitOnEnter()) {
-        // Swapped mode: Enter submits, Cmd/Ctrl+Enter inserts a newline.
-        if (isModified) {
-          e.preventDefault()
-          e.stopPropagation()
-          insertNewlineAtCursor()
-          return
-        }
-
-        // Shift+Enter always inserts a newline.
-        if (e.shiftKey) {
-          // If the picker is open, avoid selecting an item on Enter.
-          if (showPicker()) {
-            e.stopPropagation()
-          }
-          return
-        }
-
-        e.preventDefault()
-        handleSend()
-        return
-      }
-
-      // Default: Cmd/Ctrl+Enter submits.
-      if (isModified) {
-        e.preventDefault()
-        if (showPicker()) {
-          handlePickerClose()
-        }
-        handleSend()
-        return
-      }
-    }
-
-    if (e.key === "ArrowUp") {
-      const handled = selectPreviousHistory()
-      if (handled) {
-        e.preventDefault()
-        return
-      }
-    }
-
-    if (e.key === "ArrowDown") {
-      const handled = selectNextHistory()
-      if (handled) {
-        e.preventDefault()
-        return
-      }
-    }
-  }
 
   async function handleSend() {
     const text = prompt().trim()
@@ -624,37 +228,24 @@ export default function PromptInput(props: PromptInputProps) {
     const resolvedPrompt = isKnownSlashCommand ? text : resolvePastedPlaceholders(text, currentAttachments)
     const historyEntry = resolvedPrompt
 
-    const refreshHistory = async () => {
-      try {
-        await addToHistory(props.instanceFolder, historyEntry)
-        setHistory((prev) => {
-          const next = [historyEntry, ...prev]
-          if (next.length > HISTORY_LIMIT) {
-            next.length = HISTORY_LIMIT
-          }
-          return next
-        })
-        setHistoryIndex(-1)
-      } catch (historyError) {
-        log.error("Failed to update prompt history:", historyError)
-      }
-    }
+    const refreshHistory = () => recordHistoryEntry(historyEntry)
 
     setExpandState("normal")
     clearPrompt()
+    clearHistoryDraft()
+    setMode("normal")
 
     // Ignore attachments for slash commands, but keep them for next prompt.
     if (!isKnownSlashCommand) {
       clearAttachments(props.instanceId, props.sessionId)
-      setPasteCount(0)
-      setImageCount(0)
+      syncAttachmentCounters("", [])
       setIgnoredAtPositions(new Set<number>())
     } else {
       syncAttachmentCounters("", currentAttachments)
       setIgnoredAtPositions(new Set<number>())
     }
 
-    setHistoryDraft(null)
+    clearHistoryDraft()
 
     if (isKnownSlashCommand) {
       // Record attempted slash commands even if execution fails.
@@ -688,60 +279,6 @@ export default function PromptInput(props: PromptInputProps) {
     }
   }
 
-  function focusTextareaEnd() {
-    if (!textareaRef) return
-    setTimeout(() => {
-      if (!textareaRef) return
-      const pos = textareaRef.value.length
-      textareaRef.setSelectionRange(pos, pos)
-      textareaRef.focus()
-    }, 0)
-  }
-
-  function canUseHistory(force = false) {
-    if (force) return true
-    if (showPicker()) return false
-    const textarea = textareaRef
-    if (!textarea) return false
-    return textarea.selectionStart === 0 && textarea.selectionEnd === 0
-  }
-
-  function selectPreviousHistory(force = false) {
-    const entries = history()
-    if (entries.length === 0) return false
-    if (!canUseHistory(force)) return false
-
-    if (historyIndex() === -1) {
-      setHistoryDraft(prompt())
-    }
-
-    const newIndex = historyIndex() === -1 ? 0 : Math.min(historyIndex() + 1, entries.length - 1)
-    setHistoryIndex(newIndex)
-    setPrompt(entries[newIndex])
-    focusTextareaEnd()
-    return true
-  }
-
-  function selectNextHistory(force = false) {
-    const entries = history()
-    if (entries.length === 0) return false
-    if (!canUseHistory(force)) return false
-    if (historyIndex() === -1) return false
-
-    const newIndex = historyIndex() - 1
-    if (newIndex >= 0) {
-      setHistoryIndex(newIndex)
-      setPrompt(entries[newIndex])
-    } else {
-      setHistoryIndex(-1)
-      const draft = historyDraft()
-      setPrompt(draft ?? "")
-      setHistoryDraft(null)
-    }
-    focusTextareaEnd()
-    return true
-  }
-
   function handleAbort() {
     if (!props.onAbortSession || !props.isSessionBusy) return
     void props.onAbortSession()
@@ -750,266 +287,6 @@ export default function PromptInput(props: PromptInputProps) {
   function handleExpandToggle(nextState: "normal" | "expanded") {
     setExpandState(nextState)
     // Keep focus on textarea
-    textareaRef?.focus()
-  }
-
-  function handleInput(e: Event) {
-
-    const target = e.target as HTMLTextAreaElement
-    const value = target.value
-    setPrompt(value)
-    setHistoryIndex(-1)
-    setHistoryDraft(null)
-
-    const cursorPos = target.selectionStart
-
-    // Slash command picker (only when editing the command token: "/<query>")
-    if (value.startsWith("/") && cursorPos >= 1) {
-      const firstWhitespaceIndex = value.slice(1).search(/\s/)
-      const tokenEnd = firstWhitespaceIndex === -1 ? value.length : firstWhitespaceIndex + 1
-
-      if (cursorPos <= tokenEnd) {
-        setPickerMode("command")
-        setAtPosition(0)
-        setSearchQuery(value.substring(1, cursorPos))
-        setShowPicker(true)
-        return
-      }
-    }
-
-    const textBeforeCursor = value.substring(0, cursorPos)
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@")
-
-    const previousAtPosition = atPosition()
-
-
-    if (lastAtIndex === -1) {
-      setIgnoredAtPositions(new Set<number>())
-    } else if (previousAtPosition !== null && lastAtIndex !== previousAtPosition) {
-      setIgnoredAtPositions((prev) => {
-        const next = new Set(prev)
-        next.delete(previousAtPosition)
-        return next
-      })
-    }
-
-    if (lastAtIndex !== -1) {
-      const textAfterAt = value.substring(lastAtIndex + 1, cursorPos)
-      const hasSpace = textAfterAt.includes(" ") || textAfterAt.includes("\n")
-
-      if (!hasSpace && cursorPos === lastAtIndex + textAfterAt.length + 1) {
-        if (!ignoredAtPositions().has(lastAtIndex)) {
-          setPickerMode("mention")
-          setAtPosition(lastAtIndex)
-          setSearchQuery(textAfterAt)
-          setShowPicker(true)
-        }
-        return
-      }
-    }
-
-    setShowPicker(false)
-    setAtPosition(null)
-  }
-
-  function handlePickerSelect(
-    item:
-      | { type: "agent"; agent: Agent }
-      | {
-        type: "file"
-        file: { path: string; relativePath?: string; isGitFile: boolean; isDirectory?: boolean }
-      }
-      | { type: "command"; command: SDKCommand },
-  ) {
-    if (item.type === "command") {
-      const name = item.command.name
-      const currentPrompt = prompt()
-
-      const afterSlash = currentPrompt.slice(1)
-      const firstWhitespaceIndex = afterSlash.search(/\s/)
-      const tokenEnd = firstWhitespaceIndex === -1 ? currentPrompt.length : firstWhitespaceIndex + 1
-
-      const before = ""
-      const after = currentPrompt.substring(tokenEnd)
-      const newPrompt = before + `/${name} ` + after
-      setPrompt(newPrompt)
-
-      setTimeout(() => {
-        if (textareaRef) {
-          const newCursorPos = `/${name} `.length
-          textareaRef.setSelectionRange(newCursorPos, newCursorPos)
-          textareaRef.focus()
-        }
-      }, 0)
-    } else if (item.type === "agent") {
-      const agentName = item.agent.name
-      const existingAttachments = attachments()
-      const alreadyAttached = existingAttachments.some(
-        (att) => att.source.type === "agent" && att.source.name === agentName,
-      )
-
-      if (!alreadyAttached) {
-        const attachment = createAgentAttachment(agentName)
-        addAttachment(props.instanceId, props.sessionId, attachment)
-      }
-
-      const currentPrompt = prompt()
-      const pos = atPosition()
-      const cursorPos = textareaRef?.selectionStart || 0
-
-      if (pos !== null) {
-        const before = currentPrompt.substring(0, pos)
-        const after = currentPrompt.substring(cursorPos)
-        const attachmentText = `@${agentName}`
-        const newPrompt = before + attachmentText + " " + after
-        setPrompt(newPrompt)
-
-        setTimeout(() => {
-          if (textareaRef) {
-            const newCursorPos = pos + attachmentText.length + 1
-            textareaRef.setSelectionRange(newCursorPos, newCursorPos)
-          }
-        }, 0)
-      }
-    } else if (item.type === "file") {
-      const displayPath = item.file.path
-      const relativePath = item.file.relativePath ?? displayPath
-      const isFolder = item.file.isDirectory ?? displayPath.endsWith("/")
-
-      if (isFolder) {
-        const currentPrompt = prompt()
-        const pos = atPosition()
-        const cursorPos = textareaRef?.selectionStart || 0
-        const folderMention =
-          relativePath === "." || relativePath === ""
-            ? "/"
-            : relativePath.replace(/\/+$/, "") + "/"
-
-        if (pos !== null) {
-          const before = currentPrompt.substring(0, pos + 1)
-          const after = currentPrompt.substring(cursorPos)
-          const newPrompt = before + folderMention + after
-          setPrompt(newPrompt)
-          setSearchQuery(folderMention)
-
-          setTimeout(() => {
-            if (textareaRef) {
-              const newCursorPos = pos + 1 + folderMention.length
-              textareaRef.setSelectionRange(newCursorPos, newCursorPos)
-            }
-          }, 0)
-        }
-
-        return
-      }
-
-      const normalizedPath = relativePath.replace(/\/+$/, "") || relativePath
-      const pathSegments = normalizedPath.split("/")
-      const filename = (() => {
-        const candidate = pathSegments[pathSegments.length - 1] || normalizedPath
-        return candidate === "." ? "/" : candidate
-      })()
-
-      const existingAttachments = attachments()
-      const alreadyAttached = existingAttachments.some(
-        (att) => att.source.type === "file" && att.source.path === normalizedPath,
-      )
-
-      if (!alreadyAttached) {
-        const attachment = createFileAttachment(normalizedPath, filename, "text/plain", undefined, props.instanceFolder)
-        addAttachment(props.instanceId, props.sessionId, attachment)
-      }
-
-      const currentPrompt = prompt()
-      const pos = atPosition()
-      const cursorPos = textareaRef?.selectionStart || 0
-
-      if (pos !== null) {
-        const before = currentPrompt.substring(0, pos)
-        const after = currentPrompt.substring(cursorPos)
-        const attachmentText = `@${normalizedPath}`
-        const newPrompt = before + attachmentText + " " + after
-        setPrompt(newPrompt)
-
-        setTimeout(() => {
-          if (textareaRef) {
-            const newCursorPos = pos + attachmentText.length + 1
-            textareaRef.setSelectionRange(newCursorPos, newCursorPos)
-          }
-        }, 0)
-      }
-    }
-
-    setShowPicker(false)
-    setAtPosition(null)
-    setSearchQuery("")
-    textareaRef?.focus()
-  }
-
-  function handlePickerClose() {
-    const pos = atPosition()
-    if (pickerMode() === "mention" && pos !== null) {
-      setIgnoredAtPositions((prev) => new Set(prev).add(pos))
-    }
-    setShowPicker(false)
-    setAtPosition(null)
-    setSearchQuery("")
-    setTimeout(() => textareaRef?.focus(), 0)
-  }
-
-  function handleDragOver(e: DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(true)
-  }
-
-  function handleDragLeave(e: DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-  }
-
-  function handleDrop(e: DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-
-    const files = e.dataTransfer?.files
-    if (!files || files.length === 0) return
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      const path = (file as File & { path?: string }).path || file.name
-      const filename = file.name
-      const mime = file.type || "text/plain"
-
-      const createAndStoreAttachment = (previewUrl?: string) => {
-        const attachment = createFileAttachment(path, filename, mime, undefined, props.instanceFolder)
-        if (previewUrl && (mime.startsWith("image/") || mime.startsWith("text/"))) {
-          attachment.url = previewUrl
-        }
-        addAttachment(props.instanceId, props.sessionId, attachment)
-      }
-
-      if (mime.startsWith("image/") && typeof FileReader !== "undefined") {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const result = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(result)
-        }
-        reader.readAsDataURL(file)
-      } else if (mime.startsWith("text/") && typeof FileReader !== "undefined") {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const dataUrl = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(dataUrl)
-        }
-        reader.readAsDataURL(file)
-      } else {
-        createAndStoreAttachment()
-      }
-    }
-
     textareaRef?.focus()
   }
 
@@ -1025,8 +302,6 @@ export default function PromptInput(props: PromptInputProps) {
     const nextValue = before + insertion + after
 
     setPrompt(nextValue)
-    setHistoryIndex(-1)
-    setHistoryDraft(null)
     setShowPicker(false)
     setAtPosition(null)
 
@@ -1092,22 +367,25 @@ export default function PromptInput(props: PromptInputProps) {
 
   const submitOnEnter = () => preferences().promptSubmitOnEnter
 
-  function insertNewlineAtCursor() {
-    const textarea = textareaRef
-    const current = prompt()
-    const start = textarea ? textarea.selectionStart : current.length
-    const end = textarea ? textarea.selectionEnd : current.length
-    const nextValue = current.substring(0, start) + "\n" + current.substring(end)
-    const nextCursor = start + 1
-
-    setPrompt(nextValue)
-
-    setTimeout(() => {
-      if (!textareaRef) return
-      textareaRef.focus()
-      textareaRef.setSelectionRange(nextCursor, nextCursor)
-    }, 0)
-  }
+  const handleKeyDown = usePromptKeyDown({
+    getTextarea: () => textareaRef ?? null,
+    prompt,
+    setPrompt,
+    mode,
+    setMode,
+    isPickerOpen: showPicker,
+    closePicker: handlePickerClose,
+    ignoredAtPositions,
+    setIgnoredAtPositions,
+    getAttachments: attachments,
+    removeAttachment: (attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId),
+    submitOnEnter,
+    onSend: () => void handleSend(),
+    selectPreviousHistory: (force) =>
+      selectPreviousHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
+    selectNextHistory: (force) =>
+      selectNextHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
+  })
 
   const shouldShowOverlay = () => prompt().length === 0
 
@@ -1171,7 +449,13 @@ export default function PromptInput(props: PromptInputProps) {
                   <button
                     type="button"
                     class="prompt-history-button"
-                    onClick={() => selectPreviousHistory(true)}
+                    onClick={() =>
+                      selectPreviousHistory({
+                        force: true,
+                        isPickerOpen: showPicker(),
+                        getTextarea: () => textareaRef,
+                      })
+                    }
                     disabled={!canHistoryGoPrevious()}
                     aria-label={t("promptInput.history.previousAriaLabel")}
                   >
@@ -1180,7 +464,13 @@ export default function PromptInput(props: PromptInputProps) {
                   <button
                     type="button"
                     class="prompt-history-button"
-                    onClick={() => selectNextHistory(true)}
+                    onClick={() =>
+                      selectNextHistory({
+                        force: true,
+                        isPickerOpen: showPicker(),
+                        getTextarea: () => textareaRef,
+                      })
+                    }
                     disabled={!canHistoryGoNext()}
                     aria-label={t("promptInput.history.nextAriaLabel")}
                   >

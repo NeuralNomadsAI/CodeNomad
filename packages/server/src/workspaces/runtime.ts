@@ -116,11 +116,25 @@ export class WorkspaceRuntime {
           folder: options.folder,
           binary: options.binaryPath,
           spawnCommand: spec.command,
-          spawnArgs: spec.args,
           commandLine,
-          env: redactEnvironment(env),
         },
         "Launching OpenCode process",
+      )
+
+      this.logger.debug(
+        {
+          workspaceId: options.workspaceId,
+          spawnArgs: spec.args,
+        },
+        "OpenCode spawn args",
+      )
+
+      this.logger.trace(
+        {
+          workspaceId: options.workspaceId,
+          env: redactEnvironment(env),
+        },
+        "OpenCode spawn environment",
       )
       const detached = process.platform !== "win32"
       const child = spawn(spec.command, spec.args, {

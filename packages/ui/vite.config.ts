@@ -3,6 +3,7 @@ import { defineConfig } from "vite"
 import solid from "vite-plugin-solid"
 import { VitePWA } from "vite-plugin-pwa"
 import { resolve } from "path"
+import { copyMonacoPublicAssets } from "./scripts/monaco-public-assets.js"
 
 const uiPackageJson = JSON.parse(fs.readFileSync(resolve(__dirname, "package.json"), "utf-8")) as { version?: string }
 const uiVersion = uiPackageJson.version ?? "0.0.0"
@@ -11,6 +12,31 @@ export default defineConfig({
   root: "./src/renderer",
   plugins: [
     solid(),
+    {
+      name: "prepare-monaco-public-assets",
+      // Ensure Monaco's AMD assets exist in `root/public` for both dev server and builds.
+      // These files are gitignored and generated on demand.
+      configureServer(server) {
+        copyMonacoPublicAssets({
+          uiRendererRoot: resolve(__dirname, "src/renderer"),
+          warn: (msg) => server.config.logger.warn(msg),
+          sourceRoots: [
+            resolve(__dirname, "../../node_modules/monaco-editor/min/vs"),
+            resolve(__dirname, "node_modules/monaco-editor/min/vs"),
+          ],
+        })
+      },
+      buildStart() {
+        copyMonacoPublicAssets({
+          uiRendererRoot: resolve(__dirname, "src/renderer"),
+          warn: (msg) => this.warn(msg),
+          sourceRoots: [
+            resolve(__dirname, "../../node_modules/monaco-editor/min/vs"),
+            resolve(__dirname, "node_modules/monaco-editor/min/vs"),
+          ],
+        })
+      },
+    },
     {
       name: "emit-ui-version",
       generateBundle() {
@@ -51,14 +77,23 @@ export default defineConfig({
         theme_color: "#1a1a1a",
       },
       workbox: {
-        // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
-        navigateFallback: null,
-        // Only precache static assets (avoid caching HTML documents / routes).
-        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
-        globIgnores: ["**/*.html"],
-        // Only cache static UI assets; never cache API traffic.
-        runtimeCaching: [
-          {
+         // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
+         // This is a build-time limit for the precache manifest, not a hard runtime cap.
+         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+          // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
+          navigateFallback: null,
+          // Only precache static assets (avoid caching HTML documents / routes).
+          globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+         // Monaco assets can be large; cache them at runtime instead.
+         globIgnores: [
+           "**/*.html",
+           "**/assets/*worker-*.js",
+           "**/assets/editor.api-*.js",
+           "**/monaco/vs/**/*",
+         ],
+         // Only cache static UI assets; never cache API traffic.
+         runtimeCaching: [
+           {
             urlPattern: ({ url, request }) => {
               if (url.pathname.startsWith("/api/")) return false
               if (request.destination === "document") return false
