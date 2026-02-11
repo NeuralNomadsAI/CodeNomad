@@ -68,16 +68,6 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
 
     const scopeKey = `${props.instanceId}:${hasSession ? sessionId : "no-session"}`
 
-    const isBinaryDiff = (item: any) => {
-      const before = typeof item?.before === "string" ? item.before : ""
-      const after = typeof item?.after === "string" ? item.after : ""
-      if (before.length === 0 && after.length === 0) {
-        // OpenCode stores empty before/after for binaries.
-        return true
-      }
-      return false
-    }
-
     const emptyViewerMessage = () => {
       if (!hasSession) return props.t("instanceShell.sessionChanges.noSessionSelected")
       if (diffs === undefined) return props.t("instanceShell.sessionChanges.loading")
@@ -97,7 +87,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
         </div>
         <div class="file-viewer-content file-viewer-content--monaco">
           <Show
-            when={selectedFileData && hasSession && Array.isArray(diffs) && diffs.length > 0}
+            when={selectedFileData && hasSession && Array.isArray(diffs) && diffs.length > 0 ? selectedFileData : null}
             fallback={
               <div class="file-viewer-empty">
                 <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
@@ -105,23 +95,14 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
             }
           >
             {(file) => (
-              <Show
-                when={!isBinaryDiff(file())}
-                fallback={
-                  <div class="file-viewer-empty">
-                    <span class="file-viewer-empty-text">Binary file cannot be displayed</span>
-                  </div>
-                }
-              >
-                <MonacoDiffViewer
-                  scopeKey={scopeKey}
-                  path={String(file().file || "")}
-                  before={String((file() as any).before || "")}
-                  after={String((file() as any).after || "")}
-                  viewMode={props.diffViewMode()}
-                  contextMode={props.diffContextMode()}
-                />
-              </Show>
+              <MonacoDiffViewer
+                scopeKey={scopeKey}
+                path={String(file().file || "")}
+                before={String((file() as any).before || "")}
+                after={String((file() as any).after || "")}
+                viewMode={props.diffViewMode()}
+                contextMode={props.diffContextMode()}
+              />
             )}
           </Show>
         </div>
