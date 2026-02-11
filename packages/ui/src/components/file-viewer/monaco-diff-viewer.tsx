@@ -49,11 +49,17 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         automaticLayout: true,
         renderSideBySide: true,
         renderSideBySideInlineBreakpoint: 0,
+        renderMarginRevertIcon: false,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         renderWhitespace: "selection",
         fontSize: 13,
         wordWrap: "off",
+        glyphMargin: false,
+        folding: false,
+        // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
+        lineNumbersMinChars: 4,
+        lineDecorationsWidth: 12,
       })
 
       setReady(true)
