@@ -157,7 +157,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
             >
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={item.path}>
-                  {item.path}
+                  <span class="file-path-text">{item.path}</span>
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
@@ -188,7 +188,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
             >
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={item.path}>
-                  {item.path}
+                  <span class="file-path-text">{item.path}</span>
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
@@ -213,7 +213,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         header={
           <>
             <span class="files-tab-selected-path" title={selectedEntry?.path || "Git Changes"}>
-              {selectedEntry?.path || "Git Changes"}
+              <span class="file-path-text">{selectedEntry?.path || "Git Changes"}</span>
             </span>
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>

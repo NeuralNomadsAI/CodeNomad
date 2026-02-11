@@ -164,9 +164,15 @@
   @apply text-xs font-mono min-w-0 flex-1 overflow-hidden whitespace-nowrap;
   color: var(--text-primary);
   text-overflow: ellipsis;
+  /* Truncate from the start; keep filename visible. */
   direction: rtl;
   text-align: left;
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
+}
+
+.files-tab-selected-path .file-path-text {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .files-tab-stat {
@@ -240,9 +246,15 @@
   @apply text-xs font-mono min-w-0 flex-1 overflow-hidden whitespace-nowrap;
   color: var(--text-primary);
   text-overflow: ellipsis;
+  /* Truncate from the start; keep filename visible. */
   direction: rtl;
   text-align: left;
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
+}
+
+.file-list-item-path .file-path-text {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .file-list-item-stats {

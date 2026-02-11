@@ -144,7 +144,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
             >
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={item.file}>
-                  {item.file}
+                  <span class="file-path-text">{item.file}</span>
                 </div>
                 <div class="file-list-item-stats">
                   <span class="file-list-item-additions">+{item.additions}</span>
@@ -170,7 +170,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
             >
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={item.file}>
-                  {item.file}
+                  <span class="file-path-text">{item.file}</span>
                 </div>
                 <div class="file-list-item-stats">
                   <span class="file-list-item-additions">+{item.additions}</span>
@@ -190,7 +190,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
         header={
           <>
             <span class="files-tab-selected-path" title={headerPath()}>
-              {headerPath()}
+              <span class="file-path-text">{headerPath()}</span>
             </span>
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>

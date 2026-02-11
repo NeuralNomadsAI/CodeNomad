@@ -105,7 +105,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             <div class="file-list-item" onClick={() => props.onLoadEntries(p())}>
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={p()}>
-                  ..
+                  <span class="file-path-text">..</span>
                 </div>
               </div>
             </div>
@@ -131,7 +131,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             >
               <div class="file-list-item-content">
                 <div class="file-list-item-path" title={item.path}>
-                  {item.name}
+                  <span class="file-path-text">{item.name}</span>
                 </div>
                 <div class="file-list-item-stats">
                   <span class="text-[10px] text-secondary">{item.type}</span>
@@ -150,7 +150,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             <div class="files-tab-stats">
               <span class="files-tab-stat">
                 <span class="files-tab-selected-path" title={headerDisplayedPath()}>
-                  {headerDisplayedPath()}
+                  <span class="file-path-text">{headerDisplayedPath()}</span>
                 </span>
               </span>
               <Show when={props.browserLoading()}>
