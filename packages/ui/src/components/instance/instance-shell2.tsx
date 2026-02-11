@@ -35,10 +35,13 @@ import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
+import { getSessionStatus } from "../../stores/session-status"
+import { ShieldAlert } from "lucide-solid"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -227,6 +230,57 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (status === "connecting") return t("instanceShell.connection.connecting")
     if (status === "error" || status === "disconnected") return t("instanceShell.connection.disconnected")
     return t("instanceShell.connection.unknown")
+  }
+
+  const hasPendingRequests = createMemo(() => {
+    const permissions = getPermissionQueueLength(props.instance.id)
+    const questions = getQuestionQueueLength(props.instance.id)
+    return permissions + questions > 0
+  })
+
+  const activeSessionStatusPill = createMemo(() => {
+    const activeSessionId = activeSessionIdForInstance()
+    if (!activeSessionId || activeSessionId === "info") return null
+
+    const activeSession = activeSessionForInstance()
+    const needsPermission = Boolean(activeSession?.pendingPermission)
+    const needsQuestion = Boolean(activeSession?.pendingQuestion)
+    const needsInput = needsPermission || needsQuestion
+
+    if (needsInput) {
+      return {
+        className: "session-permission",
+        text: needsPermission
+          ? t("sessionList.status.needsPermission")
+          : t("sessionList.status.needsInput"),
+        showAlertIcon: true,
+      }
+    }
+
+    const status = getSessionStatus(props.instance.id, activeSessionId)
+    const text =
+      status === "working"
+        ? t("sessionList.status.working")
+        : status === "compacting"
+          ? t("sessionList.status.compacting")
+          : t("sessionList.status.idle")
+
+    return {
+      className: `session-${status}`,
+      text,
+      showAlertIcon: false,
+    }
+  })
+
+  const renderActiveSessionStatusPill = () => {
+    const pill = activeSessionStatusPill()
+    if (!pill) return null
+    return (
+      <span class={`status-indicator session-status session-status-list ${pill.className}`}>
+        {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
+        {pill.text}
+      </span>
+    )
   }
 
   const handleCommandPaletteClick = () => {
@@ -556,15 +610,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         size="small"
                         aria-expanded={leftDrawerState() !== "floating-closed"}
                       >
-                        {leftAppBarButtonIcon()}
+                       {leftAppBarButtonIcon()}
                       </IconButton>
                     </Show>
 
-                    <div class="flex flex-wrap items-center gap-1 justify-center">
-                      <PermissionNotificationBanner
-                        instanceId={props.instance.id}
-                        onClick={() => setPermissionModalOpen(true)}
-                      />
+                    <div class="flex-1 flex items-center justify-center min-w-0">
+                      <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
+                        <PermissionNotificationBanner
+                          instanceId={props.instance.id}
+                          onClick={() => setPermissionModalOpen(true)}
+                        />
+                      </Show>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-center gap-1">
                       <button
                         type="button"
                         class="connection-status-button px-2 py-0.5 text-xs"
@@ -577,6 +636,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       <span class="connection-status-shortcut-hint">
                         <Kbd shortcut="cmd+shift+p" />
                       </span>
+                    </div>
+
+                    <div class="flex-1 flex items-center justify-center min-w-0">
                       <span
                         class={`status-indicator ${connectionStatusClass()}`}
                         aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
@@ -616,7 +678,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </div>
               }
             >
-              <div class="session-toolbar-left flex items-center gap-3 min-w-0">
+              <div class="session-toolbar-left flex-1 flex items-center gap-3 min-w-0">
                 <Show when={leftDrawerState() === "floating-closed"}>
                   <IconButton
                     ref={setLeftToggleButtonEl}
@@ -644,13 +706,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
                   </div>
                 </Show>
+
+                <div class="ml-auto flex items-center session-header-hints">
+                  <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
+                    <PermissionNotificationBanner
+                      instanceId={props.instance.id}
+                      onClick={() => setPermissionModalOpen(true)}
+                    />
+                  </Show>
+                </div>
               </div>
 
-              <div class="session-toolbar-center flex-1 flex items-center justify-center gap-2 min-w-[160px]">
-                <PermissionNotificationBanner
-                  instanceId={props.instance.id}
-                  onClick={() => setPermissionModalOpen(true)}
-                />
+              <div class="session-toolbar-center flex items-center justify-center gap-2 min-w-[160px]">
                 <button
                   type="button"
                   class="connection-status-button px-2 py-0.5 text-xs"
@@ -660,44 +727,47 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 >
                   {t("instanceShell.commandPalette.button")}
                 </button>
+              </div>
+
+              <div class="session-toolbar-right flex-1 flex items-center gap-3">
                 <span class="connection-status-shortcut-hint">
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
-              </div>
 
-              <div class="session-toolbar-right flex items-center gap-3">
-                <div class="connection-status-meta flex items-center gap-3">
-                  <Show when={connectionStatus() === "connected"}>
-                    <span class="status-indicator connected">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.connected")}</span>
-                    </span>
-                  </Show>
-                  <Show when={connectionStatus() === "connecting"}>
-                    <span class="status-indicator connecting">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.connecting")}</span>
-                    </span>
-                  </Show>
-                  <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                    <span class="status-indicator disconnected">
-                      <span class="status-dot" />
-                      <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
-                    </span>
+                <div class="ml-auto flex items-center gap-3">
+                  <div class="connection-status-meta flex items-center gap-3">
+                    <Show when={connectionStatus() === "connected"}>
+                      <span class="status-indicator connected">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.connected")}</span>
+                      </span>
+                    </Show>
+                    <Show when={connectionStatus() === "connecting"}>
+                      <span class="status-indicator connecting">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.connecting")}</span>
+                      </span>
+                    </Show>
+                    <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
+                      <span class="status-indicator disconnected">
+                        <span class="status-dot" />
+                        <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
+                      </span>
+                    </Show>
+                  </div>
+                  <Show when={rightDrawerState() === "floating-closed"}>
+                    <IconButton
+                      ref={setRightToggleButtonEl}
+                      color="inherit"
+                      onClick={handleRightAppBarButtonClick}
+                      aria-label={rightAppBarButtonLabel()}
+                      size="small"
+                      aria-expanded={rightDrawerState() !== "floating-closed"}
+                    >
+                      {rightAppBarButtonIcon()}
+                    </IconButton>
                   </Show>
                 </div>
-                <Show when={rightDrawerState() === "floating-closed"}>
-                  <IconButton
-                    ref={setRightToggleButtonEl}
-                    color="inherit"
-                    onClick={handleRightAppBarButtonClick}
-                    aria-label={rightAppBarButtonLabel()}
-                    size="small"
-                    aria-expanded={rightDrawerState() !== "floating-closed"}
-                  >
-                    {rightAppBarButtonIcon()}
-                  </IconButton>
-                </Show>
               </div>
             </Show>
           </Toolbar>
