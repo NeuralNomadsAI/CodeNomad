@@ -46,33 +46,14 @@ interface GitChangesTabProps {
 const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const renderContent = (): JSX.Element => {
     const sessionId = props.activeSessionId()
-    if (!sessionId || sessionId === "info") {
-      return (
-        <div class="right-panel-empty">
-          <span class="text-xs">Select a session to view changes.</span>
-        </div>
-      )
-    }
 
-    const entries = props.entries()
-    if (entries === null) {
-      return (
-        <div class="right-panel-empty">
-          <span class="text-xs">Loading git changes…</span>
-        </div>
-      )
-    }
+    const hasSession = Boolean(sessionId && sessionId !== "info")
+    const entries = hasSession ? props.entries() : null
 
-    const nonDeleted = entries.filter((item) => item && item.status !== "deleted")
-    if (nonDeleted.length === 0) {
-      return (
-        <div class="right-panel-empty">
-          <span class="text-xs">No git changes yet.</span>
-        </div>
-      )
-    }
+    const sorted = Array.isArray(entries)
+      ? [...entries].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
+      : []
 
-    const sorted = [...entries].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
     const totals = sorted.reduce(
       (acc, item) => {
         acc.additions += typeof item.added === "number" ? item.added : 0
@@ -81,6 +62,15 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       },
       { additions: 0, deletions: 0 },
     )
+
+    const nonDeleted = sorted.filter((item) => item && item.status !== "deleted")
+
+    const emptyViewerMessage = () => {
+      if (!hasSession) return "Select a session to view changes."
+      if (entries === null) return "Loading git changes…"
+      if (nonDeleted.length === 0) return "No git changes yet."
+      return "No file selected."
+    }
 
     const selectedPath = props.selectedPath()
     const fallbackPath = props.mostChangedPath()
@@ -120,7 +110,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     }
                     fallback={
                       <div class="file-viewer-empty">
-                        <span class="file-viewer-empty-text">No file selected.</span>
+                        <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
                       </div>
                     }
                   >
@@ -153,71 +143,77 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       </div>
     )
 
+    const renderEmptyList = () => <div class="p-3 text-xs text-secondary">{emptyViewerMessage()}</div>
+
     const renderListPanel = () => (
-      <For each={sorted}>
-        {(item) => (
-          <div
-            class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
-            onClick={() => {
-              props.onOpenFile(item.path)
-            }}
-          >
-            <div class="file-list-item-content">
-              <div class="file-list-item-path" title={item.path}>
-                {item.path}
-              </div>
-              <div class="file-list-item-stats">
-                <Show when={item.status === "deleted"}>
-                  <span class="text-[10px] text-secondary">deleted</span>
-                </Show>
-                <Show when={item.status !== "deleted"}>
-                  <>
-                    <span class="file-list-item-additions">+{item.added}</span>
-                    <span class="file-list-item-deletions">-{item.removed}</span>
-                  </>
-                </Show>
+      <Show when={nonDeleted.length > 0} fallback={renderEmptyList()}>
+        <For each={sorted}>
+          {(item) => (
+            <div
+              class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
+              onClick={() => {
+                props.onOpenFile(item.path)
+              }}
+            >
+              <div class="file-list-item-content">
+                <div class="file-list-item-path" title={item.path}>
+                  {item.path}
+                </div>
+                <div class="file-list-item-stats">
+                  <Show when={item.status === "deleted"}>
+                    <span class="text-[10px] text-secondary">deleted</span>
+                  </Show>
+                  <Show when={item.status !== "deleted"}>
+                    <>
+                      <span class="file-list-item-additions">+{item.added}</span>
+                      <span class="file-list-item-deletions">-{item.removed}</span>
+                    </>
+                  </Show>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </For>
+          )}
+        </For>
+      </Show>
     )
 
     const renderListOverlay = () => (
-      <For each={sorted}>
-        {(item) => (
-          <div
-            class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
-            onClick={() => props.onOpenFile(item.path)}
-            title={item.path}
-          >
-            <div class="file-list-item-content">
-              <div class="file-list-item-path" title={item.path}>
-                {item.path}
-              </div>
-              <div class="file-list-item-stats">
-                <Show when={item.status === "deleted"}>
-                  <span class="text-[10px] text-secondary">deleted</span>
-                </Show>
-                <Show when={item.status !== "deleted"}>
-                  <>
-                    <span class="file-list-item-additions">+{item.added}</span>
-                    <span class="file-list-item-deletions">-{item.removed}</span>
-                  </>
-                </Show>
+      <Show when={nonDeleted.length > 0} fallback={renderEmptyList()}>
+        <For each={sorted}>
+          {(item) => (
+            <div
+              class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
+              onClick={() => props.onOpenFile(item.path)}
+              title={item.path}
+            >
+              <div class="file-list-item-content">
+                <div class="file-list-item-path" title={item.path}>
+                  {item.path}
+                </div>
+                <div class="file-list-item-stats">
+                  <Show when={item.status === "deleted"}>
+                    <span class="text-[10px] text-secondary">deleted</span>
+                  </Show>
+                  <Show when={item.status !== "deleted"}>
+                    <>
+                      <span class="file-list-item-additions">+{item.added}</span>
+                      <span class="file-list-item-deletions">-{item.removed}</span>
+                    </>
+                  </Show>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </For>
+          )}
+        </For>
+      </Show>
     )
 
     return (
       <SplitFilePanel
         header={
           <>
-            <span class="files-tab-selected-path" title={selectedEntry?.path || ""}>
-              {selectedEntry?.path || ""}
+            <span class="files-tab-selected-path" title={selectedEntry?.path || "Git Changes"}>
+              {selectedEntry?.path || "Git Changes"}
             </span>
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>
@@ -235,7 +231,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.refresh")}
               aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
-              disabled={props.statusLoading()}
+              disabled={!hasSession || props.statusLoading() || entries === null}
               style={{ "margin-left": "auto" }}
               onClick={() => props.onRefresh()}
             >

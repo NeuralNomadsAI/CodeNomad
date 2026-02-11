@@ -37,15 +37,8 @@ interface FilesTabProps {
 
 const FilesTab: Component<FilesTabProps> = (props) => {
   const renderContent = (): JSX.Element => {
-    if (props.browserLoading() && props.browserEntries() === null) {
-      return (
-        <div class="right-panel-empty">
-          <span class="text-xs">Loading files...</span>
-        </div>
-      )
-    }
-
-    const entries = props.browserEntries() || []
+    const entriesValue = props.browserEntries()
+    const entries = entriesValue || []
     const sorted = [...entries].sort((a, b) => {
       const aDir = a.type === "directory" ? 0 : 1
       const bDir = b.type === "directory" ? 0 : 1
@@ -56,6 +49,11 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     const parent = props.parentPath()
 
     const headerDisplayedPath = () => props.browserSelectedPath() || props.browserPath()
+
+    const emptyViewerMessage = () => {
+      if (props.browserLoading() && entriesValue === null) return "Loading files..."
+      return "Select a file to preview"
+    }
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
@@ -74,7 +72,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                     }
                     fallback={
                       <div class="file-viewer-empty">
-                        <span class="file-viewer-empty-text">Select a file to preview</span>
+                        <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
                       </div>
                     }
                   >
@@ -112,6 +110,10 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               </div>
             </div>
           )}
+        </Show>
+
+        <Show when={props.browserLoading() && entriesValue === null}>
+          <div class="p-3 text-xs text-secondary">Loading files...</div>
         </Show>
 
         <For each={sorted}>
