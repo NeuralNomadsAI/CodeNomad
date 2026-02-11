@@ -135,7 +135,6 @@ export default function PromptInput(props: PromptInputProps) {
     instanceFolder: () => props.instanceFolder,
     prompt,
     setPrompt,
-    resetHistoryNavigation,
     getTextarea: () => textareaRef ?? null,
     instanceAgents,
     commands: () => getCommands(props.instanceId),
@@ -303,7 +302,6 @@ export default function PromptInput(props: PromptInputProps) {
     const nextValue = before + insertion + after
 
     setPrompt(nextValue)
-    resetHistoryNavigation()
     setShowPicker(false)
     setAtPosition(null)
 

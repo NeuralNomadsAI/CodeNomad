@@ -17,7 +17,6 @@ type PromptPickerOptions = {
 
   prompt: Accessor<string>
   setPrompt: (value: string) => void
-  resetHistoryNavigation?: () => void
   getTextarea: () => HTMLTextAreaElement | null
 
   instanceAgents: Accessor<Agent[]>
@@ -53,7 +52,6 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     const target = e.target as HTMLTextAreaElement
     const value = target.value
     options.setPrompt(value)
-    options.resetHistoryNavigation?.()
 
     const cursorPos = target.selectionStart
 

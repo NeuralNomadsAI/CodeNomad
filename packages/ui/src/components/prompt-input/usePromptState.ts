@@ -50,7 +50,11 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
   const setPrompt = (value: string) => {
     setPromptInternal(value)
-    setSessionDraftPrompt(options.instanceId(), options.sessionId(), value)
+    // Persist drafts only when the user is at the "fresh" position (not browsing history).
+    // This keeps the bottom-of-history draft stable even if the user edits recalled history entries.
+    if (historyIndex() === -1) {
+      setSessionDraftPrompt(options.instanceId(), options.sessionId(), value)
+    }
   }
 
   const clearPrompt = () => {
@@ -121,6 +125,12 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
     const textarea = selectOptions.getTextarea()
     if (!textarea) return false
+
+    // Only require the cursor to be at the buffer start when *entering* history navigation.
+    // Once we're already navigating history (historyIndex >= 0), allow ArrowUp/ArrowDown
+    // regardless of cursor position (we focus the end of the entry).
+    if (historyIndex() !== -1) return true
+
     return textarea.selectionStart === 0 && textarea.selectionEnd === 0
   }
 
@@ -164,7 +174,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
       setPrompt(entries[newIndex])
     } else {
       setHistoryIndex(-1)
-      const draft = historyDraft()
+      const draft = historyDraft() ?? getSessionDraftPrompt(options.instanceId(), options.sessionId())
       setPrompt(draft ?? "")
       setHistoryDraft(null)
     }
