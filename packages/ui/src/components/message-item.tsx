@@ -268,73 +268,83 @@ export default function MessageItem(props: MessageItemProps) {
   return (
     <div class={containerClass()}>
       <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
-        <div class="message-speaker">
-          <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
-            {speakerLabel()}
-          </span>
-          <Show when={agentMeta()}>{(meta) => <span class="message-agent-meta">{meta()}</span>}</Show>
-        </div>
-        <div class="message-item-actions">
-          <Show when={isUser()}>
-            <div class="message-action-group">
-              <Show when={props.onRevert}>
-                <button
-                  class="message-action-button"
-                  onClick={handleRevert}
-                  title={t("messageItem.actions.revert")}
-                  aria-label={t("messageItem.actions.revert")}
-                >
-                  <Undo class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </Show>
-              <Show when={props.onFork}>
-                <button
-                  class="message-action-button"
-                  onClick={() => props.onFork?.(props.record.id)}
-                  title={t("messageItem.actions.fork")}
-                  aria-label={t("messageItem.actions.fork")}
-                >
-                  <Split class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </Show>
-              <button
-                class="message-action-button"
-                onClick={handleCopy}
-                title={copyLabel()}
-                aria-label={copyLabel()}
-              >
-                <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
-            </div>
-          </Show>
-          <Show when={!isUser()}>
-            <div class="message-action-group">
-              <button
-                class="message-action-button"
-                onClick={handleCopy}
-                title={copyLabel()}
-                aria-label={copyLabel()}
-              >
-                <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+        <div class="message-item-header-row message-item-header-row--top">
+          <div class="message-speaker">
+            <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
+              {speakerLabel()}
+            </span>
+          </div>
 
-              <Show when={deletableTextPartId()}>
-                {(partId) => (
+          <div class="message-item-actions">
+            <Show when={isUser()}>
+              <div class="message-action-group">
+                <Show when={props.onRevert}>
                   <button
                     class="message-action-button"
-                    onClick={() => void handleDeletePart(partId())}
-                    disabled={isDeletingPart(partId())}
-                    title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                    aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    onClick={handleRevert}
+                    title={t("messageItem.actions.revert")}
+                    aria-label={t("messageItem.actions.revert")}
                   >
-                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                    <Undo class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
-                )}
-              </Show>
-            </div>
-          </Show>
-          <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
+                </Show>
+                <Show when={props.onFork}>
+                  <button
+                    class="message-action-button"
+                    onClick={() => props.onFork?.(props.record.id)}
+                    title={t("messageItem.actions.fork")}
+                    aria-label={t("messageItem.actions.fork")}
+                  >
+                    <Split class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
+                <button
+                  class="message-action-button"
+                  onClick={handleCopy}
+                  title={copyLabel()}
+                  aria-label={copyLabel()}
+                >
+                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            </Show>
+            <Show when={!isUser()}>
+              <div class="message-action-group">
+                <button
+                  class="message-action-button"
+                  onClick={handleCopy}
+                  title={copyLabel()}
+                  aria-label={copyLabel()}
+                >
+                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+
+                <Show when={deletableTextPartId()}>
+                  {(partId) => (
+                    <button
+                      class="message-action-button"
+                      onClick={() => void handleDeletePart(partId())}
+                      disabled={isDeletingPart(partId())}
+                      title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                      aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+                    >
+                      <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                </Show>
+              </div>
+            </Show>
+            <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
+          </div>
         </div>
+
+        <Show when={agentMeta()}>
+          {(meta) => (
+            <div class="message-item-header-row message-item-header-row--bottom">
+              <span class="message-agent-meta">{meta()}</span>
+            </div>
+          )}
+        </Show>
 
       </header>
 

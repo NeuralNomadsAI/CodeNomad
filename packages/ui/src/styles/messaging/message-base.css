@@ -4,7 +4,19 @@
 }
 
 .message-item-header {
+  @apply flex flex-col gap-0.5;
+}
+
+.message-item-header-row {
+  @apply w-full;
+}
+
+.message-item-header-row--top {
   @apply flex justify-between items-start gap-2.5;
+}
+
+.message-item-header-row--bottom {
+  @apply flex items-start;
 }
 
 .message-speaker {
@@ -13,6 +25,7 @@
 
 .message-speaker-label {
   font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
 }
 
 .message-speaker-label[data-role="user"] {
