@@ -15,6 +15,18 @@
 - Prefer composable primitives (signals, hooks, utilities) over deep inheritance or implicit global state.
 - When adding platform integrations (SSE, IPC, SDK), isolate them in thin adapters that surface typed events/actions.
 
+## File Length Guidelines (Highlight Only)
+
+We track file size as a refactoring signal. When you touch or create files, highlight oversized files so the team can plan refactors when time permits.
+
+- Source files: warn after ~500 lines; target limit ~800 lines
+- Test files: highlight after ~1000 lines
+
+Behavior for agents:
+- Do not refactor solely to satisfy these thresholds.
+- When a change touches a file that exceeds the warning/limit, mention it in your final response and include the file path and approximate line count.
+- When creating new files, aim to stay under the thresholds unless there's a clear reason.
+
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
