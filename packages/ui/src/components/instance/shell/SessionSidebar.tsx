@@ -68,7 +68,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               }
             }}
           >
-            <PlusSquare class="w-4 h-4 opacity-70" />
+            <PlusSquare class="w-5 h-5" />
           </IconButton>
           <IconButton
             size="small"
@@ -85,7 +85,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               },
             }}
           >
-            <Search class={props.showSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
+            <Search class="w-5 h-5" />
           </IconButton>
           <IconButton
             size="small"
