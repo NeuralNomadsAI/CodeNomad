@@ -4,7 +4,7 @@ import type { Session } from "../../../types/session"
 import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { Search, SquarePlus } from "lucide-solid"
+import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -68,7 +68,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               }
             }}
           >
-            <SquarePlus class="w-4 h-4 opacity-70" />
+            <PlusSquare class="w-4 h-4 opacity-70" />
           </IconButton>
           <IconButton
             size="small"
