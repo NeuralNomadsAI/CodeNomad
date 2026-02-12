@@ -21,6 +21,8 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "Развернуть сессию",
   "sessionList.expand.collapseTitle": "Свернуть",
   "sessionList.expand.expandTitle": "Развернуть",
+  "sessionList.actions.newSession.ariaLabel": "Новая сессия",
+  "sessionList.actions.newSession.title": "Новая сессия",
   "sessionList.actions.copyId.ariaLabel": "Скопировать ID сессии",
   "sessionList.actions.copyId.title": "Скопировать ID сессии",
   "sessionList.actions.rename.ariaLabel": "Переименовать сессию",

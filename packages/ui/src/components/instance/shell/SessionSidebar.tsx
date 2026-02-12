@@ -4,7 +4,7 @@ import type { Session } from "../../../types/session"
 import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { Search } from "lucide-solid"
+import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -59,6 +59,20 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           <IconButton
             size="small"
             color="inherit"
+            aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
+            title={props.t("sessionList.actions.newSession.title")}
+            onClick={() => {
+              const result = props.onNewSession()
+              if (result instanceof Promise) {
+                void result.catch((error) => log.error("Failed to create session:", error))
+              }
+            }}
+          >
+            <PlusSquare class="w-5 h-5" />
+          </IconButton>
+          <IconButton
+            size="small"
+            color="inherit"
             aria-label={props.t("sessionList.filter.ariaLabel")}
             title={props.t("sessionList.filter.ariaLabel")}
             aria-pressed={props.showSearch()}
@@ -71,7 +85,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               },
             }}
           >
-            <Search class={props.showSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
+            <Search class="w-5 h-5" />
           </IconButton>
           <IconButton
             size="small"
