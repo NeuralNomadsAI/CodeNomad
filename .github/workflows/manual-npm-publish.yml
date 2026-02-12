@@ -21,6 +21,9 @@ on:
         required: false
         type: string
         default: dev
+    secrets:
+      NPM_TOKEN:
+        required: false
 
 permissions:
   contents: read
