@@ -5,6 +5,7 @@ import { EventEmitter } from "events"
 import { existsSync, readFileSync } from "fs"
 import os from "os"
 import path from "path"
+import { parse as parseYaml } from "yaml"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -39,6 +40,36 @@ interface CliEntryResolution {
 
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 
+function isYamlPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase()
+  return lower.endsWith(".yaml") || lower.endsWith(".yml")
+}
+
+function isJsonPath(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".json")
+}
+
+function resolveConfigPaths(raw?: string): { configYamlPath: string; legacyJsonPath: string } {
+  const target = raw && raw.trim().length > 0 ? raw.trim() : DEFAULT_CONFIG_PATH
+  const resolved = resolveConfigPath(target)
+
+  if (isYamlPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: resolved, legacyJsonPath: path.join(baseDir, "config.json") }
+  }
+
+  if (isJsonPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: path.join(baseDir, "config.yaml"), legacyJsonPath: resolved }
+  }
+
+  // Treat as directory.
+  return {
+    configYamlPath: path.join(resolved, "config.yaml"),
+    legacyJsonPath: path.join(resolved, "config.json"),
+  }
+}
+
 function resolveConfigPath(configPath?: string): string {
   const target = configPath && configPath.trim().length > 0 ? configPath : DEFAULT_CONFIG_PATH
   if (target.startsWith("~/")) {
@@ -53,10 +84,19 @@ function resolveHostForMode(mode: ListeningMode): string {
 
 function readListeningModeFromConfig(): ListeningMode {
   try {
-    const configPath = resolveConfigPath(process.env.CLI_CONFIG)
-    if (!existsSync(configPath)) return "local"
-    const content = readFileSync(configPath, "utf-8")
-    const parsed = JSON.parse(content)
+    const { configYamlPath, legacyJsonPath } = resolveConfigPaths(process.env.CLI_CONFIG)
+
+    let parsed: any = null
+    if (existsSync(configYamlPath)) {
+      const content = readFileSync(configYamlPath, "utf-8")
+      parsed = parseYaml(content)
+    } else if (existsSync(legacyJsonPath)) {
+      const content = readFileSync(legacyJsonPath, "utf-8")
+      parsed = JSON.parse(content)
+    } else {
+      return "local"
+    }
+
     const mode = parsed?.preferences?.listeningMode
     if (mode === "local" || mode === "all") {
       return mode

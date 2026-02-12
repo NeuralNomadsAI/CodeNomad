@@ -36,7 +36,8 @@
   },
   "dependencies": {
     "@neuralnomads/codenomad": "file:../server",
-    "@codenomad/ui": "file:../ui"
+    "@codenomad/ui": "file:../ui",
+    "yaml": "^2.4.2"
   },
   "devDependencies": {
     "7zip-bin": "^5.2.0",

@@ -2,7 +2,6 @@ import { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { ConfigStore } from "../../config/store"
 import { BinaryRegistry } from "../../config/binaries"
-import { ConfigFileSchema } from "../../config/schema"
 
 interface RouteDeps {
   configStore: ConfigStore
@@ -27,10 +26,25 @@ const BinaryValidateSchema = z.object({
 export function registerConfigRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/config/app", async () => deps.configStore.get())
 
-  app.put("/api/config/app", async (request) => {
-    const body = ConfigFileSchema.parse(request.body ?? {})
-    deps.configStore.replace(body)
-    return deps.configStore.get()
+  app.put("/api/config/app", async (request, reply) => {
+    // Backwards compatible: treat PUT as a merge-patch update.
+    try {
+      deps.configStore.mergePatch(request.body ?? {})
+      return deps.configStore.get()
+    } catch (error) {
+      reply.code(400)
+      return { error: error instanceof Error ? error.message : "Invalid config patch" }
+    }
+  })
+
+  app.patch("/api/config/app", async (request, reply) => {
+    try {
+      deps.configStore.mergePatch(request.body ?? {})
+      return deps.configStore.get()
+    } catch (error) {
+      reply.code(400)
+      return { error: error instanceof Error ? error.message : "Invalid config patch" }
+    }
   })
 
   app.get("/api/config/binaries", async () => {

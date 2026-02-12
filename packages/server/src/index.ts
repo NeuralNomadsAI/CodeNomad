@@ -9,6 +9,7 @@ import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { WorkspaceManager } from "./workspaces/manager"
 import { ConfigStore } from "./config/store"
+import { resolveConfigLocation } from "./config/location"
 import { BinaryRegistry } from "./config/binaries"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
@@ -210,13 +211,6 @@ function resolveHost(input: string | undefined): string {
   return trimmed
 }
 
-function resolvePath(filePath: string) {
-  if (filePath.startsWith("~/")) {
-    return path.join(process.env.HOME ?? "", filePath.slice(2))
-  }
-  return path.resolve(filePath)
-}
-
 function programHasArg(argv: string[], flag: string): boolean {
   return argv.includes(flag)
 }
@@ -245,7 +239,8 @@ async function main() {
 
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
-  const configDir = path.dirname(resolvePath(options.configPath))
+  const configLocation = resolveConfigLocation(options.configPath)
+  const configDir = configLocation.baseDir
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -266,7 +261,7 @@ async function main() {
 
   const authManager = new AuthManager(
     {
-      configPath: options.configPath,
+      configPath: configLocation.configYamlPath,
       username: options.authUsername,
       password: options.authPassword,
       generateToken: options.generateToken,
@@ -295,7 +290,16 @@ async function main() {
 
   const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
 
-  const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
+  const configStore = new ConfigStore(configLocation, eventBus, configLogger)
+
+  // Eagerly load config at boot so migrations run immediately
+  // (instead of waiting for the first /api/config request).
+  try {
+    configStore.get()
+  } catch (error) {
+    configLogger.warn({ err: error }, "Failed to load config at boot; continuing with defaults")
+  }
+
   const binaryRegistry = new BinaryRegistry(configStore, eventBus, configLogger)
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
@@ -307,7 +311,7 @@ async function main() {
     nodeExtraCaCertsPath,
   })
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
-  const instanceStore = new InstanceStore()
+  const instanceStore = new InstanceStore(configLocation.instancesDir)
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
