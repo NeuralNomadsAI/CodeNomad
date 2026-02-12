@@ -286,6 +286,8 @@ export interface ServerMeta {
   serverVersion?: string
   ui?: UiMeta
   support?: SupportMeta
+  /** Optional update info (dev channel only). */
+  update?: LatestReleaseInfo | null
 }
 
 export type BackgroundProcessStatus = "running" | "stopped" | "error"

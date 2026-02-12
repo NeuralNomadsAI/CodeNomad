@@ -1,4 +1,4 @@
-name: Dev CI
+name: Develop Pre-Release
 
 on:
   push:
@@ -7,12 +7,34 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  id-token: write
+  contents: write
+
+concurrency:
+  group: dev-prerelease
+  cancel-in-progress: true
 
 jobs:
-  dev-ci:
-    uses: ./.github/workflows/build-and-upload.yml
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version_suffix: ${{ steps.vars.outputs.version_suffix }}
+    steps:
+      - name: Compute version suffix
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA8="${GITHUB_SHA::8}"
+          TS=$(date -u +%Y%m%d%H%M%S)
+          echo "version_suffix=-dev.${TS}.${SHA8}" >> "$GITHUB_OUTPUT"
+
+  prerelease:
+    needs: prepare
+    uses: ./.github/workflows/reusable-release.yml
     with:
-      upload: false
-      set_versions: false
+      version_suffix: ${{ needs.prepare.outputs.version_suffix }}
+      dist_tag: dev
+      prerelease: true
+      release_ui: false
     secrets: inherit

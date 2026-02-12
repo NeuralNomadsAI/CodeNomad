@@ -50,6 +50,11 @@ For dev version
 npx @neuralnomads/codenomad@dev --launch
 ```
 
+Dev builds are published as GitHub pre-releases:
+https://github.com/shantur/CodeNomad/releases
+
+Dev releases are bleeding-edge builds, generated automatically every time a new commit is pushed to the `dev` branch.
+
 This command starts the server and opens the web client in your default browser.
 
 ## Highlights

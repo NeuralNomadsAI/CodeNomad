@@ -13,6 +13,16 @@ on:
         required: false
         default: dev
         type: string
+      prerelease:
+        description: "Create GitHub prerelease"
+        required: false
+        default: false
+        type: boolean
+      release_ui:
+        description: "Publish remote UI + manifest"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -53,11 +63,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.versions.outputs.tag }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            if [ "${IS_PRERELEASE}" = "true" ]; then
+              gh release create "$TAG" --title "$TAG" --generate-notes --prerelease
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
           fi
 
   build-and-upload:
@@ -71,6 +86,7 @@ jobs:
 
   release-ui:
     needs: prepare-release
+    if: ${{ inputs.release_ui }}
     permissions:
       contents: read
     uses: ./.github/workflows/release-ui.yml

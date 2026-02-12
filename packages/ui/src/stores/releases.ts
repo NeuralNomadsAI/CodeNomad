@@ -11,12 +11,15 @@ const log = getLogger("actions")
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
+const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
+const META_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 
 let initialized = false
 let visibilityEffectInitialized = false
 let activeToast: ToastHandle | null = null
 let activeToastKey: string | null = null
 let uiUpdateToasted = false
+let metaRefreshInterval: ReturnType<typeof setInterval> | null = null
 
 function dismissActiveToast() {
   if (activeToast) {
@@ -80,6 +83,8 @@ async function refreshFromMeta() {
     const meta = await getServerMeta(true)
     setSupportInfo(meta.support ?? null)
     maybeNotifyUiUpdated(meta)
+    maybeNotifyDevReleaseAvailable(meta)
+    ensureMetaRefresh(meta)
   } catch (error) {
     log.warn("Unable to load server metadata for support info", error)
   }
@@ -113,6 +118,46 @@ function maybeNotifyUiUpdated(meta: ServerMeta) {
     duration: 8000,
     position: "bottom-right",
   })
+}
+
+function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
+  const update = meta.update
+  if (!update || !update.version || !update.url) return
+
+  const lastSeen = safeReadLocalStorage(DEV_RELEASE_STORAGE_KEY)
+  if (lastSeen === update.version) {
+    return
+  }
+
+  safeWriteLocalStorage(DEV_RELEASE_STORAGE_KEY, update.version)
+
+  showToastNotification({
+    title: tGlobal("releases.devUpdateAvailable.title"),
+    message: tGlobal("releases.devUpdateAvailable.message", { version: update.version }),
+    variant: "info",
+    duration: 12000,
+    position: "bottom-right",
+    action: {
+      label: tGlobal("releases.devUpdateAvailable.action"),
+      href: update.url,
+    },
+  })
+}
+
+function ensureMetaRefresh(meta: ServerMeta) {
+  if (metaRefreshInterval) return
+
+  const version = meta.serverVersion?.trim() ?? ""
+  const looksLikeDev = version.includes("-dev.")
+  const hasDevUpdateChannel = Boolean(meta.update)
+
+  if (!looksLikeDev && !hasDevUpdateChannel) {
+    return
+  }
+
+  metaRefreshInterval = setInterval(() => {
+    void refreshFromMeta()
+  }, META_REFRESH_INTERVAL_MS)
 }
 
 function safeReadLocalStorage(key: string): string | null {

@@ -26,4 +26,11 @@ export const appMessages = {
   "releases.upgradeRequired.message.withVersion": "Actualiza a CodeNomad {version} para usar la UI más reciente.",
   "releases.upgradeRequired.message.noVersion": "Actualiza CodeNomad para usar la UI más reciente.",
   "releases.upgradeRequired.action.getUpdate": "Obtener actualización",
+
+  "releases.uiUpdated.title": "UI actualizada",
+  "releases.uiUpdated.message": "La UI ahora está actualizada a {version}.",
+
+  "releases.devUpdateAvailable.title": "Compilación dev disponible",
+  "releases.devUpdateAvailable.message": "Hay una nueva compilación dev disponible: {version}.",
+  "releases.devUpdateAvailable.action": "Ver release",
 } as const

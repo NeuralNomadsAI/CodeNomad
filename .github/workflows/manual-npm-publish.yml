@@ -67,6 +67,16 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Publish server package with provenance
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+        run: |
+          npm publish --workspace @neuralnomads/codenomad --access public --tag ${DIST_TAG} --provenance
+
+      - name: Publish server package with provenance (OIDC)
+        if: ${{ secrets.NPM_TOKEN == '' }}
         env:
           NPM_CONFIG_PROVENANCE: true
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org

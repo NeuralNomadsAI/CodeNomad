@@ -22,6 +22,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses } from "./server/network-addresses"
+import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 
 const require = createRequire(import.meta.url)
 
@@ -348,6 +349,21 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
+  const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
+  const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
+  const isDevVersion = packageJson.version.includes("-dev.")
+  const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
+  const devReleaseMonitor = enableDevUpdateChecks
+    ? startDevReleaseMonitor({
+        currentVersion: packageJson.version,
+        repo: githubRepo,
+        logger: logger.child({ component: "updates" }),
+        onUpdate: (release) => {
+          serverMeta.update = release
+        },
+      })
+    : null
+
   if (uiResolution.uiDevServerUrl && options.https) {
     throw new InvalidArgumentError("UI dev proxy is only supported with --https=false --http=true")
   }
@@ -506,6 +522,8 @@ async function main() {
     await Promise.allSettled([shutdownWorkspaces, shutdownHttp])
 
     // no-op: remote UI manifest replaces GitHub release monitor
+
+    devReleaseMonitor?.stop()
 
     logger.info("Exiting process")
     process.exit(0)

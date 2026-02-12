@@ -52,6 +52,12 @@ export function startReleaseMonitor(options: ReleaseMonitorOptions): ReleaseMoni
   }
 }
 
+export function compareVersionStrings(a: string, b: string): number {
+  const left = parseVersion(a)
+  const right = parseVersion(b)
+  return compareVersions(left, right)
+}
+
 async function fetchLatestRelease(options: ReleaseMonitorOptions): Promise<LatestReleaseInfo | null> {
   const response = await fetch(RELEASES_API_URL, {
     headers: {
@@ -92,7 +98,7 @@ async function fetchLatestRelease(options: ReleaseMonitorOptions): Promise<Lates
   }
 }
 
-function stripTagPrefix(tag: string | undefined): string | null {
+export function stripTagPrefix(tag: string | undefined): string | null {
   if (!tag) return null
   const trimmed = tag.trim()
   if (!trimmed) return null
