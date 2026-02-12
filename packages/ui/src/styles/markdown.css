@@ -157,16 +157,6 @@
     width: 100%;
     margin: 1rem 0;
     background-color: transparent;
-    display: block;
-    padding-right: 0.75rem;
-  }
-
-  .markdown-body thead,
-  .markdown-body tbody,
-  .markdown-body tfoot {
-    width: 100%;
-    display: table;
-    table-layout: fixed;
   }
 
   .markdown-body th,
@@ -182,8 +172,12 @@
     background-color: var(--surface-secondary);
   }
 
-  .markdown-body tbody tr:nth-child(2n) {
-    background-color: var(--surface-muted);
+  .markdown-body tbody > tr:nth-child(odd) > td {
+    background-color: var(--markdown-table-row-odd);
+  }
+
+  .markdown-body tbody > tr:nth-child(even) > td {
+    background-color: var(--markdown-table-row-even);
   }
 
   .markdown-code-block {
