@@ -1,4 +1,4 @@
-@import "github-markdown-css/github-markdown-dark.css";
+@import "github-markdown-css/github-markdown-light.css" layer(github-markdown-base);
 
 @layer components {
   .markdown-body {
@@ -108,15 +108,21 @@
     background: transparent;
   }
 
-  .markdown-body pre {
+  .markdown-body pre:not(.shiki) {
     font-family: var(--font-family-mono);
     font-size: var(--font-size-sm);
     line-height: var(--line-height-normal);
     background-color: var(--surface-code);
+    color: var(--text-primary);
     border: 1px solid var(--border-base);
     border-radius: 8px;
     padding: 0.75rem;
     margin: 1rem 0;
+  }
+
+  .markdown-body pre:not(.shiki) code,
+  .markdown-code-block pre:not(.shiki) code {
+    color: var(--text-primary);
   }
 
   .markdown-body blockquote {
@@ -151,16 +157,6 @@
     width: 100%;
     margin: 1rem 0;
     background-color: transparent;
-    display: block;
-    padding-right: 0.75rem;
-  }
-
-  .markdown-body thead,
-  .markdown-body tbody,
-  .markdown-body tfoot {
-    width: 100%;
-    display: table;
-    table-layout: fixed;
   }
 
   .markdown-body th,
@@ -168,10 +164,20 @@
     border: 1px solid var(--border-base);
     padding: 0.5rem 0.75rem;
     text-align: left;
+    color: var(--text-primary);
+    background-color: transparent;
   }
 
   .markdown-body th {
     background-color: var(--surface-secondary);
+  }
+
+  .markdown-body tbody > tr:nth-child(odd) > td {
+    background-color: var(--markdown-table-row-odd);
+  }
+
+  .markdown-body tbody > tr:nth-child(even) > td {
+    background-color: var(--markdown-table-row-even);
   }
 
   .markdown-code-block {
