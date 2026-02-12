@@ -70,18 +70,19 @@ jobs:
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
 
       - name: Publish server package with provenance
-        if: ${{ secrets.NPM_TOKEN != '' }}
         env:
+          # Optional: when present, npm will use token auth.
+          # When empty/unset, npm trusted publishing (OIDC) may be used if configured.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+        shell: bash
         run: |
-          npm publish --workspace @neuralnomads/codenomad --access public --tag ${DIST_TAG} --provenance
-
-      - name: Publish server package with provenance (OIDC)
-        if: ${{ secrets.NPM_TOKEN == '' }}
-        env:
-          NPM_CONFIG_PROVENANCE: true
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
-        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN not set; attempting npm trusted publishing (OIDC)"
+            unset NODE_AUTH_TOKEN
+          else
+            echo "Using NPM_TOKEN authentication"
+          fi
           npm publish --workspace @neuralnomads/codenomad --access public --tag ${DIST_TAG} --provenance
