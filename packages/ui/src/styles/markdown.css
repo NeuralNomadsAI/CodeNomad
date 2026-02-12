@@ -96,6 +96,7 @@
   .markdown-body code {
     font-family: var(--font-family-mono);
     font-size: var(--font-size-sm);
+    color: var(--text-primary);
     background-color: var(--surface-muted);
     border: 1px solid var(--border-base);
     border-radius: 4px;
