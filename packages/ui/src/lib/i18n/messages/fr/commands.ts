@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "Afficher/masquer les entrées d'appel d'outil dans la timeline des messages",
   "commands.timelineToolCalls.keywords": "timeline, outil, basculer",
 
+  "commands.keyboardShortcutHints.label.show": "Afficher les raccourcis clavier",
+  "commands.keyboardShortcutHints.label.hide": "Masquer les raccourcis clavier",
+  "commands.keyboardShortcutHints.description": "Afficher ou masquer les indices de raccourcis clavier dans l'interface",
+  "commands.keyboardShortcutHints.description.disabledWeb": "Désactivé en WebUI (les raccourcis sont toujours masqués)",
+  "commands.keyboardShortcutHints.keywords": "raccourci, raccourcis, clavier, keybind, indices",
+
   "commands.common.expanded": "Développé",
   "commands.common.collapsed": "Réduit",
   "commands.common.visible": "Visible",

@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "切换消息时间轴中的工具调用条目",
   "commands.timelineToolCalls.keywords": "timeline, tool, toggle, 时间轴, 工具, 切换",
 
+  "commands.keyboardShortcutHints.label.show": "显示键盘快捷键提示",
+  "commands.keyboardShortcutHints.label.hide": "隐藏键盘快捷键提示",
+  "commands.keyboardShortcutHints.description": "显示或隐藏界面中的键盘快捷键提示",
+  "commands.keyboardShortcutHints.description.disabledWeb": "WebUI 中已禁用（提示始终隐藏）",
+  "commands.keyboardShortcutHints.keywords": "shortcuts, keyboard, hints, 快捷键, 键盘, 提示",
+
   "commands.common.expanded": "展开",
   "commands.common.collapsed": "折叠",
   "commands.common.visible": "可见",

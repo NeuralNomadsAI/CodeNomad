@@ -172,7 +172,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                         </span>
                       </Show>
                     </div>
-                    <kbd class="kbd ml-2">
+                    <kbd class="kbd ml-2 kbd-hint">
                       Cmd+Enter
                     </kbd>
                   </button>

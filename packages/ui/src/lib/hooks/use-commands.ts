@@ -14,6 +14,7 @@ import { getLogger } from "../logger"
 import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
+import { runtimeEnv } from "../runtime-env"
 
 const log = getLogger("actions")
 
@@ -28,6 +29,7 @@ function splitKeywords(key: string): string[] {
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
+  toggleKeyboardShortcutHints: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
@@ -452,6 +454,26 @@ export function useCommands(options: UseCommandsOptions) {
       category: "System",
       keywords: () => splitKeywords("commands.timelineToolCalls.keywords"),
       action: options.toggleShowTimelineTools,
+    })
+
+    commandRegistry.register({
+      id: "keyboard-shortcut-hints",
+      label: () =>
+        tGlobal(
+          options.preferences().showKeyboardShortcutHints
+            ? "commands.keyboardShortcutHints.label.hide"
+            : "commands.keyboardShortcutHints.label.show",
+        ),
+      description: () =>
+        tGlobal(
+          runtimeEnv.host === "web"
+            ? "commands.keyboardShortcutHints.description.disabledWeb"
+            : "commands.keyboardShortcutHints.description",
+        ),
+      category: "System",
+      keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
+      disabled: () => runtimeEnv.host === "web",
+      action: options.toggleKeyboardShortcutHints,
     })
 
     commandRegistry.register({

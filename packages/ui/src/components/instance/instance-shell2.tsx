@@ -633,7 +633,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       >
                         {t("instanceShell.commandPalette.button")}
                       </button>
-                      <span class="connection-status-shortcut-hint">
+                      <span class="connection-status-shortcut-hint kbd-hint">
                         <Kbd shortcut="cmd+shift+p" />
                       </span>
                     </div>
@@ -730,7 +730,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </div>
 
               <div class="session-toolbar-right flex-1 flex items-center gap-3">
-                <span class="connection-status-shortcut-hint">
+                <span class="connection-status-shortcut-hint kbd-hint">
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
 
