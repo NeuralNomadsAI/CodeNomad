@@ -47,7 +47,7 @@ npx @neuralnomads/codenomad --launch
 For dev version
 
 ```bash
-npx @neuralnomads/codenomad@dev --launch
+npx @neuralnomads/codenomad-dev --launch
 ```
 
 Dev builds are published as GitHub pre-releases:

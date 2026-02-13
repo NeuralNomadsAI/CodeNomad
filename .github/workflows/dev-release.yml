@@ -34,7 +34,8 @@ jobs:
     uses: ./.github/workflows/reusable-release.yml
     with:
       version_suffix: ${{ needs.prepare.outputs.version_suffix }}
-      dist_tag: dev
+      npm_package_name: "@neuralnomads/codenomad-dev"
+      dist_tag: latest
       prerelease: true
       release_ui: false
     secrets: inherit

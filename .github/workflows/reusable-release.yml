@@ -13,6 +13,11 @@ on:
         required: false
         default: dev
         type: string
+      npm_package_name:
+        description: "npm package name to publish (defaults to server package name)"
+        required: false
+        default: ""
+        type: string
       prerelease:
         description: "Create GitHub prerelease"
         required: false
@@ -100,4 +105,5 @@ jobs:
     with:
       version: ${{ needs.prepare-release.outputs.version }}
       dist_tag: ${{ inputs.dist_tag }}
+      package_name: ${{ inputs.npm_package_name }}
     secrets: inherit

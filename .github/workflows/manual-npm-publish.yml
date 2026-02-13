@@ -12,6 +12,11 @@ on:
         required: false
         default: dev
         type: string
+      package_name:
+        description: "Package name to publish (e.g. @neuralnomads/codenomad-dev)"
+        required: false
+        default: "@neuralnomads/codenomad"
+        type: string
   workflow_call:
     inputs:
       version:
@@ -21,6 +26,10 @@ on:
         required: false
         type: string
         default: dev
+      package_name:
+        required: false
+        type: string
+        default: "@neuralnomads/codenomad"
     secrets:
       NPM_TOKEN:
         required: false
@@ -54,7 +63,7 @@ jobs:
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Build server package (includes UI bundling)
-        run: npm run build --workspace @neuralnomads/codenomad
+        run: npm run build --workspace packages/server
 
       - name: Set publish metadata
         shell: bash
@@ -65,9 +74,16 @@ jobs:
           fi
           echo "VERSION=$VERSION_INPUT" >> "$GITHUB_ENV"
           echo "DIST_TAG=${{ inputs.dist_tag || 'dev' }}" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=${{ inputs.package_name }}" >> "$GITHUB_ENV"
 
       - name: Bump package version for publish
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+
+      - name: Set server package name for publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const fs=require('fs'); const path=require('path'); const p=path.join('packages','server','package.json'); const j=JSON.parse(fs.readFileSync(p,'utf8')); j.name=process.env.PACKAGE_NAME || j.name; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n'); console.log('Publishing as', j.name);"
 
       - name: Publish server package with provenance
         env:
@@ -85,4 +101,4 @@ jobs:
           else
             echo "Using NPM_TOKEN authentication"
           fi
-          npm publish --workspace @neuralnomads/codenomad --access public --tag ${DIST_TAG} --provenance
+          npm publish --workspace packages/server --access public --tag ${DIST_TAG} --provenance
