@@ -1,7 +1,7 @@
 import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { Session } from "../../../types/session"
-import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
+import { keyboardRegistry, type KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
 import { PlusSquare, Search } from "lucide-solid"
@@ -13,7 +13,6 @@ import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
-import Kbd from "../../kbd"
 import WorktreeSelector from "../../worktree-selector"
 import AgentSelector from "../../agent-selector"
 import ModelSelector from "../../model-selector"
@@ -119,12 +118,13 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           </Show>
         </div>
       </div>
-      <Show when={!props.isPhoneLayout()}>
-        <div class="session-sidebar-shortcuts">
-          <Show when={props.keyboardShortcuts().length}>
-            <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
-          </Show>
-        </div>
+      <Show when={props.keyboardShortcuts().length}>
+        <KeyboardHint
+          class="session-sidebar-shortcuts"
+          shortcuts={props.keyboardShortcuts()}
+          separator=" "
+          showDescription={false}
+        />
       </Show>
     </div>
 
@@ -168,13 +168,17 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
               <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
 
-              <Show when={!props.isPhoneLayout()}>
-                <div class="session-sidebar-selector-hints" aria-hidden="true">
-                  <Kbd shortcut="cmd+shift+a" />
-                  <Kbd shortcut="cmd+shift+m" />
-                  <Kbd shortcut="cmd+shift+t" />
-                </div>
-              </Show>
+              <KeyboardHint
+                class="session-sidebar-selector-hints"
+                ariaHidden={true}
+                shortcuts={[
+                  keyboardRegistry.get("open-agent-selector"),
+                  keyboardRegistry.get("focus-model"),
+                  keyboardRegistry.get("focus-variant"),
+                ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
+                separator=" "
+                showDescription={false}
+              />
             </div>
           </>
         )}
