@@ -2,7 +2,6 @@ import { onMount, onCleanup, type Accessor } from "solid-js"
 import { setupTabKeyboardShortcuts } from "../keyboard"
 import { registerNavigationShortcuts } from "../shortcuts/navigation"
 import { registerInputShortcuts } from "../shortcuts/input"
-import { registerAgentShortcuts } from "../shortcuts/agent"
 import { registerEscapeShortcut, setEscapeStateChangeHandler } from "../shortcuts/escape"
 import { keyboardRegistry } from "../keyboard-registry"
 import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
@@ -55,24 +54,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
           ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
         ) as HTMLTextAreaElement
         textarea?.focus()
-      },
-    )
-
-    registerAgentShortcuts(
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-agent-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
       },
     )
 

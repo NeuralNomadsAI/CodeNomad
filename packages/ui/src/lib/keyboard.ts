@@ -10,22 +10,6 @@ export function setupTabKeyboardShortcuts(
   handleCloseSession: (instanceId: string, sessionId: string) => void,
   handleCommandPalette: () => void,
 ) {
-  keyboardRegistry.register({
-    id: "session-new",
-    key: "n",
-    modifiers: {
-      shift: true,
-      meta: isMac(),
-      ctrl: !isMac(),
-    },
-    handler: () => {
-      const instanceId = activeInstanceId()
-      if (instanceId) void handleNewSession(instanceId)
-    },
-    description: "New Session",
-    context: "global",
-  })
-
   window.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
       e.preventDefault()

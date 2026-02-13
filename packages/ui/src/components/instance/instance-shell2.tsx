@@ -316,13 +316,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
 
-   const keyboardShortcuts = createMemo(() =>
-     [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
-       (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
-     ),
-   )
-
-   useSessionSidebarRequests({
+  useSessionSidebarRequests({
      instanceId: () => props.instance.id,
      sidebarContentEl: leftDrawerContentEl,
      leftPinned,
@@ -382,16 +376,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             role="presentation"
             aria-hidden="true"
           />
-          <SessionSidebar
-            t={t}
-            instanceId={props.instance.id}
-            threads={sessionThreads}
-            activeSessionId={activeSessionIdForInstance}
-            activeSession={activeSessionForInstance}
-            showSearch={showSessionSearch}
-            onToggleSearch={() => setShowSessionSearch((current) => !current)}
-            keyboardShortcuts={keyboardShortcuts}
-            isPhoneLayout={isPhoneLayout}
+        <SessionSidebar
+          t={t}
+          instanceId={props.instance.id}
+          threads={sessionThreads}
+          activeSessionId={activeSessionIdForInstance}
+          activeSession={activeSessionForInstance}
+          showSearch={showSessionSearch}
+          onToggleSearch={() => setShowSessionSearch((current) => !current)}
+          isPhoneLayout={isPhoneLayout}
             drawerState={leftDrawerState}
             leftPinned={leftPinned}
             onSelectSession={handleSessionSelect}
@@ -443,27 +436,26 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
         </Show>
-        <SessionSidebar
-          t={t}
-          instanceId={props.instance.id}
-          threads={sessionThreads}
-          activeSessionId={activeSessionIdForInstance}
-          activeSession={activeSessionForInstance}
-          showSearch={showSessionSearch}
-          onToggleSearch={() => setShowSessionSearch((current) => !current)}
-          keyboardShortcuts={keyboardShortcuts}
-          isPhoneLayout={isPhoneLayout}
-          drawerState={leftDrawerState}
-          leftPinned={leftPinned}
-          onSelectSession={handleSessionSelect}
-          onNewSession={props.onNewSession}
-          onSidebarAgentChange={props.handleSidebarAgentChange}
-          onSidebarModelChange={props.handleSidebarModelChange}
-          onPinLeftDrawer={pinLeftDrawer}
-          onUnpinLeftDrawer={unpinLeftDrawer}
-          onCloseLeftDrawer={closeLeftDrawer}
-          setContentEl={setLeftDrawerContentEl}
-        />
+          <SessionSidebar
+            t={t}
+            instanceId={props.instance.id}
+            threads={sessionThreads}
+            activeSessionId={activeSessionIdForInstance}
+            activeSession={activeSessionForInstance}
+            showSearch={showSessionSearch}
+            onToggleSearch={() => setShowSessionSearch((current) => !current)}
+            isPhoneLayout={isPhoneLayout}
+            drawerState={leftDrawerState}
+            leftPinned={leftPinned}
+            onSelectSession={handleSessionSelect}
+            onNewSession={props.onNewSession}
+            onSidebarAgentChange={props.handleSidebarAgentChange}
+            onSidebarModelChange={props.handleSidebarModelChange}
+            onPinLeftDrawer={pinLeftDrawer}
+            onUnpinLeftDrawer={unpinLeftDrawer}
+            onCloseLeftDrawer={closeLeftDrawer}
+            setContentEl={setLeftDrawerContentEl}
+          />
       </Drawer>
     )
   }

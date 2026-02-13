@@ -37,23 +37,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     const deleting = loading().deletingSession.get(props.instance.id)
     return deleting ? deleting.has(sessionId) : false
   }
-  const newSessionShortcut = createMemo<KeyboardShortcut>(() => {
-    const registered = keyboardRegistry.get("session-new")
-    if (registered) return registered
-    return {
-      id: "session-new-display",
-      key: "n",
-      modifiers: {
-        shift: true,
-        meta: isMac(),
-        ctrl: !isMac(),
-      },
-      handler: () => {},
-      description: t("instanceWelcome.shortcuts.newSession"),
-      context: "global",
-    }
-  })
-  const newSessionShortcutString = createMemo(() => (isMac() ? "cmd+shift+n" : "ctrl+shift+n"))
 
   createEffect(() => {
     const sessions = parentSessions()
@@ -108,12 +91,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     }
  
     const sessions = parentSessions()
- 
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
-      e.preventDefault()
-      handleNewSession()
-      return
-    }
  
     if (sessions.length === 0) return
  
@@ -502,7 +479,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                     )}
                     <span>{t("instanceWelcome.new.createButton")}</span>
                   </div>
-                  <Kbd shortcut={newSessionShortcutString()} class="ml-2" />
                 </button>
               </div>
             </div>

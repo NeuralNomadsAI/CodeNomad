@@ -130,7 +130,6 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.newSession.keywords"),
-      shortcut: { key: "N", meta: true, shift: true },
       action: async () => {
         const instance = activeInstance()
         if (!instance) return
@@ -176,57 +175,6 @@ export function useCommands(options: UseCommandsOptions) {
       action: () => {
         const instance = activeInstance()
         if (instance) setActiveSession(instance.id, "info")
-      },
-    })
-
-    commandRegistry.register({
-      id: "session-next",
-      label: () => tGlobal("commands.nextSession.label"),
-      description: () => tGlobal("commands.nextSession.description"),
-      category: "Session",
-      keywords: () => splitKeywords("commands.nextSession.keywords"),
-      shortcut: { key: "]", meta: true, shift: true },
-      action: () => {
-        const instanceId = activeInstanceId()
-        if (!instanceId) return
-        const ids = getVisibleSessionIds(instanceId)
-        if (ids.length <= 1) return
-
-        const currentActiveId = activeSessionIdForInstance() ?? ""
-        const currentIndex = ids.indexOf(currentActiveId)
-        const targetIndex = (currentIndex + 1 + ids.length) % ids.length
-
-        const targetSessionId = ids[targetIndex]
-        if (targetSessionId) {
-          setActiveSessionFromList(instanceId, targetSessionId)
-          emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
-        }
-      },
-    })
-
-    commandRegistry.register({
-      id: "session-prev",
-      label: () => tGlobal("commands.previousSession.label"),
-      description: () => tGlobal("commands.previousSession.description"),
-      category: "Session",
-      keywords: () => splitKeywords("commands.previousSession.keywords"),
-      shortcut: { key: "[", meta: true, shift: true },
-      action: () => {
-        const instanceId = activeInstanceId()
-        if (!instanceId) return
-        const ids = getVisibleSessionIds(instanceId)
-        if (ids.length <= 1) return
-
-        const currentActiveId = activeSessionIdForInstance() ?? ""
-        const currentIndex = ids.indexOf(currentActiveId)
-        const targetIndex =
-          currentIndex === -1 ? ids.length - 1 : currentIndex <= 0 ? ids.length - 1 : currentIndex - 1
-
-        const targetSessionId = ids[targetIndex]
-        if (targetSessionId) {
-          setActiveSessionFromList(instanceId, targetSessionId)
-          emitSessionSidebarRequest({ instanceId, action: "show-session-list" })
-        }
       },
     })
 
@@ -365,49 +313,6 @@ export function useCommands(options: UseCommandsOptions) {
             variant: "error",
           })
         }
-
-      },
-    })
-
-    commandRegistry.register({
-      id: "open-model-selector",
-      label: () => tGlobal("commands.openModelSelector.label"),
-      description: () => tGlobal("commands.openModelSelector.description"),
-      category: "Agent & Model",
-      keywords: () => splitKeywords("commands.openModelSelector.keywords"),
-      shortcut: { key: "M", meta: true, shift: true },
-      action: () => {
-        const instance = activeInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
-      },
-    })
-
-    commandRegistry.register({
-      id: "open-variant-selector",
-      label: () => tGlobal("commands.selectModelVariant.label"),
-      description: () => tGlobal("commands.selectModelVariant.description"),
-      category: "Agent & Model",
-      keywords: () => splitKeywords("commands.selectModelVariant.keywords"),
-      shortcut: { key: "T", meta: true, shift: true },
-      action: () => {
-        const instance = activeInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
-      },
-    })
-
-    commandRegistry.register({
-      id: "open-agent-selector",
-      label: () => tGlobal("commands.openAgentSelector.label"),
-      description: () => tGlobal("commands.openAgentSelector.description"),
-      category: "Agent & Model",
-      keywords: () => splitKeywords("commands.openAgentSelector.keywords"),
-      shortcut: { key: "A", meta: true, shift: true },
-      action: () => {
-        const instance = activeInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-agent-selector" })
       },
     })
 

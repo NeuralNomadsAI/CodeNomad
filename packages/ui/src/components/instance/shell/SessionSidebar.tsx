@@ -31,8 +31,6 @@ interface SessionSidebarProps {
 
   showSearch: Accessor<boolean>
   onToggleSearch: () => void
-
-  keyboardShortcuts: Accessor<KeyboardShortcut[]>
   isPhoneLayout: Accessor<boolean>
   drawerState: Accessor<DrawerViewState>
   leftPinned: Accessor<boolean>
@@ -119,11 +117,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           </Show>
         </div>
       </div>
-      <div class="session-sidebar-shortcuts">
-        <Show when={props.keyboardShortcuts().length}>
-          <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
-        </Show>
-      </div>
     </div>
 
     <div class="session-sidebar flex flex-col flex-1 min-h-0">
@@ -165,12 +158,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               />
 
               <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
-
-              <div class="session-sidebar-selector-hints" aria-hidden="true">
-                <Kbd shortcut="cmd+shift+a" />
-                <Kbd shortcut="cmd+shift+m" />
-                <Kbd shortcut="cmd+shift+t" />
-              </div>
             </div>
           </>
         )}
