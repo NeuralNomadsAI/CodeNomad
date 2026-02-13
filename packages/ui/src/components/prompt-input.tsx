@@ -1,8 +1,8 @@
-import { createSignal, Show, onMount, onCleanup, createEffect, on, untrack } from "solid-js"
+import { createSignal, Show, onMount, onCleanup, createEffect, on } from "solid-js"
 import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
 import UnifiedPicker from "./unified-picker"
 import ExpandButton from "./expand-button"
-import { getAttachments, clearAttachments, removeAttachment } from "../stores/attachments"
+import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
@@ -63,6 +63,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDrop,
     syncAttachmentCounters,
     handleExpandTextAttachment,
+    handleRemoveAttachment,
   } = usePromptAttachments({
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
@@ -86,6 +87,9 @@ export default function PromptInput(props: PromptInputProps) {
         const attachment = attachments().find((a) => a.id === attachmentId)
         if (!attachment) return
         handleExpandTextAttachment(attachment)
+      },
+      removeAttachment: (attachmentId: string) => {
+        handleRemoveAttachment(attachmentId)
       },
       setPromptText: (text: string, opts?: { focus?: boolean }) => {
         const textarea = textareaRef
@@ -166,10 +170,7 @@ export default function PromptInput(props: PromptInputProps) {
         setAtPosition(null)
         setSearchQuery("")
 
-        const instanceId = props.instanceId
-        const sessionId = props.sessionId
-        const currentAttachments = untrack(() => getAttachments(instanceId, sessionId))
-        syncAttachmentCounters(prompt(), currentAttachments)
+        syncAttachmentCounters(prompt())
       },
       { defer: true },
     ),
@@ -238,10 +239,10 @@ export default function PromptInput(props: PromptInputProps) {
     // Ignore attachments for slash commands, but keep them for next prompt.
     if (!isKnownSlashCommand) {
       clearAttachments(props.instanceId, props.sessionId)
-      syncAttachmentCounters("", [])
+      syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     } else {
-      syncAttachmentCounters("", currentAttachments)
+      syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     }
 

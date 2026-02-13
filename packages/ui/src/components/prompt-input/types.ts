@@ -8,6 +8,7 @@ export type PromptInsertMode = "quote" | "code"
 export interface PromptInputApi {
   insertSelection(text: string, mode: PromptInsertMode): void
   expandTextAttachment(attachmentId: string): void
+  removeAttachment(attachmentId: string): void
   setPromptText(text: string, opts?: { focus?: boolean }): void
   focus(): void
 }
