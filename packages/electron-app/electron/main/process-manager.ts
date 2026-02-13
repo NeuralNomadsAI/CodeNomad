@@ -97,7 +97,7 @@ function readListeningModeFromConfig(): ListeningMode {
       return "local"
     }
 
-    const mode = parsed?.preferences?.listeningMode
+    const mode = parsed?.server?.listeningMode ?? parsed?.preferences?.listeningMode
     if (mode === "local" || mode === "all") {
       return mode
     }

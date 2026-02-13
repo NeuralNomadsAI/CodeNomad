@@ -1,7 +1,6 @@
 import type {
   AgentModelSelection,
   AgentModelSelections,
-  ConfigFile,
   ModelPreference,
   OpenCodeBinary,
   Preferences,
@@ -183,9 +182,9 @@ export interface BinaryRecord {
   validationError?: string
 }
 
-export type AppConfig = ConfigFile
-export type AppConfigResponse = AppConfig
-export type AppConfigUpdateRequest = Partial<AppConfig>
+export type SettingsOwner = string
+export type SettingsBucket = Record<string, unknown>
+export type SettingsDoc = Record<string, unknown>
 
 export interface BinaryListResponse {
   binaries: BinaryRecord[]
@@ -214,8 +213,8 @@ export type WorkspaceEventType =
   | "workspace.error"
   | "workspace.stopped"
   | "workspace.log"
-  | "config.appChanged"
-  | "config.binariesChanged"
+  | "storage.configChanged"
+  | "storage.stateChanged"
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
@@ -226,8 +225,8 @@ export type WorkspaceEventPayload =
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
   | { type: "workspace.stopped"; workspaceId: string }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
-  | { type: "config.appChanged"; config: AppConfig }
-  | { type: "config.binariesChanged"; binaries: BinaryRecord[] }
+  | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
+  | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }

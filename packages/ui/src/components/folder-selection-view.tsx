@@ -26,11 +26,11 @@ interface FolderSelectionViewProps {
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const { recentFolders, removeRecentFolder, preferences, updatePreferences } = useConfig()
+  const { recentFolders, removeRecentFolder, preferences, updatePreferences, serverSettings, updateLastUsedBinary } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
-  const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")
+  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
@@ -53,7 +53,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   // Update selected binary when preferences change
   createEffect(() => {
-    const lastUsed = preferences().lastUsedBinary
+    const lastUsed = serverSettings().opencodeBinary
     if (!lastUsed) return
     setSelectedBinary((current) => (current === lastUsed ? current : lastUsed))
   })

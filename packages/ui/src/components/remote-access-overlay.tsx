@@ -6,7 +6,7 @@ import { ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-so
 import type { NetworkAddress, ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { restartCli } from "../lib/native/cli"
-import { preferences, setListeningMode } from "../stores/preferences"
+import { serverSettings, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { getLogger } from "../lib/logger"
 import { useI18n } from "../lib/i18n"
@@ -33,7 +33,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
   const [savingPassword, setSavingPassword] = createSignal(false)
 
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
-  const currentMode = createMemo(() => meta()?.listeningMode ?? preferences().listeningMode)
+  const currentMode = createMemo(() => meta()?.listeningMode ?? serverSettings().listeningMode)
   const allowExternalConnections = createMemo(() => currentMode() === "all")
   const displayAddresses = createMemo(() => {
     const list = addresses()

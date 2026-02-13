@@ -1,6 +1,6 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import { storage, type ConfigData } from "../lib/storage"
+import { storage, type OwnerBucket } from "../lib/storage"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -23,32 +23,21 @@ export interface ModelPreference {
   modelId: string
 }
 
-export interface AgentModelSelections {
-  [instanceId: string]: Record<string, ModelPreference>
-}
-
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
-
 export type ListeningMode = "local" | "all"
 
-export interface Preferences {
+export interface UiSettings {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   promptSubmitOnEnter: boolean
-  lastUsedBinary?: string
   locale?: string
-  environmentVariables: Record<string, string>
-  modelRecents: ModelPreference[]
-  modelFavorites: ModelPreference[]
-  modelThinkingSelections: Record<string, string>
   diffViewMode: DiffViewMode
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
-  listeningMode: ListeningMode
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -57,12 +46,14 @@ export interface Preferences {
   notifyOnIdle: boolean
 }
 
+// Backwards-compatible alias for older imports.
+export type Preferences = UiSettings
 
 export interface OpenCodeBinary {
-
   path: string
   version?: string
   lastUsed: number
+  label?: string
 }
 
 export interface RecentFolder {
@@ -70,27 +61,53 @@ export interface RecentFolder {
   lastAccessed: number
 }
 
-export type ThemePreference = NonNullable<ConfigData["theme"]>
+export type ThemePreference = "light" | "dark" | "system"
+
+interface UiConfigBucket {
+  theme?: ThemePreference
+  settings?: Partial<UiSettings>
+}
+
+interface ServerConfigBucket {
+  listeningMode?: ListeningMode
+  environmentVariables?: Record<string, string>
+  opencodeBinary?: string
+}
+
+interface UiStateBucket {
+  recentFolders?: RecentFolder[]
+  opencodeBinaries?: OpenCodeBinary[]
+  models?: {
+    recents?: ModelPreference[]
+    favorites?: ModelPreference[]
+    thinkingSelections?: Record<string, string>
+  }
+}
+
+interface NormalizedUiState {
+  recentFolders: RecentFolder[]
+  opencodeBinaries: OpenCodeBinary[]
+  models: {
+    recents: ModelPreference[]
+    favorites: ModelPreference[]
+    thinkingSelections: Record<string, string>
+  }
+}
 
 const MAX_RECENT_FOLDERS = 20
 const MAX_RECENT_MODELS = 5
 const MAX_FAVORITE_MODELS = 50
 
-const defaultPreferences: Preferences = {
+const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
   promptSubmitOnEnter: false,
-  environmentVariables: {},
-  modelRecents: [],
-  modelFavorites: [],
-  modelThinkingSelections: {},
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
-  listeningMode: "local",
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -98,382 +115,351 @@ const defaultPreferences: Preferences = {
   notifyOnIdle: true,
 }
 
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
-    try {
-      return JSON.stringify(a) === JSON.stringify(b)
-    } catch (error) {
-      log.warn("Failed to compare preference values", error)
-    }
+function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
+  const sanitized = input ?? {}
+  return {
+    showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
+    thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
+    showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
+    promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    locale: sanitized.locale ?? defaultUiSettings.locale,
+    diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
+    diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
+    showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
+    autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
+    osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
+    osNotificationsAllowWhenVisible:
+      sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
+    notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
+    notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
   }
-  return false
 }
 
-function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelections?: unknown }): Preferences {
-  const sanitized = pref ?? {}
-  const environmentVariables = {
-    ...defaultPreferences.environmentVariables,
-    ...(sanitized.environmentVariables ?? {}),
+function normalizeRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v
   }
+  return out
+}
 
-  const sourceModelRecents = sanitized.modelRecents ?? defaultPreferences.modelRecents
-  const modelRecents = sourceModelRecents.map((item) => ({ ...item }))
-
-  const sourceModelFavorites = sanitized.modelFavorites ?? defaultPreferences.modelFavorites
-  const modelFavorites = sourceModelFavorites.map((item) => ({ ...item }))
-
-  const modelThinkingSelections = {
-    ...defaultPreferences.modelThinkingSelections,
-    ...(sanitized.modelThinkingSelections ?? {}),
+function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
+  if (!Array.isArray(value)) return []
+  const out: T[] = []
+  for (const item of value) {
+    const mapped = mapper(item)
+    if (mapped) out.push(mapped)
   }
+  return out
+}
 
+function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
+  const source = input ?? {}
   return {
-    showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultPreferences.showThinkingBlocks,
-    thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
-    showTimelineTools: sanitized.showTimelineTools ?? defaultPreferences.showTimelineTools,
-    promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultPreferences.promptSubmitOnEnter,
-    lastUsedBinary: sanitized.lastUsedBinary ?? defaultPreferences.lastUsedBinary,
-    locale: sanitized.locale ?? defaultPreferences.locale,
-    environmentVariables,
-    modelRecents,
-    modelFavorites,
-    modelThinkingSelections,
-    diffViewMode: sanitized.diffViewMode ?? defaultPreferences.diffViewMode,
-    toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultPreferences.toolOutputExpansion,
-    diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultPreferences.diagnosticsExpansion,
-    showUsageMetrics: sanitized.showUsageMetrics ?? defaultPreferences.showUsageMetrics,
-    autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultPreferences.autoCleanupBlankSessions,
-    listeningMode: sanitized.listeningMode ?? defaultPreferences.listeningMode,
-
-    osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultPreferences.osNotificationsEnabled,
-    osNotificationsAllowWhenVisible:
-      sanitized.osNotificationsAllowWhenVisible ?? defaultPreferences.osNotificationsAllowWhenVisible,
-    notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultPreferences.notifyOnNeedsInput,
-    notifyOnIdle: sanitized.notifyOnIdle ?? defaultPreferences.notifyOnIdle,
+    recentFolders: cloneArray<RecentFolder>(source.recentFolders, (f) => {
+      if (!f || typeof f !== "object") return null
+      const p = (f as any).path
+      const lastAccessed = (f as any).lastAccessed
+      if (typeof p !== "string") return null
+      const ts = typeof lastAccessed === "number" ? lastAccessed : Date.now()
+      return { path: p, lastAccessed: ts }
+    }),
+    opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
+      if (!b || typeof b !== "object") return null
+      const p = (b as any).path
+      if (typeof p !== "string") return null
+      const lastUsed = typeof (b as any).lastUsed === "number" ? (b as any).lastUsed : Date.now()
+      const version = typeof (b as any).version === "string" ? (b as any).version : undefined
+      const label = typeof (b as any).label === "string" ? (b as any).label : undefined
+      return { path: p, version, label, lastUsed }
+    }),
+    models: {
+      recents: cloneArray<ModelPreference>((source.models as any)?.recents, (m) => {
+        if (!m || typeof m !== "object") return null
+        const providerId = (m as any).providerId
+        const modelId = (m as any).modelId
+        if (typeof providerId !== "string" || typeof modelId !== "string") return null
+        return { providerId, modelId }
+      }),
+      favorites: cloneArray<ModelPreference>((source.models as any)?.favorites, (m) => {
+        if (!m || typeof m !== "object") return null
+        const providerId = (m as any).providerId
+        const modelId = (m as any).modelId
+        if (typeof providerId !== "string" || typeof modelId !== "string") return null
+        return { providerId, modelId }
+      }),
+      thinkingSelections: normalizeRecord((source.models as any)?.thinkingSelections),
+    },
   }
+}
+
+function normalizeServerConfig(input?: ServerConfigBucket | null): Required<Pick<ServerConfigBucket, "listeningMode" | "environmentVariables" | "opencodeBinary">> {
+  const source = input ?? {}
+  const listeningMode = source.listeningMode === "all" ? "all" : "local"
+  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
+  const environmentVariables = normalizeRecord(source.environmentVariables)
+  return { listeningMode, opencodeBinary, environmentVariables }
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
+function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
+  const folders = source.filter((f) => f.path !== folderPath)
+  folders.unshift({ path: folderPath, lastAccessed: Date.now() })
+  return folders.slice(0, MAX_RECENT_FOLDERS)
+}
+
+function buildBinaryList(binaryPath: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
+  const timestamp = Date.now()
+  const existing = source.find((b) => b.path === binaryPath)
+  if (existing) {
+    const updatedEntry: OpenCodeBinary = { ...existing, lastUsed: timestamp, version: version ?? existing.version }
+    const remaining = source.filter((b) => b.path !== binaryPath)
+    return [updatedEntry, ...remaining]
+  }
+  const nextEntry: OpenCodeBinary = version
+    ? { path: binaryPath, version, lastUsed: timestamp }
+    : { path: binaryPath, lastUsed: timestamp }
+  return [nextEntry, ...source].slice(0, 10)
+}
+
+const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
+const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
+const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
+const [isLoaded, setIsLoaded] = createSignal(false)
+
+const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
+const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
+const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
+const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
+
+const preferences = uiSettings
+const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
+
+let loadPromise: Promise<void> | null = null
+
+async function ensureLoaded(): Promise<void> {
+  if (isLoaded()) return
+  if (!loadPromise) {
+    loadPromise = Promise.all([
+      storage.loadConfigOwner("ui"),
+      storage.loadConfigOwner("server"),
+      storage.loadStateOwner("ui"),
+    ])
+      .then(([uiCfg, srvCfg, uiSt]) => {
+        setUiConfigBucket(uiCfg as any)
+        setServerConfigBucket(srvCfg as any)
+        setUiStateBucket(uiSt as any)
+        setIsLoaded(true)
+      })
+      .catch((error) => {
+        log.error("Failed to load settings", error)
+        setUiConfigBucket({})
+        setServerConfigBucket({})
+        setUiStateBucket({})
+        setIsLoaded(true)
+      })
+      .finally(() => {
+        loadPromise = null
+      })
+  }
+  await loadPromise
+}
+
+async function patchConfigOwner(owner: string, patch: unknown) {
+  await ensureLoaded()
+  const updated = await storage.patchConfigOwner(owner, patch)
+  if (owner === "ui") setUiConfigBucket(updated as any)
+  if (owner === "server") setServerConfigBucket(updated as any)
+}
+
+async function patchStateOwner(owner: string, patch: unknown) {
+  await ensureLoaded()
+  const updated = await storage.patchStateOwner(owner, patch)
+  if (owner === "ui") setUiStateBucket(updated as any)
+}
+
+function updateUiSettings(updates: Partial<UiSettings>) {
+  const current = uiConfigBucket()
+  const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
+  const patch = { settings: nextSettings }
+  void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
+}
+
+function updatePreferences(updates: Partial<UiSettings>): void {
+  updateUiSettings(updates)
+}
+
+function setThemePreference(preference: ThemePreference): void {
+  if (themePreference() === preference) return
+  void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
+}
+
+function setListeningMode(mode: ListeningMode): void {
+  if (serverSettings().listeningMode === mode) return
+  void patchConfigOwner("server", { listeningMode: mode }).catch((error) => log.error("Failed to set listening mode", error))
+}
+
+function updateEnvironmentVariables(envVars: Record<string, string>): void {
+  void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
+    log.error("Failed to update environment variables", error),
+  )
+}
+
+function addEnvironmentVariable(key: string, value: string): void {
+  const current = serverSettings().environmentVariables
+  updateEnvironmentVariables({ ...current, [key]: value })
+}
+
+function removeEnvironmentVariable(key: string): void {
+  const current = serverSettings().environmentVariables
+  const { [key]: removed, ...rest } = current
+  updateEnvironmentVariables(rest)
+}
+
+function updateLastUsedBinary(path: string): void {
+  const target = path && path.trim().length > 0 ? path : "opencode"
+  void patchConfigOwner("server", { opencodeBinary: target }).catch((error) => log.error("Failed to set default binary", error))
+
+  // also bump lastUsed in state ui.opencodeBinaries
+  const nextList = buildBinaryList(target, undefined, opencodeBinaries())
+  void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to update binary list", error))
+}
+
+function addOpenCodeBinary(path: string, version?: string): void {
+  const nextList = buildBinaryList(path, version, opencodeBinaries())
+  void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to add binary", error))
+}
+
+function removeOpenCodeBinary(path: string): void {
+  const nextList = opencodeBinaries().filter((b) => b.path !== path)
+  void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to remove binary", error))
+
+  if (serverSettings().opencodeBinary === path) {
+    void patchConfigOwner("server", { opencodeBinary: "opencode" }).catch((error) =>
+      log.error("Failed to reset default binary", error),
+    )
+  }
+}
+
+function addRecentFolder(folderPath: string): void {
+  const next = buildRecentFolderList(folderPath, recentFolders())
+  void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
+}
+
+function removeRecentFolder(folderPath: string): void {
+  const next = recentFolders().filter((f) => f.path !== folderPath)
+  void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
+}
+
+function recordWorkspaceLaunch(folderPath: string, binaryPath?: string): void {
+  const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : serverSettings().opencodeBinary
+  const nextFolders = buildRecentFolderList(folderPath, recentFolders())
+  const nextBinaries = buildBinaryList(targetBinary, undefined, opencodeBinaries())
+
+  void patchStateOwner("ui", { recentFolders: nextFolders, opencodeBinaries: nextBinaries }).catch((error) =>
+    log.error("Failed to update ui state on launch", error),
+  )
+  void patchConfigOwner("server", { opencodeBinary: targetBinary }).catch((error) =>
+    log.error("Failed to persist selected binary", error),
+  )
+}
+
+function addRecentModelPreference(model: ModelPreference): void {
+  if (!model.providerId || !model.modelId) return
+  const recents = uiState().models.recents
+  const filtered = recents.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
+  const updated = [model, ...filtered].slice(0, MAX_RECENT_MODELS)
+  void patchStateOwner("ui", { models: { recents: updated } }).catch((error) => log.error("Failed to update model recents", error))
+}
+
 function isFavoriteModelPreference(model: ModelPreference): boolean {
   if (!model.providerId || !model.modelId) return false
-  return (preferences().modelFavorites ?? []).some(
-    (item) => item.providerId === model.providerId && item.modelId === model.modelId,
-  )
+  return uiState().models.favorites.some((item) => item.providerId === model.providerId && item.modelId === model.modelId)
 }
 
 function toggleFavoriteModelPreference(model: ModelPreference): void {
   if (!model.providerId || !model.modelId) return
-  const favorites = preferences().modelFavorites ?? []
+  const favorites = uiState().models.favorites
   const exists = favorites.some((item) => item.providerId === model.providerId && item.modelId === model.modelId)
 
-  if (exists) {
-    const updated = favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
-    updatePreferences({ modelFavorites: updated })
-    return
-  }
+  const updated = exists
+    ? favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
+    : [model, ...favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)].slice(
+        0,
+        MAX_FAVORITE_MODELS,
+      )
 
-  const filtered = favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
-  const updated = [model, ...filtered].slice(0, MAX_FAVORITE_MODELS)
-  updatePreferences({ modelFavorites: updated })
+  void patchStateOwner("ui", { models: { favorites: updated } }).catch((error) => log.error("Failed to update model favorites", error))
 }
 
 function getModelThinkingSelection(model: { providerId: string; modelId: string }): string | undefined {
   if (!model.providerId || !model.modelId) return undefined
-  return preferences().modelThinkingSelections?.[getModelKey(model)]
+  return uiState().models.thinkingSelections[getModelKey(model)]
 }
 
 function setModelThinkingSelection(model: { providerId: string; modelId: string }, value: string | undefined): void {
   if (!model.providerId || !model.modelId) return
   const key = getModelKey(model)
-  const current = preferences().modelThinkingSelections?.[key]
+  const current = uiState().models.thinkingSelections[key]
   if (current === value) return
 
-  updateConfig((draft) => {
-    const selections = { ...(draft.preferences.modelThinkingSelections ?? {}) }
-    if (!value) {
-      delete selections[key]
-    } else {
-      selections[key] = value
-    }
-    draft.preferences = normalizePreferences({
-      ...draft.preferences,
-      modelThinkingSelections: selections,
-    })
-  })
-}
-
-const [internalConfig, setInternalConfig] = createSignal<ConfigData>(buildFallbackConfig())
-
-const config = createMemo<DeepReadonly<ConfigData>>(() => internalConfig())
-const [isConfigLoaded, setIsConfigLoaded] = createSignal(false)
-const preferences = createMemo<Preferences>(() => internalConfig().preferences)
-const recentFolders = createMemo<RecentFolder[]>(() => internalConfig().recentFolders ?? [])
-const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => internalConfig().opencodeBinaries ?? [])
-const themePreference = createMemo<ThemePreference>(() => internalConfig().theme ?? "system")
-let loadPromise: Promise<void> | null = null
-
-function normalizeConfig(config?: ConfigData | null): ConfigData {
-  return {
-    preferences: normalizePreferences(config?.preferences),
-    recentFolders: (config?.recentFolders ?? []).map((folder) => ({ ...folder })),
-    opencodeBinaries: (config?.opencodeBinaries ?? []).map((binary) => ({ ...binary })),
-    theme: config?.theme ?? "system",
+  const selections = { ...uiState().models.thinkingSelections }
+  if (!value) {
+    delete selections[key]
+  } else {
+    selections[key] = value
   }
-}
-
-function buildFallbackConfig(): ConfigData {
-  return normalizeConfig()
-}
-
-function removeLegacyAgentSelections(config?: ConfigData | null): { cleaned: ConfigData; migrated: boolean } {
-  const migrated = Boolean((config?.preferences as { agentModelSelections?: unknown } | undefined)?.agentModelSelections)
-  const cleanedConfig = normalizeConfig(config)
-  return { cleaned: cleanedConfig, migrated }
-}
-
-async function syncConfig(source?: ConfigData): Promise<void> {
-  try {
-    const loaded = source ?? (await storage.loadConfig())
-    const { cleaned, migrated } = removeLegacyAgentSelections(loaded)
-    applyConfig(cleaned)
-    if (migrated) {
-      void storage.updateConfig(cleaned).catch((error: unknown) => {
-        log.error("Failed to persist legacy config cleanup", error)
-      })
-    }
-  } catch (error) {
-    log.error("Failed to load config", error)
-    applyConfig(buildFallbackConfig())
-  }
-}
-
-function applyConfig(next: ConfigData) {
-  setInternalConfig(normalizeConfig(next))
-  setIsConfigLoaded(true)
-}
-
-function cloneConfigForUpdate(): ConfigData {
-  return normalizeConfig(internalConfig())
-}
-
-function logConfigDiff(previous: ConfigData, next: ConfigData) {
-  if (deepEqual(previous, next)) {
-    return
-  }
-  const changes = diffObjects(previous, next)
-  if (changes.length > 0) {
-    log.info("[Config] Changes", changes)
-  }
-}
-
-function diffObjects(previous: unknown, next: unknown, path: string[] = []): string[] {
-  if (previous === next) {
-    return []
-  }
-
-  if (typeof previous !== "object" || previous === null || typeof next !== "object" || next === null) {
-    return [path.join(".")]
-  }
-
-  const prevKeys = Object.keys(previous as Record<string, unknown>)
-  const nextKeys = Object.keys(next as Record<string, unknown>)
-  const allKeys = new Set([...prevKeys, ...nextKeys])
-  const changes: string[] = []
-
-  for (const key of allKeys) {
-    const childPath = [...path, key]
-    const prevValue = (previous as Record<string, unknown>)[key]
-    const nextValue = (next as Record<string, unknown>)[key]
-    changes.push(...diffObjects(prevValue, nextValue, childPath))
-  }
-
-  return changes
-}
-
-function updateConfig(mutator: (draft: ConfigData) => void): void {
-  const previous = internalConfig()
-  const draft = cloneConfigForUpdate()
-  mutator(draft)
-  logConfigDiff(previous, draft)
-  applyConfig(draft)
-  void persistFullConfig(draft)
-}
-
-async function persistFullConfig(next: ConfigData): Promise<void> {
-  try {
-    await ensureConfigLoaded()
-    await storage.updateConfig(next)
-  } catch (error) {
-    log.error("Failed to save config", error)
-    void syncConfig().catch((syncError: unknown) => {
-      log.error("Failed to refresh config", syncError)
-    })
-  }
-}
-
-function setThemePreference(preference: ThemePreference): void {
-  if (themePreference() === preference) {
-    return
-  }
-  updateConfig((draft) => {
-    draft.theme = preference
-  })
-}
-
-async function ensureConfigLoaded(): Promise<void> {
-  if (isConfigLoaded()) return
-  if (!loadPromise) {
-    loadPromise = syncConfig().finally(() => {
-      loadPromise = null
-    })
-  }
-  await loadPromise
-}
-
-function buildRecentFolderList(path: string, source: RecentFolder[]): RecentFolder[] {
-  const folders = source.filter((f) => f.path !== path)
-  folders.unshift({ path, lastAccessed: Date.now() })
-  return folders.slice(0, MAX_RECENT_FOLDERS)
-}
-
-function buildBinaryList(path: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
-  const timestamp = Date.now()
-  const existing = source.find((b) => b.path === path)
-  if (existing) {
-    const updatedEntry: OpenCodeBinary = { ...existing, lastUsed: timestamp }
-    const remaining = source.filter((b) => b.path !== path)
-    return [updatedEntry, ...remaining]
-  }
-  const nextEntry: OpenCodeBinary = version ? { path, version, lastUsed: timestamp } : { path, lastUsed: timestamp }
-  return [nextEntry, ...source].slice(0, 10)
-}
-
-function updatePreferences(updates: Partial<Preferences>): void {
-  const current = internalConfig().preferences
-  const merged = normalizePreferences({ ...current, ...updates })
-  if (deepEqual(current, merged)) {
-    return
-  }
-  updateConfig((draft) => {
-    draft.preferences = merged
-  })
-}
-
-function setListeningMode(mode: ListeningMode): void {
-  if (preferences().listeningMode === mode) return
-  updatePreferences({ listeningMode: mode })
+  void patchStateOwner("ui", { models: { thinkingSelections: selections } }).catch((error) =>
+    log.error("Failed to update thinking selection", error),
+  )
 }
 
 function setDiffViewMode(mode: DiffViewMode): void {
   if (preferences().diffViewMode === mode) return
-  updatePreferences({ diffViewMode: mode })
+  updateUiSettings({ diffViewMode: mode })
 }
 
 function setToolOutputExpansion(mode: ExpansionPreference): void {
   if (preferences().toolOutputExpansion === mode) return
-  updatePreferences({ toolOutputExpansion: mode })
+  updateUiSettings({ toolOutputExpansion: mode })
 }
 
 function setDiagnosticsExpansion(mode: ExpansionPreference): void {
   if (preferences().diagnosticsExpansion === mode) return
-  updatePreferences({ diagnosticsExpansion: mode })
+  updateUiSettings({ diagnosticsExpansion: mode })
 }
 
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   if (preferences().thinkingBlocksExpansion === mode) return
-  updatePreferences({ thinkingBlocksExpansion: mode })
+  updateUiSettings({ thinkingBlocksExpansion: mode })
 }
 
 function toggleShowThinkingBlocks(): void {
-  updatePreferences({ showThinkingBlocks: !preferences().showThinkingBlocks })
+  updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
 function toggleShowTimelineTools(): void {
-  updatePreferences({ showTimelineTools: !preferences().showTimelineTools })
+  updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
 
 function toggleUsageMetrics(): void {
-  updatePreferences({ showUsageMetrics: !preferences().showUsageMetrics })
+  updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
 }
 
 function togglePromptSubmitOnEnter(): void {
-  updatePreferences({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
+  updateUiSettings({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
 }
 
 function toggleAutoCleanupBlankSessions(): void {
   const nextValue = !preferences().autoCleanupBlankSessions
   log.info("toggle auto cleanup", { value: nextValue })
-  updatePreferences({ autoCleanupBlankSessions: nextValue })
-}
-
-function addRecentFolder(path: string): void {
-  updateConfig((draft) => {
-    draft.recentFolders = buildRecentFolderList(path, draft.recentFolders)
-  })
-}
-
-function removeRecentFolder(path: string): void {
-  updateConfig((draft) => {
-    draft.recentFolders = draft.recentFolders.filter((f) => f.path !== path)
-  })
-}
-
-function addOpenCodeBinary(path: string, version?: string): void {
-  updateConfig((draft) => {
-    draft.opencodeBinaries = buildBinaryList(path, version, draft.opencodeBinaries)
-  })
-}
-
-function removeOpenCodeBinary(path: string): void {
-  updateConfig((draft) => {
-    draft.opencodeBinaries = draft.opencodeBinaries.filter((b) => b.path !== path)
-  })
-}
-
-function updateLastUsedBinary(path: string): void {
-  const target = path || preferences().lastUsedBinary || "opencode"
-  updateConfig((draft) => {
-    draft.preferences = normalizePreferences({ ...draft.preferences, lastUsedBinary: target })
-    draft.opencodeBinaries = buildBinaryList(target, undefined, draft.opencodeBinaries)
-  })
-}
-
-function recordWorkspaceLaunch(folderPath: string, binaryPath?: string): void {
-  updateConfig((draft) => {
-    const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : draft.preferences.lastUsedBinary || "opencode"
-    draft.recentFolders = buildRecentFolderList(folderPath, draft.recentFolders)
-    draft.preferences = normalizePreferences({ ...draft.preferences, lastUsedBinary: targetBinary })
-    draft.opencodeBinaries = buildBinaryList(targetBinary, undefined, draft.opencodeBinaries)
-  })
-}
-
-function updateEnvironmentVariables(envVars: Record<string, string>): void {
-  updatePreferences({ environmentVariables: envVars })
-}
-
-function addEnvironmentVariable(key: string, value: string): void {
-  const current = preferences().environmentVariables || {}
-  const updated = { ...current, [key]: value }
-  updateEnvironmentVariables(updated)
-}
-
-function removeEnvironmentVariable(key: string): void {
-  const current = preferences().environmentVariables || {}
-  const { [key]: removed, ...rest } = current
-  updateEnvironmentVariables(rest)
-}
-
-function addRecentModelPreference(model: ModelPreference): void {
-  if (!model.providerId || !model.modelId) return
-  const recents = preferences().modelRecents ?? []
-  const filtered = recents.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
-  const updated = [model, ...filtered].slice(0, MAX_RECENT_MODELS)
-  updatePreferences({ modelRecents: updated })
+  updateUiSettings({ autoCleanupBlankSessions: nextValue })
 }
 
 async function setAgentModelPreference(instanceId: string, agent: string, model: ModelPreference): Promise<void> {
@@ -497,41 +483,52 @@ async function getAgentModelPreference(instanceId: string, agent: string): Promi
   return selections[agent]
 }
 
-void ensureConfigLoaded().catch((error: unknown) => {
-  log.error("Failed to initialize config", error)
+void ensureLoaded().catch((error: unknown) => {
+  log.error("Failed to initialize settings", error)
 })
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
-  config: typeof config
   preferences: typeof preferences
-  recentFolders: typeof recentFolders
-  opencodeBinaries: typeof opencodeBinaries
+  updatePreferences: typeof updatePreferences
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
-  updateConfig: typeof updateConfig
+
+  // server-owned stable config
+  serverSettings: typeof serverSettings
+  setListeningMode: typeof setListeningMode
+  updateEnvironmentVariables: typeof updateEnvironmentVariables
+  addEnvironmentVariable: typeof addEnvironmentVariable
+  removeEnvironmentVariable: typeof removeEnvironmentVariable
+  updateLastUsedBinary: typeof updateLastUsedBinary
+
+  // ui-owned state
+  recentFolders: typeof recentFolders
+  opencodeBinaries: typeof opencodeBinaries
+  uiState: typeof uiState
+  addRecentFolder: typeof addRecentFolder
+  removeRecentFolder: typeof removeRecentFolder
+  addOpenCodeBinary: typeof addOpenCodeBinary
+  removeOpenCodeBinary: typeof removeOpenCodeBinary
+  recordWorkspaceLaunch: typeof recordWorkspaceLaunch
+  addRecentModelPreference: typeof addRecentModelPreference
+  isFavoriteModelPreference: typeof isFavoriteModelPreference
+  toggleFavoriteModelPreference: typeof toggleFavoriteModelPreference
+  getModelThinkingSelection: typeof getModelThinkingSelection
+  setModelThinkingSelection: typeof setModelThinkingSelection
+
+  // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
   togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
-
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
   setThinkingBlocksExpansion: typeof setThinkingBlocksExpansion
-  setListeningMode: typeof setListeningMode
-  addRecentFolder: typeof addRecentFolder
-  removeRecentFolder: typeof removeRecentFolder
-  addOpenCodeBinary: typeof addOpenCodeBinary
-  removeOpenCodeBinary: typeof removeOpenCodeBinary
-  updateLastUsedBinary: typeof updateLastUsedBinary
-  recordWorkspaceLaunch: typeof recordWorkspaceLaunch
-  updatePreferences: typeof updatePreferences
-  updateEnvironmentVariables: typeof updateEnvironmentVariables
-  addEnvironmentVariable: typeof addEnvironmentVariable
-  removeEnvironmentVariable: typeof removeEnvironmentVariable
-  addRecentModelPreference: typeof addRecentModelPreference
+
+  // instance scoped
   setAgentModelPreference: typeof setAgentModelPreference
   getAgentModelPreference: typeof getAgentModelPreference
 }
@@ -539,14 +536,30 @@ interface ConfigContextValue {
 const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
-  isLoaded: isConfigLoaded,
-  config,
+  isLoaded,
   preferences,
-  recentFolders,
-  opencodeBinaries,
+  updatePreferences,
   themePreference,
   setThemePreference,
-  updateConfig,
+  serverSettings,
+  setListeningMode,
+  updateEnvironmentVariables,
+  addEnvironmentVariable,
+  removeEnvironmentVariable,
+  updateLastUsedBinary,
+  recentFolders,
+  opencodeBinaries,
+  uiState,
+  addRecentFolder,
+  removeRecentFolder,
+  addOpenCodeBinary,
+  removeOpenCodeBinary,
+  recordWorkspaceLaunch,
+  addRecentModelPreference,
+  isFavoriteModelPreference,
+  toggleFavoriteModelPreference,
+  getModelThinkingSelection,
+  setModelThinkingSelection,
   toggleShowThinkingBlocks,
   toggleShowTimelineTools,
   toggleUsageMetrics,
@@ -556,43 +569,40 @@ const configContextValue: ConfigContextValue = {
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
-  setListeningMode,
-  addRecentFolder,
-  removeRecentFolder,
-  addOpenCodeBinary,
-  removeOpenCodeBinary,
-  updateLastUsedBinary,
-  recordWorkspaceLaunch,
-  updatePreferences,
-  updateEnvironmentVariables,
-  addEnvironmentVariable,
-  removeEnvironmentVariable,
-  addRecentModelPreference,
   setAgentModelPreference,
   getAgentModelPreference,
 }
 
-const ConfigProvider: ParentComponent = (props) => {
+export const ConfigProvider: ParentComponent = (props) => {
   onMount(() => {
-    ensureConfigLoaded().catch((error: unknown) => {
-      log.error("Failed to initialize config", error)
+    ensureLoaded().catch((error: unknown) => {
+      log.error("Failed to initialize settings", error)
     })
 
-    const unsubscribe = storage.onConfigChanged((config) => {
-      syncConfig(config).catch((error: unknown) => {
-        log.error("Failed to refresh config", error)
-      })
+    const unsubUi = storage.onConfigOwnerChanged("ui", (bucket) => {
+      setUiConfigBucket(bucket as any)
+      setIsLoaded(true)
+    })
+    const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
+      setServerConfigBucket(bucket as any)
+      setIsLoaded(true)
+    })
+    const unsubStateUi = storage.onStateOwnerChanged("ui", (bucket) => {
+      setUiStateBucket(bucket as any)
+      setIsLoaded(true)
     })
 
     return () => {
-      unsubscribe()
+      unsubUi()
+      unsubServer()
+      unsubStateUi()
     }
   })
 
   return <ConfigContext.Provider value={configContextValue}>{props.children}</ConfigContext.Provider>
 }
 
-function useConfig(): ConfigContextValue {
+export function useConfig(): ConfigContextValue {
   const context = useContext(ConfigContext)
   if (!context) {
     throw new Error("useConfig must be used within ConfigProvider")
@@ -601,41 +611,38 @@ function useConfig(): ConfigContextValue {
 }
 
 export {
-  ConfigProvider,
-  useConfig,
-  config,
   preferences,
-  updateConfig,
-  updatePreferences,
-  toggleShowThinkingBlocks,
-  toggleShowTimelineTools,
-  toggleAutoCleanupBlankSessions,
-  toggleUsageMetrics,
-  togglePromptSubmitOnEnter,
+  uiState,
+  serverSettings,
   recentFolders,
-  addRecentFolder,
-  removeRecentFolder,
   opencodeBinaries,
-  addOpenCodeBinary,
-  removeOpenCodeBinary,
-  updateLastUsedBinary,
+  themePreference,
+  setThemePreference,
+  updatePreferences,
+  setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  updateLastUsedBinary,
+  addRecentFolder,
+  removeRecentFolder,
+  addOpenCodeBinary,
+  removeOpenCodeBinary,
+  recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,
   toggleFavoriteModelPreference,
   getModelThinkingSelection,
   setModelThinkingSelection,
-  setAgentModelPreference,
-  getAgentModelPreference,
+  toggleShowThinkingBlocks,
+  toggleShowTimelineTools,
+  toggleUsageMetrics,
+  toggleAutoCleanupBlankSessions,
+  togglePromptSubmitOnEnter,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
-  setListeningMode,
-  themePreference,
-  setThemePreference,
-  recordWorkspaceLaunch,
- }
- 
+  setAgentModelPreference,
+  getAgentModelPreference,
+}

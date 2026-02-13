@@ -1,11 +1,11 @@
-import type { AppConfig, InstanceData } from "../../../server/src/api-types"
+import type { InstanceData, WorkspaceEventPayload } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { serverEvents } from "./server-events"
 import { getLogger } from "./logger"
 
 const log = getLogger("actions")
 
-export type ConfigData = AppConfig
+export type OwnerBucket = Record<string, any>
 
 const DEFAULT_INSTANCE_DATA: InstanceData = {
   messageHistory: [],
@@ -30,17 +30,25 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 export class ServerStorage {
-  private configChangeListeners: Set<(config: ConfigData) => void> = new Set()
-  private configCache: ConfigData | null = null
-  private loadPromise: Promise<ConfigData> | null = null
+  private configOwnerCache = new Map<string, OwnerBucket>()
+  private stateOwnerCache = new Map<string, OwnerBucket>()
+  private configOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
+  private stateOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
+  private configOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
+  private stateOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
   private instanceDataCache = new Map<string, InstanceData>()
   private instanceDataListeners = new Map<string, Set<(data: InstanceData) => void>>()
   private instanceLoadPromises = new Map<string, Promise<InstanceData>>()
 
   constructor() {
-    serverEvents.on("config.appChanged", (event) => {
-      if (event.type !== "config.appChanged") return
-      this.setConfigCache(event.config)
+    serverEvents.on("storage.configChanged", (event: WorkspaceEventPayload) => {
+      if (event.type !== "storage.configChanged") return
+      this.setOwnerCache("config", event.owner, event.value)
+    })
+
+    serverEvents.on("storage.stateChanged", (event: WorkspaceEventPayload) => {
+      if (event.type !== "storage.stateChanged") return
+      this.setOwnerCache("state", event.owner, event.value)
     })
 
     serverEvents.on("instance.dataChanged", (event) => {
@@ -49,30 +57,56 @@ export class ServerStorage {
     })
   }
 
-  async loadConfig(): Promise<ConfigData> {
-    if (this.configCache) {
-      return this.configCache
-    }
+  async loadConfigOwner(owner: string): Promise<OwnerBucket> {
+    const cached = this.configOwnerCache.get(owner)
+    if (cached) return cached
 
-    if (!this.loadPromise) {
-      this.loadPromise = serverApi
-        .fetchConfig()
-        .then((config) => {
-          this.setConfigCache(config)
-          return config
+    if (!this.configOwnerLoadPromises.has(owner)) {
+      const promise = serverApi
+        .fetchConfigOwner<OwnerBucket>(owner)
+        .then((value) => {
+          this.setOwnerCache("config", owner, value)
+          return value
         })
         .finally(() => {
-          this.loadPromise = null
+          this.configOwnerLoadPromises.delete(owner)
         })
+      this.configOwnerLoadPromises.set(owner, promise)
     }
 
-    return this.loadPromise
+    return this.configOwnerLoadPromises.get(owner)!
   }
 
-  async updateConfig(next: ConfigData): Promise<ConfigData> {
-    const nextConfig = await serverApi.updateConfig(next)
-    this.setConfigCache(nextConfig)
-    return nextConfig
+  async patchConfigOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    const updated = await serverApi.patchConfigOwner<OwnerBucket>(owner, patch)
+    this.setOwnerCache("config", owner, updated)
+    return updated
+  }
+
+  async loadStateOwner(owner: string): Promise<OwnerBucket> {
+    const cached = this.stateOwnerCache.get(owner)
+    if (cached) return cached
+
+    if (!this.stateOwnerLoadPromises.has(owner)) {
+      const promise = serverApi
+        .fetchStateOwner<OwnerBucket>(owner)
+        .then((value) => {
+          this.setOwnerCache("state", owner, value)
+          return value
+        })
+        .finally(() => {
+          this.stateOwnerLoadPromises.delete(owner)
+        })
+      this.stateOwnerLoadPromises.set(owner, promise)
+    }
+
+    return this.stateOwnerLoadPromises.get(owner)!
+  }
+
+  async patchStateOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    const updated = await serverApi.patchStateOwner<OwnerBucket>(owner, patch)
+    this.setOwnerCache("state", owner, updated)
+    return updated
   }
 
   async loadInstanceData(instanceId: string): Promise<InstanceData> {
@@ -110,12 +144,40 @@ export class ServerStorage {
     this.setInstanceDataCache(instanceId, DEFAULT_INSTANCE_DATA)
   }
 
-  onConfigChanged(listener: (config: ConfigData) => void): () => void {
-    this.configChangeListeners.add(listener)
-    if (this.configCache) {
-      listener(this.configCache)
+  onConfigOwnerChanged(owner: string, listener: (value: OwnerBucket) => void): () => void {
+    if (!this.configOwnerListeners.has(owner)) {
+      this.configOwnerListeners.set(owner, new Set())
     }
-    return () => this.configChangeListeners.delete(listener)
+    const bucket = this.configOwnerListeners.get(owner)!
+    bucket.add(listener)
+    const cached = this.configOwnerCache.get(owner)
+    if (cached) {
+      listener(cached)
+    }
+    return () => {
+      bucket.delete(listener)
+      if (bucket.size === 0) {
+        this.configOwnerListeners.delete(owner)
+      }
+    }
+  }
+
+  onStateOwnerChanged(owner: string, listener: (value: OwnerBucket) => void): () => void {
+    if (!this.stateOwnerListeners.has(owner)) {
+      this.stateOwnerListeners.set(owner, new Set())
+    }
+    const bucket = this.stateOwnerListeners.get(owner)!
+    bucket.add(listener)
+    const cached = this.stateOwnerCache.get(owner)
+    if (cached) {
+      listener(cached)
+    }
+    return () => {
+      bucket.delete(listener)
+      if (bucket.size === 0) {
+        this.stateOwnerListeners.delete(owner)
+      }
+    }
   }
 
   onInstanceDataChanged(instanceId: string, listener: (data: InstanceData) => void): () => void {
@@ -136,18 +198,30 @@ export class ServerStorage {
     }
   }
 
-  private setConfigCache(config: ConfigData) {
-    if (this.configCache && isDeepEqual(this.configCache, config)) {
-      this.configCache = config
+  private setOwnerCache(kind: "config" | "state", owner: string, value: OwnerBucket) {
+    if (owner === "*") {
+      // Full-doc updates are not tracked owner-by-owner; invalidate caches.
+      if (kind === "config") {
+        this.configOwnerCache.clear()
+      } else {
+        this.stateOwnerCache.clear()
+      }
       return
     }
-    this.configCache = config
-    this.notifyConfigChanged(config)
-  }
 
-  private notifyConfigChanged(config: ConfigData) {
-    for (const listener of this.configChangeListeners) {
-      listener(config)
+    const cache = kind === "config" ? this.configOwnerCache : this.stateOwnerCache
+    const listeners = kind === "config" ? this.configOwnerListeners : this.stateOwnerListeners
+
+    const previous = cache.get(owner)
+    if (previous && isDeepEqual(previous, value)) {
+      cache.set(owner, value)
+      return
+    }
+    cache.set(owner, value)
+    const bucket = listeners.get(owner)
+    if (!bucket) return
+    for (const listener of bucket) {
+      listener(value)
     }
   }
 

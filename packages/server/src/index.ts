@@ -8,9 +8,9 @@ import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { WorkspaceManager } from "./workspaces/manager"
-import { ConfigStore } from "./config/store"
 import { resolveConfigLocation } from "./config/location"
-import { BinaryRegistry } from "./config/binaries"
+import { SettingsService } from "./settings/service"
+import { BinaryResolver } from "./settings/binaries"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
@@ -291,21 +291,12 @@ async function main() {
 
   const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
 
-  const configStore = new ConfigStore(configLocation, eventBus, configLogger)
-
-  // Eagerly load config at boot so migrations run immediately
-  // (instead of waiting for the first /api/config request).
-  try {
-    configStore.get()
-  } catch (error) {
-    configLogger.warn({ err: error }, "Failed to load config at boot; continuing with defaults")
-  }
-
-  const binaryRegistry = new BinaryRegistry(configStore, eventBus, configLogger)
+  const settings = new SettingsService(configLocation, eventBus, configLogger)
+  const binaryResolver = new BinaryResolver(settings)
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
-    configStore,
-    binaryRegistry,
+    settings,
+    binaryResolver,
     eventBus,
     logger: workspaceLogger,
     getServerBaseUrl: () => serverMeta.localUrl,
@@ -392,8 +383,7 @@ async function main() {
         defaultPort: options.httpPort,
         protocol: "http",
         workspaceManager,
-        configStore,
-        binaryRegistry,
+        settings,
         fileSystemBrowser,
         eventBus,
         serverMeta,
@@ -413,8 +403,7 @@ async function main() {
         protocol: "https",
         httpsOptions: tlsResolution?.httpsOptions,
         workspaceManager,
-        configStore,
-        binaryRegistry,
+        settings,
         fileSystemBrowser,
         eventBus,
         serverMeta,

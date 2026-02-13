@@ -10,12 +10,12 @@ interface EnvironmentVariablesEditorProps {
 const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (props) => {
   const { t } = useI18n()
   const {
-    preferences,
+    serverSettings,
     addEnvironmentVariable,
     removeEnvironmentVariable,
     updateEnvironmentVariables,
   } = useConfig()
-  const [envVars, setEnvVars] = createSignal<Record<string, string>>(preferences().environmentVariables || {})
+  const [envVars, setEnvVars] = createSignal<Record<string, string>>(serverSettings().environmentVariables || {})
   const [newKey, setNewKey] = createSignal("")
   const [newValue, setNewValue] = createSignal("")
 

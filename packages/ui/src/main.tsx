@@ -30,8 +30,8 @@ async function bootstrap() {
     document.documentElement.removeAttribute("data-theme")
 
     try {
-      const config = await storage.loadConfig()
-      const theme = config?.theme ?? "system"
+      const uiConfig = await storage.loadConfigOwner("ui")
+      const theme = (uiConfig as any)?.theme ?? "system"
 
       if (theme === "system") {
         document.documentElement.removeAttribute("data-theme")

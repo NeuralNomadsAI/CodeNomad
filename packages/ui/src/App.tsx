@@ -58,6 +58,7 @@ const App: Component = () => {
   const { t } = useI18n()
   const {
     preferences,
+    serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
     toggleShowTimelineTools,
@@ -177,7 +178,7 @@ const App: Component = () => {
       return
     }
     setIsSelectingFolder(true)
-    const selectedBinary = binaryPath || preferences().lastUsedBinary || "opencode"
+    const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
     try {
       recordWorkspaceLaunch(folderPath, selectedBinary)
       clearLaunchError()

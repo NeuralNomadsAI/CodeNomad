@@ -9,12 +9,11 @@ import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
 import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
 
-import { ConfigStore } from "../config/store"
-import { BinaryRegistry } from "../config/binaries"
+import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
-import { registerConfigRoutes } from "./routes/config"
+import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
@@ -37,8 +36,7 @@ interface HttpServerDeps {
   protocol: "http" | "https"
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
-  configStore: ConfigStore
-  binaryRegistry: BinaryRegistry
+  settings: SettingsService
   fileSystemBrowser: FileSystemBrowser
   eventBus: EventBus
   serverMeta: ServerMeta
@@ -244,7 +242,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerConfigRoutes(app, { configStore: deps.configStore, binaryRegistry: deps.binaryRegistry })
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
   registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })

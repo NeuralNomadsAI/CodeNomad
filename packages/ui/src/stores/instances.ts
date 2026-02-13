@@ -20,7 +20,7 @@ import {
 } from "./sessions"
 import { ensureWorktreesLoaded, ensureWorktreeMapLoaded, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { fetchCommands, clearCommands } from "./commands"
-import { preferences } from "./preferences"
+import { serverSettings } from "./preferences"
 import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -91,7 +91,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instanc
     binaryPath: descriptor.binaryId ?? descriptor.binaryLabel ?? existing?.binaryPath,
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
-    environmentVariables: existing?.environmentVariables ?? preferences().environmentVariables ?? {},
+    environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
   }
 }
 

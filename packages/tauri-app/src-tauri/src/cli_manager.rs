@@ -141,8 +141,15 @@ struct PreferencesConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct ServerConfig {
+    #[serde(rename = "listeningMode")]
+    listening_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AppConfig {
     preferences: Option<PreferencesConfig>,
+    server: Option<ServerConfig>,
 }
 
 fn resolve_config_locations() -> (PathBuf, PathBuf) {
@@ -188,11 +195,18 @@ fn resolve_listening_mode() -> String {
 
     if let Ok(content) = fs::read_to_string(&yaml_path) {
         if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
-            if let Some(mode) = config
-                .preferences
+            let mode = config
+                .server
                 .as_ref()
-                .and_then(|prefs| prefs.listening_mode.as_ref())
-            {
+                .and_then(|srv| srv.listening_mode.as_ref())
+                .or_else(|| {
+                    config
+                        .preferences
+                        .as_ref()
+                        .and_then(|prefs| prefs.listening_mode.as_ref())
+                });
+
+            if let Some(mode) = mode {
                 if mode == "local" {
                     return "local".to_string();
                 }
@@ -206,11 +220,17 @@ fn resolve_listening_mode() -> String {
     // Legacy fallback.
     if let Ok(content) = fs::read_to_string(&json_path) {
         if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
-            if let Some(mode) = config
-                .preferences
+            let mode = config
+                .server
                 .as_ref()
-                .and_then(|prefs| prefs.listening_mode.as_ref())
-            {
+                .and_then(|srv| srv.listening_mode.as_ref())
+                .or_else(|| {
+                    config
+                        .preferences
+                        .as_ref()
+                        .and_then(|prefs| prefs.listening_mode.as_ref())
+                });
+            if let Some(mode) = mode {
                 if mode == "local" {
                     return "local".to_string();
                 }
