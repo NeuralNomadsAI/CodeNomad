@@ -118,14 +118,11 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           </Show>
         </div>
       </div>
-      <Show when={props.keyboardShortcuts().length}>
-        <KeyboardHint
-          class="session-sidebar-shortcuts"
-          shortcuts={props.keyboardShortcuts()}
-          separator=" "
-          showDescription={false}
-        />
-      </Show>
+      <div class="session-sidebar-shortcuts">
+        <Show when={props.keyboardShortcuts().length}>
+          <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
+        </Show>
+      </div>
     </div>
 
     <div class="session-sidebar flex flex-col flex-1 min-h-0">
