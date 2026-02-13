@@ -1,4 +1,5 @@
 import { Component, JSX, For } from "solid-js"
+import useMediaQuery from "@suid/material/useMediaQuery"
 import { isMac } from "../lib/keyboard-utils"
 
 interface KbdProps {
@@ -27,6 +28,9 @@ const SPECIAL_KEY_LABELS: Record<string, string> = {
 }
 
 const Kbd: Component<KbdProps> = (props) => {
+  const desktopQuery = useMediaQuery("(min-width: 1280px)")
+  if (!desktopQuery()) return null
+
   const parts = () => {
     if (props.children) return [{ text: props.children, isModifier: false }]
     if (!props.shortcut) return []
