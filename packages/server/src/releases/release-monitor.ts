@@ -107,7 +107,9 @@ export function stripTagPrefix(tag: string | undefined): string | null {
 
 function parseVersion(value: string): NormalizedVersion {
   const normalized = stripTagPrefix(value) ?? "0.0.0"
-  const [core, prerelease = null] = normalized.split("-", 2)
+  const dashIndex = normalized.indexOf("-")
+  const core = dashIndex >= 0 ? normalized.slice(0, dashIndex) : normalized
+  const prerelease = dashIndex >= 0 ? normalized.slice(dashIndex + 1) : null
   const [major = 0, minor = 0, patch = 0] = core.split(".").map((segment) => {
     const parsed = Number.parseInt(segment, 10)
     return Number.isFinite(parsed) ? parsed : 0

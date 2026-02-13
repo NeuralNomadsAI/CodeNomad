@@ -148,7 +148,7 @@ function ensureMetaRefresh(meta: ServerMeta) {
   if (metaRefreshInterval) return
 
   const version = meta.serverVersion?.trim() ?? ""
-  const looksLikeDev = version.includes("-dev.")
+  const looksLikeDev = version.includes("-dev.") || version.includes("-dev-")
   const hasDevUpdateChannel = Boolean(meta.update)
 
   if (!looksLikeDev && !hasDevUpdateChannel) {

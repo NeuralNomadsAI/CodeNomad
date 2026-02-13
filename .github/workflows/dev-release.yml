@@ -26,8 +26,8 @@ jobs:
         run: |
           set -euo pipefail
           SHA8="${GITHUB_SHA::8}"
-          TS=$(date -u +%Y%m%d%H%M%S)
-          echo "version_suffix=-dev.${TS}.${SHA8}" >> "$GITHUB_OUTPUT"
+          DATE=$(date -u +%Y%m%d)
+          echo "version_suffix=-dev-${DATE}-${SHA8}" >> "$GITHUB_OUTPUT"
 
   prerelease:
     needs: prepare

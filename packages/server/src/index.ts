@@ -351,7 +351,7 @@ async function main() {
 
   const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
   const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
-  const isDevVersion = packageJson.version.includes("-dev.")
+  const isDevVersion = packageJson.version.includes("-dev.") || packageJson.version.includes("-dev-")
   const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
   const devReleaseMonitor = enableDevUpdateChecks
     ? startDevReleaseMonitor({
