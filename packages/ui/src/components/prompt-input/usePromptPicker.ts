@@ -1,7 +1,7 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
 import type { Agent } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment } from "../../types/attachment"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import type { PickerMode } from "./types"
 import type { PickerSelectAction } from "../unified-picker"
@@ -212,18 +212,6 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         const trimmed = relativePath.replace(/\/+$/, "")
         return trimmed.length > 0 ? trimmed : "."
       })()
-
-      const addPathOnlyAttachment = (value: string) => {
-        const display = `path: ${value}`
-        const filename = value
-        const existing = getAttachments(options.instanceId(), options.sessionId())
-        const alreadyAttached = existing.some(
-          (att) => att.source.type === "text" && att.source.value === value && att.display === display,
-        )
-        if (!alreadyAttached) {
-          addAttachment(options.instanceId(), options.sessionId(), createTextAttachment(value, display, filename))
-        }
-      }
 
       if (isFolder) {
         if (action === "tab") {
