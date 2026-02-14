@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
-import { Copy, Split, Trash2, Undo } from "lucide-solid"
+import { Copy, ExternalLink, Split, Trash2, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -8,6 +8,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessagePart } from "../stores/session-actions"
+import { isTauriHost } from "../lib/runtime-env"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -105,7 +106,8 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     if (url.startsWith("file://")) {
-      window.open(url, "_blank", "noopener")
+      // Local filesystem URLs are not reliably downloadable from the message stream.
+      // We hide the download action for these chips.
       return
     }
 
@@ -408,17 +410,20 @@ export default function MessageItem(props: MessageItemProps) {
                       <img src={attachment.url} alt={name} class="h-5 w-5 rounded object-cover" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleAttachmentDownload(attachment)}
-                      class="attachment-download"
-                      aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
-                    >
-                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12l4 4 4-4m-4-8v12" />
-                      </svg>
-                    </button>
+                    <Show when={!attachment.url?.startsWith("file://")}>
+                      <button
+                        type="button"
+                        onClick={() => void handleAttachmentDownload(attachment)}
+                        class="attachment-download"
+                        aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
+                        title={t("messageItem.attachment.downloadAriaLabel", { name })}
+                      >
+                        <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12l4 4 4-4m-4-8v12" />
+                        </svg>
+                      </button>
+                    </Show>
 
                     <button
                       type="button"
