@@ -236,8 +236,7 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         const mentionText = `@${folderMention}`
 
         if (action === "shiftEnter") {
-          // SHIFT+ENTER on directory: attach path as text only.
-          addPathOnlyAttachment(folderMention)
+          // SHIFT+ENTER on directory: keep @path in prompt (BACKSPACE works), remove @ when sending
           replaceMentionToken(mentionText, { trailingSpace: true })
         } else {
           // ENTER/click on directory: attach as a file part pointing at a file:// directory URL.
@@ -274,8 +273,7 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         }
 
         if (action === "shiftEnter") {
-          // SHIFT+ENTER on file: attach path as text only.
-          addPathOnlyAttachment(normalizedPath)
+          // SHIFT+ENTER on file: keep @path in prompt (BACKSPACE works), remove @ when sending
           replaceMentionToken(`@${normalizedPath}`, { trailingSpace: true })
         } else {
           // ENTER/click on file: attach file (existing behavior).
@@ -316,6 +314,25 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     const pos = atPosition()
     if (pickerMode() === "mention" && pos !== null) {
       setIgnoredAtPositions((prev) => new Set(prev).add(pos))
+
+      // Remove the partial @mention text from the textarea when ESC is pressed
+      const textarea = options.getTextarea()
+      if (textarea) {
+        const currentPrompt = options.prompt()
+        const cursorPos = textarea.selectionStart
+        // Remove text from @ position to cursor position
+        const before = currentPrompt.substring(0, pos)
+        const after = currentPrompt.substring(cursorPos)
+        options.setPrompt(before + after)
+
+        // Restore cursor position to where @ was
+        setTimeout(() => {
+          const nextTextarea = options.getTextarea()
+          if (nextTextarea) {
+            nextTextarea.setSelectionRange(pos, pos)
+          }
+        }, 0)
+      }
     }
     setShowPicker(false)
     setAtPosition(null)

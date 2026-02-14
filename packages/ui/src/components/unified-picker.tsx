@@ -268,6 +268,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const workspaceChanged = lastWorkspaceId !== props.workspaceId
     const queryChanged = lastQuery !== props.searchQuery
 
+    if (queryChanged) {
+      // Reset selectedIndex to 0 when query changes to avoid ghost state
+      // This ensures proper highlighting when navigating back to root or changing queries
+      setSelectedIndex(0)
+      resetScrollPosition()
+    }
+
     if (!isInitialized() || workspaceChanged || queryChanged) {
       setIsInitialized(true)
       lastWorkspaceId = props.workspaceId
