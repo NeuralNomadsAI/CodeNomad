@@ -45,6 +45,15 @@ export default function MessageItem(props: MessageItemProps) {
 
   const messageParts = () => props.parts
 
+  // User messages can temporarily include synthetic helper parts (e.g. tool traces / file reads).
+  // We only want to display the primary prompt text for the user message; other synthetic text
+  // parts should be hidden.
+  const primaryUserTextPartId = () => {
+    if (!isUser()) return null
+    const firstText = messageParts().find((part) => part?.type === "text") as { id?: string } | undefined
+    return typeof firstText?.id === "string" ? firstText.id : null
+  }
+
   const fileAttachments = () =>
     messageParts().filter((part): part is FilePart => part?.type === "file" && typeof (part as FilePart).url === "string")
 
@@ -372,6 +381,7 @@ export default function MessageItem(props: MessageItemProps) {
               messageType={props.record.role}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
+              primaryUserTextPartId={primaryUserTextPartId()}
               onRendered={props.onContentRendered}
             />
           )}

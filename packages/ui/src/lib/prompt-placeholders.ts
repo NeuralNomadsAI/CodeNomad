@@ -1,4 +1,4 @@
-import type { Attachment } from "../types/attachment"
+import type { Attachment, FileSource } from "../types/attachment"
 
 export function resolvePastedPlaceholders(prompt: string, attachments: Attachment[] = []): string {
   if (!prompt) {
@@ -12,7 +12,7 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
   // IMPORTANT: avoid rewriting plain `@mentions` or email addresses.
   const fileAttachmentPaths = new Set(
     attachments
-      .filter((a) => a.source.type === "file")
+      .filter((a): a is Attachment & { source: FileSource } => a.source.type === "file")
       .map((a) => a.source.path),
   )
 

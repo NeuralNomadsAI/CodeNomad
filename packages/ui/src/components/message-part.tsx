@@ -13,9 +13,12 @@ interface MessagePartProps {
   messageType?: "user" | "assistant"
   instanceId: string
   sessionId: string
+  // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
+  // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
+  primaryUserTextPartId?: string | null
   onRendered?: () => void
  }
-  export default function MessagePart(props: MessagePartProps) {
+   export default function MessagePart(props: MessagePartProps) {
 
   const { isDark } = useTheme()
   const { preferences } = useConfig()
@@ -28,8 +31,19 @@ interface MessagePartProps {
   const shouldHideTextPart = () => {
     const part = props.part
     if (!part || part.type !== "text") return false
-    // Keep optimistic user prompts visible; hide synthetic assistant text.
-    return Boolean((part as any).synthetic) && props.messageType !== "user"
+
+    const isSynthetic = Boolean((part as any).synthetic)
+    if (!isSynthetic) return false
+
+    // Keep optimistic user prompts visible; hide other synthetic user helper parts.
+    if (props.messageType === "user") {
+      const primaryId = props.primaryUserTextPartId
+      if (!primaryId) return false
+      return part.id !== primaryId
+    }
+
+    // Hide synthetic assistant text.
+    return true
   }
 
 
