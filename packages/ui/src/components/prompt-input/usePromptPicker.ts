@@ -2,7 +2,7 @@ import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
 import type { Agent } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
-import { addAttachment, getAttachments } from "../../stores/attachments"
+import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import type { PickerMode } from "./types"
 import type { PickerSelectAction } from "../unified-picker"
 
@@ -250,6 +250,20 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
           )
 
           if (!alreadyAttached) {
+            // Remove any parent/child directory attachments that overlap with this one
+            // (e.g., if "docs/" is attached and user selects "docs/screenshots/", replace parent with child)
+            for (const att of existingAttachments) {
+              if (
+                att.source.type === "file" &&
+                att.source.mime === "inode/directory" &&
+                (normalizedFolderPath.startsWith(att.source.path + "/") || // new is child of existing
+                  att.source.path.startsWith(normalizedFolderPath + "/")) // new is parent of existing
+              ) {
+                // Remove the overlapping directory attachment
+                removeAttachment(options.instanceId(), options.sessionId(), att.id)
+              }
+            }
+
             const attachment = createFileAttachment(
               normalizedFolderPath,
               dirFilename,
