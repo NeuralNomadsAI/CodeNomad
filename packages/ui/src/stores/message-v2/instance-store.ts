@@ -189,6 +189,7 @@ export interface InstanceMessageStore {
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
+  applyPartDelta: (input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) => void
   removeMessage: (messageId: string) => void
   removeMessagePart: (messageId: string, partId: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
@@ -595,6 +596,45 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // Any part update can change the rendered height of the message
     // list, so we treat it as a session revision for scroll purposes.
     bumpSessionRevision(message.sessionId)
+  }
+
+  function applyPartDelta(input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) {
+    if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
+      return
+    }
+
+    const message = state.messages[input.messageId]
+    if (!message) {
+      // Best-effort: drop deltas for unknown messages.
+      return
+    }
+
+    let applied = false
+
+    setState(
+      "messages",
+      input.messageId,
+      produce((draft: MessageRecord) => {
+        const entry = draft.parts[input.partId]
+        if (!entry?.data) return
+        const part = entry.data as any
+        const currentValue = part?.[input.field]
+        if (typeof currentValue === "string" || currentValue === undefined || currentValue === null) {
+          part[input.field] = `${currentValue ?? ""}${input.delta}`
+          applied = true
+        }
+        if (!applied) return
+        entry.revision += 1
+        draft.updatedAt = Date.now()
+        if (input.bumpRevision ?? true) {
+          draft.revision += 1
+        }
+      }),
+    )
+
+    if (applied) {
+      bumpSessionRevision(message.sessionId)
+    }
   }
 
   function removeMessage(messageId: string) {
@@ -1087,19 +1127,20 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      setState(reconcile(createInitialState(instanceId)))
    }
  
-   return {
+    return {
 
      instanceId,
      state,
      setState,
      addOrUpdateSession,
-     hydrateMessages,
-     upsertMessage,
+      hydrateMessages,
+      upsertMessage,
       applyPartUpdate,
+      applyPartDelta,
       removeMessage,
       removeMessagePart,
       bufferPendingPart,
-     flushPendingParts,
+      flushPendingParts,
      replaceMessageId,
      setMessageInfo,
      getMessageInfo,
@@ -1124,5 +1165,4 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearInstance,
     }
   }
-
 

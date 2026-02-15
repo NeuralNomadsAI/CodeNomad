@@ -104,6 +104,22 @@ export function applyPartUpdateV2(instanceId: string, part: ClientPart | null | 
   })
 }
 
+export function applyPartDeltaV2(
+  instanceId: string,
+  input: { messageId: string; partId: string; field: string; delta: string },
+): void {
+  if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
+    return
+  }
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.applyPartDelta({
+    messageId: input.messageId,
+    partId: input.partId,
+    field: input.field,
+    delta: input.delta,
+  })
+}
+
 export function replaceMessageIdV2(instanceId: string, oldId: string, newId: string): void {
   if (!oldId || !newId || oldId === newId) return
   const store = messageStoreBus.getOrCreate(instanceId)

@@ -1,6 +1,7 @@
 import type {
   MessageInfo,
   MessagePartRemovedEvent,
+  MessagePartDeltaEvent,
   MessagePartUpdatedEvent,
   MessageRemovedEvent,
   MessageUpdateEvent,
@@ -48,6 +49,7 @@ import { loadMessages } from "./session-api"
 import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import {
   applyPartUpdateV2,
+  applyPartDeltaV2,
   replaceMessageIdV2,
   reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
@@ -348,6 +350,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   }
 }
 
+function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
+  const props = event.properties
+  if (!props) return
+  const { messageID, partID, field, delta } = props
+  if (!messageID || !partID || !field || typeof delta !== "string") return
+  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+}
+
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
   const info = event.properties?.info
 
@@ -625,6 +635,7 @@ function handleQuestionAnswered(
 export {
   handleMessagePartRemoved,
   handleMessageRemoved,
+  handleMessagePartDelta,
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,

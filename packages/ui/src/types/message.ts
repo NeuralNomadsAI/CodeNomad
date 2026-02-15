@@ -20,6 +20,19 @@ export type {
   SDKMessage
 }
 
+// Server streaming event: append-only delta updates.
+// Emitted over SSE by newer OpenCode builds.
+export interface MessagePartDeltaEvent {
+  type: "message.part.delta"
+  properties: {
+    sessionID: string
+    messageID: string
+    partID: string
+    field: string
+    delta: string
+  }
+}
+
 export interface RenderCache {
   text: string
   html: string
