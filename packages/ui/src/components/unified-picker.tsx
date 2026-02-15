@@ -268,6 +268,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const workspaceChanged = lastWorkspaceId !== props.workspaceId
     const queryChanged = lastQuery !== props.searchQuery
 
+    if (queryChanged) {
+      // Reset selectedIndex to 0 when query changes to avoid ghost state
+      // This ensures proper highlighting when navigating back to root or changing queries
+      setSelectedIndex(0)
+      resetScrollPosition()
+    }
+
     if (!isInitialized() || workspaceChanged || queryChanged) {
       setIsInitialized(true)
       lastWorkspaceId = props.workspaceId
@@ -341,6 +348,17 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     if (mode() === "command") {
       filteredCommands().forEach((command) => items.push({ type: "command", command }))
       return items
+    }
+
+    // Add root directory as first item when query is "/"
+    if (mode() === "mention" && props.searchQuery === "/") {
+      const rootFile: FileItem = {
+        path: "/",
+        relativePath: "/",
+        isDirectory: true,
+        isGitFile: false,
+      }
+      items.push({ type: "file", file: rootFile })
     }
 
     filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
@@ -524,8 +542,37 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
           <Show when={mode() === "mention" && fileCount() > 0}>
             <div class="dropdown-section-header">
-              {t("unifiedPicker.sections.files")}
+              {props.searchQuery === "/" ? t("unifiedPicker.sections.directories") : t("unifiedPicker.sections.files")}
             </div>
+            <Show when={props.searchQuery === "/"}>
+              <div
+                class={`dropdown-item py-1.5 ${
+                  selectedIndex() === 0 ? "dropdown-item-highlight" : ""
+                }`}
+                data-picker-selected={selectedIndex() === 0}
+                onClick={() => {
+                  const rootFile: FileItem = {
+                    path: "/",
+                    relativePath: "/",
+                    isDirectory: true,
+                    isGitFile: false,
+                  }
+                  props.onSelect({ type: "file", file: rootFile }, "click")
+                }}
+              >
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="dropdown-icon h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <span class="font-mono">/ (root)</span>
+                </div>
+              </div>
+            </Show>
             <For each={files()}>
               {(file) => {
                 const itemIndex = allItems().findIndex(

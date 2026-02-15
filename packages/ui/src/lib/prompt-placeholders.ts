@@ -1,12 +1,52 @@
-import type { Attachment } from "../types/attachment"
+import type { Attachment, FileSource } from "../types/attachment"
 
 export function resolvePastedPlaceholders(prompt: string, attachments: Attachment[] = []): string {
-  if (!prompt || !prompt.includes("[pasted #")) {
+  if (!prompt) {
     return prompt
   }
 
+  // Get file attachments (ENTER case) - these are sent separately, keep @ in prompt
+  const fileAttachments = new Set(
+    attachments
+      .filter((a) => a.source.type === "file" && "path" in a.source)
+      .map((a) => (a.source as { path: string }).path),
+  )
+
+  // Build a set of paths that were added via SHIFT+ENTER (text attachments with path: display)
+  // These need @ stripped from the prompt
+  const pathAttachments = new Set(
+    attachments
+      .filter((a) => a.source.type === "text" && typeof a.display === "string" && a.display.startsWith("path:"))
+      .map((a) => (a.source as { value: string }).value),
+  )
+
+  let result = prompt
+
+  // For each path attachment, find and replace @path with path in the prompt
+  // This is more precise than regex and won't affect regular @mentions
+  for (const path of pathAttachments) {
+    // Try both with and without trailing slash
+    const variants = [path, path + "/"]
+
+    for (const variant of variants) {
+      // Skip if this path is also a file attachment (should keep @)
+      if (fileAttachments.has(variant) || fileAttachments.has(variant.replace(/\/$/, ""))) {
+        continue
+      }
+
+      // Replace @path with path (exact match)
+      const searchPattern = "@" + variant
+      result = result.split(searchPattern).join(variant)
+    }
+  }
+
+  // Then, resolve [pasted #N] placeholders
+  if (!result.includes("[pasted #")) {
+    return result
+  }
+
   if (!attachments || attachments.length === 0) {
-    return prompt
+    return result
   }
 
   const lookup = new Map<string, string>()
@@ -26,10 +66,10 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
   }
 
   if (lookup.size === 0) {
-    return prompt
+    return result
   }
 
-  return prompt.replace(/\[pasted #(\d+)\]/g, (fullMatch) => {
+  return result.replace(/\[pasted #(\d+)\]/g, (fullMatch) => {
     const replacement = lookup.get(fullMatch)
     return typeof replacement === "string" ? replacement : fullMatch
   })
