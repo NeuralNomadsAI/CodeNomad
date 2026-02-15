@@ -1,6 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -23,6 +23,7 @@ interface FolderSelectionViewProps {
   onAdvancedSettingsOpen?: () => void
   onAdvancedSettingsClose?: () => void
   onOpenRemoteAccess?: () => void
+  onClose?: () => void
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
@@ -373,7 +374,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
                 onClick={() => props.onOpenRemoteAccess?.()}
               >
-                <MonitorUp class="w-4 h-4" />
+                  <MonitorUp class="w-4 h-4" />
+                </button>
+            </Show>
+            <Show when={props.onClose}>
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+                onClick={() => props.onClose?.()}
+                aria-label={t("app.launchError.close")}
+                title={t("app.launchError.closeTitle")}
+              >
+                <X class="w-4 h-4" />
               </button>
             </Show>
           </div>

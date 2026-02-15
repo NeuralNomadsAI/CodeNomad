@@ -460,25 +460,17 @@ const App: Component = () => {
         <Show when={showFolderSelection()}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
-              <button
-                onClick={() => {
-                  setShowFolderSelection(false)
-                  setIsAdvancedSettingsOpen(false)
-                  clearLaunchError()
-                }}
-                class="absolute top-4 right-4 z-10 p-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                title={t("app.launchError.closeTitle")}
-              >
-                <svg class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
                 advancedSettingsOpen={isAdvancedSettingsOpen()}
                 onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
                 onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
+                onClose={() => {
+                  setShowFolderSelection(false)
+                  setIsAdvancedSettingsOpen(false)
+                  clearLaunchError()
+                }}
               />
             </div>
           </div>
