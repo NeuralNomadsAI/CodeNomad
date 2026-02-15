@@ -77,9 +77,9 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     return
   }
   const store = messageStoreBus.getOrCreate(instanceId)
-  const timeInfo = (info.time ?? {}) as { created?: number; completed?: number }
+  const timeInfo = (info.time ?? {}) as { created?: number; end?: number }
   const createdAt = typeof timeInfo.created === "number" ? timeInfo.created : Date.now()
-  const completedAt = typeof timeInfo.completed === "number" ? timeInfo.completed : undefined
+  const endAt = typeof timeInfo.end === "number" ? timeInfo.end : undefined
 
   store.upsertMessage({
     id: info.id,
@@ -87,7 +87,7 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     role: info.role === "user" ? "user" : "assistant",
     status: options?.status ?? "complete",
     createdAt,
-    updatedAt: completedAt ?? createdAt,
+    updatedAt: endAt ?? createdAt,
     bumpRevision: Boolean(options?.bumpRevision),
   })
   store.setMessageInfo(info.id, info)

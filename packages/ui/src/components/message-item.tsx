@@ -151,7 +151,8 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     const info = props.messageInfo
-    return Boolean(info && info.role === "assistant" && info.time.completed !== undefined && info.time.completed === 0)
+    const timeInfo = info?.time as { created: number; end?: number } | undefined
+    return Boolean(info && info.role === "assistant" && (timeInfo?.end === undefined || timeInfo?.end === 0))
   }
 
   const handleRevert = () => {
