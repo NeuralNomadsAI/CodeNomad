@@ -60,6 +60,7 @@ const App: Component = () => {
     preferences,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
+    toggleKeyboardShortcutHints,
     toggleShowTimelineTools,
     toggleAutoCleanupBlankSessions,
     toggleUsageMetrics,
@@ -79,6 +80,13 @@ const App: Component = () => {
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
+
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    const shouldShow =
+      runtimeEnv.host !== "web" && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? true)
+    document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
+  })
 
   const updateInstanceTabBarHeight = () => {
     if (typeof document === "undefined") return
@@ -293,6 +301,7 @@ const App: Component = () => {
     preferences,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
+    toggleKeyboardShortcutHints,
     toggleShowTimelineTools,
     toggleUsageMetrics,
     togglePromptSubmitOnEnter,

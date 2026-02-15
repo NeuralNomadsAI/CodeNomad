@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "Переключить отображение вызовов инструментов в таймлайне сообщений",
   "commands.timelineToolCalls.keywords": "таймлайн, tool, переключить",
 
+  "commands.keyboardShortcutHints.label.show": "Показать подсказки сочетаний",
+  "commands.keyboardShortcutHints.label.hide": "Скрыть подсказки сочетаний",
+  "commands.keyboardShortcutHints.description": "Показать или скрыть подсказки сочетаний клавиш в интерфейсе",
+  "commands.keyboardShortcutHints.description.disabledWeb": "Отключено в WebUI (подсказки всегда скрыты)",
+  "commands.keyboardShortcutHints.keywords": "shortcut, shortcuts, keyboard, keybind, подсказки",
+
   "commands.common.expanded": "Развернуто",
   "commands.common.collapsed": "Свернуто",
   "commands.common.visible": "Видимо",

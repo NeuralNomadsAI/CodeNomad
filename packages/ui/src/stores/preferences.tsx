@@ -34,6 +34,7 @@ export type ListeningMode = "local" | "all"
 
 export interface Preferences {
   showThinkingBlocks: boolean
+  showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   promptSubmitOnEnter: boolean
@@ -78,6 +79,7 @@ const MAX_FAVORITE_MODELS = 50
 
 const defaultPreferences: Preferences = {
   showThinkingBlocks: false,
+  showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
   promptSubmitOnEnter: false,
@@ -131,6 +133,7 @@ function normalizePreferences(pref?: Partial<Preferences> & { agentModelSelectio
 
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultPreferences.showThinkingBlocks,
+    showKeyboardShortcutHints: sanitized.showKeyboardShortcutHints ?? defaultPreferences.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultPreferences.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultPreferences.showTimelineTools,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultPreferences.promptSubmitOnEnter,
@@ -393,6 +396,10 @@ function toggleShowThinkingBlocks(): void {
   updatePreferences({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
+function toggleKeyboardShortcutHints(): void {
+  updatePreferences({ showKeyboardShortcutHints: !preferences().showKeyboardShortcutHints })
+}
+
 function toggleShowTimelineTools(): void {
   updatePreferences({ showTimelineTools: !preferences().showTimelineTools })
 }
@@ -511,6 +518,7 @@ interface ConfigContextValue {
   setThemePreference: typeof setThemePreference
   updateConfig: typeof updateConfig
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
+  toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
@@ -548,6 +556,7 @@ const configContextValue: ConfigContextValue = {
   setThemePreference,
   updateConfig,
   toggleShowThinkingBlocks,
+  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
@@ -608,6 +617,7 @@ export {
   updateConfig,
   updatePreferences,
   toggleShowThinkingBlocks,
+  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleAutoCleanupBlankSessions,
   toggleUsageMetrics,

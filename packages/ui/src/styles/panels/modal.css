@@ -46,6 +46,11 @@
   color: var(--text-primary);
 }
 
+.modal-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .modal-list-container[data-pointer-mode="pointer"] .modal-item:hover {
   background-color: var(--surface-hover);
 }

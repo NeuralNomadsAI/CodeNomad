@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "Toggle tool call entries in the message timeline",
   "commands.timelineToolCalls.keywords": "timeline, tool, toggle",
 
+  "commands.keyboardShortcutHints.label.show": "Show Keyboard Shortcut Hints",
+  "commands.keyboardShortcutHints.label.hide": "Hide Keyboard Shortcut Hints",
+  "commands.keyboardShortcutHints.description": "Show or hide keyboard shortcut hints across the UI",
+  "commands.keyboardShortcutHints.description.disabledWeb": "Disabled in WebUI (shortcut hints are always hidden)",
+  "commands.keyboardShortcutHints.keywords": "shortcut, shortcuts, keyboard, keybind, hints",
+
   "commands.common.expanded": "Expanded",
   "commands.common.collapsed": "Collapsed",
   "commands.common.visible": "Visible",

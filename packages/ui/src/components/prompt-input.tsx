@@ -480,7 +480,7 @@ export default function PromptInput(props: PromptInputProps) {
                 </Show>
               </div>
               <Show when={shouldShowOverlay()}>
-                <div class={`prompt-input-overlay ${mode() === "shell" ? "shell-mode" : ""}`}>
+                <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
                     when={props.escapeInDebounce}
                     fallback={

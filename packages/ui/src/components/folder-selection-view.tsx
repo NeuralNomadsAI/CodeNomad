@@ -548,7 +548,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           : t("folderSelection.browse.button")}
                       </span>
                     </div>
-                    <Kbd shortcut="cmd+n" class="ml-2" />
+                    <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
                   </button>
                 </div>
 
@@ -573,7 +573,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
             </div>
 
-            <div class="panel panel-footer shrink-0 hidden sm:block">
+            <div class="panel panel-footer shrink-0 hidden sm:block keyboard-hints">
               <div class="panel-footer-hints">
                 <Show when={folders().length > 0}>
                   <div class="flex items-center gap-1.5">
@@ -591,7 +591,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
-                  <Kbd shortcut="cmd+n" />
+                  <Kbd shortcut="cmd+n" class="kbd-hint" />
                   <span>{t("folderSelection.hints.browse")}</span>
                 </div>
               </div>
