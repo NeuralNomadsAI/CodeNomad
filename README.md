@@ -44,6 +44,22 @@ Run CodeNomad as a local server and access it via your web browser. Perfect for 
 npx @neuralnomads/codenomad --launch
 ```
 
+Full server/CLI documentation (flags + env vars, TLS, auth, remote access):
+`packages/server/README.md`
+
+To see all available options:
+
+```bash
+npx @neuralnomads/codenomad --help
+```
+
+If you prefer not to run it as a one-off `npx @neuralnomads/codenomad`, you can install it and run the local binary:
+
+```bash
+npm install @neuralnomads/codenomad
+npx codenomad --launch
+```
+
 For dev version
 
 ```bash

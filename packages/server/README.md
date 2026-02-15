@@ -31,6 +31,12 @@ You can run CodeNomad directly without installing it:
 npx @neuralnomads/codenomad --launch
 ```
 
+To list all CLI options:
+
+```sh
+npx @neuralnomads/codenomad --help
+```
+
 On startup, CodeNomad prints two URLs:
 
 - `Local Connection URL : ...` (used by desktop shells)
@@ -43,6 +49,16 @@ Or install it globally to use the `codenomad` command:
 npm install -g @neuralnomads/codenomad
 codenomad --launch
 ```
+
+### Install Locally (per-project)
+If you prefer to install CodeNomad into a project and run the local binary:
+
+```sh
+npm install @neuralnomads/codenomad
+npx codenomad --launch
+```
+
+(`npx codenomad ...` will use `./node_modules/.bin/codenomad` when present.)
 
 ### Common Flags
 You can configure the server using flags or environment variables:
@@ -63,10 +79,24 @@ You can configure the server using flags or environment variables:
 | `--config <path>` | `CLI_CONFIG` | Config file location |
 | `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file (defaults to stdout) |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | Username for CodeNomad's internal auth (default `codenomad`) |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
 | `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows |
 | `--dangerously-skip-auth` | `CODENOMAD_SKIP_AUTH` | Disable CodeNomad's internal auth (use only behind a trusted perimeter) |
+| `--ui-dir <path>` | `CLI_UI_DIR` | Directory containing the built UI bundle |
+| `--ui-dev-server <url>` | `CLI_UI_DEV_SERVER` | Proxy UI requests to a running dev server (requires `--https=false --http=true`) |
+| `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
+| `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (true|false) |
+| `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
+
+### Update Checks (Advanced)
+These environment variables control how CodeNomad checks for dev updates:
+
+| Env Variable | Description |
+|-------------|-------------|
+| `CODENOMAD_UPDATE_CHANNEL` | Update channel (use `dev` to enable dev build update checks) |
+| `CODENOMAD_GITHUB_REPO` | GitHub repo used for dev release checks (default `NeuralNomadsAI/CodeNomad`) |
 
 ### HTTP vs HTTPS
 
