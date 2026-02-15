@@ -44,18 +44,21 @@ Run CodeNomad as a local server and access it via your web browser. Perfect for 
 npx @neuralnomads/codenomad --launch
 ```
 
-For dev version
+Full server/CLI documentation (flags + env vars, TLS, auth, remote access):
+- [packages/server/README.md](packages/server/README.md)
+
+To see all available options:
+
+```bash
+npx @neuralnomads/codenomad --help
+```
+
+### 🧪 Dev Releases
+Bleeding-edge builds are published as GitHub pre-releases and are generated automatically from the `dev` branch.
 
 ```bash
 npx @neuralnomads/codenomad-dev --launch
 ```
-
-Dev builds are published as GitHub pre-releases:
-https://github.com/shantur/CodeNomad/releases
-
-Dev releases are bleeding-edge builds, generated automatically every time a new commit is pushed to the `dev` branch.
-
-This command starts the server and opens the web client in your default browser.
 
 ## Highlights
 

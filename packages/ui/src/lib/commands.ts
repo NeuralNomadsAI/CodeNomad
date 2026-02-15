@@ -18,6 +18,7 @@ export interface Command {
   description: Resolvable<string>
   keywords?: Resolvable<string[]>
   shortcut?: KeyboardShortcut
+  disabled?: Resolvable<boolean>
   action: () => void | Promise<void>
   category?: Resolvable<string>
 }

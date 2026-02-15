@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "メッセージタイムラインのツールコール表示を切り替え",
   "commands.timelineToolCalls.keywords": "タイムライン, ツール, 切り替え, timeline, tool, toggle",
 
+  "commands.keyboardShortcutHints.label.show": "キーボードショートカットのヒントを表示",
+  "commands.keyboardShortcutHints.label.hide": "キーボードショートカットのヒントを非表示",
+  "commands.keyboardShortcutHints.description": "UI 全体のキーボードショートカットヒントを表示/非表示",
+  "commands.keyboardShortcutHints.description.disabledWeb": "WebUI では無効（ヒントは常に非表示）",
+  "commands.keyboardShortcutHints.keywords": "ショートカット, キーボード, ヒント, shortcuts, keyboard, hints",
+
   "commands.common.expanded": "展開",
   "commands.common.collapsed": "折りたたみ",
   "commands.common.visible": "表示",

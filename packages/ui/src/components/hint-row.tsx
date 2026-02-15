@@ -8,7 +8,7 @@ interface HintRowProps {
 
 const HintRow: Component<HintRowProps> = (props) => {
   return (
-    <span aria-hidden={props.ariaHidden} class={`text-xs text-muted ${props.class || ""}`}>
+    <span aria-hidden={props.ariaHidden} class={`keyboard-hints text-xs text-muted ${props.class || ""}`}>
       {props.children}
     </span>
   )

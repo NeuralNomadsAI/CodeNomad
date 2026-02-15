@@ -29,6 +29,7 @@ export type ListeningMode = "local" | "all"
 
 export interface UiSettings {
   showThinkingBlocks: boolean
+  showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   promptSubmitOnEnter: boolean
@@ -100,6 +101,7 @@ const MAX_FAVORITE_MODELS = 50
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
+  showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
   promptSubmitOnEnter: false,
@@ -119,6 +121,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
+    showKeyboardShortcutHints:
+      sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
@@ -444,6 +448,10 @@ function toggleShowThinkingBlocks(): void {
   updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
+function toggleKeyboardShortcutHints(): void {
+  updatePreferences({ showKeyboardShortcutHints: !preferences().showKeyboardShortcutHints })
+}
+
 function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
@@ -519,6 +527,7 @@ interface ConfigContextValue {
 
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
+  toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
@@ -561,6 +570,7 @@ const configContextValue: ConfigContextValue = {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
+  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
@@ -635,6 +645,7 @@ export {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
+  toggleKeyboardShortcutHints,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,

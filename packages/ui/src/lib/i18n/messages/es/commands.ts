@@ -97,6 +97,12 @@ export const commandMessages = {
   "commands.timelineToolCalls.description": "Alternar entradas de llamadas de herramienta en la línea de tiempo de mensajes",
   "commands.timelineToolCalls.keywords": "línea de tiempo, herramienta, alternar",
 
+  "commands.keyboardShortcutHints.label.show": "Mostrar atajos de teclado",
+  "commands.keyboardShortcutHints.label.hide": "Ocultar atajos de teclado",
+  "commands.keyboardShortcutHints.description": "Mostrar u ocultar sugerencias de atajos de teclado en la interfaz",
+  "commands.keyboardShortcutHints.description.disabledWeb": "Desactivado en WebUI (los atajos siempre se ocultan)",
+  "commands.keyboardShortcutHints.keywords": "atajo, atajos, teclado, keybind, pistas",
+
   "commands.common.expanded": "Expandido",
   "commands.common.collapsed": "Colapsado",
   "commands.common.visible": "Visible",

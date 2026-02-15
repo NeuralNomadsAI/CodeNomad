@@ -62,7 +62,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
             {t("messageListHeader.commandPalette.button")}
           </button>
           <span class="connection-status-shortcut-hint">
-            <Kbd shortcut="cmd+shift+p" />
+            <Kbd shortcut="cmd+shift+p" class="kbd-hint" />
           </span>
         </div>
       </div>
