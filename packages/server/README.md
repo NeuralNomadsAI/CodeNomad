@@ -90,7 +90,13 @@ You can configure the server using flags or environment variables:
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (true|false) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
 
-### Update Checks (Advanced)
+### Dev Releases (Advanced)
+If you want the latest bleeding-edge builds (published as GitHub pre-releases), use the dev package:
+
+```sh
+npx @neuralnomads/codenomad-dev --launch
+```
+
 These environment variables control how CodeNomad checks for dev updates:
 
 | Env Variable | Description |

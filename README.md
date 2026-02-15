@@ -45,7 +45,7 @@ npx @neuralnomads/codenomad --launch
 ```
 
 Full server/CLI documentation (flags + env vars, TLS, auth, remote access):
-`packages/server/README.md`
+- [packages/server/README.md](packages/server/README.md)
 
 To see all available options:
 
@@ -53,25 +53,12 @@ To see all available options:
 npx @neuralnomads/codenomad --help
 ```
 
-If you prefer not to run it as a one-off `npx @neuralnomads/codenomad`, you can install it and run the local binary:
-
-```bash
-npm install @neuralnomads/codenomad
-npx codenomad --launch
-```
-
-For dev version
+### 🧪 Dev Releases
+Bleeding-edge builds are published as GitHub pre-releases and are generated automatically from the `dev` branch.
 
 ```bash
 npx @neuralnomads/codenomad-dev --launch
 ```
-
-Dev builds are published as GitHub pre-releases:
-https://github.com/shantur/CodeNomad/releases
-
-Dev releases are bleeding-edge builds, generated automatically every time a new commit is pushed to the `dev` branch.
-
-This command starts the server and opens the web client in your default browser.
 
 ## Highlights
 
