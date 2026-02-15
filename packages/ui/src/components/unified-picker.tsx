@@ -74,10 +74,12 @@ type PickerItem =
   | { type: "file"; file: FileItem }
   | { type: "command"; command: SDKCommand }
 
+export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
+
 interface UnifiedPickerProps {
   open: boolean
   mode?: "mention" | "command"
-  onSelect: (item: PickerItem) => void
+  onSelect: (item: PickerItem, action: PickerSelectAction) => void
   onClose: () => void
   agents: Agent[]
   commands?: SDKCommand[]
@@ -266,6 +268,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const workspaceChanged = lastWorkspaceId !== props.workspaceId
     const queryChanged = lastQuery !== props.searchQuery
 
+    if (queryChanged) {
+      // Reset selectedIndex to 0 when query changes to avoid ghost state
+      // This ensures proper highlighting when navigating back to root or changing queries
+      setSelectedIndex(0)
+      resetScrollPosition()
+    }
+
     if (!isInitialized() || workspaceChanged || queryChanged) {
       setIsInitialized(true)
       lastWorkspaceId = props.workspaceId
@@ -356,7 +365,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
 
   function handleSelect(item: PickerItem) {
-    props.onSelect(item)
+    props.onSelect(item, "click")
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -379,7 +388,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       e.stopPropagation()
       const selected = items[selectedIndex()]
       if (selected) {
-        handleSelect(selected)
+        const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"
+        props.onSelect(selected, action)
       }
     } else if (e.key === "Escape") {
       e.preventDefault()
@@ -443,7 +453,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                   <div
                     class={`dropdown-item ${isSelected() ? "dropdown-item-highlight" : ""}`}
                     data-picker-selected={isSelected()}
-                    onClick={() => handleSelect({ type: "command", command })}
+                    onClick={() => props.onSelect({ type: "command", command }, "click")}
                   >
                     <div class="flex items-start gap-2">
                       <svg class="dropdown-icon-accent h-4 w-4 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -479,7 +489,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
-                    onClick={() => handleSelect({ type: "agent", agent })}
+                    onClick={() => props.onSelect({ type: "agent", agent }, "click")}
                   >
                     <div class="flex items-start gap-2">
                       <svg
@@ -535,7 +545,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
-                    onClick={() => handleSelect({ type: "file", file })}
+                    onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
                     <div class="flex items-center gap-2 text-sm">
                       <Show
