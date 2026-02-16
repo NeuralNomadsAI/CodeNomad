@@ -5,15 +5,12 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
     return prompt
   }
 
-  // Get file attachments (ENTER case) - these are sent separately, keep @ in prompt
   const fileAttachments = new Set(
     attachments
-      .filter((a) => a.source.type === "file" && "path" in a.source)
-      .map((a) => (a.source as { path: string }).path),
+      .filter((a): a is Attachment & { source: FileSource } => a.source.type === "file")
+      .map((a) => a.source.path),
   )
 
-  // Build a set of paths that were added via SHIFT+ENTER (text attachments with path: display)
-  // These need @ stripped from the prompt
   const pathAttachments = new Set(
     attachments
       .filter((a) => a.source.type === "text" && typeof a.display === "string" && a.display.startsWith("path:"))
@@ -22,57 +19,35 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
 
   let result = prompt
 
-  // For each path attachment (SHIFT+ENTER), find and replace @path with path in the prompt
-  for (const path of pathAttachments) {
+  // Step 1: Handle root paths FIRST using unique placeholders
+  // Replace longer pattern first to avoid partial match issues
+  result = result.replace(/@(\.\/)/g, "___ROOT___")
+  result = result.replace(/@(\.)(?!\.)/g, "___ROOT_NOSLASH___")
+  // Note: The regex @(\.)(?!\.) means @. NOT followed by another .
+
+  // Step 2: Build set of non-root paths
+  const allPaths = new Set<string>()
+  for (const p of fileAttachments) {
+    if (p && p !== "." && p !== "./") allPaths.add(p)
+  }
+  for (const p of pathAttachments) {
+    if (p && p !== "." && p !== "./") allPaths.add(p)
+  }
+
+  // Step 3: Replace @path with ./path for non-root paths
+  for (const path of allPaths) {
     if (!path) continue
-    
-    // The path should already have ./ prefix from usePromptPicker
-    // We need to find @path in prompt and replace with path
-    
-    // For "./docs/" path, try to match @docs/, @./docs/, @docs, etc.
-    const basePath = path.replace(/^\.\//, "").replace(/\/+$/, "")  // "docs"
-    const withSlash = basePath + "/"  // "docs/"
-    
-    const patterns = [
-      "@" + path,         // @./docs/
-      "@" + basePath,     // @docs
-      "@" + withSlash,   // @docs/
-    ]
-    
-    for (const pattern of patterns) {
-      if (result.includes(pattern)) {
-        result = result.replace(pattern, path)
-      }
-    }
+    const withoutPrefix = path.startsWith("./") ? path.slice(2) : path
+    const withPrefix = path.startsWith("./") ? path : "./" + path
+    result = result.replace("@" + withoutPrefix, withPrefix)
+    result = result.replace("@" + withoutPrefix + "/", withPrefix + "/")
   }
 
-  // Also strip @ for paths that have file attachments (ENTER case)
-  for (const filePath of fileAttachments) {
-    if (!filePath || filePath.length === 0) continue
+  // Step 4: Convert placeholders back to ./
+  result = result.replace("___ROOT___", "./")
+  result = result.replace("___ROOT_NOSLASH___", "./")
 
-    // Special case: if attachment is "./" or ".", handle separately
-    if (filePath === "./" || filePath === ".") {
-      result = result.replace("@./", "./")
-      result = result.replace("@.", "./")
-      continue
-    }
-
-    // Normal path handling
-    const pathToFind = filePath.replace(/^\.\//, "")
-    const patterns = [
-      "@" + filePath,
-      "@./" + pathToFind,
-      "@" + pathToFind,
-    ]
-
-    for (const pattern of patterns) {
-      if (result.includes(pattern)) {
-        result = result.replace(pattern, filePath)
-      }
-    }
-  }
-
-  // Then, resolve [pasted #N] placeholders
+  // Step 5: Resolve [pasted #N] placeholders
   if (!result.includes("[pasted #")) {
     return result
   }
@@ -87,7 +62,7 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
     const source = attachment?.source
     if (!source || source.type !== "text") continue
     const display = attachment?.display
-    const value = source.value
+    const value = (source as { value?: string }).value
     if (typeof display !== "string" || typeof value !== "string") continue
     const match = display.match(/pasted #(\d+)/)
     if (!match) continue
