@@ -304,10 +304,10 @@ function setThemePreference(preference: ThemePreference): void {
   void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
 }
 
-function setListeningMode(mode: ListeningMode): void {
-  if (serverSettings().listeningMode === mode) return
-  void patchConfigOwner("server", { listeningMode: mode }).catch((error) => log.error("Failed to set listening mode", error))
-}
+ async function setListeningMode(mode: ListeningMode): Promise<void> {
+   if (serverSettings().listeningMode === mode) return
+   await patchConfigOwner("server", { listeningMode: mode })
+ }
 
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
