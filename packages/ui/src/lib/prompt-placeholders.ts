@@ -23,15 +23,52 @@ export function resolvePastedPlaceholders(prompt: string, attachments: Attachmen
   let result = prompt
 
   // For each path attachment (SHIFT+ENTER), find and replace @path with path in the prompt
-  // We ALWAYS strip @ for SHIFT+ENTER paths, even if there's also a file attachment
   for (const path of pathAttachments) {
-    // Try both with and without trailing slash
-    const variants = [path, path + "/"]
+    if (!path) continue
+    
+    // The path should already have ./ prefix from usePromptPicker
+    // We need to find @path in prompt and replace with path
+    
+    // For "./docs/" path, try to match @docs/, @./docs/, @docs, etc.
+    const basePath = path.replace(/^\.\//, "").replace(/\/+$/, "")  // "docs"
+    const withSlash = basePath + "/"  // "docs/"
+    
+    const patterns = [
+      "@" + path,         // @./docs/
+      "@" + basePath,     // @docs
+      "@" + withSlash,   // @docs/
+    ]
+    
+    for (const pattern of patterns) {
+      if (result.includes(pattern)) {
+        result = result.replace(pattern, path)
+      }
+    }
+  }
 
-    for (const variant of variants) {
-      // Replace @path with path (exact match)
-      const searchPattern = "@" + variant
-      result = result.split(searchPattern).join(variant)
+  // Also strip @ for paths that have file attachments (ENTER case)
+  for (const filePath of fileAttachments) {
+    if (!filePath || filePath.length === 0) continue
+
+    // Special case: if attachment is "./" or ".", handle separately
+    if (filePath === "./" || filePath === ".") {
+      result = result.replace("@./", "./")
+      result = result.replace("@.", "./")
+      continue
+    }
+
+    // Normal path handling
+    const pathToFind = filePath.replace(/^\.\//, "")
+    const patterns = [
+      "@" + filePath,
+      "@./" + pathToFind,
+      "@" + pathToFind,
+    ]
+
+    for (const pattern of patterns) {
+      if (result.includes(pattern)) {
+        result = result.replace(pattern, filePath)
+      }
     }
   }
 

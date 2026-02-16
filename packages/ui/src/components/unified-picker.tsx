@@ -51,9 +51,7 @@ function normalizeQuery(rawQuery: string) {
   if (!trimmed) {
     return ""
   }
-  if (trimmed === "." || trimmed === "./") {
-    return ""
-  }
+  // Don't normalize "." - it's used for workspace root
   return trimmed.replace(/^(\.\/)+/, "").replace(/^\/+/, "")
 }
 
@@ -350,18 +348,22 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       return items
     }
 
-    // Add root directory as first item when query is "/"
-    if (mode() === "mention" && props.searchQuery === "/") {
+    // Add root directory as first item only when query is EXACTLY "." or "./" (not "./docs/")
+    const isExactRootQuery = props.searchQuery === "." || props.searchQuery === "./"
+    if (mode() === "mention" && isExactRootQuery) {
       const rootFile: FileItem = {
-        path: "/",
-        relativePath: "/",
+        path: ".",
+        relativePath: ".",
         isDirectory: true,
         isGitFile: false,
       }
       items.push({ type: "file", file: rootFile })
     }
 
-    filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+    // Don't show agents for exact root path queries
+    if (!isExactRootQuery) {
+      filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+    }
     files().forEach((file) => items.push({ type: "file", file }))
     return items
   }
@@ -485,7 +487,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
-          <Show when={mode() === "mention" && agentCount() > 0}>
+          <Show when={mode() === "mention" && agentCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
               {t("unifiedPicker.sections.agents")}
             </div>
@@ -540,11 +542,11 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
-          <Show when={mode() === "mention" && fileCount() > 0}>
+          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
-              {props.searchQuery === "/" ? t("unifiedPicker.sections.directories") : t("unifiedPicker.sections.files")}
+              {t("unifiedPicker.sections.files")}
             </div>
-            <Show when={props.searchQuery === "/"}>
+            <Show when={props.searchQuery === "." || props.searchQuery === "./"}>
               <div
                 class={`dropdown-item py-1.5 ${
                   selectedIndex() === 0 ? "dropdown-item-highlight" : ""
@@ -552,8 +554,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                 data-picker-selected={selectedIndex() === 0}
                 onClick={() => {
                   const rootFile: FileItem = {
-                    path: "/",
-                    relativePath: "/",
+                    path: ".",
+                    relativePath: ".",
                     isDirectory: true,
                     isGitFile: false,
                   }
@@ -569,7 +571,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
                     />
                   </svg>
-                  <span class="font-mono">/ (root)</span>
+                  <span class="font-mono">. (workspace root)</span>
                 </div>
               </div>
             </Show>

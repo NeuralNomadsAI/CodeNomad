@@ -204,13 +204,16 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
       }
 
       const folderMention =
-        relativePath === "." || relativePath === ""
-          ? "/"
-          : relativePath.replace(/\/+$/, "") + "/"
+        relativePath === "." || relativePath === "" || relativePath === "./"
+          ? "./"
+          : (relativePath.startsWith("./") ? relativePath.replace(/\/+$/, "") + "/" : relativePath.replace(/^\.\//, "").replace(/\/+$/, "") + "/")
 
       const normalizedFolderPath = (() => {
         const trimmed = relativePath.replace(/\/+$/, "")
-        return trimmed.length > 0 ? trimmed : "."
+        // If it's root "./", just return "./"
+        if (trimmed === "" || trimmed === ".") return "./"
+        // Otherwise remove any leading ./ and add ./ prefix
+        return "./" + trimmed.replace(/^\.\//, "")
       })()
 
       const addPathOnlyAttachment = (value: string) => {
@@ -237,12 +240,13 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
 
         if (action === "shiftEnter") {
           // SHIFT+ENTER on directory: keep @path in prompt, add text attachment, remove @ when sending
-          addPathOnlyAttachment(folderMention)
+          // Always prefix with ./ for consistency
+          const normalizedFolderPathWithPrefix = normalizedFolderPath.startsWith("./") ? normalizedFolderPath : "./" + normalizedFolderPath
+          addPathOnlyAttachment(normalizedFolderPathWithPrefix)
           replaceMentionToken(mentionText, { trailingSpace: true })
         } else {
           // ENTER/click on directory: attach as a file part pointing at a file:// directory URL.
-          const dirLabel =
-            normalizedFolderPath === "." ? "/" : normalizedFolderPath.split("/").pop() || normalizedFolderPath
+          const dirLabel = normalizedFolderPath === "./" ? "./" : normalizedFolderPath.split("/").pop() || normalizedFolderPath
           const dirFilename = dirLabel.endsWith("/") ? dirLabel : `${dirLabel}/`
 
           const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
@@ -275,10 +279,14 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
 
         if (action === "shiftEnter") {
           // SHIFT+ENTER on file: keep @path in prompt, add text attachment, remove @ when sending
-          addPathOnlyAttachment(normalizedPath)
-          replaceMentionToken(`@${normalizedPath}`, { trailingSpace: true })
+          // Always prefix with ./ for consistency
+          const normalizedPathWithPrefix = normalizedPath.startsWith("./") ? normalizedPath : "./" + normalizedPath
+          addPathOnlyAttachment(normalizedPathWithPrefix)
+          replaceMentionToken(`@${normalizedPathWithPrefix}`, { trailingSpace: true })
         } else {
           // ENTER/click on file: attach file (existing behavior).
+          // Always prefix with ./ for consistency
+          const normalizedPathWithPrefix = normalizedPath.startsWith("./") ? normalizedPath : "./" + normalizedPath
           const pathSegments = normalizedPath.split("/")
           const filename = (() => {
             const candidate = pathSegments[pathSegments.length - 1] || normalizedPath
@@ -287,12 +295,12 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
 
           const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
           const alreadyAttached = existingAttachments.some(
-            (att) => att.source.type === "file" && att.source.path === normalizedPath,
+            (att) => att.source.type === "file" && att.source.path === normalizedPathWithPrefix,
           )
 
           if (!alreadyAttached) {
             const attachment = createFileAttachment(
-              normalizedPath,
+              normalizedPathWithPrefix,
               filename,
               "text/plain",
               undefined,
@@ -301,7 +309,7 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
             addAttachment(options.instanceId(), options.sessionId(), attachment)
           }
 
-          replaceMentionToken(`@${normalizedPath}`, { trailingSpace: true })
+          replaceMentionToken(`@${normalizedPathWithPrefix}`, { trailingSpace: true })
         }
       }
     }
