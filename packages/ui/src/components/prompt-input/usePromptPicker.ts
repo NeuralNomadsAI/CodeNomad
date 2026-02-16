@@ -204,13 +204,16 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
       }
 
       const folderMention =
-        relativePath === "." || relativePath === ""
-          ? "/"
-          : relativePath.replace(/\/+$/, "") + "/"
+        relativePath === "." || relativePath === "" || relativePath === "./"
+          ? "./"
+          : (relativePath.startsWith("./") ? relativePath.replace(/\/+$/, "") + "/" : relativePath.replace(/^\.\//, "").replace(/\/+$/, "") + "/")
 
       const normalizedFolderPath = (() => {
         const trimmed = relativePath.replace(/\/+$/, "")
-        return trimmed.length > 0 ? trimmed : "."
+        // If it's root "./", just return "./"
+        if (trimmed === "" || trimmed === ".") return "./"
+        // Otherwise remove any leading ./ and add ./ prefix
+        return "./" + trimmed.replace(/^\.\//, "")
       })()
 
       const addPathOnlyAttachment = (value: string) => {
@@ -236,13 +239,14 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         const mentionText = `@${folderMention}`
 
         if (action === "shiftEnter") {
-          // SHIFT+ENTER on directory: attach path as text only.
-          addPathOnlyAttachment(folderMention)
+          // SHIFT+ENTER on directory: keep @path in prompt, add text attachment, remove @ when sending
+          // Always prefix with ./ for consistency
+          const normalizedFolderPathWithPrefix = normalizedFolderPath.startsWith("./") ? normalizedFolderPath : "./" + normalizedFolderPath
+          addPathOnlyAttachment(normalizedFolderPathWithPrefix)
           replaceMentionToken(mentionText, { trailingSpace: true })
         } else {
           // ENTER/click on directory: attach as a file part pointing at a file:// directory URL.
-          const dirLabel =
-            normalizedFolderPath === "." ? "/" : normalizedFolderPath.split("/").pop() || normalizedFolderPath
+          const dirLabel = normalizedFolderPath === "./" ? "./" : normalizedFolderPath.split("/").pop() || normalizedFolderPath
           const dirFilename = dirLabel.endsWith("/") ? dirLabel : `${dirLabel}/`
 
           const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
@@ -274,11 +278,15 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         }
 
         if (action === "shiftEnter") {
-          // SHIFT+ENTER on file: attach path as text only.
-          addPathOnlyAttachment(normalizedPath)
-          replaceMentionToken(`@${normalizedPath}`, { trailingSpace: true })
+          // SHIFT+ENTER on file: keep @path in prompt, add text attachment, remove @ when sending
+          // Always prefix with ./ for consistency
+          const normalizedPathWithPrefix = normalizedPath.startsWith("./") ? normalizedPath : "./" + normalizedPath
+          addPathOnlyAttachment(normalizedPathWithPrefix)
+          replaceMentionToken(`@${normalizedPathWithPrefix}`, { trailingSpace: true })
         } else {
           // ENTER/click on file: attach file (existing behavior).
+          // Always prefix with ./ for consistency
+          const normalizedPathWithPrefix = normalizedPath.startsWith("./") ? normalizedPath : "./" + normalizedPath
           const pathSegments = normalizedPath.split("/")
           const filename = (() => {
             const candidate = pathSegments[pathSegments.length - 1] || normalizedPath
@@ -287,12 +295,12 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
 
           const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
           const alreadyAttached = existingAttachments.some(
-            (att) => att.source.type === "file" && att.source.path === normalizedPath,
+            (att) => att.source.type === "file" && att.source.path === normalizedPathWithPrefix,
           )
 
           if (!alreadyAttached) {
             const attachment = createFileAttachment(
-              normalizedPath,
+              normalizedPathWithPrefix,
               filename,
               "text/plain",
               undefined,
@@ -301,7 +309,7 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
             addAttachment(options.instanceId(), options.sessionId(), attachment)
           }
 
-          replaceMentionToken(`@${normalizedPath}`, { trailingSpace: true })
+          replaceMentionToken(`@${normalizedPathWithPrefix}`, { trailingSpace: true })
         }
       }
     }
@@ -316,6 +324,28 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     const pos = atPosition()
     if (pickerMode() === "mention" && pos !== null) {
       setIgnoredAtPositions((prev) => new Set(prev).add(pos))
+
+      // Remove the partial @mention text from the textarea when ESC is pressed
+      const textarea = options.getTextarea()
+      if (textarea) {
+        const currentPrompt = options.prompt()
+        const cursorPos = textarea.selectionStart
+        // Remove text from @ position to cursor position
+        const before = currentPrompt.substring(0, pos)
+        const after = currentPrompt.substring(cursorPos)
+        options.setPrompt(before + after)
+
+        // Restore cursor position to where @ was
+        setTimeout(() => {
+          const nextTextarea = options.getTextarea()
+          if (nextTextarea) {
+            nextTextarea.setSelectionRange(pos, pos)
+          }
+        }, 0)
+
+        // Clear ignoredAtPositions so typing @ again will work
+        setIgnoredAtPositions(new Set<number>())
+      }
     }
     setShowPicker(false)
     setAtPosition(null)
