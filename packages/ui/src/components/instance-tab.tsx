@@ -11,20 +11,11 @@ interface InstanceTabProps {
   onClose: () => void
 }
 
-function formatFolderName(path: string, instances: Instance[], currentInstance: Instance): string {
-  const name = path.split("/").pop() || path
-
-  const duplicates = instances.filter((i) => {
-    const iName = i.folder.split("/").pop() || i.folder
-    return iName === name
-  })
-
-  if (duplicates.length > 1) {
-    const index = duplicates.findIndex((i) => i.id === currentInstance.id)
-    return `~/${name} (${index + 1})`
-  }
-
-  return `~/${name}`
+function getPathBasename(path: string): string {
+  // Instance folders can be POSIX-like (/Users/...) on macOS/Linux or Windows-like (C:\Users\...).
+  // Normalize by trimming trailing separators and then splitting on both '/' and '\\'.
+  const normalized = path.replace(/[\\/]+$/, "")
+  return normalized.split(/[\\/]/).pop() || path
 }
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
@@ -58,7 +49,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
       >
         <FolderOpen class="w-4 h-4 flex-shrink-0" />
         <span class="tab-label">
-          {props.instance.folder.split("/").pop() || props.instance.folder}
+          {getPathBasename(props.instance.folder)}
         </span>
         <span
           class={`status-indicator session-status ml-auto ${statusClassName()}`}

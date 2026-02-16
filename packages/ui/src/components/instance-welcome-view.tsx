@@ -502,7 +502,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                     )}
                     <span>{t("instanceWelcome.new.createButton")}</span>
                   </div>
-                  <Kbd shortcut={newSessionShortcutString()} class="ml-2" />
+                  <Kbd shortcut={newSessionShortcutString()} class="ml-2 kbd-hint" />
                 </button>
               </div>
             </div>
@@ -539,7 +539,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
         </div>
       </Show>
 
-      <div class="panel-footer hidden sm:block">
+      <div class="panel-footer hidden sm:block keyboard-hints">
 
         <div class="panel-footer-hints">
           <div class="flex items-center gap-1.5">

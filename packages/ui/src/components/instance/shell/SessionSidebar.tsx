@@ -1,10 +1,10 @@
 import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { Session } from "../../../types/session"
-import type { KeyboardShortcut } from "../../../lib/keyboard-registry"
+import { keyboardRegistry, type KeyboardShortcut } from "../../../lib/keyboard-registry"
 import type { DrawerViewState } from "./types"
 
-import { Search } from "lucide-solid"
+import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -13,7 +13,6 @@ import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
-import Kbd from "../../kbd"
 import WorktreeSelector from "../../worktree-selector"
 import AgentSelector from "../../agent-selector"
 import ModelSelector from "../../model-selector"
@@ -59,6 +58,20 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           <IconButton
             size="small"
             color="inherit"
+            aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
+            title={props.t("sessionList.actions.newSession.title")}
+            onClick={() => {
+              const result = props.onNewSession()
+              if (result instanceof Promise) {
+                void result.catch((error) => log.error("Failed to create session:", error))
+              }
+            }}
+          >
+            <PlusSquare class="w-5 h-5" />
+          </IconButton>
+          <IconButton
+            size="small"
+            color="inherit"
             aria-label={props.t("sessionList.filter.ariaLabel")}
             title={props.t("sessionList.filter.ariaLabel")}
             aria-pressed={props.showSearch()}
@@ -71,7 +84,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               },
             }}
           >
-            <Search class={props.showSearch() ? "w-4 h-4" : "w-4 h-4 opacity-70"} />
+            <Search class="w-5 h-5" />
           </IconButton>
           <IconButton
             size="small"
@@ -152,11 +165,17 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
               <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
 
-              <div class="session-sidebar-selector-hints" aria-hidden="true">
-                <Kbd shortcut="cmd+shift+a" />
-                <Kbd shortcut="cmd+shift+m" />
-                <Kbd shortcut="cmd+shift+t" />
-              </div>
+              <KeyboardHint
+                class="session-sidebar-selector-hints"
+                ariaHidden={true}
+                shortcuts={[
+                  keyboardRegistry.get("open-agent-selector"),
+                  keyboardRegistry.get("focus-model"),
+                  keyboardRegistry.get("focus-variant"),
+                ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
+                separator=" "
+                showDescription={false}
+              />
             </div>
           </>
         )}

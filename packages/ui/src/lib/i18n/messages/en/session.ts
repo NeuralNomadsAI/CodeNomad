@@ -21,6 +21,8 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "Expand session",
   "sessionList.expand.collapseTitle": "Collapse",
   "sessionList.expand.expandTitle": "Expand",
+  "sessionList.actions.newSession.ariaLabel": "New session",
+  "sessionList.actions.newSession.title": "New session",
   "sessionList.actions.copyId.ariaLabel": "Copy session ID",
   "sessionList.actions.copyId.title": "Copy session ID",
   "sessionList.actions.rename.ariaLabel": "Rename session",

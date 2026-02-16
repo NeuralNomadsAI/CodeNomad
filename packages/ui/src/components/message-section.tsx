@@ -867,7 +867,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <ul>
                     <li>
                       <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                      <Kbd shortcut="cmd+shift+p" class="ml-2" />
+                      <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                     </li>
                     <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                     <li>

@@ -112,6 +112,10 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
 
   const groupedCommandList = () => processedCommands().groups
   const orderedCommands = () => processedCommands().ordered
+
+  const isCommandDisabled = (command: Command) => {
+    return command.disabled ? Boolean(resolveResolvable(command.disabled)) : false
+  }
   const selectedIndex = createMemo(() => {
     const ordered = orderedCommands()
     if (ordered.length === 0) return -1
@@ -138,10 +142,11 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       }
       return
     }
- 
+
     const currentId = selectedCommandId()
     if (!currentId || !ordered.some((cmd) => cmd.id === currentId)) {
-      setSelectedCommandId(ordered[0].id)
+      const firstEnabled = ordered.find((cmd) => !isCommandDisabled(cmd))
+      setSelectedCommandId((firstEnabled || ordered[0])?.id ?? null)
     }
   })
 
@@ -195,12 +200,14 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       if (index < 0 || index >= ordered.length) return
       const command = ordered[index]
       if (!command) return
+      if (isCommandDisabled(command)) return
       props.onExecute(command)
       props.onClose()
     }
   }
 
   function handleCommandClick(command: Command) {
+    if (isCommandDisabled(command)) return
     props.onExecute(command)
     props.onClose()
   }
@@ -265,11 +272,13 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                       <For each={group.commands}>
                         {(command, localIndex) => {
                           const commandIndex = group.startIndex + localIndex()
+                          const disabled = isCommandDisabled(command)
                           return (
                             <button
                               type="button"
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
+                              disabled={disabled}
                               class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
                               onPointerMove={(event) => {
                                 if (event.movementX === 0 && event.movementY === 0) return

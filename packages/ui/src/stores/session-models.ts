@@ -1,5 +1,5 @@
 import { agents, providers } from "./session-state"
-import { preferences, getAgentModelPreference } from "./preferences"
+import { uiState, getAgentModelPreference } from "./preferences"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -17,7 +17,7 @@ function isModelValid(
 function getRecentModelPreferenceForInstance(
   instanceId: string,
 ): { providerId: string; modelId: string } | undefined {
-  const recents = preferences().modelRecents ?? []
+  const recents = uiState().models.recents ?? []
   for (const item of recents) {
     if (isModelValid(instanceId, item)) {
       return item

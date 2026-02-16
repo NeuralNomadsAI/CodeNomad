@@ -2,8 +2,8 @@ import path from "path"
 import { spawnSync } from "child_process"
 import { connect } from "net"
 import { EventBus } from "../events/bus"
-import { ConfigStore } from "../config/store"
-import { BinaryRegistry } from "../config/binaries"
+import type { SettingsService } from "../settings/service"
+import type { BinaryResolver } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
@@ -23,8 +23,8 @@ const STARTUP_STABILITY_DELAY_MS = 1500
 
 interface WorkspaceManagerOptions {
   rootDir: string
-  configStore: ConfigStore
-  binaryRegistry: BinaryRegistry
+  settings: SettingsService
+  binaryResolver: BinaryResolver
   eventBus: EventBus
   logger: Logger
   getServerBaseUrl: () => string
@@ -86,7 +86,7 @@ export class WorkspaceManager {
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
  
     const id = `${Date.now().toString(36)}`
-    const binary = this.options.binaryRegistry.resolveDefault()
+    const binary = this.options.binaryResolver.resolveDefault()
     const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
@@ -118,8 +118,9 @@ export class WorkspaceManager {
 
     this.options.eventBus.publish({ type: "workspace.created", workspace: descriptor })
 
-    const preferences = this.options.configStore.get().preferences ?? {}
-    const userEnvironment = preferences.environmentVariables ?? {}
+    const serverConfig = this.options.settings.getOwner("config", "server")
+    const envVars = (serverConfig as any)?.environmentVariables
+    const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
 
     const opencodeUsername = DEFAULT_OPENCODE_USERNAME
     const opencodePassword = generateOpencodeServerPassword()

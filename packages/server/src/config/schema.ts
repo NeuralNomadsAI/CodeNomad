@@ -8,7 +8,8 @@ const ModelPreferenceSchema = z.object({
 const AgentModelSelectionSchema = z.record(z.string(), ModelPreferenceSchema)
 const AgentModelSelectionsSchema = z.record(z.string(), AgentModelSelectionSchema)
 
-const PreferencesSchema = z.object({
+const PreferencesSchema = z
+  .object({
   showThinkingBlocks: z.boolean().default(false),
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   showTimelineTools: z.boolean().default(true),
@@ -31,7 +32,9 @@ const PreferencesSchema = z.object({
   osNotificationsAllowWhenVisible: z.boolean().default(false),
   notifyOnNeedsInput: z.boolean().default(true),
   notifyOnIdle: z.boolean().default(true),
-})
+  })
+  // Preserve unknown preference keys so newer configs survive older binaries.
+  .passthrough()
 
 const RecentFolderSchema = z.object({
   path: z.string(),
@@ -45,14 +48,35 @@ const OpenCodeBinarySchema = z.object({
   label: z.string().optional(),
 })
 
-const ConfigFileSchema = z.object({
-  preferences: PreferencesSchema.default({}),
-  recentFolders: z.array(RecentFolderSchema).default([]),
-  opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
-  theme: z.enum(["light", "dark", "system"]).optional(),
-})
+const ConfigFileSchema = z
+  .object({
+    preferences: PreferencesSchema.default({}),
+    recentFolders: z.array(RecentFolderSchema).default([]),
+    opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
+    theme: z.enum(["light", "dark", "system"]).optional(),
+  })
+  // Preserve unknown top-level keys so optional future features survive downgrades.
+  .passthrough()
+
+// On-disk config.yaml only stores stable configuration (not volatile state like recent folders).
+const ConfigYamlSchema = z
+  .object({
+    preferences: PreferencesSchema.default({}),
+    opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
+    theme: z.enum(["light", "dark", "system"]).optional(),
+  })
+  .passthrough()
+
+// On-disk state.yaml stores server-scoped mutable state (per-server, not per-client).
+const StateFileSchema = z
+  .object({
+    recentFolders: z.array(RecentFolderSchema).default([]),
+  })
+  .passthrough()
 
 const DEFAULT_CONFIG = ConfigFileSchema.parse({})
+const DEFAULT_CONFIG_YAML = ConfigYamlSchema.parse({})
+const DEFAULT_STATE = StateFileSchema.parse({})
 
 export {
   ModelPreferenceSchema,
@@ -62,7 +86,11 @@ export {
   RecentFolderSchema,
   OpenCodeBinarySchema,
   ConfigFileSchema,
+  ConfigYamlSchema,
+  StateFileSchema,
   DEFAULT_CONFIG,
+  DEFAULT_CONFIG_YAML,
+  DEFAULT_STATE,
 }
 
 export type ModelPreference = z.infer<typeof ModelPreferenceSchema>
@@ -72,3 +100,5 @@ export type Preferences = z.infer<typeof PreferencesSchema>
 export type RecentFolder = z.infer<typeof RecentFolderSchema>
 export type OpenCodeBinary = z.infer<typeof OpenCodeBinarySchema>
 export type ConfigFile = z.infer<typeof ConfigFileSchema>
+export type ConfigYamlFile = z.infer<typeof ConfigYamlSchema>
+export type StateFile = z.infer<typeof StateFileSchema>

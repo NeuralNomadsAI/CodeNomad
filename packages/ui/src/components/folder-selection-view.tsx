@@ -1,6 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -23,14 +23,15 @@ interface FolderSelectionViewProps {
   onAdvancedSettingsOpen?: () => void
   onAdvancedSettingsClose?: () => void
   onOpenRemoteAccess?: () => void
+  onClose?: () => void
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const { recentFolders, removeRecentFolder, preferences, updatePreferences } = useConfig()
+  const { recentFolders, removeRecentFolder, preferences, updatePreferences, serverSettings, updateLastUsedBinary } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
-  const [selectedBinary, setSelectedBinary] = createSignal(preferences().lastUsedBinary || "opencode")
+  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
@@ -53,7 +54,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   // Update selected binary when preferences change
   createEffect(() => {
-    const lastUsed = preferences().lastUsedBinary
+    const lastUsed = serverSettings().opencodeBinary
     if (!lastUsed) return
     setSelectedBinary((current) => (current === lastUsed ? current : lastUsed))
   })
@@ -373,7 +374,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
                 onClick={() => props.onOpenRemoteAccess?.()}
               >
-                <MonitorUp class="w-4 h-4" />
+                  <MonitorUp class="w-4 h-4" />
+                </button>
+            </Show>
+            <Show when={props.onClose}>
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+                onClick={() => props.onClose?.()}
+                aria-label={t("app.launchError.close")}
+                title={t("app.launchError.closeTitle")}
+              >
+                <X class="w-4 h-4" />
               </button>
             </Show>
           </div>
@@ -548,7 +560,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           : t("folderSelection.browse.button")}
                       </span>
                     </div>
-                    <Kbd shortcut="cmd+n" class="ml-2" />
+                    <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
                   </button>
                 </div>
 
@@ -573,7 +585,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
             </div>
 
-            <div class="panel panel-footer shrink-0 hidden sm:block">
+            <div class="panel panel-footer shrink-0 hidden sm:block keyboard-hints">
               <div class="panel-footer-hints">
                 <Show when={folders().length > 0}>
                   <div class="flex items-center gap-1.5">
@@ -591,7 +603,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
-                  <Kbd shortcut="cmd+n" />
+                  <Kbd shortcut="cmd+n" class="kbd-hint" />
                   <span>{t("folderSelection.hints.browse")}</span>
                 </div>
               </div>

@@ -183,9 +183,25 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
 
         if (isDeletingFromEnd || isDeletingFromStart || isSelected) {
           const currentAttachments = options.getAttachments()
-          const attachment = currentAttachments.find(
-            (a) => (a.source.type === "file" || a.source.type === "agent") && a.filename === name,
-          )
+          const attachment = currentAttachments.find((a) => {
+            if (a.source.type === "agent") {
+              return a.filename === name
+            }
+            if (a.source.type === "file") {
+              // Match either by filename (basename) or by path (for full paths like @docs/file.txt)
+              return (
+                a.filename === name ||
+                a.source.path === name ||
+                a.source.path.endsWith("/" + name) ||
+                a.source.path === name.replace(/\/$/, "")
+              )
+            }
+            if (a.source.type === "text") {
+              // For text attachments (path-only mentions), match by value
+              return a.source.value === name || a.source.value.endsWith("/" + name)
+            }
+            return false
+          })
 
           if (attachment) {
             e.preventDefault()
@@ -204,6 +220,14 @@ export function usePromptKeyDown(options: UsePromptKeyDownOptions) {
             setTimeout(() => {
               textarea.setSelectionRange(mentionStart, mentionStart)
             }, 0)
+
+            // Check if there are any @ remaining in the text - if not, close the picker
+            if (!newText.includes("@") && options.isPickerOpen()) {
+              options.closePicker()
+              // Clear ignoredAtPositions since we deleted the entire @mention
+              // This ensures typing @ again will open the picker
+              options.setIgnoredAtPositions(new Set())
+            }
 
             return
           }

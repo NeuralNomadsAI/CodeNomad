@@ -1,4 +1,4 @@
-import { createSignal, type Accessor } from "solid-js"
+import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
@@ -7,6 +7,7 @@ import {
   findHighestAttachmentCounters,
   formatImagePlaceholder,
   formatPastedPlaceholder,
+  imageDisplayCounterRegex,
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
 
@@ -23,7 +24,7 @@ type PromptAttachments = {
   attachments: Accessor<Attachment[]>
   pasteCount: Accessor<number>
   imageCount: Accessor<number>
-  syncAttachmentCounters: (promptText: string, sessionAttachments: Attachment[]) => void
+  syncAttachmentCounters: (promptText: string) => void
 
   handlePaste: (e: ClipboardEvent) => Promise<void>
   isDragging: Accessor<boolean>
@@ -41,45 +42,106 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
 
-  function syncAttachmentCounters(currentPrompt: string, sessionAttachments: Attachment[]) {
-    const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt, sessionAttachments)
+  function syncAttachmentCounters(currentPrompt: string) {
+    const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
     setPasteCount(highestPaste)
     setImageCount(highestImage)
   }
+
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+  function removeTokenFromPrompt(currentPrompt: string, tokenRegex: RegExp) {
+    const next = currentPrompt.replace(tokenRegex, "")
+    if (next === currentPrompt) return currentPrompt
+
+    return next
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .trim()
+  }
+
+  const createLooseImagePlaceholderRegex = (counter: string | number) =>
+    new RegExp(`\\[\\s*Image\\s*#\\s*${counter}\\s*\\]`, "i")
+  const createLoosePastedPlaceholderRegex = (counter: string | number) =>
+    new RegExp(`\\[\\s*pasted\\s*#\\s*${counter}\\s*\\]`, "i")
+
+  // Keep placeholder-backed attachments in sync with prompt text.
+  // If the placeholder token disappears from the prompt, the attachment should disappear too.
+  createEffect(() => {
+    const currentPrompt = options.prompt()
+    const currentAttachments = attachments()
+
+    const toRemove: string[] = []
+
+    for (const attachment of currentAttachments) {
+      if (attachment.source.type === "text") {
+        const match = attachment.display.match(pastedDisplayCounterRegex)
+        if (!match) continue
+        const counter = match[1]
+        if (!createLoosePastedPlaceholderRegex(counter).test(currentPrompt)) {
+          toRemove.push(attachment.id)
+        }
+        continue
+      }
+
+      if (attachment.source.type === "file" && attachment.mediaType.startsWith("image/")) {
+        const match =
+          attachment.display.match(bracketedImageDisplayCounterRegex) || attachment.display.match(imageDisplayCounterRegex)
+        if (!match) continue
+        const counter = match[1]
+        if (!createLooseImagePlaceholderRegex(counter).test(currentPrompt)) {
+          toRemove.push(attachment.id)
+        }
+      }
+    }
+
+    for (const attachmentId of toRemove) {
+      removeAttachment(options.instanceId(), options.sessionId(), attachmentId)
+    }
+  })
 
   function handleRemoveAttachment(attachmentId: string) {
     const currentAttachments = attachments()
     const attachment = currentAttachments.find((a) => a.id === attachmentId)
 
+    // Always remove from store.
     removeAttachment(options.instanceId(), options.sessionId(), attachmentId)
 
-    if (attachment) {
-      const currentPrompt = options.prompt()
-      let newPrompt = currentPrompt
+    if (!attachment) return
 
-      if (attachment.source.type === "file") {
-        if (attachment.mediaType.startsWith("image/")) {
-          const imageMatch = attachment.display.match(bracketedImageDisplayCounterRegex)
-          if (imageMatch) {
-            const placeholder = formatImagePlaceholder(imageMatch[1])
-            newPrompt = currentPrompt.replace(placeholder, "").replace(/\s+/g, " ").trim()
-          }
-        } else {
-          const filename = attachment.filename
-          newPrompt = currentPrompt.replace(`@${filename}`, "").replace(/\s+/g, " ").trim()
+    const currentPrompt = options.prompt()
+    let nextPrompt = currentPrompt
+
+    if (attachment.source.type === "file") {
+      if (attachment.mediaType.startsWith("image/")) {
+        const imageMatch =
+          attachment.display.match(bracketedImageDisplayCounterRegex) || attachment.display.match(imageDisplayCounterRegex)
+        if (imageMatch) {
+          nextPrompt = removeTokenFromPrompt(currentPrompt, createLooseImagePlaceholderRegex(imageMatch[1]))
         }
-      } else if (attachment.source.type === "agent") {
-        const agentName = attachment.filename
-        newPrompt = currentPrompt.replace(`@${agentName}`, "").replace(/\s+/g, " ").trim()
-      } else if (attachment.source.type === "text") {
-        const placeholderMatch = attachment.display.match(pastedDisplayCounterRegex)
-        if (placeholderMatch) {
-          const placeholder = formatPastedPlaceholder(placeholderMatch[1])
-          newPrompt = currentPrompt.replace(placeholder, "").replace(/\s+/g, " ").trim()
+      } else {
+        // For file mentions we insert `@<path>`, but the chip might display `@<filename>`.
+        const candidates = [attachment.source.path, attachment.filename]
+        for (const candidate of candidates) {
+          if (!candidate) continue
+          const mentionRegex = new RegExp(`@${escapeRegExp(candidate)}(?=\\s|$)`, "i")
+          nextPrompt = removeTokenFromPrompt(nextPrompt, mentionRegex)
         }
       }
+    } else if (attachment.source.type === "agent") {
+      const agentName = attachment.filename
+      const mentionRegex = new RegExp(`@${escapeRegExp(agentName)}(?=\\s|$)`, "i")
+      nextPrompt = removeTokenFromPrompt(currentPrompt, mentionRegex)
+    } else if (attachment.source.type === "text") {
+      const placeholderMatch = attachment.display.match(pastedDisplayCounterRegex)
+      if (placeholderMatch) {
+        nextPrompt = removeTokenFromPrompt(currentPrompt, createLoosePastedPlaceholderRegex(placeholderMatch[1]))
+      }
+    }
 
-      options.setPrompt(newPrompt)
+    if (nextPrompt !== currentPrompt) {
+      options.setPrompt(nextPrompt)
     }
   }
 
@@ -143,13 +205,32 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
         const blob = item.getAsFile()
         if (!blob) continue
 
-        const count = imageCount() + 1
+        const { highestImage } = findHighestAttachmentCounters(options.prompt())
+        const count = highestImage + 1
         setImageCount(count)
+
+        const placeholder = formatImagePlaceholder(count)
+        const textarea = options.getTextarea()
+
+        if (textarea) {
+          const start = textarea.selectionStart
+          const end = textarea.selectionEnd
+          const currentText = options.prompt()
+          const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
+          options.setPrompt(newText)
+
+          setTimeout(() => {
+            const newCursorPos = start + placeholder.length
+            textarea.setSelectionRange(newCursorPos, newCursorPos)
+            textarea.focus()
+          }, 0)
+        } else {
+          options.setPrompt(options.prompt() + placeholder)
+        }
 
         const reader = new FileReader()
         reader.onload = () => {
           const base64Data = (reader.result as string).split(",")[1]
-          const display = formatImagePlaceholder(count)
           const filename = `image-${count}.png`
 
           const attachment = createFileAttachment(
@@ -160,24 +241,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
             options.instanceFolder(),
           )
           attachment.url = `data:image/png;base64,${base64Data}`
-          attachment.display = display
+          attachment.display = placeholder
           addAttachment(options.instanceId(), options.sessionId(), attachment)
-
-          const textarea = options.getTextarea()
-          if (textarea) {
-            const start = textarea.selectionStart
-            const end = textarea.selectionEnd
-            const currentText = options.prompt()
-            const placeholder = formatImagePlaceholder(count)
-            const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-            options.setPrompt(newText)
-
-            setTimeout(() => {
-              const newCursorPos = start + placeholder.length
-              textarea.setSelectionRange(newCursorPos, newCursorPos)
-              textarea.focus()
-            }, 0)
-          }
         }
         reader.readAsDataURL(blob)
 
@@ -196,7 +261,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     if (isLongPaste) {
       e.preventDefault()
 
-      const count = pasteCount() + 1
+      const { highestPaste } = findHighestAttachmentCounters(options.prompt())
+      const count = highestPaste + 1
       setPasteCount(count)
 
       const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
@@ -204,14 +270,12 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const filename = `paste-${count}.txt`
 
       const attachment = createTextAttachment(pastedText, display, filename)
-      addAttachment(options.instanceId(), options.sessionId(), attachment)
-
+      const placeholder = formatPastedPlaceholder(count)
       const textarea = options.getTextarea()
       if (textarea) {
         const start = textarea.selectionStart
         const end = textarea.selectionEnd
         const currentText = options.prompt()
-        const placeholder = formatPastedPlaceholder(count)
         const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
         options.setPrompt(newText)
 
@@ -220,7 +284,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
           textarea.setSelectionRange(newCursorPos, newCursorPos)
           textarea.focus()
         }, 0)
+      } else {
+        options.setPrompt(options.prompt() + placeholder)
       }
+
+      addAttachment(options.instanceId(), options.sessionId(), attachment)
     }
   }
 

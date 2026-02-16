@@ -21,6 +21,8 @@ export const sessionMessages = {
   "sessionList.expand.expandAriaLabel": "展开会话",
   "sessionList.expand.collapseTitle": "折叠",
   "sessionList.expand.expandTitle": "展开",
+  "sessionList.actions.newSession.ariaLabel": "新建会话",
+  "sessionList.actions.newSession.title": "新建会话",
   "sessionList.actions.copyId.ariaLabel": "复制会话 ID",
   "sessionList.actions.copyId.title": "复制会话 ID",
   "sessionList.actions.rename.ariaLabel": "重命名会话",

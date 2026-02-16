@@ -1,11 +1,7 @@
 import type {
-  AppConfig,
   BackgroundProcess,
   BackgroundProcessListResponse,
   BackgroundProcessOutputResponse,
-  BinaryCreateRequest,
-  BinaryListResponse,
-  BinaryUpdateRequest,
   BinaryValidationResult,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
@@ -214,37 +210,27 @@ export const serverApi = {
     )
   },
 
-  fetchConfig(): Promise<AppConfig> {
-    return request<AppConfig>("/api/config/app")
+  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
+    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
   },
-  updateConfig(payload: AppConfig): Promise<AppConfig> {
-    return request<AppConfig>("/api/config/app", {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    })
-  },
-  listBinaries(): Promise<BinaryListResponse> {
-    return request<BinaryListResponse>("/api/config/binaries")
-  },
-  createBinary(payload: BinaryCreateRequest) {
-    return request<{ binary: BinaryListResponse["binaries"][number] }>("/api/config/binaries", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-
-  updateBinary(id: string, updates: BinaryUpdateRequest) {
-    return request<{ binary: BinaryListResponse["binaries"][number] }>(`/api/config/binaries/${encodeURIComponent(id)}`, {
+  patchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
+    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, {
       method: "PATCH",
-      body: JSON.stringify(updates),
+      body: JSON.stringify(patch ?? {}),
+    })
+  },
+  fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
+    return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
+  },
+  patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
+    return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch ?? {}),
     })
   },
 
-  deleteBinary(id: string): Promise<void> {
-    return request(`/api/config/binaries/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
   validateBinary(path: string): Promise<BinaryValidationResult> {
-    return request<BinaryValidationResult>("/api/config/binaries/validate", {
+    return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
     })

@@ -26,4 +26,11 @@ export const appMessages = {
   "releases.upgradeRequired.message.withVersion": "最新の UI を使うには CodeNomad {version} に更新してください。",
   "releases.upgradeRequired.message.noVersion": "最新の UI を使うには CodeNomad を更新してください。",
   "releases.upgradeRequired.action.getUpdate": "更新を取得",
+
+  "releases.uiUpdated.title": "UI を更新しました",
+  "releases.uiUpdated.message": "UI が {version} に更新されました。",
+
+  "releases.devUpdateAvailable.title": "開発版が利用可能",
+  "releases.devUpdateAvailable.message": "新しい開発版が利用可能です: {version}。",
+  "releases.devUpdateAvailable.action": "リリースを見る",
 } as const

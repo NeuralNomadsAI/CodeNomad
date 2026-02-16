@@ -51,9 +51,7 @@ function normalizeQuery(rawQuery: string) {
   if (!trimmed) {
     return ""
   }
-  if (trimmed === "." || trimmed === "./") {
-    return ""
-  }
+  // Don't normalize "." - it's used for workspace root
   return trimmed.replace(/^(\.\/)+/, "").replace(/^\/+/, "")
 }
 
@@ -74,10 +72,12 @@ type PickerItem =
   | { type: "file"; file: FileItem }
   | { type: "command"; command: SDKCommand }
 
+export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
+
 interface UnifiedPickerProps {
   open: boolean
   mode?: "mention" | "command"
-  onSelect: (item: PickerItem) => void
+  onSelect: (item: PickerItem, action: PickerSelectAction) => void
   onClose: () => void
   agents: Agent[]
   commands?: SDKCommand[]
@@ -266,6 +266,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const workspaceChanged = lastWorkspaceId !== props.workspaceId
     const queryChanged = lastQuery !== props.searchQuery
 
+    if (queryChanged) {
+      // Reset selectedIndex to 0 when query changes to avoid ghost state
+      // This ensures proper highlighting when navigating back to root or changing queries
+      setSelectedIndex(0)
+      resetScrollPosition()
+    }
+
     if (!isInitialized() || workspaceChanged || queryChanged) {
       setIsInitialized(true)
       lastWorkspaceId = props.workspaceId
@@ -341,7 +348,22 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       return items
     }
 
-    filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+    // Add root directory as first item only when query is EXACTLY "." or "./" (not "./docs/")
+    const isExactRootQuery = props.searchQuery === "." || props.searchQuery === "./"
+    if (mode() === "mention" && isExactRootQuery) {
+      const rootFile: FileItem = {
+        path: ".",
+        relativePath: ".",
+        isDirectory: true,
+        isGitFile: false,
+      }
+      items.push({ type: "file", file: rootFile })
+    }
+
+    // Don't show agents for exact root path queries
+    if (!isExactRootQuery) {
+      filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+    }
     files().forEach((file) => items.push({ type: "file", file }))
     return items
   }
@@ -356,7 +378,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
 
   function handleSelect(item: PickerItem) {
-    props.onSelect(item)
+    props.onSelect(item, "click")
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -379,7 +401,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       e.stopPropagation()
       const selected = items[selectedIndex()]
       if (selected) {
-        handleSelect(selected)
+        const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"
+        props.onSelect(selected, action)
       }
     } else if (e.key === "Escape") {
       e.preventDefault()
@@ -443,7 +466,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                   <div
                     class={`dropdown-item ${isSelected() ? "dropdown-item-highlight" : ""}`}
                     data-picker-selected={isSelected()}
-                    onClick={() => handleSelect({ type: "command", command })}
+                    onClick={() => props.onSelect({ type: "command", command }, "click")}
                   >
                     <div class="flex items-start gap-2">
                       <svg class="dropdown-icon-accent h-4 w-4 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -464,7 +487,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
-          <Show when={mode() === "mention" && agentCount() > 0}>
+          <Show when={mode() === "mention" && agentCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
               {t("unifiedPicker.sections.agents")}
             </div>
@@ -479,7 +502,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
-                    onClick={() => handleSelect({ type: "agent", agent })}
+                    onClick={() => props.onSelect({ type: "agent", agent }, "click")}
                   >
                     <div class="flex items-start gap-2">
                       <svg
@@ -519,10 +542,39 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
-          <Show when={mode() === "mention" && fileCount() > 0}>
+          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
               {t("unifiedPicker.sections.files")}
             </div>
+            <Show when={props.searchQuery === "." || props.searchQuery === "./"}>
+              <div
+                class={`dropdown-item py-1.5 ${
+                  selectedIndex() === 0 ? "dropdown-item-highlight" : ""
+                }`}
+                data-picker-selected={selectedIndex() === 0}
+                onClick={() => {
+                  const rootFile: FileItem = {
+                    path: ".",
+                    relativePath: ".",
+                    isDirectory: true,
+                    isGitFile: false,
+                  }
+                  props.onSelect({ type: "file", file: rootFile }, "click")
+                }}
+              >
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="dropdown-icon h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <span class="font-mono">. {t("unifiedPicker.sections.workspaceRoot")}</span>
+                </div>
+              </div>
+            </Show>
             <For each={files()}>
               {(file) => {
                 const itemIndex = allItems().findIndex(
@@ -535,7 +587,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                       itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
                     data-picker-selected={itemIndex === selectedIndex()}
-                    onClick={() => handleSelect({ type: "file", file })}
+                    onClick={() => props.onSelect({ type: "file", file }, "click")}
                   >
                     <div class="flex items-center gap-2 text-sm">
                       <Show

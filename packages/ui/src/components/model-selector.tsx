@@ -5,7 +5,7 @@ import { ChevronDown, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { preferences, toggleFavoriteModelPreference } from "../stores/preferences"
+import { uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 const log = getLogger("session")
 
 
@@ -59,7 +59,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   const favoriteKeySet = createMemo(() => {
     const result = new Set<string>()
-    for (const item of preferences().modelFavorites ?? []) {
+    for (const item of uiState().models.favorites ?? []) {
       if (item.providerId && item.modelId) {
         result.add(`${item.providerId}/${item.modelId}`)
       }

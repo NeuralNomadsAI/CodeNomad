@@ -6,6 +6,8 @@
   --surface-muted: #f8fafc;
   --surface-code: #f1f5f9;
   --surface-hover: #e0e0e0;
+  --markdown-table-row-odd: transparent;
+  --markdown-table-row-even: #f1f5f9;
   
   /* Border tokens */
   --border-base: #e0e0e0;
@@ -180,6 +182,8 @@
     --surface-muted: #212529;
     --surface-code: #1a1a1a;
     --surface-hover: #3a3a3a;
+    --markdown-table-row-odd: #0f1114;
+    --markdown-table-row-even: #181c22;
     
     /* Border tokens */
     --border-base: #3a3a3a;
@@ -347,6 +351,8 @@
   --surface-muted: #212529;
   --surface-code: #1a1a1a;
   --surface-hover: #3a3a3a;
+  --markdown-table-row-odd: #0f1114;
+  --markdown-table-row-even: #181c22;
   
   /* Border tokens */
   --border-base: #3a3a3a;

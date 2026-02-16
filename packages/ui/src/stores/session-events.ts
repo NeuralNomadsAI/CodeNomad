@@ -1,6 +1,7 @@
 import type {
   MessageInfo,
   MessagePartRemovedEvent,
+  MessagePartDeltaEvent,
   MessagePartUpdatedEvent,
   MessageRemovedEvent,
   MessageUpdateEvent,
@@ -48,6 +49,7 @@ import { loadMessages } from "./session-api"
 import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
 import {
   applyPartUpdateV2,
+  applyPartDeltaV2,
   replaceMessageIdV2,
   reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
@@ -298,10 +300,10 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
 
-    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; completed?: number }
+    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
-      typeof timeInfo.completed === "number" && timeInfo.completed > 0
-        ? timeInfo.completed
+      typeof timeInfo.end === "number" && timeInfo.end > 0
+        ? timeInfo.end
         : typeof timeInfo.updated === "number" && timeInfo.updated > 0
           ? timeInfo.updated
           : typeof timeInfo.created === "number" && timeInfo.created > 0
@@ -331,14 +333,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     if (!record) {
       const createdAt = info.time?.created ?? Date.now()
-      const completedAt = (info.time as { completed?: number } | undefined)?.completed
+      const endAt = (info.time as { end?: number } | undefined)?.end
       store.upsertMessage({
         id: messageId,
         sessionId,
         role,
         status,
         createdAt,
-        updatedAt: completedAt ?? createdAt,
+        updatedAt: endAt ?? createdAt,
       })
     }
 
@@ -346,6 +348,14 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     updateSessionInfo(instanceId, sessionId)
   }
+}
+
+function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
+  const props = event.properties
+  if (!props) return
+  const { messageID, partID, field, delta } = props
+  if (!messageID || !partID || !field || typeof delta !== "string") return
+  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -625,6 +635,7 @@ function handleQuestionAnswered(
 export {
   handleMessagePartRemoved,
   handleMessageRemoved,
+  handleMessagePartDelta,
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,

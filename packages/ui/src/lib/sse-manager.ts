@@ -4,6 +4,7 @@ import {
   MessageRemovedEvent,
   MessagePartUpdatedEvent,
   MessagePartRemovedEvent,
+  MessagePartDeltaEvent,
 } from "../types/message"
 import type {
   EventLspUpdated,
@@ -58,6 +59,7 @@ type SSEEvent =
   | MessageRemovedEvent
   | MessagePartUpdatedEvent
   | MessagePartRemovedEvent
+  | MessagePartDeltaEvent
   | EventSessionUpdated
   | EventSessionCompacted
   | EventSessionDiff
@@ -117,6 +119,9 @@ class SSEManager {
         break
       case "message.part.updated":
         this.onMessagePartUpdated?.(instanceId, event as MessagePartUpdatedEvent)
+        break
+      case "message.part.delta":
+        this.onMessagePartDelta?.(instanceId, event as MessagePartDeltaEvent)
         break
       case "message.removed":
         this.onMessageRemoved?.(instanceId, event as MessageRemovedEvent)
@@ -184,6 +189,7 @@ class SSEManager {
   onMessageUpdate?: (instanceId: string, event: MessageUpdateEvent) => void
   onMessageRemoved?: (instanceId: string, event: MessageRemovedEvent) => void
   onMessagePartUpdated?: (instanceId: string, event: MessagePartUpdatedEvent) => void
+  onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
   onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void

@@ -299,13 +299,19 @@ export const SessionView: Component<SessionViewProps> = (props) => {
              />
 
 
-               <Show when={attachments().length > 0}>
-                 <PromptAttachmentsBar
-                   attachments={attachments()}
-                   onRemoveAttachment={(attachmentId) => removeAttachment(props.instanceId, props.sessionId, attachmentId)}
-                   onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
-                 />
-               </Show>
+                <Show when={attachments().length > 0}>
+                  <PromptAttachmentsBar
+                    attachments={attachments()}
+                    onRemoveAttachment={(attachmentId) => {
+                      if (promptInputApi) {
+                        promptInputApi.removeAttachment(attachmentId)
+                        return
+                      }
+                      removeAttachment(props.instanceId, props.sessionId, attachmentId)
+                    }}
+                    onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
+                  />
+                </Show>
 
               <PromptInput
                instanceId={props.instanceId}

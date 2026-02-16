@@ -13,6 +13,21 @@ on:
         required: false
         default: dev
         type: string
+      npm_package_name:
+        description: "npm package name to publish (defaults to server package name)"
+        required: false
+        default: ""
+        type: string
+      prerelease:
+        description: "Create GitHub prerelease"
+        required: false
+        default: false
+        type: boolean
+      release_ui:
+        description: "Publish remote UI + manifest"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -53,11 +68,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.versions.outputs.tag }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            if [ "${IS_PRERELEASE}" = "true" ]; then
+              gh release create "$TAG" --title "$TAG" --generate-notes --prerelease
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
           fi
 
   build-and-upload:
@@ -71,6 +91,7 @@ jobs:
 
   release-ui:
     needs: prepare-release
+    if: ${{ inputs.release_ui }}
     permissions:
       contents: read
     uses: ./.github/workflows/release-ui.yml
@@ -84,4 +105,5 @@ jobs:
     with:
       version: ${{ needs.prepare-release.outputs.version }}
       dist_tag: ${{ inputs.dist_tag }}
+      package_name: ${{ inputs.npm_package_name }}
     secrets: inherit

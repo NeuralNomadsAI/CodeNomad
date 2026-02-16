@@ -198,6 +198,16 @@ interface MessageContentItemProps {
   onContentRendered?: () => void
 }
 
+function isSupportedPartType(part: unknown): boolean {
+  const type = (part as any)?.type
+  // Ignore part types the UI does not support rendering yet.
+  return !(typeof type === "string" && type === "patch")
+}
+
+function isContentPartType(type: unknown): boolean {
+  return type === "text" || type === "file"
+}
+
 function MessageContentItem(props: MessageContentItemProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -222,15 +232,9 @@ function MessageContentItem(props: MessageContentItemProps) {
       const partId = ids[idx]
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (
-        part.type === "tool" ||
-        part.type === "reasoning" ||
-        part.type === "compaction" ||
-        part.type === "step-start" ||
-        part.type === "step-finish"
-      ) {
-        break
-      }
+      if (!isSupportedPartType(part)) continue
+
+      if (!isContentPartType((part as any).type)) break
       resolved.push(part)
     }
 
@@ -256,15 +260,9 @@ function MessageContentItem(props: MessageContentItemProps) {
       const partId = ids[idx]
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (
-        part.type === "tool" ||
-        part.type === "reasoning" ||
-        part.type === "compaction" ||
-        part.type === "step-start" ||
-        part.type === "step-finish"
-      ) {
-        continue
-      }
+      if (!isSupportedPartType(part)) continue
+
+      if (!isContentPartType((part as any).type)) continue
       if (partHasRenderableText(part)) {
         return false
       }
@@ -549,6 +547,9 @@ export default function MessageBlock(props: MessageBlockProps) {
     }
 
     orderedParts.forEach((part, partIndex) => {
+      if (!isSupportedPartType(part)) {
+        return
+      }
       if (part.type === "tool") {
         flushContent()
         const partId = part.id

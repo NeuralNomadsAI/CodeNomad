@@ -26,4 +26,11 @@ export const appMessages = {
   "releases.upgradeRequired.message.withVersion": "更新到 CodeNomad {version} 以使用最新的 UI。",
   "releases.upgradeRequired.message.noVersion": "更新 CodeNomad 以使用最新的 UI。",
   "releases.upgradeRequired.action.getUpdate": "获取更新",
+
+  "releases.uiUpdated.title": "UI 已更新",
+  "releases.uiUpdated.message": "UI 已更新到 {version}。",
+
+  "releases.devUpdateAvailable.title": "可用的开发版",
+  "releases.devUpdateAvailable.message": "有新的开发版可用：{version}。",
+  "releases.devUpdateAvailable.action": "查看发布",
 } as const

@@ -58,6 +58,7 @@ import {
 import {
   handleMessagePartRemoved,
   handleMessageRemoved,
+  handleMessagePartDelta,
   handleMessageUpdate,
   handlePermissionReplied,
   handlePermissionUpdated,
@@ -74,6 +75,7 @@ import {
 
 sseManager.onMessageUpdate = handleMessageUpdate
 sseManager.onMessagePartUpdated = handleMessageUpdate
+sseManager.onMessagePartDelta = handleMessagePartDelta
 sseManager.onMessageRemoved = handleMessageRemoved
 sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onSessionUpdate = handleSessionUpdate

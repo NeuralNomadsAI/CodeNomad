@@ -431,7 +431,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
               </Show>
             </div>
 
-            <div class="panel-footer">
+            <div class="panel-footer keyboard-hints">
               <div class="panel-footer-hints">
                 <div class="flex items-center gap-1.5">
                   <kbd class="kbd">↑</kbd>

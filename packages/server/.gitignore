@@ -1,1 +1,4 @@
 public/
+
+# Local developer config (may contain secrets)
+config-*.json

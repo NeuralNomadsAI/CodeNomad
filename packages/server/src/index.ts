@@ -8,8 +8,9 @@ import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { WorkspaceManager } from "./workspaces/manager"
-import { ConfigStore } from "./config/store"
-import { BinaryRegistry } from "./config/binaries"
+import { resolveConfigLocation } from "./config/location"
+import { SettingsService } from "./settings/service"
+import { BinaryResolver } from "./settings/binaries"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
@@ -21,6 +22,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses } from "./server/network-addresses"
+import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 
 const require = createRequire(import.meta.url)
 
@@ -210,13 +212,6 @@ function resolveHost(input: string | undefined): string {
   return trimmed
 }
 
-function resolvePath(filePath: string) {
-  if (filePath.startsWith("~/")) {
-    return path.join(process.env.HOME ?? "", filePath.slice(2))
-  }
-  return path.resolve(filePath)
-}
-
 function programHasArg(argv: string[], flag: string): boolean {
   return argv.includes(flag)
 }
@@ -245,7 +240,8 @@ async function main() {
 
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
-  const configDir = path.dirname(resolvePath(options.configPath))
+  const configLocation = resolveConfigLocation(options.configPath)
+  const configDir = configLocation.baseDir
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -266,7 +262,7 @@ async function main() {
 
   const authManager = new AuthManager(
     {
-      configPath: options.configPath,
+      configPath: configLocation.configYamlPath,
       username: options.authUsername,
       password: options.authPassword,
       generateToken: options.generateToken,
@@ -295,19 +291,19 @@ async function main() {
 
   const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
 
-  const configStore = new ConfigStore(options.configPath, eventBus, configLogger)
-  const binaryRegistry = new BinaryRegistry(configStore, eventBus, configLogger)
+  const settings = new SettingsService(configLocation, eventBus, configLogger)
+  const binaryResolver = new BinaryResolver(settings)
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
-    configStore,
-    binaryRegistry,
+    settings,
+    binaryResolver,
     eventBus,
     logger: workspaceLogger,
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
-  const instanceStore = new InstanceStore()
+  const instanceStore = new InstanceStore(configLocation.instancesDir)
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -344,6 +340,21 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
+  const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
+  const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
+  const isDevVersion = packageJson.version.includes("-dev.") || packageJson.version.includes("-dev-")
+  const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
+  const devReleaseMonitor = enableDevUpdateChecks
+    ? startDevReleaseMonitor({
+        currentVersion: packageJson.version,
+        repo: githubRepo,
+        logger: logger.child({ component: "updates" }),
+        onUpdate: (release) => {
+          serverMeta.update = release
+        },
+      })
+    : null
+
   if (uiResolution.uiDevServerUrl && options.https) {
     throw new InvalidArgumentError("UI dev proxy is only supported with --https=false --http=true")
   }
@@ -372,8 +383,7 @@ async function main() {
         defaultPort: options.httpPort,
         protocol: "http",
         workspaceManager,
-        configStore,
-        binaryRegistry,
+        settings,
         fileSystemBrowser,
         eventBus,
         serverMeta,
@@ -393,8 +403,7 @@ async function main() {
         protocol: "https",
         httpsOptions: tlsResolution?.httpsOptions,
         workspaceManager,
-        configStore,
-        binaryRegistry,
+        settings,
         fileSystemBrowser,
         eventBus,
         serverMeta,
@@ -502,6 +511,8 @@ async function main() {
     await Promise.allSettled([shutdownWorkspaces, shutdownHttp])
 
     // no-op: remote UI manifest replaces GitHub release monitor
+
+    devReleaseMonitor?.stop()
 
     logger.info("Exiting process")
     process.exit(0)
