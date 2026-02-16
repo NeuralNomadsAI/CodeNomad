@@ -140,8 +140,11 @@ async function sendMessage(
         const display: string | undefined = att.display
         const value: unknown = source.value
         const isPastedPlaceholder = typeof display === "string" && /^pasted #\d+/.test(display)
+        const isPathPlaceholder = typeof display === "string" && /^path:/.test(display)
 
-        if (isPastedPlaceholder || typeof value !== "string") {
+        // Skip path: attachments from being sent as separate parts (content is already in prompt)
+        // Skip pasted placeholders too (already resolved in prompt)
+        if (isPastedPlaceholder || isPathPlaceholder || typeof value !== "string") {
           continue
         }
 
