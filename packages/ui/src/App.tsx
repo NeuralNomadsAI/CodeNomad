@@ -143,6 +143,31 @@ const App: Component = () => {
     onCleanup(() => document.removeEventListener("fullscreenchange", syncBrowserFullscreenState))
   })
 
+  onMount(() => {
+    if (typeof window === "undefined") return
+    const vv = window.visualViewport
+    if (!vv) return
+
+    const updateKeyboardOffset = () => {
+      // visualViewport shrinks when the OSK is visible. Use the delta as a bottom inset.
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      document.documentElement.style.setProperty("--keyboard-offset", `${Math.floor(inset)}px`)
+    }
+
+    const schedule = () => requestAnimationFrame(updateKeyboardOffset)
+    schedule()
+    vv.addEventListener("resize", schedule)
+    vv.addEventListener("scroll", schedule)
+    window.addEventListener("orientationchange", schedule)
+
+    onCleanup(() => {
+      vv.removeEventListener("resize", schedule)
+      vv.removeEventListener("scroll", schedule)
+      window.removeEventListener("orientationchange", schedule)
+      document.documentElement.style.removeProperty("--keyboard-offset")
+    })
+  })
+
   // If the user exits browser fullscreen via browser UI, restore chrome.
   let lastBrowserFullscreen = false
   createEffect(() => {
@@ -471,7 +496,7 @@ const App: Component = () => {
           </div>
         </Dialog.Portal>
       </Dialog>
-      <div class="h-screen w-screen flex flex-col">
+      <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
         <Show
           when={!hasInstances()}
           fallback={

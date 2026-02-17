@@ -17,6 +17,9 @@ export interface PromptInputProps {
   instanceId: string
   instanceFolder: string
   sessionId: string
+
+  // Used to scope global "type-to-focus" behavior.
+  isActive?: boolean
   onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean

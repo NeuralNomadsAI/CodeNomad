@@ -28,6 +28,7 @@ interface SessionViewProps {
   instanceId: string
   instanceFolder: string
   escapeInDebounce: boolean
+  isPhoneLayout?: boolean
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -75,6 +76,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       () => props.isActive,
       (isActive) => {
         if (!isActive) return
+
+        // On phones, focusing the prompt on session switch is disruptive (it raises the OSK).
+        if (props.isPhoneLayout) return
 
         // Don't steal focus from other inputs (command palette, dialogs, selectors, etc.)
         if (typeof document === "undefined") return
@@ -314,17 +318,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                 </Show>
 
               <PromptInput
-               instanceId={props.instanceId}
-               instanceFolder={props.instanceFolder}
-               sessionId={activeSession.id}
-               onSend={handleSendMessage}
-               onRunShell={handleRunShell}
-               escapeInDebounce={props.escapeInDebounce}
-               isSessionBusy={sessionBusy()}
-               disabled={sessionNeedsInput()}
-               onAbortSession={handleAbortSession}
-               registerPromptInputApi={registerPromptInputApi}
-               />
+                instanceId={props.instanceId}
+                instanceFolder={props.instanceFolder}
+                sessionId={activeSession.id}
+                isActive={props.isActive}
+                onSend={handleSendMessage}
+                onRunShell={handleRunShell}
+                escapeInDebounce={props.escapeInDebounce}
+                isSessionBusy={sessionBusy()}
+                disabled={sessionNeedsInput()}
+                onAbortSession={handleAbortSession}
+                registerPromptInputApi={registerPromptInputApi}
+                />
             </div>
           )
         }}

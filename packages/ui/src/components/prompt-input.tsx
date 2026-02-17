@@ -176,15 +176,26 @@ export default function PromptInput(props: PromptInputProps) {
     ),
   )
 
-  onMount(() => {
+  const isCoarsePointer = () => {
+    if (typeof window === "undefined") return false
+    return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches)
+  }
+
+  createEffect(() => {
+    // Scope global "type-to-focus" behavior to the active, visible prompt only.
+    if (typeof document === "undefined") return
+    if (isCoarsePointer()) return
+    if (props.isActive === false) return
+    if (props.disabled) return
+
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement as HTMLElement
+      const activeElement = document.activeElement as HTMLElement | null
 
       const isInputElement =
         activeElement?.tagName === "INPUT" ||
         activeElement?.tagName === "TEXTAREA" ||
         activeElement?.tagName === "SELECT" ||
-        activeElement?.isContentEditable
+        Boolean(activeElement?.isContentEditable)
 
       if (isInputElement) return
 
@@ -192,16 +203,25 @@ export default function PromptInput(props: PromptInputProps) {
       if (isModifierKey) return
 
       const isSpecialKey =
-        e.key === "Tab" || e.key === "Enter" || e.key.startsWith("Arrow") || e.key === "Backspace" || e.key === "Delete"
+        e.key === "Tab" ||
+        e.key === "Enter" ||
+        e.key.startsWith("Arrow") ||
+        e.key === "Backspace" ||
+        e.key === "Delete"
       if (isSpecialKey) return
 
-      if (e.key.length === 1 && textareaRef && !props.disabled) {
-        textareaRef.focus()
+      const textarea = textareaRef
+      if (!textarea || textarea.disabled) return
+
+      // In session cache mode inactive panes are display:none; avoid stealing focus.
+      if (textarea.offsetParent === null) return
+
+      if (e.key.length === 1) {
+        textarea.focus()
       }
     }
 
     document.addEventListener("keydown", handleGlobalKeyDown)
-
     onCleanup(() => {
       document.removeEventListener("keydown", handleGlobalKeyDown)
     })
@@ -435,7 +455,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={props.disabled}
-                rows={expandState() === "expanded" ? 15 : 4}
+                rows={expandState() === "expanded" ? 15 : 3}
                 spellcheck={false}
                 autocorrect="off"
                 autoCapitalize="off"

@@ -823,6 +823,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           instanceId={props.instance.id}
                           instanceFolder={props.instance.folder}
                           escapeInDebounce={props.escapeInDebounce}
+                          isPhoneLayout={isPhoneLayout()}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}
