@@ -29,6 +29,7 @@ interface SessionViewProps {
   instanceFolder: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
+  compactPromptLayout?: boolean
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -322,6 +323,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                 instanceFolder={props.instanceFolder}
                 sessionId={activeSession.id}
                 isActive={props.isActive}
+                compactLayout={props.compactPromptLayout}
                 onSend={handleSendMessage}
                 onRunShell={handleRunShell}
                 escapeInDebounce={props.escapeInDebounce}

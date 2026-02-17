@@ -455,7 +455,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={props.disabled}
-                rows={expandState() === "expanded" ? 15 : 3}
+                rows={expandState() === "expanded" ? (props.compactLayout ? 10 : 15) : 3}
                 spellcheck={false}
                 autocorrect="off"
                 autoCapitalize="off"

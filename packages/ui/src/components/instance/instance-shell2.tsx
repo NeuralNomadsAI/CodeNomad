@@ -124,6 +124,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
+  const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
 
@@ -824,6 +825,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           instanceFolder={props.instance.folder}
                           escapeInDebounce={props.escapeInDebounce}
                           isPhoneLayout={isPhoneLayout()}
+                          compactPromptLayout={compactPromptLayout()}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}

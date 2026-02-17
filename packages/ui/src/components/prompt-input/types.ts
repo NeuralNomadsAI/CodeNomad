@@ -20,6 +20,9 @@ export interface PromptInputProps {
 
   // Used to scope global "type-to-focus" behavior.
   isActive?: boolean
+
+  // Phone/tablet layouts should keep the expanded prompt more compact.
+  compactLayout?: boolean
   onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean
