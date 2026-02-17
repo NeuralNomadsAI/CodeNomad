@@ -7,7 +7,7 @@ import { MonacoDiffViewer } from "../../../../file-viewer/monaco-diff-viewer"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
-import type { DiffContextMode, DiffViewMode } from "../types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
 
 interface GitChangesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -29,8 +29,10 @@ interface GitChangesTabProps {
 
   diffViewMode: Accessor<DiffViewMode>
   diffContextMode: Accessor<DiffContextMode>
+  diffWordWrapMode: Accessor<DiffWordWrapMode>
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
+  onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
   onOpenFile: (path: string) => void
   onRefresh: () => void
@@ -80,14 +82,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
-        <div class="file-viewer-header">
-          <DiffToolbar
-            viewMode={props.diffViewMode()}
-            contextMode={props.diffContextMode()}
-            onViewModeChange={props.onViewModeChange}
-            onContextModeChange={props.onContextModeChange}
-          />
-        </div>
         <div class="file-viewer-content file-viewer-content--monaco">
           <Show
             when={props.selectedLoading()}
@@ -122,6 +116,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                         after={String((file() as any).after || "")}
                         viewMode={props.diffViewMode()}
                         contextMode={props.diffContextMode()}
+                        wordWrap={props.diffWordWrapMode()}
                       />
                     )}
                   </Show>
@@ -237,6 +232,15 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
             >
               <RefreshCw class={`h-4 w-4${props.statusLoading() ? " animate-spin" : ""}`} />
             </button>
+
+            <DiffToolbar
+              viewMode={props.diffViewMode()}
+              contextMode={props.diffContextMode()}
+              wordWrapMode={props.diffWordWrapMode()}
+              onViewModeChange={props.onViewModeChange}
+              onContextModeChange={props.onContextModeChange}
+              onWordWrapModeChange={props.onWordWrapModeChange}
+            />
           </>
         }
         list={{ panel: renderListPanel, overlay: renderListOverlay }}

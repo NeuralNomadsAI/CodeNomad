@@ -12,6 +12,7 @@ interface MonacoDiffViewerProps {
   after: string
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
+  wordWrap?: "on" | "off"
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
@@ -54,7 +55,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         scrollBeyondLastLine: false,
         renderWhitespace: "selection",
         fontSize: 13,
-        wordWrap: "off",
+        wordWrap: props.wordWrap === "on" ? "on" : "off",
         glyphMargin: false,
         folding: false,
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
@@ -81,6 +82,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     if (!ready() || !monaco || !diffEditor) return
     const viewMode = props.viewMode === "unified" ? "unified" : "split"
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
+    const wordWrap = props.wordWrap === "on" ? "on" : "off"
 
     diffEditor.updateOptions({
       renderSideBySide: viewMode === "split",
@@ -89,7 +91,20 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         contextMode === "collapsed"
           ? { enabled: true }
           : { enabled: false },
+      wordWrap,
     })
+
+    try {
+      diffEditor.getOriginalEditor?.()?.updateOptions?.({ wordWrap })
+    } catch {
+      // ignore
+    }
+
+    try {
+      diffEditor.getModifiedEditor?.()?.updateOptions?.({ wordWrap })
+    } catch {
+      // ignore
+    }
   })
 
   createEffect(() => {
