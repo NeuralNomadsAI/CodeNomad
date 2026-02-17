@@ -90,6 +90,7 @@ export interface Model {
   variantKeys?: string[]
   limit?: {
     context?: number
+    input?: number
     output?: number
   }
   cost?: {
