@@ -558,21 +558,86 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   updateSessionInfo(instanceId, sessionID)
 }
 
+const activeTuiToasts = new Map<string, import("../lib/notifications").ToastHandle>()
+const recentTuiToastTimestamps = new Map<string, number>()
+const TUI_TOAST_DUPLICATE_WINDOW_MS = 2500
+const MIN_TUI_TOAST_DURATION_MS = 4000
+const SPINNER_PREFIX_RE = /^[·•●○◌◦▪▫◆◇◉◎◍◯◔◕◠◡◢◣◤◥◦]+[\s-]*/u
+
+function isValidTuiToastPayload(payload: TuiToastEvent["properties"] | undefined): payload is TuiToastEvent["properties"] {
+  if (!payload) return false
+  if (typeof payload.message !== "string" || typeof payload.variant !== "string") return false
+  return payload.message.trim().length > 0
+}
+
+function normalizeToastText(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
+}
+
+function normalizeToastTitle(value: string): string {
+  const compact = normalizeToastText(value)
+  // Some providers emit spinner frames by rotating a leading glyph in title.
+  // Treat those as the same toast to avoid popup storms.
+  return compact.replace(SPINNER_PREFIX_RE, "")
+}
+
+function createTuiToastKey(instanceId: string, payload: TuiToastEvent["properties"], variant: ToastVariant): string {
+  const title = typeof payload.title === "string" ? normalizeToastTitle(payload.title) : ""
+  const message = normalizeToastText(payload.message)
+  return `${instanceId}:${variant}:${title}:${message}`
+}
+
+function shouldSuppressTuiToast(dedupeKey: string, now: number): boolean {
+  const existing = activeTuiToasts.get(dedupeKey)
+  if (existing) {
+    recentTuiToastTimestamps.set(dedupeKey, now)
+    return true
+  }
+
+  const lastSeenAt = recentTuiToastTimestamps.get(dedupeKey)
+  if (typeof lastSeenAt === "number" && now - lastSeenAt < TUI_TOAST_DUPLICATE_WINDOW_MS) {
+    return true
+  }
+
+  return false
+}
+
+function getTuiToastDuration(payloadDuration: number | undefined): number | undefined {
+  if (typeof payloadDuration !== "number") return undefined
+  return Math.max(payloadDuration, MIN_TUI_TOAST_DURATION_MS)
+}
+
 function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   const payload = event?.properties
-  if (!payload || typeof payload.message !== "string" || typeof payload.variant !== "string") return
-  if (!payload.message.trim()) return
+  if (!isValidTuiToastPayload(payload)) return
 
   const variant: ToastVariant = ALLOWED_TOAST_VARIANTS.has(payload.variant as ToastVariant)
     ? (payload.variant as ToastVariant)
     : "info"
 
-  showToastNotification({
-    title: typeof payload.title === "string" ? payload.title : undefined,
-    message: payload.message,
-    variant,
-    duration: typeof payload.duration === "number" ? payload.duration : undefined,
-  })
+  const title = typeof payload.title === "string" ? payload.title : undefined
+  const dedupeKey = createTuiToastKey(_instanceId, payload, variant)
+  const now = Date.now()
+
+  if (shouldSuppressTuiToast(dedupeKey, now)) {
+    return
+  }
+
+  const duration = getTuiToastDuration(payload.duration)
+  const handle = showToastNotification({ title, message: payload.message, variant, duration })
+  activeTuiToasts.set(dedupeKey, handle)
+  recentTuiToastTimestamps.set(dedupeKey, now)
+
+  const effectiveDuration = duration ?? 10000
+  setTimeout(() => {
+    if (activeTuiToasts.get(dedupeKey) === handle) {
+      activeTuiToasts.delete(dedupeKey)
+    }
+    const lastSeen = recentTuiToastTimestamps.get(dedupeKey)
+    if (typeof lastSeen === "number" && Date.now() - lastSeen >= TUI_TOAST_DUPLICATE_WINDOW_MS) {
+      recentTuiToastTimestamps.delete(dedupeKey)
+    }
+  }, Math.max(effectiveDuration, TUI_TOAST_DUPLICATE_WINDOW_MS))
 }
 
 function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {

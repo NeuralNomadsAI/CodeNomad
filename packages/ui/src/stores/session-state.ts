@@ -682,7 +682,9 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
     const deletionResults = await Promise.all(cleanupPromises)
     const deletedCount = deletionResults.filter(Boolean).length
 
-    if (deletedCount > 0) {
+    const shouldShowCleanupToast = fetchIfNeeded
+
+    if (deletedCount > 0 && shouldShowCleanupToast) {
       showToastNotification({
         message: deletedCount === 1
           ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
