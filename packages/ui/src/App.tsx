@@ -1,6 +1,7 @@
 import { Component, For, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
+import useMediaQuery from "@suid/material/useMediaQuery"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { showConfirmDialog } from "./stores/alerts"
@@ -82,6 +83,46 @@ const App: Component = () => {
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
 
+  const phoneQuery = useMediaQuery("(max-width: 767px)")
+  const isPhoneLayout = createMemo(() => phoneQuery())
+
+  // In-memory only: hides chrome on phone; may also request browser fullscreen.
+  const [mobileFullscreenMode, setMobileFullscreenMode] = createSignal(false)
+  const [browserFullscreenActive, setBrowserFullscreenActive] = createSignal(false)
+
+  const fullscreenSupported = () => {
+    if (typeof document === "undefined") return false
+    const el = document.documentElement as any
+    return Boolean(document.fullscreenEnabled) && typeof el?.requestFullscreen === "function"
+  }
+
+  const syncBrowserFullscreenState = () => {
+    if (typeof document === "undefined") return
+    setBrowserFullscreenActive(Boolean(document.fullscreenElement))
+  }
+
+  const enterMobileFullscreen = async () => {
+    if (!isPhoneLayout()) return
+    setMobileFullscreenMode(true)
+    if (!fullscreenSupported()) return
+    try {
+      await document.documentElement.requestFullscreen()
+    } catch {
+      // Ignore: immersive mode still works without browser fullscreen.
+    }
+  }
+
+  const exitMobileFullscreen = async () => {
+    if (typeof document !== "undefined" && document.fullscreenElement && typeof document.exitFullscreen === "function") {
+      try {
+        await document.exitFullscreen()
+      } catch {
+        // Ignore
+      }
+    }
+    setMobileFullscreenMode(false)
+  }
+
   createEffect(() => {
     if (typeof document === "undefined") return
     const shouldShow =
@@ -94,6 +135,31 @@ const App: Component = () => {
     const element = document.querySelector<HTMLElement>(".tab-bar-instance")
     setInstanceTabBarHeight(element?.offsetHeight ?? 0)
   }
+
+  onMount(() => {
+    if (typeof document === "undefined") return
+    syncBrowserFullscreenState()
+    document.addEventListener("fullscreenchange", syncBrowserFullscreenState)
+    onCleanup(() => document.removeEventListener("fullscreenchange", syncBrowserFullscreenState))
+  })
+
+  // If the user exits browser fullscreen via browser UI, restore chrome.
+  let lastBrowserFullscreen = false
+  createEffect(() => {
+    const active = browserFullscreenActive()
+    const mode = mobileFullscreenMode()
+    if (mode && lastBrowserFullscreen && !active) {
+      setMobileFullscreenMode(false)
+    }
+    lastBrowserFullscreen = active
+  })
+
+  // If we leave phone layout (rotation / resize), restore chrome.
+  createEffect(() => {
+    if (!isPhoneLayout() && mobileFullscreenMode()) {
+      void exitMobileFullscreen()
+    }
+  })
 
   createEffect(() => {
     void initMarkdown(isDark()).catch((error) => log.error("Failed to initialize markdown", error))
@@ -410,14 +476,16 @@ const App: Component = () => {
           when={!hasInstances()}
           fallback={
             <>
-              <InstanceTabs
-                instances={instances()}
-                activeInstanceId={activeInstanceId()}
-                onSelect={setActiveInstanceId}
-                onClose={handleCloseInstance}
-                onNew={handleNewInstanceRequest}
-                onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
-              />
+              <Show when={!isPhoneLayout() || !mobileFullscreenMode()}>
+                <InstanceTabs
+                  instances={instances()}
+                  activeInstanceId={activeInstanceId()}
+                  onSelect={setActiveInstanceId}
+                  onClose={handleCloseInstance}
+                  onNew={handleNewInstanceRequest}
+                  onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
+                />
+              </Show>
  
               <For each={Array.from(instances().values())}>
                 {(instance) => {
@@ -435,7 +503,10 @@ const App: Component = () => {
                             handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
                             handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
                             onExecuteCommand={executeCommand}
-                            tabBarOffset={instanceTabBarHeight()}
+                            tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                            mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                            onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                            onExitMobileFullscreen={() => void exitMobileFullscreen()}
                           />
                         </InstanceMetadataProvider>
 

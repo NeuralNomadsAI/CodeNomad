@@ -42,7 +42,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getSessionStatus } from "../../stores/session-status"
-import { ShieldAlert } from "lucide-solid"
+import { Maximize2, Minimize2, ShieldAlert } from "lucide-solid"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -70,6 +70,11 @@ interface InstanceShellProps {
   handleSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onExecuteCommand: (command: Command) => void
   tabBarOffset: number
+
+  // In-memory only: mobile immersive/fullscreen mode.
+  mobileFullscreenMode: boolean
+  onEnterMobileFullscreen: () => void
+  onExitMobileFullscreen: () => void
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
@@ -118,6 +123,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
+  const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
 
@@ -585,13 +591,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       {renderLeftPanel()}
 
       <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
-        <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-          <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
-            <Show
-              when={!isPhoneLayout()}
-              fallback={
-                <div class="flex flex-col w-full gap-1.5">
-                  <div class="flex flex-wrap items-center justify-between gap-2 w-full">
+        <Show when={!mobileFullscreen()}>
+          <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
+            <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
+              <Show
+                when={!isPhoneLayout()}
+                fallback={
+                  <div class="flex flex-col w-full gap-1.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2 w-full">
                     <Show when={leftDrawerState() === "floating-closed"}>
                       <IconButton
                         ref={setLeftToggleButtonEl}
@@ -637,6 +644,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <span class="status-dot" />
                       </span>
                     </div>
+
+                    <Show when={!props.mobileFullscreenMode}>
+                      <IconButton
+                        color="inherit"
+                        onClick={props.onEnterMobileFullscreen}
+                        aria-label={t("instanceShell.fullscreen.enter")}
+                        title={t("instanceShell.fullscreen.enter")}
+                        size="small"
+                      >
+                        <Maximize2 class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                    </Show>
 
                     <Show when={rightDrawerState() === "floating-closed"}>
                       <IconButton
@@ -750,9 +769,24 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </Show>
                 </div>
               </div>
-            </Show>
-          </Toolbar>
-        </AppBar>
+              </Show>
+            </Toolbar>
+          </AppBar>
+        </Show>
+
+        <Show when={mobileFullscreen()}>
+          <div class="mobile-fullscreen-exit-wrapper">
+            <button
+              type="button"
+              class="message-scroll-button mobile-fullscreen-exit-button"
+              onClick={props.onExitMobileFullscreen}
+              aria-label={t("instanceShell.fullscreen.exit")}
+              title={t("instanceShell.fullscreen.exit")}
+            >
+              <Minimize2 class="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        </Show>
 
         <Box
           component="main"

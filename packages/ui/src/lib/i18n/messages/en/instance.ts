@@ -39,6 +39,9 @@ export const instanceMessages = {
   "instanceShell.rightDrawer.toggle.open": "Open right drawer",
   "instanceShell.rightDrawer.toggle.close": "Close right drawer",
 
+  "instanceShell.fullscreen.enter": "Full screen",
+  "instanceShell.fullscreen.exit": "Exit full screen",
+
   "instanceShell.metrics.usedLabel": "Used",
   "instanceShell.metrics.availableLabel": "Avail",
 

@@ -39,6 +39,9 @@ export const instanceMessages = {
   "instanceShell.rightDrawer.toggle.open": "打开右侧抽屉",
   "instanceShell.rightDrawer.toggle.close": "关闭右侧抽屉",
 
+  "instanceShell.fullscreen.enter": "全屏",
+  "instanceShell.fullscreen.exit": "退出全屏",
+
   "instanceShell.metrics.usedLabel": "已用",
   "instanceShell.metrics.availableLabel": "可用",
 

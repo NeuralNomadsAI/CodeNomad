@@ -125,6 +125,18 @@ session-sidebar-controls .selector-trigger-primary {
   width: 100%;
 }
 
+.mobile-fullscreen-exit-wrapper {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  z-index: 1250;
+  pointer-events: none;
+}
+
+.mobile-fullscreen-exit-button {
+  pointer-events: auto;
+}
+
 .session-resize-handle {
   @apply absolute top-0 w-1 h-full cursor-col-resize bg-transparent transition-colors;
   z-index: 10;

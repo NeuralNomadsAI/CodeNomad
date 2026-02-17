@@ -39,6 +39,9 @@ export const instanceMessages = {
   "instanceShell.rightDrawer.toggle.open": "右ドロワーを開く",
   "instanceShell.rightDrawer.toggle.close": "右ドロワーを閉じる",
 
+  "instanceShell.fullscreen.enter": "全画面",
+  "instanceShell.fullscreen.exit": "全画面を終了",
+
   "instanceShell.metrics.usedLabel": "使用",
   "instanceShell.metrics.availableLabel": "残り",
 
