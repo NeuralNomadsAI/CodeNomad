@@ -42,7 +42,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getSessionStatus } from "../../stores/session-status"
-import { Maximize2, Minimize2, ShieldAlert } from "lucide-solid"
+import { Maximize2, ShieldAlert } from "lucide-solid"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -773,20 +773,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </Show>
             </Toolbar>
           </AppBar>
-        </Show>
-
-        <Show when={mobileFullscreen()}>
-          <div class="mobile-fullscreen-exit-wrapper">
-            <button
-              type="button"
-              class="message-scroll-button mobile-fullscreen-exit-button"
-              onClick={props.onExitMobileFullscreen}
-              aria-label={t("instanceShell.fullscreen.exit")}
-              title={t("instanceShell.fullscreen.exit")}
-            >
-              <Minimize2 class="h-5 w-5" aria-hidden="true" />
-            </button>
-          </div>
         </Show>
 
         <Box

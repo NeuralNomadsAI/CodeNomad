@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo, createEffect, createSignal, onMount, 
 import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
+import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { showConfirmDialog } from "./stores/alerts"
@@ -497,6 +498,19 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
+        <Show when={isPhoneLayout() && mobileFullscreenMode()}>
+          <div class="mobile-fullscreen-exit-wrapper">
+            <button
+              type="button"
+              class="message-scroll-button mobile-fullscreen-exit-button"
+              onClick={() => void exitMobileFullscreen()}
+              aria-label={t("instanceShell.fullscreen.exit")}
+              title={t("instanceShell.fullscreen.exit")}
+            >
+              <Minimize2 class="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        </Show>
         <Show
           when={!hasInstances()}
           fallback={
