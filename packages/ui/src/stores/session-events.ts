@@ -562,7 +562,7 @@ const activeTuiToasts = new Map<string, import("../lib/notifications").ToastHand
 const recentTuiToastTimestamps = new Map<string, number>()
 const TUI_TOAST_DUPLICATE_WINDOW_MS = 2500
 const MIN_TUI_TOAST_DURATION_MS = 4000
-const SPINNER_PREFIX_RE = /^[·•●○◌◦▪▫◆◇◉◎◍◯◔◕◠◡◢◣◤◥◦]+[\s-]*/u
+const SPINNER_PREFIX_RE = /^[·•●○◌◦▪▫◆◇◉◎◍◯◔◕◠◡◢◣◤◥]+[\s-]*/u
 
 function isValidTuiToastPayload(payload: TuiToastEvent["properties"] | undefined): payload is TuiToastEvent["properties"] {
   if (!payload) return false
