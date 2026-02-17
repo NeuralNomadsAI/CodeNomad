@@ -29,6 +29,7 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
+import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
@@ -349,16 +350,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     measureDrawerHost,
   })
 
-  const formattedUsedTokens = () => formatTokenTotal(tokenStats().used)
-
-
-  const formattedAvailableTokens = () => {
-    const avail = tokenStats().avail
-    if (typeof avail === "number") {
-      return formatTokenTotal(avail)
-    }
-    return "--"
-  }
 
   const renderLeftPanel = () => {
     if (leftPinned()) {
@@ -661,20 +652,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </Show>
                   </div>
 
-                  <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                      <span class="uppercase text-[10px] tracking-wide text-muted">
-                        {t("instanceShell.metrics.usedLabel")}
-                      </span>
-                      <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                    <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
+                      <ContextMeter
+                        usedTokens={tokenStats().used}
+                        availableTokens={tokenStats().avail}
+                        formatTokens={formatTokenTotal}
+                        usedLabel={t("instanceShell.metrics.usedLabel")}
+                        availableLabel={t("instanceShell.metrics.availableLabel")}
+                      />
                     </div>
-                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                      <span class="uppercase text-[10px] tracking-wide text-muted">
-                        {t("instanceShell.metrics.availableLabel")}
-                      </span>
-                      <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                    </div>
-                  </div>
                 </div>
               }
             >
@@ -693,18 +679,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </Show>
 
                 <Show when={!showingInfoView()}>
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-muted">
-                      {t("instanceShell.metrics.usedLabel")}
-                    </span>
-                    <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-                  </div>
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-muted">
-                      {t("instanceShell.metrics.availableLabel")}
-                    </span>
-                    <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                  </div>
+                  <ContextMeter
+                    usedTokens={tokenStats().used}
+                    availableTokens={tokenStats().avail}
+                    formatTokens={formatTokenTotal}
+                    usedLabel={t("instanceShell.metrics.usedLabel")}
+                    availableLabel={t("instanceShell.metrics.availableLabel")}
+                  />
                 </Show>
 
                 <div class="ml-auto flex items-center session-header-hints">
