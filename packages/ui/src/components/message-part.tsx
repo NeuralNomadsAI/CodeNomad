@@ -3,7 +3,6 @@ import ToolCall from "./tool-call"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { useConfig } from "../stores/preferences"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
@@ -17,16 +16,18 @@ interface MessagePartProps {
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
   onRendered?: () => void
- }
-   export default function MessagePart(props: MessagePartProps) {
+}
+
+export default function MessagePart(props: MessagePartProps) {
 
   const { isDark } = useTheme()
-  const { preferences } = useConfig()
   const partType = () => props.part?.type || ""
   const reasoningId = () => `reasoning-${props.part?.id || ""}`
   const isReasoningExpanded = () => isItemExpanded(reasoningId())
   const isAssistantMessage = () => props.messageType === "assistant"
   const textContainerClass = () => (isAssistantMessage() ? "message-text message-text-assistant" : "message-text")
+  const markdownContainerClass = () => "message-text message-text-assistant"
+  const textContainerRole = () => props.messageType || "assistant"
 
   const shouldHideTextPart = () => {
     const part = props.part
@@ -55,6 +56,11 @@ interface MessagePartProps {
     }
 
     return ""
+  }
+
+  const canRenderMarkdown = () => {
+    const id = (props.part as unknown as { id?: unknown })?.id
+    return typeof id === "string" && id.length > 0
   }
 
   function reasoningSegmentHasText(segment: unknown): boolean {
@@ -91,20 +97,28 @@ interface MessagePartProps {
 
   const createTextPartForMarkdown = (): TextPart => {
     const part = props.part
-    if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
+    if (part.type === "text" && typeof part.text === "string") {
+      // Pass through the original part so `renderCache` updates persist.
+      return part as unknown as TextPart
+    }
+
+    if (part.type === "reasoning" && typeof (part as any).text === "string") {
+      // Reasoning parts render as markdown in some views; normalize to TextPart.
       return {
         id: part.id,
         type: "text",
-        text: part.text,
-        synthetic: part.type === "text" ? part.synthetic : false,
-        version: (part as { version?: number }).version
+        text: (part as any).text,
+        synthetic: false,
+        version: (part as { version?: number }).version,
+        renderCache: (part as any).renderCache,
       }
     }
+
     return {
       id: part.id,
-      type: "text", 
+      type: "text",
       text: "",
-      synthetic: false
+      synthetic: false,
     }
   }
 
@@ -117,22 +131,18 @@ interface MessagePartProps {
     <Switch>
       <Match when={partType() === "text"}>
         <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
-          <div class={textContainerClass()}>
-                <Show
-                 when={isAssistantMessage()}
-                 fallback={<span class="text-primary">{plainTextContent()}</span>}
-               >
-                 <Markdown
-                   part={createTextPartForMarkdown()}
-                   instanceId={props.instanceId}
-                   sessionId={props.sessionId}
-                   isDark={isDark()}
-                 size={isAssistantMessage() ? "tight" : "base"}
-                 onRendered={props.onRendered}
-               />
-              </Show>
-
-           </div>
+          <div class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()} data-role={textContainerRole()}>
+            <Show when={canRenderMarkdown()} fallback={<span class="text-primary">{plainTextContent()}</span>}>
+              <Markdown
+                part={createTextPartForMarkdown()}
+                instanceId={props.instanceId}
+                sessionId={props.sessionId}
+                isDark={isDark()}
+                size={isAssistantMessage() ? "tight" : "base"}
+                onRendered={props.onRendered}
+              />
+            </Show>
+          </div>
         </Show>
       </Match>
 

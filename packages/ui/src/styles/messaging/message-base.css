@@ -1,6 +1,10 @@
 /* Message item base styles */
 .message-item-base {
   @apply flex flex-col gap-2 p-3 w-full;
+
+  /* Markdown rendering uses these to theme emphasis + headings per message role. */
+  --markdown-accent: var(--message-user-border);
+  --markdown-heading-color: var(--message-user-border);
 }
 
 .message-item-header {
@@ -71,6 +75,9 @@
   padding: 0.6rem 0.65rem;
   margin-top: 0;
   margin-bottom: 0;
+
+  --markdown-accent: var(--message-assistant-border);
+  --markdown-heading-color: var(--text-primary);
 }
 
 .message-item-base:not(.assistant-message) {
