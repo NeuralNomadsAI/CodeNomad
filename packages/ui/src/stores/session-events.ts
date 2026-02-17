@@ -560,6 +560,7 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
 
 const activeTuiToasts = new Map<string, import("../lib/notifications").ToastHandle>()
 const recentTuiToastTimestamps = new Map<string, number>()
+const recentTuiToastCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const TUI_TOAST_DUPLICATE_WINDOW_MS = 2500
 const MIN_TUI_TOAST_DURATION_MS = 4000
 const SPINNER_PREFIX_RE = /^[·•●○◌◦▪▫◆◇◉◎◍◯◔◕◠◡◢◣◤◥]+[\s-]*/u
@@ -587,10 +588,62 @@ function createTuiToastKey(instanceId: string, payload: TuiToastEvent["propertie
   return `${instanceId}:${variant}:${title}:${message}`
 }
 
+function clearRecentTuiToastTracking(dedupeKey: string) {
+  recentTuiToastTimestamps.delete(dedupeKey)
+  const timer = recentTuiToastCleanupTimers.get(dedupeKey)
+  if (timer) {
+    clearTimeout(timer)
+    recentTuiToastCleanupTimers.delete(dedupeKey)
+  }
+}
+
+function resetRecentTuiToastCleanupTimer(dedupeKey: string) {
+  const existing = recentTuiToastCleanupTimers.get(dedupeKey)
+  if (existing) {
+    clearTimeout(existing)
+  }
+}
+
+function getRemainingTuiToastDedupeMs(dedupeKey: string, now = Date.now()): number | null {
+  const lastSeen = recentTuiToastTimestamps.get(dedupeKey)
+  if (typeof lastSeen !== "number") return null
+  const elapsed = now - lastSeen
+  const remaining = TUI_TOAST_DUPLICATE_WINDOW_MS - elapsed
+  return remaining > 0 ? remaining : 0
+}
+
+function runRecentTuiToastCleanup(dedupeKey: string) {
+  const remaining = getRemainingTuiToastDedupeMs(dedupeKey)
+  if (remaining === null) {
+    recentTuiToastCleanupTimers.delete(dedupeKey)
+    return
+  }
+  if (remaining === 0) {
+    clearRecentTuiToastTracking(dedupeKey)
+    return
+  }
+  scheduleRecentTuiToastCleanup(dedupeKey, remaining)
+}
+
+function scheduleRecentTuiToastCleanup(dedupeKey: string, delayMs: number) {
+  resetRecentTuiToastCleanupTimer(dedupeKey)
+
+  const timer = setTimeout(() => {
+    runRecentTuiToastCleanup(dedupeKey)
+  }, delayMs)
+
+  recentTuiToastCleanupTimers.set(dedupeKey, timer)
+}
+
+function markTuiToastSeen(dedupeKey: string, at: number) {
+  recentTuiToastTimestamps.set(dedupeKey, at)
+  scheduleRecentTuiToastCleanup(dedupeKey, TUI_TOAST_DUPLICATE_WINDOW_MS)
+}
+
 function shouldSuppressTuiToast(dedupeKey: string, now: number): boolean {
   const existing = activeTuiToasts.get(dedupeKey)
   if (existing) {
-    recentTuiToastTimestamps.set(dedupeKey, now)
+    markTuiToastSeen(dedupeKey, now)
     return true
   }
 
@@ -626,7 +679,7 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   const duration = getTuiToastDuration(payload.duration)
   const handle = showToastNotification({ title, message: payload.message, variant, duration })
   activeTuiToasts.set(dedupeKey, handle)
-  recentTuiToastTimestamps.set(dedupeKey, now)
+  markTuiToastSeen(dedupeKey, now)
 
   const effectiveDuration = duration ?? 10000
   setTimeout(() => {
@@ -635,7 +688,7 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
     }
     const lastSeen = recentTuiToastTimestamps.get(dedupeKey)
     if (typeof lastSeen === "number" && Date.now() - lastSeen >= TUI_TOAST_DUPLICATE_WINDOW_MS) {
-      recentTuiToastTimestamps.delete(dedupeKey)
+      clearRecentTuiToastTracking(dedupeKey)
     }
   }, Math.max(effectiveDuration, TUI_TOAST_DUPLICATE_WINDOW_MS))
 }
