@@ -123,3 +123,6 @@ To build the Desktop App from source:
 1.  Clone the repo.
 2.  Run `npm install` (requires pnpm or npm 7+ for workspaces).
 3.  Run `npm run build --workspace @neuralnomads/codenomad-electron-app`.
+
+[![Star History Chart](https://api.star-history.com/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.com/#NeuralNomadsAI/CodeNomad&Date)
+
