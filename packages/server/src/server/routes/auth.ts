@@ -51,7 +51,19 @@ function getTokenHtml(): string {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get("/login", async (_request, reply) => {
+  app.get("/login", async (request, reply) => {
+    // If already authenticated, don't show the login page.
+    const session = deps.authManager.getSessionFromRequest(request)
+    if (session) {
+      reply.redirect("/")
+      return
+    }
+
+    // Avoid caching the login page (helps with bfcache/back behavior).
+    reply.header("Cache-Control", "no-store")
+    reply.header("Pragma", "no-cache")
+    reply.header("Expires", "0")
+
     const status = deps.authManager.getStatus()
     reply.type("text/html").send(getLoginHtml(status.username))
   })
@@ -66,6 +78,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.code(404).send({ error: "Not found" })
       return
     }
+
+    // Avoid caching the token bootstrap page.
+    reply.header("Cache-Control", "no-store")
+    reply.header("Pragma", "no-cache")
+    reply.header("Expires", "0")
 
     reply.type("text/html").send(getTokenHtml())
   })

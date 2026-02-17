@@ -119,7 +119,8 @@
             showError(message || `Login failed (${res.status})`)
             return
           }
-          window.location.href = "/"
+          // Replace history entry so Back doesn't return to /login.
+          window.location.replace("/")
         } catch (e) {
           showError(e && e.message ? e.message : String(e))
         }
