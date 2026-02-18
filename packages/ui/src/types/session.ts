@@ -68,6 +68,7 @@ export interface Agent {
   name: string
   description: string
   mode: string
+  hidden?: boolean
   model?: {
     providerId: string
     modelId: string

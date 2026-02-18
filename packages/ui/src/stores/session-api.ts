@@ -526,6 +526,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
       name: agent.name,
       description: agent.description || "",
       mode: agent.mode,
+      hidden: agent.hidden,
       model: agent.model?.modelID
         ? {
             providerId: agent.model.providerID || "",
