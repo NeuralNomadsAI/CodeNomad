@@ -329,9 +329,35 @@ function buildWorktreeProxyPath(instanceId: string, slug: string): string {
   return `/workspaces/${encodeURIComponent(instanceId)}/worktrees/${encodeURIComponent(normalizedSlug)}/instance`
 }
 
+function encodeBase64UrlUtf8(input: string): string {
+  const bytes = new TextEncoder().encode(input)
+  // Convert bytes -> base64 (btoa expects a binary string)
+  let binary = ""
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  const base64 = btoa(binary)
+  // base64 -> base64url (strip padding)
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
+}
+
+function buildWorktreeProxyPathWithDirectoryOverride(instanceId: string, slug: string, directory: string): string {
+  const base = buildWorktreeProxyPath(instanceId, slug)
+  const encoded = encodeBase64UrlUtf8(directory)
+  return `${base}/__dir/${encoded}`
+}
+
 function getOrCreateWorktreeClient(instanceId: string, slug: string): OpencodeClient {
   const normalized = normalizeWorktreeSlug(instanceId, slug || "root")
   const proxyPath = buildWorktreeProxyPath(instanceId, normalized)
+  return sdkManager.createClient(instanceId, proxyPath, normalized)
+}
+
+function getOrCreateWorktreeClientWithDirectoryOverride(instanceId: string, slug: string, directory: string): OpencodeClient {
+  const normalized = normalizeWorktreeSlug(instanceId, slug || "root")
+  const proxyPath = buildWorktreeProxyPathWithDirectoryOverride(instanceId, normalized, directory)
   return sdkManager.createClient(instanceId, proxyPath, normalized)
 }
 
@@ -359,7 +385,9 @@ export {
   removeParentSessionMapping,
   getWorktreeSlugForDirectory,
   buildWorktreeProxyPath,
+  buildWorktreeProxyPathWithDirectoryOverride,
   getOrCreateWorktreeClient,
+  getOrCreateWorktreeClientWithDirectoryOverride,
   getRootClient,
   createWorktree,
   deleteWorktree,
