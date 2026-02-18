@@ -52,6 +52,8 @@ const permissionSessionCounts = new Map<string, Map<string, number>>()
 const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
+// Track which worktree a question was enqueued under (by question request id).
+const questionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
 const questionSessionCounts = new Map<string, Map<string, number>>()
 const questionEnqueuedAt = new Map<string, number>()
@@ -877,6 +879,16 @@ function addQuestionToQueue(instanceId: string, request: QuestionRequest): void 
   if (sessionId) {
     incrementQuestionSessionPendingCount(instanceId, sessionId)
     setSessionPendingQuestion(instanceId, sessionId, true)
+
+    // Record the worktree slug at the time the question is enqueued.
+    // This is used to respond in the same worktree context even from the global permission center.
+    const slug = getWorktreeSlugForSession(instanceId, sessionId)
+    let byQuestionId = questionWorktreeSlugByInstance.get(instanceId)
+    if (!byQuestionId) {
+      byQuestionId = new Map()
+      questionWorktreeSlugByInstance.set(instanceId, byQuestionId)
+    }
+    byQuestionId.set(request.id, slug)
   }
 }
 
@@ -897,6 +909,7 @@ function removeQuestionFromQueue(instanceId: string, requestId: string): void {
   })
 
   questionEnqueuedAt.delete(requestId)
+  questionWorktreeSlugByInstance.get(instanceId)?.delete(requestId)
   recomputeActiveInterruption(instanceId)
 
   if (removedSessionId) {
@@ -909,6 +922,7 @@ function clearQuestionQueue(instanceId: string): void {
   for (const request of getQuestionQueue(instanceId)) {
     questionEnqueuedAt.delete(request.id)
   }
+  questionWorktreeSlugByInstance.delete(instanceId)
 
   setQuestionQueues((prev) => {
     const next = new Map(prev)
@@ -934,7 +948,7 @@ function setActiveQuestionIdForInstance(instanceId: string, requestId: string): 
 
 async function sendQuestionReply(
   instanceId: string,
-  _sessionId: string,
+  sessionId: string,
   requestId: string,
   answers: string[][],
 ): Promise<void> {
@@ -944,8 +958,13 @@ async function sendQuestionReply(
   }
 
   try {
+    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
+    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
+    const worktreeSlug = stored ?? fallback
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
     await requestData(
-      instance.client.question.reply({
+      client.question.reply({
         requestID: requestId,
         answers,
       }),
@@ -959,15 +978,20 @@ async function sendQuestionReply(
   }
 }
 
-async function sendQuestionReject(instanceId: string, _sessionId: string, requestId: string): Promise<void> {
+async function sendQuestionReject(instanceId: string, sessionId: string, requestId: string): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")
   }
 
   try {
+    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
+    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
+    const worktreeSlug = stored ?? fallback
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
     await requestData(
-      instance.client.question.reject({
+      client.question.reject({
         requestID: requestId,
       }),
       "question.reject",
