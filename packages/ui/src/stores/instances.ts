@@ -6,7 +6,7 @@ import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permiss
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
-import { sdkManager } from "../lib/sdk-manager"
+import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -18,7 +18,14 @@ import {
   fetchProviders,
   clearInstanceDraftPrompts,
 } from "./sessions"
-import { ensureWorktreesLoaded, ensureWorktreeMapLoaded, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
+import {
+  ensureWorktreesLoaded,
+  ensureWorktreeMapLoaded,
+  getOrCreateWorktreeClient,
+  getWorktreeSlugForSession,
+  reloadWorktreeMap,
+  reloadWorktrees,
+} from "./worktrees"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
@@ -75,6 +82,9 @@ interface DisconnectedInstanceInfo {
 const [disconnectedInstance, setDisconnectedInstance] = createSignal<DisconnectedInstanceInfo | null>(null)
 
 const MAX_LOG_ENTRIES = 1000
+
+const pendingDisposeRequests = new Map<string, Promise<boolean>>()
+const pendingRehydrations = new Map<string, Promise<void>>()
 
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instance {
   const existing = instances().get(descriptor.id)
@@ -228,10 +238,15 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
   }
 }
 
-async function hydrateInstanceData(instanceId: string) {
+async function hydrateInstanceData(instanceId: string, options?: { force?: boolean }) {
   try {
-    await ensureWorktreesLoaded(instanceId)
-    await ensureWorktreeMapLoaded(instanceId)
+    if (options?.force) {
+      await reloadWorktrees(instanceId)
+      await reloadWorktreeMap(instanceId)
+    } else {
+      await ensureWorktreesLoaded(instanceId)
+      await ensureWorktreeMapLoaded(instanceId)
+    }
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
@@ -244,6 +259,91 @@ async function hydrateInstanceData(instanceId: string) {
   } catch (error) {
     log.error("Failed to fetch initial data", error)
   }
+}
+
+async function postInstanceDispose(instanceId: string): Promise<boolean> {
+  const instance = instances().get(instanceId)
+  if (!instance?.proxyPath) {
+    throw new Error("Instance not ready")
+  }
+
+  const baseUrl = buildInstanceBaseUrl(instance.proxyPath)
+  const url = new URL("instance/dispose", baseUrl)
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "")
+    throw new Error(message || `Dispose request failed with ${response.status}`)
+  }
+
+  const contentType = response.headers.get("content-type") ?? ""
+  if (contentType.includes("application/json")) {
+    const data = await response.json().catch(() => undefined)
+    if (typeof data === "boolean") return data
+    if (data && typeof data === "object" && "data" in (data as any)) {
+      return Boolean((data as any).data)
+    }
+    return Boolean(data)
+  }
+
+  const text = await response.text().catch(() => "")
+  if (text.trim() === "true") return true
+  if (text.trim() === "false") return false
+  return Boolean(text)
+}
+
+async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
+  if (pendingRehydrations.has(instanceId)) {
+    return pendingRehydrations.get(instanceId)
+  }
+
+  const promise = (async () => {
+    const instance = instances().get(instanceId)
+    if (!instance?.client) {
+      return
+    }
+
+    log.info("Rehydrating instance", { instanceId, reason: options?.reason })
+    clearCacheForInstance(instanceId)
+    clearCommands(instanceId)
+    clearInstanceMetadata(instanceId)
+    clearInstanceDraftPrompts(instanceId)
+    clearPermissionQueue(instanceId)
+    clearQuestionQueue(instanceId)
+
+    await hydrateInstanceData(instanceId, { force: true })
+  })().finally(() => {
+    pendingRehydrations.delete(instanceId)
+  })
+
+  pendingRehydrations.set(instanceId, promise)
+  return promise
+}
+
+async function disposeInstance(instanceId: string): Promise<boolean> {
+  if (pendingDisposeRequests.has(instanceId)) {
+    return pendingDisposeRequests.get(instanceId)!
+  }
+
+  const promise = (async () => {
+    const ok = await postInstanceDispose(instanceId)
+    if (ok) {
+      await rehydrateInstance(instanceId, { reason: "disposed" })
+    }
+    return ok
+  })().finally(() => {
+    pendingDisposeRequests.delete(instanceId)
+  })
+
+  pendingDisposeRequests.set(instanceId, promise)
+  return promise
 }
 
   void (async function initializeWorkspaces() {
@@ -939,6 +1039,30 @@ sseManager.onLspUpdated = async (instanceId) => {
   }
 }
 
+sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
+  const directory = event?.properties?.directory
+  if (!directory) {
+    void rehydrateInstance(sourceInstanceId, { reason: "disposed" })
+    return
+  }
+
+  const matchingInstanceIds: string[] = []
+  for (const instance of instances().values()) {
+    if (instance.folder === directory) {
+      matchingInstanceIds.push(instance.id)
+    }
+  }
+
+  if (matchingInstanceIds.length === 0) {
+    void rehydrateInstance(sourceInstanceId, { reason: "disposed" })
+    return
+  }
+
+  for (const instanceId of matchingInstanceIds) {
+    void rehydrateInstance(instanceId, { reason: "disposed" })
+  }
+}
+
 async function acknowledgeDisconnectedInstance(): Promise<void> {
   const pending = disconnectedInstance()
   if (!pending) {
@@ -995,4 +1119,5 @@ export {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   fetchLspStatus,
+  disposeInstance,
 }

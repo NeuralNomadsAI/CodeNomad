@@ -54,3 +54,28 @@ button.button-tertiary:hover:not(:disabled) {
 button.button-tertiary:focus-visible {
   box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }
+
+.button-danger,
+button.button-danger {
+  @apply px-6 py-3 text-base rounded-lg;
+  background-color: var(--button-danger-bg);
+  color: var(--button-danger-text);
+  border-color: var(--button-danger-bg);
+}
+
+.button-danger:hover:not(:disabled),
+button.button-danger:hover:not(:disabled) {
+  background-color: var(--button-danger-hover-bg);
+  border-color: var(--button-danger-hover-bg);
+}
+
+.button-danger:focus-visible,
+button.button-danger:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+/* Smaller sizing variant for destructive actions in tight spaces. */
+.button-danger.button-small,
+button.button-danger.button-small {
+  @apply px-4 py-2 text-sm;
+}

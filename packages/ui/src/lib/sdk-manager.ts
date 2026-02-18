@@ -46,7 +46,7 @@ class SDKManager {
 
 export type { OpencodeClient }
 
-function buildInstanceBaseUrl(proxyPath: string): string {
+export function buildInstanceBaseUrl(proxyPath: string): string {
   const normalized = normalizeProxyPath(proxyPath)
   const base = stripTrailingSlashes(CODENOMAD_API_BASE)
   return `${base}${normalized}/`

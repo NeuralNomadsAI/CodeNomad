@@ -15,4 +15,13 @@ export const logMessages = {
   "infoView.logs.paused.description": "启用流式输出以查看 OpenCode 服务器活动。",
   "infoView.logs.empty.waiting": "正在等待服务器输出...",
   "infoView.logs.scrollToBottom": "滚动到底部",
+
+  "infoView.dispose.actions.dispose": "释放实例",
+  "infoView.dispose.actions.disposing": "正在释放...",
+  "infoView.dispose.confirm.title": "要释放实例吗？",
+  "infoView.dispose.confirm.message": "这将清除此目录的项目缓存状态，并重新加载实例。",
+  "infoView.dispose.confirm.confirmLabel": "释放",
+  "infoView.dispose.confirm.cancelLabel": "取消",
+  "infoView.dispose.toast.success": "实例已释放。正在重新加载...",
+  "infoView.dispose.toast.error": "释放实例失败。",
 } as const

@@ -15,4 +15,13 @@ export const logMessages = {
   "infoView.logs.paused.description": "Включите стриминг, чтобы наблюдать за активностью сервера OpenCode.",
   "infoView.logs.empty.waiting": "Ожидание вывода сервера…",
   "infoView.logs.scrollToBottom": "Прокрутить вниз",
+
+  "infoView.dispose.actions.dispose": "Сбросить инстанс",
+  "infoView.dispose.actions.disposing": "Сброс...",
+  "infoView.dispose.confirm.title": "Сбросить инстанс?",
+  "infoView.dispose.confirm.message": "Это очистит кэш состояния проекта для этого каталога и перезагрузит инстанс.",
+  "infoView.dispose.confirm.confirmLabel": "Сбросить",
+  "infoView.dispose.confirm.cancelLabel": "Отмена",
+  "infoView.dispose.toast.success": "Инстанс сброшен. Перезагрузка...",
+  "infoView.dispose.toast.error": "Не удалось сбросить инстанс.",
 } as const

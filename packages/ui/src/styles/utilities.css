@@ -64,6 +64,8 @@
     button.button-primary,
     .button-secondary,
     button.button-secondary,
+    .button-danger,
+    button.button-danger,
     .button-tertiary,
     button.button-tertiary) {
   @apply inline-flex items-center justify-center gap-2 font-medium transition-colors rounded-md;
@@ -74,6 +76,8 @@
     button.button-primary,
     .button-secondary,
     button.button-secondary,
+    .button-danger,
+    button.button-danger,
     .button-tertiary,
     button.button-tertiary):focus-visible {
   outline: none;
@@ -84,6 +88,8 @@
     button.button-primary,
     .button-secondary,
     button.button-secondary,
+    .button-danger,
+    button.button-danger,
     .button-tertiary,
     button.button-tertiary):disabled {
   @apply cursor-not-allowed opacity-50;

@@ -1,5 +1,5 @@
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
-import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
+import { getInstanceLogs, instances, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import InstanceInfo from "./instance-info"
 import { useI18n } from "../lib/i18n"
@@ -86,8 +86,8 @@ const InfoView: Component<InfoViewProps> = (props) => {
   return (
     <div class="log-container">
       <div class="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
-        <div class="lg:w-80 flex-shrink-0 overflow-y-auto">
-          <Show when={instance()}>{(inst) => <InstanceInfo instance={inst()} />}</Show>
+        <div class="lg:w-80 flex-shrink-0 min-h-0 overflow-y-auto max-h-[40vh] lg:max-h-none">
+          <Show when={instance()}>{(inst) => <InstanceInfo instance={inst()} showDisposeButton />}</Show>
         </div>
 
         <div class="panel flex-1 flex flex-col min-h-0 overflow-hidden">
