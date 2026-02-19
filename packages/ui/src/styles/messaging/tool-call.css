@@ -232,12 +232,33 @@
   font-size: var(--font-size-xs);
 }
 
-.tool-call-io-header {
-  @apply flex items-center justify-between gap-3 px-3 py-2;
+.tool-call-io-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem;
   background-color: var(--surface-secondary);
+  border: none;
   border-top: 1px solid var(--tool-call-border-color);
   font-family: var(--font-family-mono);
   font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tool-call-io-toggle::before {
+  content: "▶";
+  font-size: 11px;
+  margin-right: 0.35rem;
+  color: var(--text-secondary);
+}
+
+.tool-call-io-toggle[aria-expanded="true"]::before {
+  content: "▼";
+}
+
+.tool-call-io-title {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }

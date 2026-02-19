@@ -172,7 +172,9 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
-  const [inputExpanded, setInputExpanded] = createSignal(false)
+  const [inputVisible, setInputVisible] = createSignal(false)
+  const [inputSectionExpanded, setInputSectionExpanded] = createSignal(false)
+  const [outputSectionExpanded, setOutputSectionExpanded] = createSignal(true)
 
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
@@ -589,13 +591,19 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
 
-  const handleToggleInput = (event: MouseEvent) => {
+  const handleToggleInputVisibility = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     if (!expanded()) {
       toggle()
     }
-    setInputExpanded((prev) => !prev)
+    setInputVisible((prev) => {
+      const next = !prev
+      if (!next) {
+        setInputSectionExpanded(false)
+      }
+      return next
+    })
   }
 
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
@@ -728,17 +736,6 @@ export default function ToolCall(props: ToolCallProps) {
     return renderer().renderBody(rendererContext)
   }
 
-  const renderToolBodyWithHeader = () => {
-    const body = renderToolBody()
-    if (!body) return null
-    return (
-      <>
-        <div class="tool-call-io-header">{t("toolCall.io.output")}</div>
-        {body}
-      </>
-    )
-  }
-
   async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
     if (!permission) return
     setPermissionSubmitting(true)
@@ -854,14 +851,14 @@ export default function ToolCall(props: ToolCallProps) {
           <button
             type="button"
             class="tool-call-header-input"
-            onClick={handleToggleInput}
-            aria-pressed={inputExpanded()}
+            onClick={handleToggleInputVisibility}
+            aria-pressed={inputVisible()}
             aria-label={
-              inputExpanded()
+              inputVisible()
                 ? t("toolCall.header.hideInputAriaLabel")
                 : t("toolCall.header.showInputAriaLabel")
             }
-            title={inputExpanded() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
+            title={inputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
           >
             <ArrowRightSquare class="w-3.5 h-3.5" />
           </button>
@@ -884,34 +881,48 @@ export default function ToolCall(props: ToolCallProps) {
 
       {expanded() && (
         <div class="tool-call-details">
-          <Show when={inputExpanded() && hasToolInput()}>
-            {(() => {
-              const content = toolInputMarkdown()
-              if (!content) return null
-              return (
-                <>
-                  <div class="tool-call-io-header">{t("toolCall.io.input")}</div>
-                  {renderMarkdownContent({ content, cacheKey: "input" })}
-                </>
-              )
-            })()}
+          <Show when={inputVisible() && hasToolInput()}>
+            <button
+              type="button"
+              class="tool-call-io-toggle"
+              aria-expanded={inputSectionExpanded()}
+              onClick={() => setInputSectionExpanded((prev) => !prev)}
+            >
+              <span class="tool-call-io-title">{t("toolCall.io.input")}</span>
+            </button>
+
+            <Show when={inputSectionExpanded()}>
+              {(() => {
+                const content = toolInputMarkdown()
+                if (!content) return null
+                return renderMarkdownContent({ content, cacheKey: "input" })
+              })()}
+            </Show>
           </Show>
 
-          <Show when={inputExpanded() && hasToolInput()} fallback={renderToolBody()}>
-            {renderToolBodyWithHeader()}
+          <button
+            type="button"
+            class="tool-call-io-toggle"
+            aria-expanded={outputSectionExpanded()}
+            onClick={() => setOutputSectionExpanded((prev) => !prev)}
+          >
+            <span class="tool-call-io-title">{t("toolCall.io.output")}</span>
+          </button>
+
+          <Show when={outputSectionExpanded()}>
+            {renderToolBody()}
+            {renderError()}
+
+            <Show when={status() === "pending" && !pendingPermission()}>
+              <div class="tool-call-pending-message">
+                <span class="spinner-small"></span>
+                <span>{t("toolCall.pending.waitingToRun")}</span>
+              </div>
+            </Show>
           </Show>
- 
-          {renderError()}
- 
+
           {renderPermissionBlock()}
           {renderQuestionBlock()}
- 
-          <Show when={status() === "pending" && !pendingPermission()}>
-            <div class="tool-call-pending-message">
-              <span class="spinner-small"></span>
-              <span>{t("toolCall.pending.waitingToRun")}</span>
-            </div>
-          </Show>
         </div>
       )}
  
