@@ -260,7 +260,7 @@
   width: 100%;
   text-align: left;
   font-size: 0.875rem;
-  font-weight: var(--font-weight-semibold);
+  font-weight: normal;
   color: var(--text-primary);
   cursor: pointer;
 }
