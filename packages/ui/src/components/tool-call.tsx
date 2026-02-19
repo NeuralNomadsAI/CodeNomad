@@ -1,5 +1,6 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { Copy } from "lucide-solid"
+import { ArrowRightSquare, Copy } from "lucide-solid"
+import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
@@ -27,7 +28,17 @@ import type {
   ToolRendererContext,
   ToolScrollHelpers,
 } from "./tool-call/types"
-import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
+import {
+  ensureMarkdownContent,
+  getRelativePath,
+  getToolIcon,
+  getToolName,
+  isToolStateCompleted,
+  isToolStateError,
+  isToolStateRunning,
+  getDefaultToolAction,
+  readToolStatePayload,
+} from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 
@@ -155,12 +166,33 @@ export default function ToolCall(props: ToolCallProps) {
     const prefExpanded = toolOutputDefaultExpanded()
     const toolName = toolCallMemo()?.tool || ""
     if (toolName === "read") {
+      const state = toolState()
+      if (state?.status === "error") {
+        return true
+      }
       return false
     }
     return prefExpanded
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
+  const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "collapsed")
+  const [toolInputVisibilityOverride, setToolInputVisibilityOverride] = createSignal<"hidden" | "expanded" | null>(null)
+  const effectiveToolInputsVisibility = createMemo(() => toolInputVisibilityOverride() ?? toolInputsVisibility())
+  const isToolInputVisible = createMemo(() => effectiveToolInputsVisibility() !== "hidden")
+  const inputDefaultExpanded = createMemo(() => effectiveToolInputsVisibility() === "expanded")
+  const [inputSectionOverride, setInputSectionOverride] = createSignal<boolean | null>(null)
+  const [outputSectionOverride, setOutputSectionOverride] = createSignal<boolean | null>(null)
+  const inputSectionExpanded = () => {
+    const override = inputSectionOverride()
+    if (override !== null) return override
+    return inputDefaultExpanded()
+  }
+  const outputSectionExpanded = () => {
+    const override = outputSectionOverride()
+    if (override !== null) return override
+    return true
+  }
 
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
@@ -182,6 +214,35 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== null) return override
     return defaultExpandedForTool()
   }
+
+  const toolInput = createMemo(() => {
+    const state = toolState()
+    return readToolStatePayload(state).input
+  })
+
+  const hasToolInput = createMemo(() => {
+    const input = toolInput()
+    return input && Object.keys(input).length > 0
+  })
+
+  const toolInputMarkdown = createMemo(() => {
+    const input = toolInput()
+    if (!input || Object.keys(input).length === 0) return null
+
+    try {
+      const yamlText = stringifyYaml(input)
+      return ensureMarkdownContent(yamlText, "yaml", true)
+    } catch (error) {
+      log.error("Failed to convert tool call input to YAML", error)
+      try {
+        const jsonText = JSON.stringify(input, null, 2)
+        return ensureMarkdownContent(jsonText, "json", true)
+      } catch (nestedError) {
+        log.error("Failed to stringify tool call input", nestedError)
+        return null
+      }
+    }
+  })
 
   const permissionDetails = createMemo(() => pendingPermission()?.permission)
   const questionDetails = createMemo(() => pendingQuestion()?.request)
@@ -548,6 +609,25 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
 
+  createEffect(() => {
+    // When global preference changes, reset per-tool-call overrides so palette changes apply.
+    toolInputsVisibility()
+    setToolInputVisibilityOverride(null)
+    setInputSectionOverride(null)
+    setOutputSectionOverride(null)
+  })
+
+  const handleToggleInputVisibility = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!expanded()) {
+      toggle()
+    }
+
+    const currentlyVisible = isToolInputVisible()
+    setToolInputVisibilityOverride(currentlyVisible ? "hidden" : "expanded")
+  }
+
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
   const { renderAnsiContent } = createAnsiContentRenderer({
@@ -789,6 +869,23 @@ export default function ToolCall(props: ToolCallProps) {
           </span>
         </button>
 
+        <Show when={hasToolInput()}>
+          <button
+            type="button"
+            class="tool-call-header-input"
+            onClick={handleToggleInputVisibility}
+            aria-pressed={isToolInputVisible()}
+            aria-label={
+              isToolInputVisible()
+                ? t("toolCall.header.hideInputAriaLabel")
+                : t("toolCall.header.showInputAriaLabel")
+            }
+            title={isToolInputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
+          >
+            <ArrowRightSquare class="w-3.5 h-3.5" />
+          </button>
+        </Show>
+
         <button
           type="button"
           class="tool-call-header-copy"
@@ -806,19 +903,79 @@ export default function ToolCall(props: ToolCallProps) {
 
       {expanded() && (
         <div class="tool-call-details">
-          {renderToolBody()}
- 
-          {renderError()}
- 
-          {renderPermissionBlock()}
-          {renderQuestionBlock()}
- 
-          <Show when={status() === "pending" && !pendingPermission()}>
-            <div class="tool-call-pending-message">
-              <span class="spinner-small"></span>
-              <span>{t("toolCall.pending.waitingToRun")}</span>
+          <Show
+            when={isToolInputVisible() && hasToolInput()}
+            fallback={
+              <>
+                {renderToolBody()}
+                {renderError()}
+
+                <Show when={status() === "pending" && !pendingPermission()}>
+                  <div class="tool-call-pending-message">
+                    <span class="spinner-small"></span>
+                    <span>{t("toolCall.pending.waitingToRun")}</span>
+                  </div>
+                </Show>
+              </>
+            }
+          >
+            <div class="tool-call-io-sections">
+              <div class="tool-call-io-section">
+                <button
+                  type="button"
+                  class="tool-call-io-toggle"
+                  aria-expanded={inputSectionExpanded()}
+                  onClick={() => setInputSectionOverride((prev) => {
+                    const current = prev === null ? inputSectionExpanded() : prev
+                    return !current
+                  })}
+                >
+                  <span class="tool-call-io-title">{t("toolCall.io.input")}</span>
+                </button>
+
+                <Show when={inputSectionExpanded()}>
+                  <div class="tool-call-io-body">
+                    {(() => {
+                      const content = toolInputMarkdown()
+                      if (!content) return null
+                      return renderMarkdownContent({ content, cacheKey: "input" })
+                    })()}
+                  </div>
+                </Show>
+              </div>
+
+              <div class="tool-call-io-section">
+                <button
+                  type="button"
+                  class="tool-call-io-toggle"
+                  aria-expanded={outputSectionExpanded()}
+                  onClick={() => setOutputSectionOverride((prev) => {
+                    const current = prev === null ? outputSectionExpanded() : prev
+                    return !current
+                  })}
+                >
+                  <span class="tool-call-io-title">{t("toolCall.io.output")}</span>
+                </button>
+
+                <Show when={outputSectionExpanded()}>
+                  <div class="tool-call-io-body">
+                    {renderToolBody()}
+                    {renderError()}
+
+                    <Show when={status() === "pending" && !pendingPermission()}>
+                      <div class="tool-call-pending-message">
+                        <span class="spinner-small"></span>
+                        <span>{t("toolCall.pending.waitingToRun")}</span>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
             </div>
           </Show>
+
+          {renderPermissionBlock()}
+          {renderQuestionBlock()}
         </div>
       )}
  
