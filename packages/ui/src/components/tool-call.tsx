@@ -1,5 +1,6 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { Copy } from "lucide-solid"
+import { AlignJustify, Copy } from "lucide-solid"
+import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
@@ -27,7 +28,17 @@ import type {
   ToolRendererContext,
   ToolScrollHelpers,
 } from "./tool-call/types"
-import { getRelativePath, getToolIcon, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, getDefaultToolAction } from "./tool-call/utils"
+import {
+  ensureMarkdownContent,
+  getRelativePath,
+  getToolIcon,
+  getToolName,
+  isToolStateCompleted,
+  isToolStateError,
+  isToolStateRunning,
+  getDefaultToolAction,
+  readToolStatePayload,
+} from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 
@@ -161,6 +172,7 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
+  const [inputExpanded, setInputExpanded] = createSignal(false)
 
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
@@ -182,6 +194,35 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== null) return override
     return defaultExpandedForTool()
   }
+
+  const toolInput = createMemo(() => {
+    const state = toolState()
+    return readToolStatePayload(state).input
+  })
+
+  const hasToolInput = createMemo(() => {
+    const input = toolInput()
+    return input && Object.keys(input).length > 0
+  })
+
+  const toolInputMarkdown = createMemo(() => {
+    const input = toolInput()
+    if (!input || Object.keys(input).length === 0) return null
+
+    try {
+      const yamlText = stringifyYaml(input)
+      return ensureMarkdownContent(yamlText, "yaml", true)
+    } catch (error) {
+      log.error("Failed to convert tool call input to YAML", error)
+      try {
+        const jsonText = JSON.stringify(input, null, 2)
+        return ensureMarkdownContent(jsonText, "json", true)
+      } catch (nestedError) {
+        log.error("Failed to stringify tool call input", nestedError)
+        return null
+      }
+    }
+  })
 
   const permissionDetails = createMemo(() => pendingPermission()?.permission)
   const questionDetails = createMemo(() => pendingQuestion()?.request)
@@ -548,6 +589,15 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
 
+  const handleToggleInput = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!expanded()) {
+      toggle()
+    }
+    setInputExpanded((prev) => !prev)
+  }
+
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
   const { renderAnsiContent } = createAnsiContentRenderer({
@@ -789,6 +839,23 @@ export default function ToolCall(props: ToolCallProps) {
           </span>
         </button>
 
+        <Show when={hasToolInput()}>
+          <button
+            type="button"
+            class="tool-call-header-input"
+            onClick={handleToggleInput}
+            aria-pressed={inputExpanded()}
+            aria-label={
+              inputExpanded()
+                ? t("toolCall.header.hideInputAriaLabel")
+                : t("toolCall.header.showInputAriaLabel")
+            }
+            title={inputExpanded() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
+          >
+            <AlignJustify class="w-3.5 h-3.5" />
+          </button>
+        </Show>
+
         <button
           type="button"
           class="tool-call-header-copy"
@@ -806,6 +873,14 @@ export default function ToolCall(props: ToolCallProps) {
 
       {expanded() && (
         <div class="tool-call-details">
+          <Show when={inputExpanded() && hasToolInput()}>
+            {(() => {
+              const content = toolInputMarkdown()
+              if (!content) return null
+              return renderMarkdownContent({ content, cacheKey: "input" })
+            })()}
+          </Show>
+
           {renderToolBody()}
  
           {renderError()}

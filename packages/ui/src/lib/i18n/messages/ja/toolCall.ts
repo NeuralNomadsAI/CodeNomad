@@ -5,6 +5,11 @@ export const toolCallMessages = {
   "toolCall.header.copyTitle": "Copy tool call title",
   "toolCall.header.copyAriaLabel": "Copy tool call title",
 
+  "toolCall.header.showInputTitle": "Show tool call input",
+  "toolCall.header.showInputAriaLabel": "Show tool call input",
+  "toolCall.header.hideInputTitle": "Hide tool call input",
+  "toolCall.header.hideInputAriaLabel": "Hide tool call input",
+
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
   "toolCall.diff.viewMode.ariaLabel": "diff 表示モード",

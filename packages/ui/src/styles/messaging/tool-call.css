@@ -127,8 +127,27 @@
   cursor: pointer;
 }
 
+.tool-call-header-input {
+  @apply inline-flex items-center justify-center;
+  background-color: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0 0.5rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+
 .tool-call-header-copy:hover {
   background-color: transparent;
+  color: var(--text-primary);
+}
+
+.tool-call-header-input:hover {
+  background-color: transparent;
+  color: var(--text-primary);
+}
+
+.tool-call-header-input[aria-pressed="true"] {
   color: var(--text-primary);
 }
 
