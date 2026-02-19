@@ -1,7 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { spawnSync } from "child_process"
-import { buildSpawnSpec } from "../../workspaces/runtime"
+import { probeBinaryVersion } from "../../workspaces/runtime"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 
@@ -15,37 +14,8 @@ const ValidateBinarySchema = z.object({
 })
 
 function validateBinaryPath(binaryPath: string): { valid: boolean; version?: string; error?: string } {
-  if (!binaryPath) {
-    return { valid: false, error: "Missing binary path" }
-  }
-
-  const spec = buildSpawnSpec(binaryPath, ["--version"])
-  try {
-    const result = spawnSync(spec.command, spec.args, {
-      encoding: "utf8",
-      windowsVerbatimArguments: Boolean((spec.options as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments),
-    })
-
-    if (result.error) {
-      return { valid: false, error: result.error.message }
-    }
-    if (result.status !== 0) {
-      const stderr = result.stderr?.trim()
-      const stdout = result.stdout?.trim()
-      const combined = stderr || stdout
-      const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
-      return { valid: false, error }
-    }
-
-    const stdout = (result.stdout ?? "").trim()
-    const firstLine = stdout.split(/\r?\n/).find((line) => line.trim().length > 0)
-    const normalized = firstLine?.trim()
-    const versionMatch = normalized?.match(/([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/)
-    const version = versionMatch?.[1]
-    return { valid: true, version }
-  } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) }
-  }
+  const result = probeBinaryVersion(binaryPath)
+  return { valid: result.valid, version: result.version, error: result.error }
 }
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {

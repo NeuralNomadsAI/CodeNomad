@@ -8,7 +8,7 @@ import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
-import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
+import { WorkspaceRuntime, ProcessExitInfo, probeBinaryVersion } from "./runtime"
 import { Logger } from "../logger"
 import { getOpencodeConfigDir } from "../opencode-config.js"
 import {
@@ -283,28 +283,22 @@ export class WorkspaceManager {
       return undefined
     }
 
-    try {
-      const result = spawnSync(resolvedPath, ["--version"], { encoding: "utf8" })
-      if (result.status === 0 && result.stdout) {
-        const line = result.stdout.split(/\r?\n/).find((entry) => entry.trim().length > 0)
-        if (line) {
-          const normalized = line.trim()
-          const versionMatch = normalized.match(/([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/)
-          if (versionMatch) {
-            const version = versionMatch[1]
-            this.options.logger.debug({ binary: resolvedPath, version }, "Detected binary version")
-            return version
-          }
-          this.options.logger.debug({ binary: resolvedPath, reported: normalized }, "Binary reported version string")
-          return normalized
-        }
-      } else if (result.error) {
-        this.options.logger.warn({ binary: resolvedPath, err: result.error }, "Failed to read binary version")
+    const result = probeBinaryVersion(resolvedPath)
+    if (result.valid) {
+      if (result.version) {
+        this.options.logger.debug({ binary: resolvedPath, version: result.version }, "Detected binary version")
+        return result.version
       }
-    } catch (error) {
-      this.options.logger.warn({ binary: resolvedPath, err: error }, "Failed to detect binary version")
+      if (result.reported) {
+        this.options.logger.debug({ binary: resolvedPath, reported: result.reported }, "Binary reported version string")
+        return result.reported
+      }
+      return undefined
     }
 
+    if (result.error) {
+      this.options.logger.warn({ binary: resolvedPath, err: result.error }, "Failed to detect binary version")
+    }
     return undefined
   }
 
