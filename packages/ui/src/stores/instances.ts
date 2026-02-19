@@ -35,6 +35,7 @@ import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestio
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
+import { showWorkspaceLaunchError } from "./launch-errors"
 
 const log = getLogger("api")
 
@@ -372,6 +373,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       break
     case "workspace.error":
       upsertWorkspace(event.workspace)
+      showWorkspaceLaunchError(event.workspace)
       break
     case "workspace.stopped":
       releaseInstanceResources(event.workspaceId)

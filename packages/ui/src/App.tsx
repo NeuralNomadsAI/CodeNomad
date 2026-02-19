@@ -18,6 +18,8 @@ import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
+import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
@@ -74,12 +76,6 @@ const App: Component = () => {
     setThinkingBlocksExpansion,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
-  interface LaunchErrorState {
-    message: string
-    binaryPath: string
-    missingBinary: boolean
-  }
-  const [launchError, setLaunchError] = createSignal<LaunchErrorState | null>(null)
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
@@ -244,35 +240,6 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  const formatLaunchErrorMessage = (error: unknown): string => {
-    if (!error) {
-      return t("app.launchError.fallbackMessage")
-    }
-    const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed.error === "string") {
-        return parsed.error
-      }
-    } catch {
-      // ignore JSON parse errors
-    }
-    return raw
-  }
-
-  const isMissingBinaryMessage = (message: string): boolean => {
-    const normalized = message.toLowerCase()
-    return (
-      normalized.includes("opencode binary not found") ||
-      normalized.includes("binary not found") ||
-      normalized.includes("no such file or directory") ||
-      normalized.includes("binary is not executable") ||
-      normalized.includes("enoent")
-    )
-  }
-
-  const clearLaunchError = () => setLaunchError(null)
-
   async function handleSelectFolder(folderPath: string, binaryPath?: string) {
     if (!folderPath) {
       return
@@ -291,13 +258,9 @@ const App: Component = () => {
         port: instances().get(instanceId)?.port,
       })
     } catch (error) {
-      const message = formatLaunchErrorMessage(error)
+      const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
       const missingBinary = isMissingBinaryMessage(message)
-      setLaunchError({
-        message,
-        binaryPath: selectedBinary,
-        missingBinary,
-      })
+      showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
     } finally {
       setIsSelectingFolder(false)
