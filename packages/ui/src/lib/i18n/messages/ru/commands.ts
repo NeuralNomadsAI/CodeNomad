@@ -130,6 +130,10 @@ export const commandMessages = {
   "commands.diagnosticsDefault.description": "Переключить, разворачивать ли вывод диагностики по умолчанию",
   "commands.diagnosticsDefault.keywords": "diagnostics, развернуть, свернуть",
 
+  "commands.toolInputsVisibility.label": "Видимость входных данных инструмента · {state}",
+  "commands.toolInputsVisibility.description": "Установить видимость аргументов входа вызовов инструментов по умолчанию",
+  "commands.toolInputsVisibility.keywords": "инструмент, вход, аргументы, видимость, скрыть, показать, раскрыть, свернуть, tool, inputs, arguments, visibility, hide, show, expand, collapse",
+
   "commands.tokenUsageDisplay.label": "Отображение token-статистики · {state}",
   "commands.tokenUsageDisplay.description": "Показать или скрыть статистику token и стоимости для сообщений ассистента",
   "commands.tokenUsageDisplay.keywords": "token, usage, cost, статистика",

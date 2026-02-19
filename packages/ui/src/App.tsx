@@ -74,6 +74,7 @@ const App: Component = () => {
     setToolOutputExpansion,
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
+    setToolInputsVisibility,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
@@ -365,6 +366,7 @@ const App: Component = () => {
     setToolOutputExpansion,
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
+    setToolInputsVisibility,
     handleNewInstanceRequest,
     handleCloseInstance,
     handleNewSession,

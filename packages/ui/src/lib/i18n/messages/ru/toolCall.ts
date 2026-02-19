@@ -5,6 +5,14 @@ export const toolCallMessages = {
   "toolCall.header.copyTitle": "Copy tool call title",
   "toolCall.header.copyAriaLabel": "Copy tool call title",
 
+  "toolCall.header.showInputTitle": "Show Tool Arguments",
+  "toolCall.header.showInputAriaLabel": "Show Tool Arguments",
+  "toolCall.header.hideInputTitle": "Hide Tool Arguments",
+  "toolCall.header.hideInputAriaLabel": "Hide Tool Arguments",
+
+  "toolCall.io.input": "Tool Input",
+  "toolCall.io.output": "Tool Output",
+
   "toolCall.diff.label": "Diff",
   "toolCall.diff.label.withPath": "Diff · {path}",
   "toolCall.diff.viewMode.ariaLabel": "Режим просмотра diff",
