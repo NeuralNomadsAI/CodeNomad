@@ -608,6 +608,7 @@ export default function ToolCall(props: ToolCallProps) {
   createEffect(() => {
     // When global preference changes, reset per-tool-call overrides so palette changes apply.
     toolInputsVisibility()
+    setToolInputVisibilityOverride(null)
     setInputSectionOverride(null)
     setOutputSectionOverride(null)
   })
