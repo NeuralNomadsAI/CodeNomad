@@ -110,7 +110,7 @@ const defaultUiSettings: UiSettings = {
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
-  toolInputsVisibility: "hidden",
+  toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
 

@@ -172,7 +172,7 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
-  const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "hidden")
+  const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "collapsed")
   const [toolInputVisibilityOverride, setToolInputVisibilityOverride] = createSignal<"hidden" | "expanded" | null>(null)
   const effectiveToolInputsVisibility = createMemo(() => toolInputVisibilityOverride() ?? toolInputsVisibility())
   const isToolInputVisible = createMemo(() => effectiveToolInputsVisibility() !== "hidden")
