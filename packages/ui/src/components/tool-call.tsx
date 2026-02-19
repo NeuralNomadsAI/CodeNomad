@@ -576,13 +576,13 @@ export default function ToolCall(props: ToolCallProps) {
     const status = toolState()?.status || ""
     switch (status) {
       case "pending":
-        return "⏸"
-      case "running":
         return "⏳"
+      case "running":
+        return "🔄"
       case "completed":
-        return "✓"
+        return "✅"
       case "error":
-        return "✗"
+        return "⚠️"
       default:
         return ""
     }
