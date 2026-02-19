@@ -601,6 +601,9 @@ export default function ToolCall(props: ToolCallProps) {
       const next = !prev
       if (!next) {
         setInputSectionExpanded(false)
+      } else {
+        setInputSectionExpanded(true)
+        setOutputSectionExpanded(true)
       }
       return next
     })
@@ -881,44 +884,69 @@ export default function ToolCall(props: ToolCallProps) {
 
       {expanded() && (
         <div class="tool-call-details">
-          <Show when={inputVisible() && hasToolInput()}>
-            <button
-              type="button"
-              class="tool-call-io-toggle"
-              aria-expanded={inputSectionExpanded()}
-              onClick={() => setInputSectionExpanded((prev) => !prev)}
-            >
-              <span class="tool-call-io-title">{t("toolCall.io.input")}</span>
-            </button>
+          <Show
+            when={inputVisible() && hasToolInput()}
+            fallback={
+              <>
+                {renderToolBody()}
+                {renderError()}
 
-            <Show when={inputSectionExpanded()}>
-              {(() => {
-                const content = toolInputMarkdown()
-                if (!content) return null
-                return renderMarkdownContent({ content, cacheKey: "input" })
-              })()}
-            </Show>
-          </Show>
-
-          <button
-            type="button"
-            class="tool-call-io-toggle"
-            aria-expanded={outputSectionExpanded()}
-            onClick={() => setOutputSectionExpanded((prev) => !prev)}
+                <Show when={status() === "pending" && !pendingPermission()}>
+                  <div class="tool-call-pending-message">
+                    <span class="spinner-small"></span>
+                    <span>{t("toolCall.pending.waitingToRun")}</span>
+                  </div>
+                </Show>
+              </>
+            }
           >
-            <span class="tool-call-io-title">{t("toolCall.io.output")}</span>
-          </button>
+            <div class="tool-call-io-sections">
+              <div class="tool-call-io-section">
+                <button
+                  type="button"
+                  class="tool-call-io-toggle"
+                  aria-expanded={inputSectionExpanded()}
+                  onClick={() => setInputSectionExpanded((prev) => !prev)}
+                >
+                  <span class="tool-call-io-title">{t("toolCall.io.input")}</span>
+                </button>
 
-          <Show when={outputSectionExpanded()}>
-            {renderToolBody()}
-            {renderError()}
-
-            <Show when={status() === "pending" && !pendingPermission()}>
-              <div class="tool-call-pending-message">
-                <span class="spinner-small"></span>
-                <span>{t("toolCall.pending.waitingToRun")}</span>
+                <Show when={inputSectionExpanded()}>
+                  <div class="tool-call-io-body">
+                    {(() => {
+                      const content = toolInputMarkdown()
+                      if (!content) return null
+                      return renderMarkdownContent({ content, cacheKey: "input" })
+                    })()}
+                  </div>
+                </Show>
               </div>
-            </Show>
+
+              <div class="tool-call-io-section">
+                <button
+                  type="button"
+                  class="tool-call-io-toggle"
+                  aria-expanded={outputSectionExpanded()}
+                  onClick={() => setOutputSectionExpanded((prev) => !prev)}
+                >
+                  <span class="tool-call-io-title">{t("toolCall.io.output")}</span>
+                </button>
+
+                <Show when={outputSectionExpanded()}>
+                  <div class="tool-call-io-body">
+                    {renderToolBody()}
+                    {renderError()}
+
+                    <Show when={status() === "pending" && !pendingPermission()}>
+                      <div class="tool-call-pending-message">
+                        <span class="spinner-small"></span>
+                        <span>{t("toolCall.pending.waitingToRun")}</span>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
+            </div>
           </Show>
 
           {renderPermissionBlock()}

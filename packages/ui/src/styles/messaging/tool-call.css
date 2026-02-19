@@ -87,6 +87,7 @@
   @apply flex items-stretch w-full;
   background-color: transparent;
   color: var(--text-primary);
+  border-bottom: 1px solid var(--tool-call-border-color);
 }
 
 .tool-call-header:hover {
@@ -232,6 +233,21 @@
   font-size: var(--font-size-xs);
 }
 
+
+.tool-call-io-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+}
+
+.tool-call-io-section {
+  border: 1px solid var(--tool-call-border-color);
+  overflow: hidden;
+  background-color: transparent;
+  border-radius: 0;
+}
+
 .tool-call-io-toggle {
   display: flex;
   align-items: center;
@@ -240,10 +256,12 @@
   padding: 0.5rem;
   background-color: var(--surface-secondary);
   border: none;
-  border-top: 1px solid var(--tool-call-border-color);
-  font-family: var(--font-family-mono);
-  font-size: 13px;
-  color: inherit;
+  border-bottom: 1px solid var(--tool-call-border-color);
+  width: 100%;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -259,8 +277,17 @@
 }
 
 .tool-call-io-title {
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
+  font-weight: inherit;
+  color: inherit;
+}
+
+.tool-call-io-body {
+  background-color: var(--surface-code);
+}
+
+/* IO sections provide the outer frame; avoid double borders on markdown frames. */
+.tool-call-io-body .tool-call-markdown {
+  border: none;
 }
 
 .tool-call-markdown {
