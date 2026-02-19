@@ -1,5 +1,5 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { AlignJustify, Copy } from "lucide-solid"
+import { ArrowRightSquare, Copy } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
@@ -728,6 +728,17 @@ export default function ToolCall(props: ToolCallProps) {
     return renderer().renderBody(rendererContext)
   }
 
+  const renderToolBodyWithHeader = () => {
+    const body = renderToolBody()
+    if (!body) return null
+    return (
+      <>
+        <div class="tool-call-io-header">{t("toolCall.io.output")}</div>
+        {body}
+      </>
+    )
+  }
+
   async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
     if (!permission) return
     setPermissionSubmitting(true)
@@ -852,7 +863,7 @@ export default function ToolCall(props: ToolCallProps) {
             }
             title={inputExpanded() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
           >
-            <AlignJustify class="w-3.5 h-3.5" />
+            <ArrowRightSquare class="w-3.5 h-3.5" />
           </button>
         </Show>
 
@@ -877,11 +888,18 @@ export default function ToolCall(props: ToolCallProps) {
             {(() => {
               const content = toolInputMarkdown()
               if (!content) return null
-              return renderMarkdownContent({ content, cacheKey: "input" })
+              return (
+                <>
+                  <div class="tool-call-io-header">{t("toolCall.io.input")}</div>
+                  {renderMarkdownContent({ content, cacheKey: "input" })}
+                </>
+              )
             })()}
           </Show>
 
-          {renderToolBody()}
+          <Show when={inputExpanded() && hasToolInput()} fallback={renderToolBody()}>
+            {renderToolBodyWithHeader()}
+          </Show>
  
           {renderError()}
  

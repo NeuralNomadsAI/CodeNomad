@@ -232,6 +232,16 @@
   font-size: var(--font-size-xs);
 }
 
+.tool-call-io-header {
+  @apply flex items-center justify-between gap-3 px-3 py-2;
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--tool-call-border-color);
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
 .tool-call-markdown {
   background-color: var(--surface-code);
   /* Keep a visible frame around the scroll viewport (not the content). */
