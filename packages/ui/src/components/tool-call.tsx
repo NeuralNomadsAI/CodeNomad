@@ -84,7 +84,7 @@ interface ToolCallProps {
 
 
 export default function ToolCall(props: ToolCallProps) {
-  const { preferences, setDiffViewMode } = useConfig()
+  const { preferences, setDiffViewMode, setToolInputsVisibility } = useConfig()
   const { isDark } = useTheme()
   const { t } = useI18n()
   const toolCallMemo = createMemo(() => props.toolCall)
@@ -172,9 +172,21 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
-  const [inputVisible, setInputVisible] = createSignal(false)
-  const [inputSectionExpanded, setInputSectionExpanded] = createSignal(false)
-  const [outputSectionExpanded, setOutputSectionExpanded] = createSignal(true)
+  const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "hidden")
+  const isToolInputVisible = createMemo(() => toolInputsVisibility() !== "hidden")
+  const inputDefaultExpanded = createMemo(() => toolInputsVisibility() === "expanded")
+  const [inputSectionOverride, setInputSectionOverride] = createSignal<boolean | null>(null)
+  const [outputSectionOverride, setOutputSectionOverride] = createSignal<boolean | null>(null)
+  const inputSectionExpanded = () => {
+    const override = inputSectionOverride()
+    if (override !== null) return override
+    return inputDefaultExpanded()
+  }
+  const outputSectionExpanded = () => {
+    const override = outputSectionOverride()
+    if (override !== null) return override
+    return true
+  }
 
   const isPermissionActive = createMemo(() => {
     const pending = pendingPermission()
@@ -591,22 +603,24 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
 
+  createEffect(() => {
+    // When global preference changes, reset per-tool-call overrides so palette changes apply.
+    toolInputsVisibility()
+    setInputSectionOverride(null)
+    setOutputSectionOverride(null)
+  })
+
   const handleToggleInputVisibility = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     if (!expanded()) {
       toggle()
     }
-    setInputVisible((prev) => {
-      const next = !prev
-      if (!next) {
-        setInputSectionExpanded(false)
-      } else {
-        setInputSectionExpanded(true)
-        setOutputSectionExpanded(true)
-      }
-      return next
-    })
+    if (isToolInputVisible()) {
+      setToolInputsVisibility("hidden")
+      return
+    }
+    setToolInputsVisibility("expanded")
   }
 
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
@@ -855,13 +869,13 @@ export default function ToolCall(props: ToolCallProps) {
             type="button"
             class="tool-call-header-input"
             onClick={handleToggleInputVisibility}
-            aria-pressed={inputVisible()}
+            aria-pressed={isToolInputVisible()}
             aria-label={
-              inputVisible()
+              isToolInputVisible()
                 ? t("toolCall.header.hideInputAriaLabel")
                 : t("toolCall.header.showInputAriaLabel")
             }
-            title={inputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
+            title={isToolInputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle")}
           >
             <ArrowRightSquare class="w-3.5 h-3.5" />
           </button>
@@ -885,7 +899,7 @@ export default function ToolCall(props: ToolCallProps) {
       {expanded() && (
         <div class="tool-call-details">
           <Show
-            when={inputVisible() && hasToolInput()}
+            when={isToolInputVisible() && hasToolInput()}
             fallback={
               <>
                 {renderToolBody()}
@@ -906,7 +920,10 @@ export default function ToolCall(props: ToolCallProps) {
                   type="button"
                   class="tool-call-io-toggle"
                   aria-expanded={inputSectionExpanded()}
-                  onClick={() => setInputSectionExpanded((prev) => !prev)}
+                  onClick={() => setInputSectionOverride((prev) => {
+                    const current = prev === null ? inputSectionExpanded() : prev
+                    return !current
+                  })}
                 >
                   <span class="tool-call-io-title">{t("toolCall.io.input")}</span>
                 </button>
@@ -927,7 +944,10 @@ export default function ToolCall(props: ToolCallProps) {
                   type="button"
                   class="tool-call-io-toggle"
                   aria-expanded={outputSectionExpanded()}
-                  onClick={() => setOutputSectionExpanded((prev) => !prev)}
+                  onClick={() => setOutputSectionOverride((prev) => {
+                    const current = prev === null ? outputSectionExpanded() : prev
+                    return !current
+                  })}
                 >
                   <span class="tool-call-io-title">{t("toolCall.io.output")}</span>
                 </button>

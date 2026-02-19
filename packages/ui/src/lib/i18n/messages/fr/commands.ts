@@ -130,6 +130,10 @@ export const commandMessages = {
   "commands.diagnosticsDefault.description": "Choisir l'ouverture par défaut de la sortie des diagnostics",
   "commands.diagnosticsDefault.keywords": "diagnostics, développer, réduire",
 
+  "commands.toolInputsVisibility.label": "Visibilité des entrées d'outil · {state}",
+  "commands.toolInputsVisibility.description": "Définir la visibilité par défaut des arguments d'entrée des appels d'outil",
+  "commands.toolInputsVisibility.keywords": "outil, entrées, arguments, visibilité, masquer, afficher, développer, réduire",
+
   "commands.tokenUsageDisplay.label": "Affichage de l'usage des tokens · {state}",
   "commands.tokenUsageDisplay.description": "Afficher ou masquer les stats de tokens et de coût pour les messages de l'assistant",
   "commands.tokenUsageDisplay.keywords": "token, usage, coût, stats",

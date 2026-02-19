@@ -130,6 +130,10 @@ export const commandMessages = {
   "commands.diagnosticsDefault.description": "切换诊断输出是否默认展开",
   "commands.diagnosticsDefault.keywords": "diagnostics, expand, collapse, 诊断, 展开, 折叠",
 
+  "commands.toolInputsVisibility.label": "工具输入可见性 · {state}",
+  "commands.toolInputsVisibility.description": "设置工具调用输入参数的默认可见性",
+  "commands.toolInputsVisibility.keywords": "工具, 输入, 参数, 可见性, 隐藏, 显示, 展开, 折叠, tool, inputs, arguments, visibility, hide, show, expand, collapse",
+
   "commands.tokenUsageDisplay.label": "Token 使用显示 · {state}",
   "commands.tokenUsageDisplay.description": "显示或隐藏助手消息的 token 和费用统计",
   "commands.tokenUsageDisplay.keywords": "token, usage, cost, stats, 令牌, 用量, 费用, 统计",

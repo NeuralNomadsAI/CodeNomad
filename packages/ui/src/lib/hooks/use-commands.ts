@@ -1,6 +1,6 @@
 import { createSignal, onMount } from "solid-js"
 import type { Accessor } from "solid-js"
-import type { Preferences, ExpansionPreference } from "../../stores/preferences"
+import type { Preferences, ExpansionPreference, ToolInputsVisibilityPreference } from "../../stores/preferences"
 import { createCommandRegistry, type Command } from "../commands"
 import { instances, activeInstanceId, setActiveInstanceId } from "../../stores/instances"
 import type { ClientPart, MessageInfo } from "../../types/message"
@@ -38,6 +38,7 @@ export interface UseCommandsOptions {
   setToolOutputExpansion: (mode: ExpansionPreference) => void
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
+  setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
   handleCloseInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
@@ -548,6 +549,29 @@ export function useCommands(options: UseCommandsOptions) {
         const mode = options.preferences().diagnosticsExpansion || "expanded"
         const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
         options.setDiagnosticsExpansion(next)
+      },
+    })
+
+    commandRegistry.register({
+      id: "tool-inputs-visibility",
+      label: () => {
+        const mode = options.preferences().toolInputsVisibility || "hidden"
+        const state =
+          mode === "expanded"
+            ? tGlobal("commands.common.expanded")
+            : mode === "collapsed"
+              ? tGlobal("commands.common.collapsed")
+              : tGlobal("commands.common.hidden")
+        return tGlobal("commands.toolInputsVisibility.label", { state })
+      },
+      description: () => tGlobal("commands.toolInputsVisibility.description"),
+      category: "System",
+      keywords: () => splitKeywords("commands.toolInputsVisibility.keywords"),
+      action: () => {
+        const mode = options.preferences().toolInputsVisibility || "hidden"
+        const next: ToolInputsVisibilityPreference =
+          mode === "hidden" ? "collapsed" : mode === "collapsed" ? "expanded" : "hidden"
+        options.setToolInputsVisibility(next)
       },
     })
 
