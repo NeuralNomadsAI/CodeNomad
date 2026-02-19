@@ -84,7 +84,7 @@ interface ToolCallProps {
 
 
 export default function ToolCall(props: ToolCallProps) {
-  const { preferences, setDiffViewMode, setToolInputsVisibility } = useConfig()
+  const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
   const { t } = useI18n()
   const toolCallMemo = createMemo(() => props.toolCall)
@@ -173,8 +173,10 @@ export default function ToolCall(props: ToolCallProps) {
 
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
   const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "hidden")
-  const isToolInputVisible = createMemo(() => toolInputsVisibility() !== "hidden")
-  const inputDefaultExpanded = createMemo(() => toolInputsVisibility() === "expanded")
+  const [toolInputVisibilityOverride, setToolInputVisibilityOverride] = createSignal<"hidden" | "expanded" | null>(null)
+  const effectiveToolInputsVisibility = createMemo(() => toolInputVisibilityOverride() ?? toolInputsVisibility())
+  const isToolInputVisible = createMemo(() => effectiveToolInputsVisibility() !== "hidden")
+  const inputDefaultExpanded = createMemo(() => effectiveToolInputsVisibility() === "expanded")
   const [inputSectionOverride, setInputSectionOverride] = createSignal<boolean | null>(null)
   const [outputSectionOverride, setOutputSectionOverride] = createSignal<boolean | null>(null)
   const inputSectionExpanded = () => {
@@ -616,11 +618,9 @@ export default function ToolCall(props: ToolCallProps) {
     if (!expanded()) {
       toggle()
     }
-    if (isToolInputVisible()) {
-      setToolInputsVisibility("hidden")
-      return
-    }
-    setToolInputsVisibility("expanded")
+
+    const currentlyVisible = isToolInputVisible()
+    setToolInputVisibilityOverride(currentlyVisible ? "hidden" : "expanded")
   }
 
   const renderer = createMemo(() => resolveToolRenderer(toolName()))

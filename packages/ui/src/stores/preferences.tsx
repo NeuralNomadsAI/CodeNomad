@@ -134,7 +134,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
     toolInputsVisibility:
-      sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
+      sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
         : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
