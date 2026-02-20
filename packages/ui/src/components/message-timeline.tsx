@@ -329,8 +329,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   }
  
   const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
-    // Suppress previews if items are selected
-    if ((props.selectedIds?.().size ?? 0) > 0) return
+    // Suppress previews if items are selected or if we are currently pressing (long-press logic)
+    if ((props.selectedIds?.().size ?? 0) > 0 || longPressTimer !== null) return
 
     if (typeof window === "undefined") return
     clearHoverTimer()
@@ -417,6 +417,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     wasLongPress = false
     pressStartPos = { x: event.clientX, y: event.clientY }
     
+    // Clear any pending hover/preview if we start a press (potential long-press)
+    clearHoverTimer()
+    clearCloseTimer()
+
     if (longPressTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(longPressTimer)
     }
