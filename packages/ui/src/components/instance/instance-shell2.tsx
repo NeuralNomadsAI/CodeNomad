@@ -625,7 +625,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     <div class="flex flex-wrap items-center justify-center gap-1">
                       <button
                         type="button"
-                        class="connection-status-button command-palette-button px-2 py-0.5 text-xs"
+                        class="connection-status-button command-palette-button"
                         onClick={handleCommandPaletteClick}
                         aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                         style={{ flex: "0 0 auto", width: "auto" }}
@@ -721,7 +721,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <div class="session-toolbar-center flex items-center justify-center gap-2 min-w-[160px]">
                 <button
                   type="button"
-                  class="connection-status-button command-palette-button px-2 py-0.5 text-xs"
+                  class="connection-status-button command-palette-button"
                   onClick={handleCommandPaletteClick}
                   aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                   style={{ flex: "0 0 auto", width: "auto" }}
