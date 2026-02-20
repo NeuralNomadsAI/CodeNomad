@@ -1,11 +1,11 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component, type Accessor } from "solid-js"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getToolIcon } from "./tool-call/utils"
-import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
+import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert, Trash2, X as CloseIcon } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
@@ -18,12 +18,17 @@ export interface TimelineSegment {
   tooltip: string
   shortLabel?: string
   variant?: "auto" | "manual"
-  toolPartIds?: string[]
+  partIds: string[]
 }
 
 interface MessageTimelineProps {
   segments: TimelineSegment[]
   onSegmentClick?: (segment: TimelineSegment) => void
+  onToggleSelection?: (id: string) => void
+  onSelectRange?: (id: string) => void
+  onClearSelection?: () => void
+  selectedIds?: Accessor<Set<string>>
+  onBulkDelete?: () => void
   activeMessageId?: string | null
   instanceId: string
   sessionId: string
@@ -41,7 +46,7 @@ interface PendingSegment {
   toolTitles: string[]
   toolTypeLabels: string[]
   toolIcons: string[]
-  toolPartIds: string[]
+  partIds: string[]
   hasPrimaryText: boolean
 }
 
@@ -190,7 +195,7 @@ export function buildTimelineSegments(
       label,
       tooltip,
       shortLabel,
-      toolPartIds: isToolSegment ? pending.toolPartIds : undefined,
+      partIds: pending.partIds,
     })
     segmentIndex += 1
     pending = null
@@ -199,7 +204,7 @@ export function buildTimelineSegments(
   const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
     if (!pending || pending.type !== type) {
       flushPending()
-      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], toolPartIds: [], hasPrimaryText: type !== "assistant" }
+      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], partIds: [], hasPrimaryText: type !== "assistant" }
     }
     return pending!
   }
@@ -217,7 +222,7 @@ export function buildTimelineSegments(
       target.toolTypeLabels.push(getToolTypeLabel(toolPart, t))
       target.toolIcons.push(getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"))
       if (typeof toolPart.id === "string" && toolPart.id.length > 0) {
-        target.toolPartIds.push(toolPart.id)
+        target.partIds.push(toolPart.id)
       }
       continue
     }
@@ -228,6 +233,9 @@ export function buildTimelineSegments(
       const target = ensureSegment(defaultContentType)
       if (target) {
         target.reasoningTexts.push(text)
+        if (typeof (part as any).id === "string") {
+          target.partIds.push((part as any).id)
+        }
       }
       continue
     }
@@ -235,6 +243,7 @@ export function buildTimelineSegments(
     if (part.type === "compaction") {
       flushPending()
       const isAuto = Boolean((part as any)?.auto)
+      const partId = (part as any).id ?? ""
       result.push({
         id: `${record.id}:${segmentIndex}`,
         messageId: record.id,
@@ -242,6 +251,7 @@ export function buildTimelineSegments(
         label: segmentLabel("compaction"),
         tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
         variant: isAuto ? "auto" : "manual",
+        partIds: partId ? [partId] : [],
       })
       segmentIndex += 1
       continue
@@ -257,6 +267,9 @@ export function buildTimelineSegments(
     if (target) {
       target.texts.push(text)
       target.hasPrimaryText = true
+      if (typeof (part as any).id === "string") {
+        target.partIds.push((part as any).id)
+      }
     }
   }
 
@@ -392,80 +405,122 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
  
   return (
-    <div class="message-timeline" role="navigation" aria-label={t("messageTimeline.ariaLabel")}>
-      <For each={props.segments}>
-        {(segment) => {
-          onCleanup(() => buttonRefs.delete(segment.id))
-          const isActive = () => props.activeMessageId === segment.messageId
+    <div class="message-timeline-container">
+      <div class="message-timeline" role="navigation" aria-label={t("messageTimeline.ariaLabel")}>
+        <For each={props.segments}>
+          {(segment) => {
+            onCleanup(() => buttonRefs.delete(segment.id))
+            const isActive = () => props.activeMessageId === segment.messageId
+            const isSelected = () => props.selectedIds?.().has(segment.id)
 
-          const hasActivePermission = () => {
-            if (segment.type !== "tool") return false
-            const partIds = segment.toolPartIds ?? []
-            if (partIds.length === 0) return false
-            for (const partId of partIds) {
-              const permissionState = store().getPermissionState(segment.messageId, partId)
-              if (permissionState?.active) return true
+            const hasActivePermission = () => {
+              if (segment.type !== "tool") return false
+              const partIds = segment.partIds ?? []
+              if (partIds.length === 0) return false
+              for (const partId of partIds) {
+                const permissionState = store().getPermissionState(segment.messageId, partId)
+                if (permissionState?.active) return true
+              }
+              return false
             }
-            return false
-          }
 
-          const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission())
+            const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission())
 
-           const shortLabelContent = () => {
-             if (segment.type === "tool") {
-               if (hasActivePermission()) {
-                 return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
+             const shortLabelContent = () => {
+               if (segment.type === "tool") {
+                 if (hasActivePermission()) {
+                   return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
+                 }
+                 return segment.shortLabel ?? getToolIcon("tool")
                }
-               return segment.shortLabel ?? getToolIcon("tool")
+               if (segment.type === "compaction") {
+                 return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
+               }
+               if (segment.type === "user") {
+                 return <UserIcon class="message-timeline-icon" aria-hidden="true" />
+               }
+               return <BotIcon class="message-timeline-icon" aria-hidden="true" />
              }
-             if (segment.type === "compaction") {
-               return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
-             }
-             if (segment.type === "user") {
-               return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-             }
-             return <BotIcon class="message-timeline-icon" aria-hidden="true" />
-           }
 
-          return (
-             <button
-               ref={(el) => registerButtonRef(segment.id, el)}
-               type="button"
-               data-variant={segment.variant}
-               class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+            return (
+               <button
+                 ref={(el) => registerButtonRef(segment.id, el)}
+                 type="button"
+                 data-variant={segment.variant}
+                 class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""}`}
 
-              aria-current={isActive() ? "true" : undefined}
-              aria-hidden={isHidden() ? "true" : undefined}
-              onClick={() => props.onSegmentClick?.(segment)}
-              onMouseEnter={(event) => handleMouseEnter(segment, event)}
-              onMouseLeave={handleMouseLeave}
+                aria-current={isActive() ? "true" : undefined}
+                aria-hidden={isHidden() ? "true" : undefined}
+              onClick={(event) => {
+                if (event.shiftKey) {
+                  props.onSelectRange?.(segment.id)
+                } else if (event.ctrlKey || event.metaKey) {
+                  props.onToggleSelection?.(segment.id)
+                } else {
+                  props.onSegmentClick?.(segment)
+                }
+              }}
+                onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                onMouseLeave={handleMouseLeave}
+              >
+                <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
+                <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
+              </button>
+            )
+          }}
+        </For>
+        <Show when={previewData()}>
+          {(data) => {
+            onCleanup(() => setTooltipElement(null))
+            return (
+              <div
+                ref={(element) => setTooltipElement(element)}
+                class="message-timeline-tooltip"
+                style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
+                onMouseEnter={() => clearCloseTimer()}
+                onMouseLeave={() => scheduleClose()}
+              >
+                <MessagePreview
+                  messageId={data().messageId}
+                  instanceId={props.instanceId}
+                  sessionId={props.sessionId}
+                  store={store}
+                />
+              </div>
+            )
+          }}
+        </Show>
+      </div>
+
+      <Show when={(props.selectedIds?.().size ?? 0) > 0}>
+        <div class="message-timeline-floating-actions">
+          <div class="floating-action-pill">
+            <button
+              type="button"
+              class="floating-action-button floating-action-delete"
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onBulkDelete?.()
+              }}
+              title={t("messageTimeline.actions.bulkDelete.title", { count: props.selectedIds?.().size })}
             >
-              <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
-              <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
+              <Trash2 class="w-4 h-4" />
+              <span class="delete-badge">{props.selectedIds?.().size}</span>
             </button>
-          )
-        }}
-      </For>
-      <Show when={previewData()}>
-        {(data) => {
-          onCleanup(() => setTooltipElement(null))
-          return (
-            <div
-              ref={(element) => setTooltipElement(element)}
-              class="message-timeline-tooltip"
-              style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
-              onMouseEnter={() => clearCloseTimer()}
-              onMouseLeave={() => scheduleClose()}
+            <div class="floating-action-divider" />
+            <button
+              type="button"
+              class="floating-action-button floating-action-clear"
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onClearSelection?.()
+              }}
+              title={t("messageTimeline.actions.clearSelection.title")}
             >
-              <MessagePreview
-                messageId={data().messageId}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                store={store}
-              />
-            </div>
-          )
-        }}
+              <CloseIcon class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </Show>
     </div>
   )

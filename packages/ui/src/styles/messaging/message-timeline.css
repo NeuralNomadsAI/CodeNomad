@@ -66,6 +66,7 @@
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.25rem;
+  padding-bottom: 4rem; /* Add extra padding at the bottom so the floating pill doesn't obscure the last items */
   overflow-y: auto;
   border-radius: 8px;
   background-color: var(--surface-base);
@@ -186,6 +187,102 @@
   color: var(--timeline-segment-active-text) !important;
   font-weight: 700;
   box-shadow: var(--timeline-segment-active-ring);
+}
+
+.message-timeline-segment-selected {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 2px var(--accent-primary) inset !important;
+}
+
+.message-timeline-container {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.message-timeline-floating-actions {
+  position: absolute;
+  bottom: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.floating-action-pill {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  padding: 2px;
+}
+
+.floating-action-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  position: relative;
+  background-color: transparent;
+}
+
+.floating-action-delete {
+  color: var(--status-error);
+}
+
+.floating-action-delete:hover {
+  background-color: var(--status-error-bg);
+}
+
+.floating-action-clear {
+  color: var(--text-muted);
+}
+
+.floating-action-clear:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.floating-action-button:active {
+  transform: scale(0.92);
+}
+
+.floating-action-divider {
+  width: 1px;
+  height: 20px;
+  background-color: var(--border-base);
+  margin: 0 2px;
+}
+
+.floating-action-button .delete-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background-color: var(--status-error);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .message-timeline-label {

@@ -9,7 +9,12 @@ import { useScrollCache } from "../lib/hooks/use-scroll-cache"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
+import { deleteMessagePart } from "../stores/session-actions"
+import { showConfirmDialog } from "../stores/alerts"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
@@ -74,9 +79,110 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
+    setLastSelectionAnchorId(segment.id)
     if (typeof document === "undefined") return
     const anchor = document.getElementById(getMessageAnchorId(segment.messageId))
     anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
+  }
+
+  const [selectedTimelineIds, setSelectedTimelineIds] = createSignal<Set<string>>(new Set())
+  const [lastSelectionAnchorId, setLastSelectionAnchorId] = createSignal<string | null>(null)
+
+  const handleToggleTimelineSelection = (id: string) => {
+    setLastSelectionAnchorId(id)
+    setSelectedTimelineIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const handleSelectRangeTimeline = (id: string) => {
+    const anchorId = lastSelectionAnchorId()
+    if (!anchorId) {
+      handleToggleTimelineSelection(id)
+      return
+    }
+
+    const segments = timelineSegments()
+    const anchorIndex = segments.findIndex((s) => s.id === anchorId)
+    const targetIndex = segments.findIndex((s) => s.id === id)
+
+    if (anchorIndex === -1 || targetIndex === -1) {
+      handleToggleTimelineSelection(id)
+      return
+    }
+
+    const start = Math.min(anchorIndex, targetIndex)
+    const end = Math.max(anchorIndex, targetIndex)
+
+    setSelectedTimelineIds((prev) => {
+      const next = new Set(prev)
+      for (let i = start; i <= end; i++) {
+        next.add(segments[i].id)
+      }
+      return next
+    })
+
+    setLastSelectionAnchorId(id)
+  }
+
+  const handleClearTimelineSelection = () => {
+    setSelectedTimelineIds(new Set<string>())
+    setLastSelectionAnchorId(null)
+  }
+
+  const handleBulkDeleteTimeline = async () => {
+    const selected = Array.from(selectedTimelineIds())
+    if (selected.length === 0) return
+
+    const confirmed = await showConfirmDialog(
+      t("messageSection.timeline.bulkDelete.confirmMessage", { count: selected.length }),
+      {
+        title: t("messageSection.timeline.bulkDelete.title"),
+        variant: "warning",
+        confirmLabel: t("messageSection.timeline.bulkDelete.confirmLabel"),
+        cancelLabel: t("messageSection.timeline.bulkDelete.cancelLabel"),
+      },
+    )
+
+    if (!confirmed) return
+
+    const segmentsToDelete = timelineSegments().filter((s) => selectedTimelineIds().has(s.id))
+    const partsToDelete: { messageId: string; partId: string }[] = []
+    segmentsToDelete.forEach((s) => {
+      s.partIds.forEach((partId) => {
+        partsToDelete.push({ messageId: s.messageId, partId })
+      })
+    })
+
+    const uniqueParts = Array.from(new Set(partsToDelete.map((p) => `${p.messageId}:${p.partId}`))).map((key) => {
+      const [messageId, partId] = key.split(":")
+      return { messageId, partId }
+    })
+
+    let failed = 0
+    for (const item of uniqueParts) {
+      try {
+        await deleteMessagePart(props.instanceId, props.sessionId, item.messageId, item.partId)
+      } catch (error) {
+        failed += 1
+        log.error(`Failed to delete part ${item.partId} of message ${item.messageId}:`, error)
+      }
+    }
+
+    setSelectedTimelineIds(new Set<string>())
+
+    if (failed > 0) {
+      showToastNotification({
+        message: t("messageSection.timeline.bulkDelete.error", { count: failed }),
+        variant: "error",
+      })
+    }
   }
  
   const lastAssistantIndex = createMemo(() => {
@@ -502,6 +608,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const ids = messageIds()
 
     if (loading) {
+      handleClearTimelineSelection()
       previousTimelineIds = []
       setTimelineSegments([])
       seenTimelineMessageIds.clear()
@@ -700,6 +807,28 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   })
  
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (selectedTimelineIds().size > 0) {
+          handleClearTimelineSelection()
+        }
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        if (selectedTimelineIds().size > 0) {
+          const target = event.target as HTMLElement
+          if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+            return
+          }
+          event.preventDefault()
+          void handleBulkDeleteTimeline()
+        }
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
+  })
+
   createEffect(() => {
     if (props.loading) {
       clearQuoteSelection()
@@ -953,6 +1082,11 @@ export default function MessageSection(props: MessageSectionProps) {
             <MessageTimeline
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
+              onToggleSelection={handleToggleTimelineSelection}
+              onSelectRange={handleSelectRangeTimeline}
+              onClearSelection={handleClearTimelineSelection}
+              selectedIds={selectedTimelineIds}
+              onBulkDelete={handleBulkDeleteTimeline}
               activeMessageId={activeMessageId()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}

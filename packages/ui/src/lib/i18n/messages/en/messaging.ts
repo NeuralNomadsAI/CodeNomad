@@ -23,6 +23,11 @@ export const messagingMessages = {
   "messageSection.quote.copy": "Copy",
   "messageSection.quote.copied": "Copied!",
   "messageSection.quote.copyFailed": "Copy failed",
+  "messageSection.timeline.bulkDelete.confirmMessage": "Are you sure you want to delete {count} items?",
+  "messageSection.timeline.bulkDelete.title": "Bulk Delete",
+  "messageSection.timeline.bulkDelete.confirmLabel": "Delete",
+  "messageSection.timeline.bulkDelete.cancelLabel": "Cancel",
+  "messageSection.timeline.bulkDelete.error": "Failed to delete {count} items",
 
   "messageTimeline.ariaLabel": "Message timeline",
   "messageTimeline.segment.user.label": "You",
@@ -35,6 +40,8 @@ export const messagingMessages = {
   "messageTimeline.tooltip.compaction.manual": "User Compaction",
   "messageTimeline.text.filePrefix": "[File] {filename}",
   "messageTimeline.text.attachment": "Attachment",
+  "messageTimeline.actions.bulkDelete.title": "Bulk Delete ({count} items)",
+  "messageTimeline.actions.clearSelection.title": "Clear selection (Esc)",
 
   "messageBlock.tool.header": "Tool Call",
   "messageBlock.tool.unknown": "unknown",
