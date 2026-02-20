@@ -36,6 +36,8 @@ interface MessageTimelineProps {
 }
 
 const MAX_TOOLTIP_LENGTH = 220
+const LONG_PRESS_MS = 500
+const JITTER_THRESHOLD = 10
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -327,6 +329,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   }
  
   const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
+    // Suppress previews if items are selected
+    if ((props.selectedIds?.().size ?? 0) > 0) return
+
     if (typeof window === "undefined") return
     clearHoverTimer()
     clearCloseTimer()
@@ -396,13 +401,63 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const previewData = createMemo(() => {
-
     const segment = hoveredSegment()
     if (!segment) return null
     const record = store().getMessage(segment.messageId)
     if (!record) return null
     return { messageId: segment.messageId }
   })
+
+  let longPressTimer: number | null = null
+  let wasLongPress = false
+  let pressStartPos = { x: 0, y: 0 }
+
+  const handlePointerDown = (id: string, event: PointerEvent) => {
+    if (event.button !== 0) return // Only primary button/touch
+    wasLongPress = false
+    pressStartPos = { x: event.clientX, y: event.clientY }
+    
+    if (longPressTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(longPressTimer)
+    }
+    
+    if (typeof window !== "undefined") {
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null
+        wasLongPress = true
+        props.onToggleSelection?.(id)
+      }, LONG_PRESS_MS)
+    }
+  }
+
+  const handlePointerUp = () => {
+    if (longPressTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(longPressTimer)
+      longPressTimer = null
+    }
+  }
+
+  const handlePointerMove = (event: PointerEvent) => {
+    if (longPressTimer !== null) {
+      const dist = Math.sqrt(
+        Math.pow(event.clientX - pressStartPos.x, 2) + 
+        Math.pow(event.clientY - pressStartPos.y, 2)
+      )
+      if (dist > JITTER_THRESHOLD) {
+        if (typeof window !== "undefined") {
+          window.clearTimeout(longPressTimer)
+        }
+        longPressTimer = null
+      }
+    }
+  }
+
+  const handleContextMenu = (event: MouseEvent) => {
+    // Prevent context menu on mobile to allow long-press to work without interruption
+    if (wasLongPress) {
+      event.preventDefault()
+    }
+  }
  
   return (
     <div class="message-timeline-container">
@@ -451,15 +506,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
                 aria-current={isActive() ? "true" : undefined}
                 aria-hidden={isHidden() ? "true" : undefined}
-              onClick={(event) => {
-                if (event.shiftKey) {
-                  props.onSelectRange?.(segment.id)
-                } else if (event.ctrlKey || event.metaKey) {
-                  props.onToggleSelection?.(segment.id)
-                } else {
-                  props.onSegmentClick?.(segment)
-                }
-              }}
+                onClick={(event) => {
+                  if (wasLongPress) {
+                    wasLongPress = false
+                    return
+                  }
+                  
+                  const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
+
+                  if (event.shiftKey) {
+                    props.onSelectRange?.(segment.id)
+                  } else if (event.ctrlKey || event.metaKey || isMultiSelectActive) {
+                    props.onToggleSelection?.(segment.id)
+                  } else {
+                    props.onSegmentClick?.(segment)
+                  }
+                }}
+                onPointerDown={(e) => handlePointerDown(segment.id, e)}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onPointerMove={handlePointerMove}
+                onContextMenu={handleContextMenu}
                 onMouseEnter={(event) => handleMouseEnter(segment, event)}
                 onMouseLeave={handleMouseLeave}
               >

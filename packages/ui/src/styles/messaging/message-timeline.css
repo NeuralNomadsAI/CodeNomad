@@ -97,6 +97,12 @@
   text-transform: uppercase;
   color: var(--text-primary);
   transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 .message-timeline-segment.message-timeline-segment-hidden {
