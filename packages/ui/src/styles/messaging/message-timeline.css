@@ -219,6 +219,14 @@
   pointer-events: none;
 }
 
+@media (max-width: 720px) {
+  .message-timeline-floating-actions {
+    left: auto;
+    right: 0.25rem;
+    transform: none;
+  }
+}
+
 .floating-action-pill {
   pointer-events: auto;
   display: flex;
