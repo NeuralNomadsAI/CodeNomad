@@ -1,5 +1,5 @@
 import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { ArrowRightSquare, Copy } from "lucide-solid"
+import { ArrowRightSquare, CheckCircle2, Copy, Hourglass, Loader2, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
@@ -576,13 +576,13 @@ export default function ToolCall(props: ToolCallProps) {
     const status = toolState()?.status || ""
     switch (status) {
       case "pending":
-        return "⏳"
+        return <Hourglass class="w-4 h-4" />
       case "running":
-        return "🔄"
+        return <Loader2 class="w-4 h-4 animate-spin" />
       case "completed":
-        return "✅"
+        return <CheckCircle2 class="w-4 h-4" />
       case "error":
-        return "⚠️"
+        return <XCircle class="w-4 h-4" />
       default:
         return ""
     }
