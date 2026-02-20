@@ -3,6 +3,11 @@ name: Reusable Release
 on:
   workflow_call:
     inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to build from"
+        required: false
+        default: ""
+        type: string
       version_suffix:
         description: "Suffix appended to package.json version"
         required: false
@@ -46,6 +51,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -84,6 +91,7 @@ jobs:
     needs: prepare-release
     uses: ./.github/workflows/build-and-upload.yml
     with:
+      ref: ${{ inputs.ref || github.ref }}
       version: ${{ needs.prepare-release.outputs.version }}
       tag: ${{ needs.prepare-release.outputs.tag }}
       release_name: ${{ needs.prepare-release.outputs.release_name }}
@@ -95,6 +103,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/release-ui.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
     secrets: inherit
 
   publish-server:
@@ -103,6 +113,7 @@ jobs:
       - build-and-upload
     uses: ./.github/workflows/manual-npm-publish.yml
     with:
+      ref: ${{ inputs.ref || github.ref }}
       version: ${{ needs.prepare-release.outputs.version }}
       dist_tag: ${{ inputs.dist_tag }}
       package_name: ${{ inputs.npm_package_name }}

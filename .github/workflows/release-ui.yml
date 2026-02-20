@@ -1,7 +1,13 @@
 name: Release UI
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to build from"
+        required: false
+        default: ""
+        type: string
   workflow_dispatch: {}
 
 permissions:
@@ -18,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
