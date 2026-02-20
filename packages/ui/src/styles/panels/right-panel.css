@@ -412,7 +412,7 @@
 }
 
 .right-panel-accordion-trigger {
-  @apply w-full flex items-center justify-between gap-3 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
+  @apply w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
   color: var(--text-secondary);
   background-color: transparent;
 }
@@ -420,6 +420,11 @@
 .right-panel-accordion-trigger:hover {
   background-color: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.section-left {
+  @apply flex items-center;
+  flex-shrink: 0;
 }
 
 .right-panel-accordion-chevron {
@@ -439,6 +444,51 @@
 
 .right-panel-accordion-content [data-accordion-content] {
   min-height: 0;
+}
+
+/* Section info tooltip */
+.section-info-trigger {
+  @apply inline-flex items-center justify-center p-0.5 rounded transition-all duration-150;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.section-info-trigger:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.section-label {
+  margin-left: 2px;
+}
+
+.section-info-icon {
+  @apply w-3.5 h-3.5;
+}
+
+.section-info-tooltip {
+  @apply max-w-xs px-3 py-2 text-xs rounded-lg border shadow-lg;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+  animation: tooltipShow 150ms ease-out;
+  transform-origin: var(--kb-tooltip-content-transform-origin);
+  z-index: 9999;
+}
+
+.section-info-tooltip[data-expanded] {
+  animation: tooltipShow 150ms ease-out;
+}
+
+@keyframes tooltipShow {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Background process cards in status panel */

@@ -1,8 +1,9 @@
 import { For, Show, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk"
 import { Accordion } from "@kobalte/core"
+import { Tooltip } from "@kobalte/core/tooltip"
 
-import { ChevronDown, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
@@ -206,21 +207,25 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     {
       id: "session-changes",
       labelKey: "instanceShell.rightPanel.sections.sessionChanges",
+      tooltipKey: "instanceShell.rightPanel.sections.sessionChanges.tooltip",
       render: renderStatusSessionChanges,
     },
     {
       id: "plan",
       labelKey: "instanceShell.rightPanel.sections.plan",
+      tooltipKey: "instanceShell.rightPanel.sections.plan.tooltip",
       render: renderPlanSectionContent,
     },
     {
       id: "background-processes",
       labelKey: "instanceShell.rightPanel.sections.backgroundProcesses",
+      tooltipKey: "instanceShell.rightPanel.sections.backgroundProcesses.tooltip",
       render: renderBackgroundProcesses,
     },
     {
       id: "mcp",
       labelKey: "instanceShell.rightPanel.sections.mcp",
+      tooltipKey: "instanceShell.rightPanel.sections.mcp.tooltip",
       render: () => (
         <InstanceServiceStatus
           initialInstance={props.instance}
@@ -233,6 +238,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     {
       id: "lsp",
       labelKey: "instanceShell.rightPanel.sections.lsp",
+      tooltipKey: "instanceShell.rightPanel.sections.lsp.tooltip",
       render: () => (
         <InstanceServiceStatus
           initialInstance={props.instance}
@@ -245,6 +251,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     {
       id: "plugins",
       labelKey: "instanceShell.rightPanel.sections.plugins",
+      tooltipKey: "instanceShell.rightPanel.sections.plugins.tooltip",
       render: () => (
         <InstanceServiceStatus
           initialInstance={props.instance}
@@ -276,7 +283,23 @@ const StatusTab: Component<StatusTabProps> = (props) => {
             <Accordion.Item value={section.id} class="right-panel-accordion-item">
               <Accordion.Header>
                 <Accordion.Trigger class="right-panel-accordion-trigger">
-                  <span>{props.t(section.labelKey)}</span>
+                  <span class="section-left">
+                    <Tooltip openDelay={200} gutter={4} placement="top">
+                      <Tooltip.Trigger
+                        class="section-info-trigger"
+                        aria-label={props.t(section.tooltipKey)}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Info class="section-info-icon" />
+                      </Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content class="section-info-tooltip">
+                          {props.t(section.tooltipKey)}
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip>
+                    <span class="section-label">{props.t(section.labelKey)}</span>
+                  </span>
                   <ChevronDown
                     class={`right-panel-accordion-chevron ${isSectionExpanded(section.id) ? "right-panel-accordion-chevron-expanded" : ""}`}
                   />
