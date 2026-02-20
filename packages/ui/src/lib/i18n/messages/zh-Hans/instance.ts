@@ -102,9 +102,9 @@ export const instanceMessages = {
   "instanceShell.rightPanel.sections.mcp": "MCP 服务器",
   "instanceShell.rightPanel.sections.mcp.tooltip": "模型上下文协议服务器，使用外部工具和服务扩展代理能力。",
   "instanceShell.rightPanel.sections.lsp": "LSP 服务器",
-  "instanceShell.rightPanel.sections.lsp.tooltip": "语言服务器协议服务器，提供代码智能、诊断和语言特定功能。",
+  "instanceShell.rightPanel.sections.lsp.tooltip": "语言服务器协议服务器，提供代码智能、诊断和语言特定的功能。",
   "instanceShell.rightPanel.sections.plugins": "插件",
-  "instanceShell.rightPanel.sections.plugins.tooltip": "自定义UI和服务器行为的插件，添加超出MCP和LSP的功能。",
+  "instanceShell.rightPanel.sections.plugins.tooltip": "自定义 UI 和服务器行为的插件，添加超出 MCP 和 LSP 的功能。",
 
   "instanceShell.sessionChanges.noSessionSelected": "选择会话以查看更改。",
   "instanceShell.sessionChanges.loading": "正在获取会话更改...",
