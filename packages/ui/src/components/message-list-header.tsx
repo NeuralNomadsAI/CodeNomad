@@ -51,7 +51,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
         <div class="connection-status-shortcut-action">
           <button
             type="button"
-            class="connection-status-button"
+            class="connection-status-button command-palette-button"
             onClick={props.onCommandPalette}
             aria-label={t("messageListHeader.commandPalette.ariaLabel")}
           >
