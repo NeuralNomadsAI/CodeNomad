@@ -287,7 +287,9 @@ export const taskRenderer: ToolRenderer = {
                 content: promptContent()!,
                 cacheKey: "task:prompt",
                 disableScrollTracking: true,
-                disableHighlight: true,
+                // Always use the normal markdown render path for prompt (even while running)
+                // so the prompt doesn't visually change between running/completed states.
+                disableHighlight: false,
               })}
             </div>
           </section>
