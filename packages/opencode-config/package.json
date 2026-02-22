@@ -4,6 +4,6 @@
   "private": true,
   "license": "MIT",
   "dependencies": {
-    "@opencode-ai/plugin": "1.2.6"
+    "@opencode-ai/plugin": "1.2.10"
   }
 }
