@@ -347,10 +347,23 @@ function clearActiveParentSession(instanceId: string): void {
 }
 
 function setSessionStatus(instanceId: string, sessionId: string, status: SessionStatus): void {
+  let parentToExpand: string | null = null
+
   withSession(instanceId, sessionId, (session) => {
     if (session.status === status) return false
+    const previous = session.status
     session.status = status
+
+    // If a child session starts working, auto-expand its parent thread once.
+    // Users can still collapse it afterwards; we only expand on the transition.
+    if (session.parentId && status === "working" && previous !== "working") {
+      parentToExpand = session.parentId
+    }
   })
+
+  if (parentToExpand) {
+    ensureSessionParentExpanded(instanceId, parentToExpand)
+  }
 }
 
 function getActiveParentSession(instanceId: string): Session | null {
