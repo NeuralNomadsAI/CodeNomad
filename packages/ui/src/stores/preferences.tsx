@@ -25,6 +25,7 @@ export interface ModelPreference {
 
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
+export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 
 export interface UiSettings {
@@ -37,6 +38,7 @@ export interface UiSettings {
   diffViewMode: DiffViewMode
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
+  toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
 
@@ -108,6 +110,7 @@ const defaultUiSettings: UiSettings = {
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
+  toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
 
@@ -130,6 +133,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
+    toolInputsVisibility:
+      sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
+        ? sanitized.toolInputsVisibility
+        : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
@@ -304,10 +311,10 @@ function setThemePreference(preference: ThemePreference): void {
   void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
 }
 
-function setListeningMode(mode: ListeningMode): void {
-  if (serverSettings().listeningMode === mode) return
-  void patchConfigOwner("server", { listeningMode: mode }).catch((error) => log.error("Failed to set listening mode", error))
-}
+ async function setListeningMode(mode: ListeningMode): Promise<void> {
+   if (serverSettings().listeningMode === mode) return
+   await patchConfigOwner("server", { listeningMode: mode })
+ }
 
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
@@ -439,6 +446,11 @@ function setDiagnosticsExpansion(mode: ExpansionPreference): void {
   updateUiSettings({ diagnosticsExpansion: mode })
 }
 
+function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
+  if (preferences().toolInputsVisibility === mode) return
+  updateUiSettings({ toolInputsVisibility: mode })
+}
+
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   if (preferences().thinkingBlocksExpansion === mode) return
   updateUiSettings({ thinkingBlocksExpansion: mode })
@@ -536,6 +548,7 @@ interface ConfigContextValue {
   setToolOutputExpansion: typeof setToolOutputExpansion
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
   setThinkingBlocksExpansion: typeof setThinkingBlocksExpansion
+  setToolInputsVisibility: typeof setToolInputsVisibility
 
   // instance scoped
   setAgentModelPreference: typeof setAgentModelPreference
@@ -579,6 +592,7 @@ const configContextValue: ConfigContextValue = {
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
+  setToolInputsVisibility,
   setAgentModelPreference,
   getAgentModelPreference,
 }

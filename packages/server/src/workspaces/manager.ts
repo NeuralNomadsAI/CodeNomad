@@ -109,10 +109,6 @@ export class WorkspaceManager {
       updatedAt: new Date().toISOString(),
     }
 
-    if (!descriptor.binaryVersion) {
-      descriptor.binaryVersion = this.detectBinaryVersion(resolvedBinaryPath)
-    }
-
     this.workspaces.set(id, descriptor)
 
 
@@ -149,7 +145,10 @@ export class WorkspaceManager {
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
 
-      await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
+      const runtimeVersion = await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
+      if (runtimeVersion) {
+        descriptor.binaryVersion = runtimeVersion
+      }
 
       descriptor.pid = pid
       descriptor.port = port
@@ -278,42 +277,12 @@ export class WorkspaceManager {
     return candidates[0] ?? ""
   }
 
-  private detectBinaryVersion(resolvedPath: string): string | undefined {
-    if (!resolvedPath) {
-      return undefined
-    }
-
-    try {
-      const result = spawnSync(resolvedPath, ["--version"], { encoding: "utf8" })
-      if (result.status === 0 && result.stdout) {
-        const line = result.stdout.split(/\r?\n/).find((entry) => entry.trim().length > 0)
-        if (line) {
-          const normalized = line.trim()
-          const versionMatch = normalized.match(/([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/)
-          if (versionMatch) {
-            const version = versionMatch[1]
-            this.options.logger.debug({ binary: resolvedPath, version }, "Detected binary version")
-            return version
-          }
-          this.options.logger.debug({ binary: resolvedPath, reported: normalized }, "Binary reported version string")
-          return normalized
-        }
-      } else if (result.error) {
-        this.options.logger.warn({ binary: resolvedPath, err: result.error }, "Failed to read binary version")
-      }
-    } catch (error) {
-      this.options.logger.warn({ binary: resolvedPath, err: error }, "Failed to detect binary version")
-    }
-
-    return undefined
-  }
-
   private async waitForWorkspaceReadiness(params: {
     workspaceId: string
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
-  }) {
+  }): Promise<string | undefined> {
 
     await Promise.race([
       this.waitForPortAvailability(params.port),
@@ -327,7 +296,7 @@ export class WorkspaceManager {
       }),
     ])
 
-    await this.waitForInstanceHealth(params)
+    const version = await this.waitForInstanceHealth(params)
 
     await Promise.race([
       this.delay(STARTUP_STABILITY_DELAY_MS),
@@ -340,6 +309,8 @@ export class WorkspaceManager {
         )
       }),
     ])
+
+    return version
   }
 
   private async waitForInstanceHealth(params: {
@@ -347,7 +318,7 @@ export class WorkspaceManager {
     port: number
     exitPromise: Promise<ProcessExitInfo>
     getLastOutput: () => string
-  }) {
+  }): Promise<string | undefined> {
     const probeResult = await Promise.race([
       this.probeInstance(params.workspaceId, params.port),
       params.exitPromise.then((info) => {
@@ -361,7 +332,7 @@ export class WorkspaceManager {
     ])
 
     if (probeResult.ok) {
-      return
+      return probeResult.version
     }
 
     const latestOutput = params.getLastOutput().trim()
@@ -372,8 +343,11 @@ export class WorkspaceManager {
     throw new Error(`Workspace ${params.workspaceId} failed health check: ${reason}.`)
   }
 
-  private async probeInstance(workspaceId: string, port: number): Promise<{ ok: boolean; reason?: string }> {
-    const url = `http://127.0.0.1:${port}/project/current`
+  private async probeInstance(
+    workspaceId: string,
+    port: number,
+  ): Promise<{ ok: boolean; reason?: string; version?: string }> {
+    const url = `http://127.0.0.1:${port}/global/health`
 
     try {
       const headers: Record<string, string> = {}
@@ -384,11 +358,22 @@ export class WorkspaceManager {
 
       const response = await fetch(url, { headers })
       if (!response.ok) {
-        const reason = `health probe returned HTTP ${response.status}`
+        const reason = `/global/health returned HTTP ${response.status}`
         this.options.logger.debug({ workspaceId, status: response.status }, "Health probe returned server error")
         return { ok: false, reason }
       }
-      return { ok: true }
+
+      const payload = (await response.json().catch(() => null)) as null | { healthy?: unknown; version?: unknown }
+      const healthy = payload?.healthy === true
+      const version = typeof payload?.version === "string" ? payload.version.trim() : undefined
+
+      if (!healthy) {
+        const reason = "Instance reported unhealthy"
+        this.options.logger.debug({ workspaceId, payload }, "Health probe returned unhealthy response")
+        return { ok: false, reason }
+      }
+
+      return { ok: true, version: version || undefined }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       this.options.logger.debug({ workspaceId, err: error }, "Health probe failed")

@@ -39,6 +39,9 @@ export const instanceMessages = {
   "instanceShell.rightDrawer.toggle.open": "Открыть правую панель",
   "instanceShell.rightDrawer.toggle.close": "Закрыть правую панель",
 
+  "instanceShell.fullscreen.enter": "Полный экран",
+  "instanceShell.fullscreen.exit": "Выйти из полного экрана",
+
   "instanceShell.metrics.usedLabel": "Использовано",
   "instanceShell.metrics.availableLabel": "Доступно",
 
@@ -91,11 +94,17 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.status": "Статус",
   "instanceShell.rightPanel.tabs.ariaLabel": "Вкладки правой панели",
   "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
+  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Файлы, измененные в текущей сессии. Показывает добавления и удаления для каждого файла.",
   "instanceShell.rightPanel.sections.plan": "План",
-  "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые Shell",
+  "instanceShell.rightPanel.sections.plan.tooltip": "Дорожная карта агента для этой сессии. Отслеживает задачи и их статус выполнения.",
+  "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые оболочки",
+  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Долгоработающие процессы, запущенные агентом. Вы можете следить за их выводом, останавливать или завершать их.",
   "instanceShell.rightPanel.sections.mcp": "MCP-серверы",
+  "instanceShell.rightPanel.sections.mcp.tooltip": "Серверы протокола Model Context Protocol, расширяющие возможности агента внешними инструментами.",
   "instanceShell.rightPanel.sections.lsp": "LSP-серверы",
+  "instanceShell.rightPanel.sections.lsp.tooltip": "Серверы протокола Language Server Protocol, обеспечивающие интеллектуальную поддержку кода и диагностику.",
   "instanceShell.rightPanel.sections.plugins": "Плагины",
+  "instanceShell.rightPanel.sections.plugins.tooltip": "Плагины, настраивающие поведение интерфейса и сервера, добавляющие функции поверх MCP и LSP.",
 
   "instanceShell.sessionChanges.noSessionSelected": "Выберите сессию, чтобы просмотреть изменения.",
   "instanceShell.sessionChanges.loading": "Загрузка изменений...",
@@ -125,7 +134,7 @@ export const instanceMessages = {
   "versionPill.uiWithVersion": "UI {version}",
   "versionPill.source": " ({source})",
 
-  "opencodeBinarySelector.title": "OpenCode Binary",
+  "opencodeBinarySelector.title": "Бинарник OpenCode",
   "opencodeBinarySelector.subtitle": "Выберите, какой исполняемый файл OpenCode запускать",
   "opencodeBinarySelector.customPath.placeholder": "Введите путь к бинарнику opencode…",
   "opencodeBinarySelector.actions.add": "Добавить",

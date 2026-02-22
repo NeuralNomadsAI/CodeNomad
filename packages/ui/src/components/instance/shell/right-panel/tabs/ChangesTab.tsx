@@ -4,7 +4,7 @@ import { MonacoDiffViewer } from "../../../../file-viewer/monaco-diff-viewer"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
-import type { DiffContextMode, DiffViewMode } from "../types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
 
 interface ChangesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -18,8 +18,10 @@ interface ChangesTabProps {
 
   diffViewMode: Accessor<DiffViewMode>
   diffContextMode: Accessor<DiffContextMode>
+  diffWordWrapMode: Accessor<DiffWordWrapMode>
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
+  onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
   listOpen: Accessor<boolean>
   onToggleList: () => void
@@ -77,14 +79,6 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
-        <div class="file-viewer-header">
-          <DiffToolbar
-            viewMode={props.diffViewMode()}
-            contextMode={props.diffContextMode()}
-            onViewModeChange={props.onViewModeChange}
-            onContextModeChange={props.onContextModeChange}
-          />
-        </div>
         <div class="file-viewer-content file-viewer-content--monaco">
           <Show
             when={selectedFileData && hasSession && Array.isArray(diffs) && diffs.length > 0 ? selectedFileData : null}
@@ -102,6 +96,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
                 after={String((file() as any).after || "")}
                 viewMode={props.diffViewMode()}
                 contextMode={props.diffContextMode()}
+                wordWrap={props.diffWordWrapMode()}
               />
             )}
           </Show>
@@ -181,6 +176,17 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
               <span class="files-tab-stat files-tab-stat-deletions">
                 <span class="files-tab-stat-value">-{totals.deletions}</span>
               </span>
+            </div>
+
+            <div style={{ "margin-left": "auto" }}>
+              <DiffToolbar
+                viewMode={props.diffViewMode()}
+                contextMode={props.diffContextMode()}
+                wordWrapMode={props.diffWordWrapMode()}
+                onViewModeChange={props.onViewModeChange}
+                onContextModeChange={props.onContextModeChange}
+                onWordWrapModeChange={props.onWordWrapModeChange}
+              />
             </div>
           </>
         }

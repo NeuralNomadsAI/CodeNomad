@@ -15,4 +15,13 @@ export const logMessages = {
   "infoView.logs.paused.description": "ストリーミングを有効にして OpenCode サーバーの動作を監視します。",
   "infoView.logs.empty.waiting": "サーバー出力を待機中...",
   "infoView.logs.scrollToBottom": "最下部へスクロール",
+
+  "infoView.dispose.actions.dispose": "インスタンスを破棄",
+  "infoView.dispose.actions.disposing": "破棄しています...",
+  "infoView.dispose.confirm.title": "インスタンスを破棄しますか？",
+  "infoView.dispose.confirm.message": "このディレクトリのプロジェクト状態キャッシュをクリアし、インスタンスを再読み込みします。",
+  "infoView.dispose.confirm.confirmLabel": "破棄",
+  "infoView.dispose.confirm.cancelLabel": "キャンセル",
+  "infoView.dispose.toast.success": "インスタンスを破棄しました。再読み込み中...",
+  "infoView.dispose.toast.error": "インスタンスの破棄に失敗しました。",
 } as const

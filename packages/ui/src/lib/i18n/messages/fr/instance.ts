@@ -39,6 +39,9 @@ export const instanceMessages = {
   "instanceShell.rightDrawer.toggle.open": "Ouvrir le tiroir droit",
   "instanceShell.rightDrawer.toggle.close": "Fermer le tiroir droit",
 
+  "instanceShell.fullscreen.enter": "Plein écran",
+  "instanceShell.fullscreen.exit": "Quitter le plein écran",
+
   "instanceShell.metrics.usedLabel": "Utilisé",
   "instanceShell.metrics.availableLabel": "Dispo",
 
@@ -91,11 +94,17 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.status": "Statut",
   "instanceShell.rightPanel.tabs.ariaLabel": "Onglets du panneau droit",
   "instanceShell.rightPanel.sections.sessionChanges": "Changements de session",
+  "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Fichiers modifiés dans la session actuelle. Affiche les ajouts et suppressions pour chaque fichier.",
   "instanceShell.rightPanel.sections.plan": "Plan",
+  "instanceShell.rightPanel.sections.plan.tooltip": "Feuille de route de l'agent pour cette session. Suit les tâches et leur statut d'achèvement.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Shells en arrière-plan",
+  "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Processus longs démarrés par l'agent. Vous pouvez surveiller leur sortie, les arrêter ou les terminer.",
   "instanceShell.rightPanel.sections.mcp": "Serveurs MCP",
+  "instanceShell.rightPanel.sections.mcp.tooltip": "Serveurs du protocole Model Context Protocol qui étendent les capacités de l'agent avec des outils externes.",
   "instanceShell.rightPanel.sections.lsp": "Serveurs LSP",
+  "instanceShell.rightPanel.sections.lsp.tooltip": "Serveurs du protocole Language Server Protocol fournissant l'intelligence de code et les diagnostics.",
   "instanceShell.rightPanel.sections.plugins": "Plugins",
+  "instanceShell.rightPanel.sections.plugins.tooltip": "Plugins qui personnalisent le comportement de l'UI et du serveur, ajoutant des fonctionnalités au-delà de MCP et LSP.",
 
   "instanceShell.sessionChanges.noSessionSelected": "Sélectionnez une session pour voir les changements.",
   "instanceShell.sessionChanges.loading": "Récupération des changements...",

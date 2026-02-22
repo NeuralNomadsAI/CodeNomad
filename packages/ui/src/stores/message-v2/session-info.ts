@@ -63,9 +63,14 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
     resolveSelectedModel(instanceProviders, latestProviderId, latestModelId)
 
   let modelOutputLimit = DEFAULT_MODEL_OUTPUT_LIMIT
+  let modelInputLimit: number | null = null
 
   if (selectedModel) {
     contextWindow = selectedModel.limit?.context ?? 0
+    const inputLimit = selectedModel.limit?.input
+    if (typeof inputLimit === "number" && inputLimit > 0) {
+      modelInputLimit = inputLimit
+    }
     const outputLimit = selectedModel.limit?.output
     if (typeof outputLimit === "number" && outputLimit > 0) {
       modelOutputLimit = Math.min(outputLimit, DEFAULT_MODEL_OUTPUT_LIMIT)
@@ -107,7 +112,13 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
 
   const outputBudget = Math.min(modelOutputLimit, DEFAULT_MODEL_OUTPUT_LIMIT)
 
-  if (!contextAvailableFromPrevious) {
+  if (modelInputLimit !== null) {
+    // Prefer explicit input limits when provided by the API.
+    // This is used by the UI "Avail" chip.
+    contextAvailableTokens = modelInputLimit
+  }
+
+  if (!contextAvailableFromPrevious && contextAvailableTokens === null) {
     if (contextWindow > 0) {
       if (latestHasContextUsage && actualUsageTokens > 0) {
         contextAvailableTokens = Math.max(contextWindow - (actualUsageTokens + outputBudget), 0)

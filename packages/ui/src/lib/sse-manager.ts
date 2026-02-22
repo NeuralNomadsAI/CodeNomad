@@ -54,6 +54,13 @@ interface BackgroundProcessRemovedEvent {
   }
 }
 
+interface ServerInstanceDisposedEvent {
+  type: "server.instance.disposed"
+  properties: {
+    directory: string
+  }
+}
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
@@ -74,6 +81,7 @@ type SSEEvent =
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
+  | ServerInstanceDisposedEvent
   | { type: string; properties?: Record<string, unknown> }
 
 type ConnectionStatus = InstanceStreamStatus
@@ -173,6 +181,9 @@ class SSEManager {
       case "background.process.removed":
         this.onBackgroundProcessRemoved?.(instanceId, event as BackgroundProcessRemovedEvent)
         break
+      case "server.instance.disposed":
+        this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
+        break
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
@@ -205,6 +216,7 @@ class SSEManager {
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void
+  onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {

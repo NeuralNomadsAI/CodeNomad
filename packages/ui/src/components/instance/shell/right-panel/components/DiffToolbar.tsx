@@ -1,50 +1,61 @@
 import type { Component } from "solid-js"
 
-import type { DiffContextMode, DiffViewMode } from "../types"
+import { AlignJustify, FoldVertical, Split, UnfoldVertical, WrapText } from "lucide-solid"
+
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
 
 interface DiffToolbarProps {
   viewMode: DiffViewMode
   contextMode: DiffContextMode
+  wordWrapMode: DiffWordWrapMode
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
+  onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 }
 
 const DiffToolbar: Component<DiffToolbarProps> = (props) => {
+  const nextViewMode = (): DiffViewMode => (props.viewMode === "split" ? "unified" : "split")
+  const nextContextMode = (): DiffContextMode => (props.contextMode === "collapsed" ? "expanded" : "collapsed")
+  const nextWordWrapMode = (): DiffWordWrapMode => (props.wordWrapMode === "on" ? "off" : "on")
+
+  const viewModeTitle = () => (nextViewMode() === "split" ? "Switch to split view" : "Switch to unified view")
+  const contextModeTitle = () =>
+    nextContextMode() === "collapsed" ? "Hide unchanged regions" : "Show full file"
+  const wordWrapTitle = () => (nextWordWrapMode() === "on" ? "Enable word wrap" : "Disable word wrap")
+
   return (
     <div class="file-viewer-toolbar">
       <button
         type="button"
-        class={`file-viewer-toolbar-button${props.viewMode === "split" ? " active" : ""}`}
-        aria-pressed={props.viewMode === "split"}
-        onClick={() => props.onViewModeChange("split")}
+        class="file-viewer-toolbar-icon-button"
+        onClick={() => props.onViewModeChange(nextViewMode())}
+        aria-label={viewModeTitle()}
+        title={viewModeTitle()}
       >
-        Split
+        {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
       </button>
       <button
         type="button"
-        class={`file-viewer-toolbar-button${props.viewMode === "unified" ? " active" : ""}`}
-        aria-pressed={props.viewMode === "unified"}
-        onClick={() => props.onViewModeChange("unified")}
+        class="file-viewer-toolbar-icon-button"
+        onClick={() => props.onContextModeChange(nextContextMode())}
+        aria-label={contextModeTitle()}
+        title={contextModeTitle()}
       >
-        Unified
+        {nextContextMode() === "collapsed" ? (
+          <FoldVertical class="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <UnfoldVertical class="h-4 w-4" aria-hidden="true" />
+        )}
       </button>
+
       <button
         type="button"
-        class={`file-viewer-toolbar-button${props.contextMode === "collapsed" ? " active" : ""}`}
-        aria-pressed={props.contextMode === "collapsed"}
-        onClick={() => props.onContextModeChange("collapsed")}
-        title="Hide unchanged regions"
+        class={`file-viewer-toolbar-icon-button${props.wordWrapMode === "on" ? " active" : ""}`}
+        onClick={() => props.onWordWrapModeChange(nextWordWrapMode())}
+        aria-label={wordWrapTitle()}
+        title={wordWrapTitle()}
       >
-        Collapsed
-      </button>
-      <button
-        type="button"
-        class={`file-viewer-toolbar-button${props.contextMode === "expanded" ? " active" : ""}`}
-        aria-pressed={props.contextMode === "expanded"}
-        onClick={() => props.onContextModeChange("expanded")}
-        title="Show full file"
-      >
-        Expanded
+        <WrapText class="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
   )

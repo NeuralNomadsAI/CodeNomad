@@ -78,7 +78,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     .addOption(new Option("--tls-ca <path>", "TLS CA chain (PEM)").env("CLI_TLS_CA"))
     .addOption(new Option("--tlsSANs <list>", "Additional TLS SANs (comma-separated)").env("CLI_TLS_SANS"))
     .addOption(
-      new Option("--workspace-root <path>", "Workspace root directory").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
+      new Option("--workspace-root <path>", "Restricts root path where workspaces can be opened").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
     )
     .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))
     .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem").env("CLI_UNRESTRICTED_ROOT").default(false))

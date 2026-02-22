@@ -291,12 +291,13 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     const initialProvider = instanceProviders.find((p) => p.id === session.model.providerId)
     const initialModel = initialProvider?.models.find((m) => m.id === session.model.modelId)
     const initialContextWindow = initialModel?.limit?.context ?? 0
+    const initialInputLimit = initialModel?.limit?.input ?? 0
     const initialSubscriptionModel = initialModel?.cost?.input === 0 && initialModel?.cost?.output === 0
     const initialOutputLimit =
       initialModel?.limit?.output && initialModel.limit.output > 0
         ? initialModel.limit.output
         : DEFAULT_MODEL_OUTPUT_LIMIT
-    const initialContextAvailable = initialContextWindow > 0 ? initialContextWindow : null
+    const initialContextAvailable = initialInputLimit > 0 ? initialInputLimit : initialContextWindow > 0 ? initialContextWindow : null
 
     setSessionInfoByInstance((prev) => {
       const next = new Map(prev)
@@ -398,10 +399,11 @@ async function forkSession(
   const forkProvider = instanceProviders.find((p) => p.id === forkedSession.model.providerId)
   const forkModel = forkProvider?.models.find((m) => m.id === forkedSession.model.modelId)
   const forkContextWindow = forkModel?.limit?.context ?? 0
+  const forkInputLimit = forkModel?.limit?.input ?? 0
   const forkSubscriptionModel = forkModel?.cost?.input === 0 && forkModel?.cost?.output === 0
   const forkOutputLimit =
     forkModel?.limit?.output && forkModel.limit.output > 0 ? forkModel.limit.output : DEFAULT_MODEL_OUTPUT_LIMIT
-  const forkContextAvailable = forkContextWindow > 0 ? forkContextWindow : null
+  const forkContextAvailable = forkInputLimit > 0 ? forkInputLimit : forkContextWindow > 0 ? forkContextWindow : null
 
   setSessionInfoByInstance((prev) => {
     const next = new Map(prev)
@@ -524,6 +526,7 @@ async function fetchAgents(instanceId: string): Promise<void> {
       name: agent.name,
       description: agent.description || "",
       mode: agent.mode,
+      hidden: agent.hidden,
       model: agent.model?.modelID
         ? {
             providerId: agent.model.providerID || "",

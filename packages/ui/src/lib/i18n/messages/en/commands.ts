@@ -130,6 +130,10 @@ export const commandMessages = {
   "commands.diagnosticsDefault.description": "Toggle default expansion for diagnostics output",
   "commands.diagnosticsDefault.keywords": "diagnostics, expand, collapse",
 
+  "commands.toolInputsVisibility.label": "Tool Inputs Visibility · {state}",
+  "commands.toolInputsVisibility.description": "Set default visibility for tool call input arguments",
+  "commands.toolInputsVisibility.keywords": "tool, inputs, arguments, visibility, hide, show, expand, collapse",
+
   "commands.tokenUsageDisplay.label": "Token Usage Display · {state}",
   "commands.tokenUsageDisplay.description": "Show or hide token and cost stats for assistant messages",
   "commands.tokenUsageDisplay.keywords": "token, usage, cost, stats",

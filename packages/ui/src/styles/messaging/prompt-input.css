@@ -295,7 +295,33 @@
   }
 
   .prompt-input {
-    padding-bottom: 1.5rem;
+    /* Prevent iOS Safari input zoom + keep input compact. */
+    font-size: 16px;
+    padding-bottom: 0.75rem;
+  }
+}
+
+@media (max-width: 1279px) {
+  :root {
+    --prompt-input-compact-height: 104px;
+  }
+
+  .prompt-input-wrapper {
+    min-height: var(--prompt-input-compact-height);
+  }
+
+  .prompt-input-field-container {
+    min-height: var(--prompt-input-compact-height);
+    height: var(--prompt-input-compact-height);
+  }
+
+  .prompt-input-field {
+    height: var(--prompt-input-compact-height);
+  }
+
+  .prompt-input-field-container.is-expanded,
+  .prompt-input-field.is-expanded {
+    height: auto;
   }
 }
 
@@ -307,9 +333,9 @@
 
 @media (max-width: 640px) {
   .prompt-input {
-    min-height: 64px;
+    min-height: 0;
     padding: 0.5rem 0.75rem;
-    padding-bottom: 2.25rem;
+    padding-bottom: 0.75rem;
   }
 
   .prompt-input-wrapper {

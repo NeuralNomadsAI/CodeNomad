@@ -31,10 +31,10 @@ export default function AgentSelector(props: AgentSelectorProps) {
   const availableAgents = createMemo(() => {
     const allAgents = instanceAgents()
     if (isChildSession()) {
-      return allAgents
+      return allAgents.filter((agent) => !agent.hidden)
     }
 
-    const filtered = allAgents.filter((agent) => agent.mode !== "subagent")
+    const filtered = allAgents.filter((agent) => !agent.hidden && agent.mode !== "subagent")
 
     const currentAgent = allAgents.find((a) => a.name === props.currentAgent)
     if (currentAgent && !filtered.find((a) => a.name === props.currentAgent)) {
@@ -103,10 +103,10 @@ export default function AgentSelector(props: AgentSelectorProps) {
         >
           <div class="flex-1 min-w-0">
             <Select.Value<Agent>>
-              {(state) => (
+              {() => (
                 <div class="selector-trigger-label selector-trigger-label--stacked">
                   <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                    {t("agentSelector.trigger.primary", { agent: state.selectedOption()?.name ?? t("agentSelector.none") })}
+                    {t("agentSelector.trigger.primary", { agent: props.currentAgent || t("agentSelector.none") })}
                   </span>
                 </div>
               )}

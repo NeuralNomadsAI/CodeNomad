@@ -130,6 +130,10 @@ export const commandMessages = {
   "commands.diagnosticsDefault.description": "診断出力を既定で展開するか切り替え",
   "commands.diagnosticsDefault.keywords": "診断, 展開, 折りたたみ, diagnostics, expand, collapse",
 
+  "commands.toolInputsVisibility.label": "ツール入力の表示 · {state}",
+  "commands.toolInputsVisibility.description": "ツール呼び出しの入力引数の既定の表示状態を設定します",
+  "commands.toolInputsVisibility.keywords": "ツール, 入力, 引数, 表示, 非表示, 展開, 折りたたみ, tool, inputs, arguments, visibility, hide, show, expand, collapse",
+
   "commands.tokenUsageDisplay.label": "トークン使用量表示 · {state}",
   "commands.tokenUsageDisplay.description": "アシスタントメッセージのトークン/コスト統計を表示/非表示",
   "commands.tokenUsageDisplay.keywords": "トークン, 使用量, コスト, 統計, token, usage, cost, stats",

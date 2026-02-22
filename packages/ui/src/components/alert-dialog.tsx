@@ -115,28 +115,28 @@ const AlertDialog: Component = () => {
           >
             <Dialog.Portal>
               <Dialog.Overlay class="modal-overlay" />
-              <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <Dialog.Content class="modal-surface w-full max-w-sm p-6 border border-base shadow-2xl" tabIndex={-1}>
-                  <div class="flex items-start gap-3">
-                    <div
-                      class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-base font-semibold"
-                      style={{
-                        "background-color": accent.badgeBg,
-                        "border-color": accent.badgeBorder,
-                        color: accent.badgeText,
-                      }}
-                      aria-hidden
-                    >
-                      {accent.symbol}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <Dialog.Title class="text-lg font-semibold text-primary">{title}</Dialog.Title>
-                      <Dialog.Description class="text-sm text-secondary mt-1 whitespace-pre-line break-words">
-                        {payload.message}
-                        {payload.detail && <p class="mt-2 text-secondary">{payload.detail}</p>}
-                      </Dialog.Description>
-                    </div>
-                  </div>
+               <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                 <Dialog.Content class="modal-surface w-full max-w-sm p-6 border border-base shadow-2xl" tabIndex={-1}>
+                   <div class="flex items-start gap-3">
+                     <div
+                       class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-base font-semibold"
+                       style={{
+                         "background-color": accent.badgeBg,
+                         "border-color": accent.badgeBorder,
+                         color: accent.badgeText,
+                       }}
+                       aria-hidden
+                     >
+                       {accent.symbol}
+                     </div>
+                     <div class="flex-1 min-w-0">
+                       <Dialog.Title class="text-lg font-semibold text-primary">{title}</Dialog.Title>
+                       <Dialog.Description class="text-sm text-secondary mt-1 whitespace-pre-line break-words">
+                         {payload.message}
+                         {payload.detail && <p class="mt-2 text-secondary">{payload.detail}</p>}
+                       </Dialog.Description>
+                     </div>
+                   </div>
 
                     <Show when={isPrompt}>
                       <div class="mt-4">
@@ -185,14 +185,14 @@ const AlertDialog: Component = () => {
                        {confirmLabel}
                      </button>
                    </div>
-                </Dialog.Content>
-              </div>
-            </Dialog.Portal>
-          </Dialog>
-        )
-      }}
-    </Show>
-  )
-}
+                 </Dialog.Content>
+               </div>
+             </Dialog.Portal>
+           </Dialog>
+         )
+       }}
+     </Show>
+   )
+ }
 
 export default AlertDialog

@@ -287,13 +287,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     if (mode() !== "mention") return
 
     const query = props.searchQuery.toLowerCase()
+    const visibleAgents = props.agents.filter((agent) => !agent.hidden)
     const filtered = query
-      ? props.agents.filter(
+      ? visibleAgents.filter(
           (agent) =>
             agent.name.toLowerCase().includes(query) ||
             (agent.description && agent.description.toLowerCase().includes(query)),
         )
-      : props.agents
+      : visibleAgents
 
     setFilteredAgents(filtered)
   })

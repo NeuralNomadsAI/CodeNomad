@@ -4,12 +4,12 @@ import { CODENOMAD_API_BASE } from "./api-client"
 class SDKManager {
   private clients = new Map<string, OpencodeClient>()
 
-  private key(instanceId: string, worktreeSlug: string): string {
-    return `${instanceId}:${worktreeSlug || "root"}`
+  private key(instanceId: string, proxyPath: string): string {
+    return `${instanceId}:${normalizeProxyPath(proxyPath)}`
   }
 
-  createClient(instanceId: string, proxyPath: string, worktreeSlug = "root"): OpencodeClient {
-    const key = this.key(instanceId, worktreeSlug)
+  createClient(instanceId: string, proxyPath: string, _worktreeSlug = "root"): OpencodeClient {
+    const key = this.key(instanceId, proxyPath)
     const existing = this.clients.get(key)
     if (existing) {
       return existing
@@ -23,12 +23,12 @@ class SDKManager {
     return client
   }
 
-  getClient(instanceId: string, worktreeSlug = "root"): OpencodeClient | null {
-    return this.clients.get(this.key(instanceId, worktreeSlug)) ?? null
+  getClient(instanceId: string, proxyPath: string): OpencodeClient | null {
+    return this.clients.get(this.key(instanceId, proxyPath)) ?? null
   }
 
-  destroyClient(instanceId: string, worktreeSlug = "root"): void {
-    this.clients.delete(this.key(instanceId, worktreeSlug))
+  destroyClient(instanceId: string, proxyPath: string): void {
+    this.clients.delete(this.key(instanceId, proxyPath))
   }
 
   destroyClientsForInstance(instanceId: string): void {
@@ -46,7 +46,7 @@ class SDKManager {
 
 export type { OpencodeClient }
 
-function buildInstanceBaseUrl(proxyPath: string): string {
+export function buildInstanceBaseUrl(proxyPath: string): string {
   const normalized = normalizeProxyPath(proxyPath)
   const base = stripTrailingSlashes(CODENOMAD_API_BASE)
   return `${base}${normalized}/`

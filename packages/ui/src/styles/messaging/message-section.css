@@ -130,6 +130,19 @@
   color: var(--text-primary);
 }
 
+/* Make the command palette trigger stand out in the header. */
+.connection-status-button.command-palette-button {
+  border-radius: 0;
+  @apply text-sm px-2 py-1 border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.connection-status-button.command-palette-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
 .connection-status-button:hover {
   background-color: var(--surface-hover);
 }

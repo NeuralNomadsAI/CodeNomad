@@ -29,6 +29,7 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
+import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
@@ -41,7 +42,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getSessionStatus } from "../../stores/session-status"
-import { ShieldAlert } from "lucide-solid"
+import { Maximize2, ShieldAlert } from "lucide-solid"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -69,6 +70,11 @@ interface InstanceShellProps {
   handleSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onExecuteCommand: (command: Command) => void
   tabBarOffset: number
+
+  // In-memory only: mobile immersive/fullscreen mode.
+  mobileFullscreenMode: boolean
+  onEnterMobileFullscreen: () => void
+  onExitMobileFullscreen: () => void
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
@@ -117,6 +123,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
+  const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
+  const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
   const rightPinningSupported = createMemo(() => layoutMode() !== "phone")
 
@@ -349,16 +357,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     measureDrawerHost,
   })
 
-  const formattedUsedTokens = () => formatTokenTotal(tokenStats().used)
-
-
-  const formattedAvailableTokens = () => {
-    const avail = tokenStats().avail
-    if (typeof avail === "number") {
-      return formatTokenTotal(avail)
-    }
-    return "--"
-  }
 
   const renderLeftPanel = () => {
     if (leftPinned()) {
@@ -594,13 +592,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       {renderLeftPanel()}
 
       <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
-        <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-          <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
-            <Show
-              when={!isPhoneLayout()}
-              fallback={
-                <div class="flex flex-col w-full gap-1.5">
-                  <div class="flex flex-wrap items-center justify-between gap-2 w-full">
+        <Show when={!mobileFullscreen()}>
+          <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
+            <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
+              <Show
+                when={!isPhoneLayout()}
+                fallback={
+                  <div class="flex flex-col w-full gap-1.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2 w-full">
                     <Show when={leftDrawerState() === "floating-closed"}>
                       <IconButton
                         ref={setLeftToggleButtonEl}
@@ -626,7 +625,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     <div class="flex flex-wrap items-center justify-center gap-1">
                       <button
                         type="button"
-                        class="connection-status-button px-2 py-0.5 text-xs"
+                        class="connection-status-button command-palette-button"
                         onClick={handleCommandPaletteClick}
                         aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                         style={{ flex: "0 0 auto", width: "auto" }}
@@ -647,6 +646,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </span>
                     </div>
 
+                    <Show when={!props.mobileFullscreenMode}>
+                      <IconButton
+                        color="inherit"
+                        onClick={props.onEnterMobileFullscreen}
+                        aria-label={t("instanceShell.fullscreen.enter")}
+                        title={t("instanceShell.fullscreen.enter")}
+                        size="small"
+                      >
+                        <Maximize2 class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                    </Show>
+
                     <Show when={rightDrawerState() === "floating-closed"}>
                       <IconButton
                         ref={setRightToggleButtonEl}
@@ -661,20 +672,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </Show>
                   </div>
 
-                  <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                      <span class="uppercase text-[10px] tracking-wide text-muted">
-                        {t("instanceShell.metrics.usedLabel")}
-                      </span>
-                      <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
+                    <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
+                      <ContextMeter
+                        usedTokens={tokenStats().used}
+                        availableTokens={tokenStats().avail}
+                        formatTokens={formatTokenTotal}
+                        usedLabel={t("instanceShell.metrics.usedLabel")}
+                        availableLabel={t("instanceShell.metrics.availableLabel")}
+                      />
                     </div>
-                    <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                      <span class="uppercase text-[10px] tracking-wide text-muted">
-                        {t("instanceShell.metrics.availableLabel")}
-                      </span>
-                      <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                    </div>
-                  </div>
                 </div>
               }
             >
@@ -693,18 +699,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </Show>
 
                 <Show when={!showingInfoView()}>
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-muted">
-                      {t("instanceShell.metrics.usedLabel")}
-                    </span>
-                    <span class="font-semibold text-primary">{formattedUsedTokens()}</span>
-                  </div>
-                  <div class="inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary">
-                    <span class="uppercase text-[10px] tracking-wide text-muted">
-                      {t("instanceShell.metrics.availableLabel")}
-                    </span>
-                    <span class="font-semibold text-primary">{formattedAvailableTokens()}</span>
-                  </div>
+                  <ContextMeter
+                    usedTokens={tokenStats().used}
+                    availableTokens={tokenStats().avail}
+                    formatTokens={formatTokenTotal}
+                    usedLabel={t("instanceShell.metrics.usedLabel")}
+                    availableLabel={t("instanceShell.metrics.availableLabel")}
+                  />
                 </Show>
 
                 <div class="ml-auto flex items-center session-header-hints">
@@ -720,7 +721,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <div class="session-toolbar-center flex items-center justify-center gap-2 min-w-[160px]">
                 <button
                   type="button"
-                  class="connection-status-button px-2 py-0.5 text-xs"
+                  class="connection-status-button command-palette-button"
                   onClick={handleCommandPaletteClick}
                   aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                   style={{ flex: "0 0 auto", width: "auto" }}
@@ -769,9 +770,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </Show>
                 </div>
               </div>
-            </Show>
-          </Toolbar>
-        </AppBar>
+              </Show>
+            </Toolbar>
+          </AppBar>
+        </Show>
 
         <Box
           component="main"
@@ -808,6 +810,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           instanceId={props.instance.id}
                           instanceFolder={props.instance.folder}
                           escapeInDebounce={props.escapeInDebounce}
+                          isPhoneLayout={isPhoneLayout()}
+                          compactPromptLayout={compactPromptLayout()}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}

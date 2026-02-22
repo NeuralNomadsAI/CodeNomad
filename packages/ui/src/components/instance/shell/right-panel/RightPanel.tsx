@@ -18,7 +18,7 @@ import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { DrawerViewState } from "../types"
-import type { DiffContextMode, DiffViewMode, RightPanelTab } from "./types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
 
 import ChangesTab from "./tabs/ChangesTab"
 import FilesTab from "./tabs/FilesTab"
@@ -32,6 +32,7 @@ import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
+  RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY,
   RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY,
@@ -101,6 +102,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   )
   const [diffContextMode, setDiffContextMode] = createSignal<DiffContextMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, ["expanded", "collapsed"] as const) ?? "collapsed",
+  )
+  const [diffWordWrapMode, setDiffWordWrapMode] = createSignal<DiffWordWrapMode>(
+    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, ["on", "off"] as const) ?? "on",
   )
 
   const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
@@ -193,6 +197,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode())
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
   })
 
   const clampSplitWidth = (value: number) => {
@@ -738,8 +747,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             onSelectFile={handleSelectChangesFile}
             diffViewMode={diffViewMode}
             diffContextMode={diffContextMode}
+            diffWordWrapMode={diffWordWrapMode}
             onViewModeChange={setDiffViewMode}
             onContextModeChange={setDiffContextMode}
+            onWordWrapModeChange={setDiffWordWrapMode}
             listOpen={changesListOpen}
             onToggleList={toggleChangesList}
             splitWidth={changesSplitWidth}
@@ -765,8 +776,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
             scopeKey={gitScopeKey}
             diffViewMode={diffViewMode}
             diffContextMode={diffContextMode}
+            diffWordWrapMode={diffWordWrapMode}
             onViewModeChange={setDiffViewMode}
             onContextModeChange={setDiffContextMode}
+            onWordWrapModeChange={setDiffWordWrapMode}
             onOpenFile={(path) => void openGitFile(path)}
             onRefresh={() => void refreshGitStatus()}
             listOpen={gitChangesListOpen}

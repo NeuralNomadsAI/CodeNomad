@@ -1,9 +1,7 @@
 import { Show } from "solid-js"
 import Kbd from "./kbd"
+import ContextMeter from "./context-meter"
 import { useI18n } from "../lib/i18n"
-
-const METRIC_CHIP_CLASS = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
-const METRIC_LABEL_CLASS = "uppercase text-[10px] tracking-wide text-muted"
 
 interface MessageListHeaderProps {
   usedTokens: number
@@ -21,7 +19,6 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
   const { t } = useI18n()
 
   const hasAvailableTokens = () => typeof props.availableTokens === "number"
-  const availableDisplay = () => (hasAvailableTokens() ? props.formatTokens(props.availableTokens as number) : "--")
 
   return (
     <div class={props.forceCompactStatusLayout ? "connection-status connection-status--compact" : "connection-status"}>
@@ -40,14 +37,13 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
 
       <div class="connection-status-text connection-status-info">
         <div class="connection-status-usage">
-          <div class={METRIC_CHIP_CLASS}>
-            <span class={METRIC_LABEL_CLASS}>{t("messageListHeader.metrics.usedLabel")}</span>
-            <span class="font-semibold text-primary">{props.formatTokens(props.usedTokens)}</span>
-          </div>
-          <div class={METRIC_CHIP_CLASS}>
-            <span class={METRIC_LABEL_CLASS}>{t("messageListHeader.metrics.availableLabel")}</span>
-            <span class="font-semibold text-primary">{hasAvailableTokens() ? availableDisplay() : "--"}</span>
-          </div>
+          <ContextMeter
+            usedTokens={props.usedTokens}
+            availableTokens={hasAvailableTokens() ? (props.availableTokens as number) : null}
+            formatTokens={props.formatTokens}
+            usedLabel={t("messageListHeader.metrics.usedLabel")}
+            availableLabel={t("messageListHeader.metrics.availableLabel")}
+          />
         </div>
       </div>
 
@@ -55,7 +51,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
         <div class="connection-status-shortcut-action">
           <button
             type="button"
-            class="connection-status-button"
+            class="connection-status-button command-palette-button"
             onClick={props.onCommandPalette}
             aria-label={t("messageListHeader.commandPalette.ariaLabel")}
           >

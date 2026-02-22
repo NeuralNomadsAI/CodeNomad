@@ -1,6 +1,8 @@
 import { Component, For, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
+import useMediaQuery from "@suid/material/useMediaQuery"
+import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { showConfirmDialog } from "./stores/alerts"
@@ -16,6 +18,8 @@ import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
+import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
@@ -70,17 +74,52 @@ const App: Component = () => {
     setToolOutputExpansion,
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
+    setToolInputsVisibility,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
-  interface LaunchErrorState {
-    message: string
-    binaryPath: string
-    missingBinary: boolean
-  }
-  const [launchError, setLaunchError] = createSignal<LaunchErrorState | null>(null)
   const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
+
+  const phoneQuery = useMediaQuery("(max-width: 767px)")
+  const isPhoneLayout = createMemo(() => phoneQuery())
+
+  // In-memory only: hides chrome on phone; may also request browser fullscreen.
+  const [mobileFullscreenMode, setMobileFullscreenMode] = createSignal(false)
+  const [browserFullscreenActive, setBrowserFullscreenActive] = createSignal(false)
+
+  const fullscreenSupported = () => {
+    if (typeof document === "undefined") return false
+    const el = document.documentElement as any
+    return Boolean(document.fullscreenEnabled) && typeof el?.requestFullscreen === "function"
+  }
+
+  const syncBrowserFullscreenState = () => {
+    if (typeof document === "undefined") return
+    setBrowserFullscreenActive(Boolean(document.fullscreenElement))
+  }
+
+  const enterMobileFullscreen = async () => {
+    if (!isPhoneLayout()) return
+    setMobileFullscreenMode(true)
+    if (!fullscreenSupported()) return
+    try {
+      await document.documentElement.requestFullscreen()
+    } catch {
+      // Ignore: immersive mode still works without browser fullscreen.
+    }
+  }
+
+  const exitMobileFullscreen = async () => {
+    if (typeof document !== "undefined" && document.fullscreenElement && typeof document.exitFullscreen === "function") {
+      try {
+        await document.exitFullscreen()
+      } catch {
+        // Ignore
+      }
+    }
+    setMobileFullscreenMode(false)
+  }
 
   createEffect(() => {
     if (typeof document === "undefined") return
@@ -94,6 +133,56 @@ const App: Component = () => {
     const element = document.querySelector<HTMLElement>(".tab-bar-instance")
     setInstanceTabBarHeight(element?.offsetHeight ?? 0)
   }
+
+  onMount(() => {
+    if (typeof document === "undefined") return
+    syncBrowserFullscreenState()
+    document.addEventListener("fullscreenchange", syncBrowserFullscreenState)
+    onCleanup(() => document.removeEventListener("fullscreenchange", syncBrowserFullscreenState))
+  })
+
+  onMount(() => {
+    if (typeof window === "undefined") return
+    const vv = window.visualViewport
+    if (!vv) return
+
+    const updateKeyboardOffset = () => {
+      // visualViewport shrinks when the OSK is visible. Use the delta as a bottom inset.
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      document.documentElement.style.setProperty("--keyboard-offset", `${Math.floor(inset)}px`)
+    }
+
+    const schedule = () => requestAnimationFrame(updateKeyboardOffset)
+    schedule()
+    vv.addEventListener("resize", schedule)
+    vv.addEventListener("scroll", schedule)
+    window.addEventListener("orientationchange", schedule)
+
+    onCleanup(() => {
+      vv.removeEventListener("resize", schedule)
+      vv.removeEventListener("scroll", schedule)
+      window.removeEventListener("orientationchange", schedule)
+      document.documentElement.style.removeProperty("--keyboard-offset")
+    })
+  })
+
+  // If the user exits browser fullscreen via browser UI, restore chrome.
+  let lastBrowserFullscreen = false
+  createEffect(() => {
+    const active = browserFullscreenActive()
+    const mode = mobileFullscreenMode()
+    if (mode && lastBrowserFullscreen && !active) {
+      setMobileFullscreenMode(false)
+    }
+    lastBrowserFullscreen = active
+  })
+
+  // If we leave phone layout (rotation / resize), restore chrome.
+  createEffect(() => {
+    if (!isPhoneLayout() && mobileFullscreenMode()) {
+      void exitMobileFullscreen()
+    }
+  })
 
   createEffect(() => {
     void initMarkdown(isDark()).catch((error) => log.error("Failed to initialize markdown", error))
@@ -152,35 +241,6 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  const formatLaunchErrorMessage = (error: unknown): string => {
-    if (!error) {
-      return t("app.launchError.fallbackMessage")
-    }
-    const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed.error === "string") {
-        return parsed.error
-      }
-    } catch {
-      // ignore JSON parse errors
-    }
-    return raw
-  }
-
-  const isMissingBinaryMessage = (message: string): boolean => {
-    const normalized = message.toLowerCase()
-    return (
-      normalized.includes("opencode binary not found") ||
-      normalized.includes("binary not found") ||
-      normalized.includes("no such file or directory") ||
-      normalized.includes("binary is not executable") ||
-      normalized.includes("enoent")
-    )
-  }
-
-  const clearLaunchError = () => setLaunchError(null)
-
   async function handleSelectFolder(folderPath: string, binaryPath?: string) {
     if (!folderPath) {
       return
@@ -199,13 +259,9 @@ const App: Component = () => {
         port: instances().get(instanceId)?.port,
       })
     } catch (error) {
-      const message = formatLaunchErrorMessage(error)
+      const message = formatLaunchErrorMessage(error, t("app.launchError.fallbackMessage"))
       const missingBinary = isMissingBinaryMessage(message)
-      setLaunchError({
-        message,
-        binaryPath: selectedBinary,
-        missingBinary,
-      })
+      showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
     } finally {
       setIsSelectingFolder(false)
@@ -310,6 +366,7 @@ const App: Component = () => {
     setToolOutputExpansion,
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
+    setToolInputsVisibility,
     handleNewInstanceRequest,
     handleCloseInstance,
     handleNewSession,
@@ -405,19 +462,34 @@ const App: Component = () => {
           </div>
         </Dialog.Portal>
       </Dialog>
-      <div class="h-screen w-screen flex flex-col">
+      <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
+        <Show when={isPhoneLayout() && mobileFullscreenMode()}>
+          <div class="mobile-fullscreen-exit-wrapper">
+            <button
+              type="button"
+              class="message-scroll-button mobile-fullscreen-exit-button"
+              onClick={() => void exitMobileFullscreen()}
+              aria-label={t("instanceShell.fullscreen.exit")}
+              title={t("instanceShell.fullscreen.exit")}
+            >
+              <Minimize2 class="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        </Show>
         <Show
           when={!hasInstances()}
           fallback={
             <>
-              <InstanceTabs
-                instances={instances()}
-                activeInstanceId={activeInstanceId()}
-                onSelect={setActiveInstanceId}
-                onClose={handleCloseInstance}
-                onNew={handleNewInstanceRequest}
-                onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
-              />
+              <Show when={!isPhoneLayout() || !mobileFullscreenMode()}>
+                <InstanceTabs
+                  instances={instances()}
+                  activeInstanceId={activeInstanceId()}
+                  onSelect={setActiveInstanceId}
+                  onClose={handleCloseInstance}
+                  onNew={handleNewInstanceRequest}
+                  onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
+                />
+              </Show>
  
               <For each={Array.from(instances().values())}>
                 {(instance) => {
@@ -435,7 +507,10 @@ const App: Component = () => {
                             handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
                             handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
                             onExecuteCommand={executeCommand}
-                            tabBarOffset={instanceTabBarHeight()}
+                            tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                            mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                            onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                            onExitMobileFullscreen={() => void exitMobileFullscreen()}
                           />
                         </InstanceMetadataProvider>
 

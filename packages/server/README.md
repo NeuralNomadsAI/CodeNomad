@@ -5,18 +5,21 @@
 ## Features & Capabilities
 
 ### 🌍 Deployment Freedom
+
 - **Remote Access**: Host CodeNomad on a powerful workstation and access it from your lightweight laptop.
 - **Code Anywhere**: Tunnel in via VPN or SSH to code securely from coffee shops or while traveling.
 - **Multi-Device**: The responsive web client works on tablets and iPads, turning any screen into a dev terminal.
 - **Always-On**: Run as a background service so your sessions are always ready when you connect.
 
 ### ⚡️ Workspace Power
+
 - **Multi-Instance**: Juggle multiple OpenCode sessions side-by-side with per-instance tabs.
 - **Long-Context Native**: Scroll through massive transcripts without hitches.
 - **Deep Task Awareness**: Monitor background tasks and child sessions without losing your flow.
 - **Command Palette**: A single, global palette to jump tabs, launch tools, and fire shortcuts.
 
 ## Prerequisites
+
 - **OpenCode**: `opencode` must be installed and configured on your system.
 - Node.js 18+ and npm (for running or building from source).
 - A workspace folder on disk you want to serve.
@@ -25,6 +28,7 @@
 ## Usage
 
 ### Run via npx (Recommended)
+
 You can run CodeNomad directly without installing it:
 
 ```sh
@@ -43,6 +47,7 @@ On startup, CodeNomad prints two URLs:
 - `Remote Connection URL : ...` (used by browsers/other machines when remote access is enabled)
 
 ### Install Globally
+
 Or install it globally to use the `codenomad` command:
 
 ```sh
@@ -51,6 +56,7 @@ codenomad --launch
 ```
 
 ### Install Locally (per-project)
+
 If you prefer to install CodeNomad into a project and run the local binary:
 
 ```sh
@@ -61,6 +67,7 @@ npx codenomad --launch
 (`npx codenomad ...` will use `./node_modules/.bin/codenomad` when present.)
 
 ### Common Flags
+
 You can configure the server using flags or environment variables:
 
 | Flag | Env Variable | Description |
@@ -74,7 +81,7 @@ You can configure the server using flags or environment variables:
 | `--tls-ca <path>` | `CLI_TLS_CA` | Optional CA chain/bundle (PEM) |
 | `--tlsSANs <list>` | `CLI_TLS_SANS` | Additional TLS SANs (comma-separated) |
 | `--host <addr>` | `CLI_HOST` | Interface to bind (default 127.0.0.1) |
-| `--workspace-root <path>` | `CLI_WORKSPACE_ROOT` | Default root for new workspaces |
+| `--workspace-root <path>` | `CLI_WORKSPACE_ROOT` | Restricts the root path where new workspaces can be opened. Git worktrees are created in `.codenomad/worktrees` inside the project folder. |
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | Allow full-filesystem browsing |
 | `--config <path>` | `CLI_CONFIG` | Config file location |
 | `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser |
@@ -87,10 +94,11 @@ You can configure the server using flags or environment variables:
 | `--ui-dir <path>` | `CLI_UI_DIR` | Directory containing the built UI bundle |
 | `--ui-dev-server <url>` | `CLI_UI_DEV_SERVER` | Proxy UI requests to a running dev server (requires `--https=false --http=true`) |
 | `--ui-no-update` | `CLI_UI_NO_UPDATE` | Disable remote UI updates |
-| `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (true|false) |
+| `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true` |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
 
 ### Dev Releases (Advanced)
+
 If you want the latest bleeding-edge builds (published as GitHub pre-releases), use the dev package:
 
 ```sh
@@ -141,12 +149,14 @@ codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 ```
 
 ### Authentication
+
 - Default behavior: CodeNomad requires a login (username/password) and stores a session cookie in the browser.
 - `--dangerously-skip-auth` / `CODENOMAD_SKIP_AUTH=true` disables the login prompt and treats all requests as authenticated.
   Use this only when access is already protected by another layer (SSO proxy, VPN, Coder workspace auth, etc.).
   If you bind to `0.0.0.0` while skipping auth, anyone who can reach the port can access the API.
 
 ### Progressive Web App (PWA)
+
 When running as a server CodeNomad can also be installed as a PWA from any supported browser, giving you a native app experience just like the Electron installation but executing on the remote server instead.
 
 1. Open the CodeNomad UI in a Chromium-based browser (Chrome, Edge, Brave, etc.).
@@ -158,5 +168,6 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 > If you host CodeNomad on a remote machine, use HTTPS. Self-signed certificates generally won't work unless they are explicitly trusted by the device/browser (e.g., via a custom CA).
 
 ### Data Storage
+
 - **Config**: `~/.config/codenomad/config.json`
 - **Instance Data**: `~/.config/codenomad/instances` (chat history, etc.)

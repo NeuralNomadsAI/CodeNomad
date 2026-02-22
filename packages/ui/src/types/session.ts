@@ -68,6 +68,7 @@ export interface Agent {
   name: string
   description: string
   mode: string
+  hidden?: boolean
   model?: {
     providerId: string
     modelId: string
@@ -90,6 +91,7 @@ export interface Model {
   variantKeys?: string[]
   limit?: {
     context?: number
+    input?: number
     output?: number
   }
   cost?: {

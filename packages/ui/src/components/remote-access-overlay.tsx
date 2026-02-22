@@ -23,6 +23,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
   const [meta, setMeta] = createSignal<ServerMeta | null>(null)
   const [authStatus, setAuthStatus] = createSignal<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean } | null>(null)
   const [loading, setLoading] = createSignal(false)
+  const [applyingListeningMode, setApplyingListeningMode] = createSignal(false)
   const [qrCodes, setQrCodes] = createSignal<Record<string, string>>({})
   const [expandedUrl, setExpandedUrl] = createSignal<string | null>(null)
   const [error, setError] = createSignal<string | null>(null)
@@ -88,6 +89,10 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       return
     }
 
+    if (applyingListeningMode()) {
+      return
+    }
+
     const confirmed = await showConfirmDialog(t("remoteAccess.listeningMode.restartConfirm.message"), {
       title: allow ? t("remoteAccess.listeningMode.restartConfirm.title.all") : t("remoteAccess.listeningMode.restartConfirm.title.local"),
       variant: "warning",
@@ -100,12 +105,21 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       return
     }
 
-    setListeningMode(targetMode)
-    const restarted = await restartCli()
-    if (!restarted) {
-      setError(t("remoteAccess.restart.errorManual"))
-    } else {
-      setMeta((prev) => (prev ? { ...prev, listeningMode: targetMode } : prev))
+    setApplyingListeningMode(true)
+    setError(null)
+    try {
+      // Important: await the config patch before restart so Electron reads the updated mode from disk.
+      await setListeningMode(targetMode)
+      const restarted = await restartCli()
+      if (!restarted) {
+        setError(t("remoteAccess.restart.errorManual"))
+      } else {
+        setMeta((prev) => (prev ? { ...prev, listeningMode: targetMode } : prev))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setApplyingListeningMode(false)
     }
 
     void refreshMeta()
@@ -196,6 +210,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                   onChange={(nextChecked) => {
                     void handleAllowConnectionsChange(nextChecked)
                   }}
+                  disabled={loading() || applyingListeningMode()}
                 >
                   <Switch.Input />
                   <Switch.Control class="remote-toggle-switch" data-checked={allowExternalConnections()}>

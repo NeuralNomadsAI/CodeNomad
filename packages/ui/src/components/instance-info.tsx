@@ -1,13 +1,20 @@
-import { Component, For, Show, createMemo } from "solid-js"
+import { Component, For, Show, createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
 import { useI18n } from "../lib/i18n"
+import { showConfirmDialog } from "../stores/alerts"
+import { disposeInstance } from "../stores/instances"
+import { showToastNotification } from "../lib/notifications"
+import { getLogger } from "../lib/logger"
 
 interface InstanceInfoProps {
   instance: Instance
   compact?: boolean
+  showDisposeButton?: boolean
 }
+
+const log = getLogger("actions")
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const { t } = useI18n()
@@ -15,6 +22,8 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
   const metadataAccessor = metadataContext?.metadata ?? (() => props.instance.metadata)
+
+  const [isDisposing, setIsDisposing] = createSignal(false)
 
   const currentInstance = () => instanceAccessor()
   const metadata = () => metadataAccessor()
@@ -24,6 +33,46 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
     const env = environmentVariables()
     return env ? Object.entries(env) : []
   })
+
+  const disposeEnabled = createMemo(() => Boolean(currentInstance()?.client) && !isDisposing())
+
+  const handleDisposeInstance = async () => {
+    if (!disposeEnabled()) return
+
+    const confirmed = await showConfirmDialog(t("infoView.dispose.confirm.message"), {
+      title: t("infoView.dispose.confirm.title"),
+      variant: "warning",
+      confirmLabel: t("infoView.dispose.confirm.confirmLabel"),
+      cancelLabel: t("infoView.dispose.confirm.cancelLabel"),
+    })
+
+    if (!confirmed) return
+
+    setIsDisposing(true)
+    try {
+      const ok = await disposeInstance(currentInstance().id)
+      if (ok) {
+        showToastNotification({
+          message: t("infoView.dispose.toast.success"),
+          variant: "success",
+          duration: 8000,
+        })
+      } else {
+        showToastNotification({
+          message: t("infoView.dispose.toast.error"),
+          variant: "error",
+        })
+      }
+    } catch (error) {
+      log.error("Failed to dispose instance", error)
+      showToastNotification({
+        message: t("infoView.dispose.toast.error"),
+        variant: "error",
+      })
+    } finally {
+      setIsDisposing(false)
+    }
+  }
 
   return (
     <div class="panel">
@@ -156,6 +205,19 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             </div>
           </div>
         </div>
+
+        <Show when={props.showDisposeButton}>
+          <div class="pt-3 border-t border-base">
+            <button
+              type="button"
+              class="button-danger button-small w-full"
+              onClick={handleDisposeInstance}
+              disabled={!disposeEnabled()}
+            >
+              {isDisposing() ? t("infoView.dispose.actions.disposing") : t("infoView.dispose.actions.dispose")}
+            </button>
+          </div>
+        </Show>
       </div>
     </div>
   )
