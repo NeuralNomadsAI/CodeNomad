@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component } from "solid-js"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
@@ -350,11 +350,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     clearCloseTimer()
   })
 
-  createEffect(() => {
-    const activeId = props.activeMessageId
-
+  createEffect(on(() => props.activeMessageId, (activeId) => {
     if (!activeId) return
-    const targetSegment = props.segments.find((segment) => segment.messageId === activeId)
+    const targetSegment = untrack(() => props.segments).find((segment) => segment.messageId === activeId)
     if (!targetSegment) return
     const element = buttonRefs.get(targetSegment.id)
     if (!element) return
@@ -366,7 +364,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         window.clearTimeout(timer)
       }
     })
-  })
+  }))
 
   createEffect(() => {
     const element = tooltipElement()
