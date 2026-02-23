@@ -115,6 +115,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
   const tabletQuery = useMediaQuery("(min-width: 768px)")
+  const compactHeaderQuery = useMediaQuery("(max-width: 1024px)")
 
   const layoutMode = createMemo<LayoutMode>(() => {
     if (desktopQuery()) return "desktop"
@@ -123,6 +124,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
+  const compactHeaderLayout = createMemo(() => isPhoneLayout() || compactHeaderQuery())
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
   const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
@@ -596,7 +598,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
             <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
               <Show
-                when={!isPhoneLayout()}
+                when={!compactHeaderLayout()}
                 fallback={
                   <div class="flex flex-col w-full gap-1.5">
                     <div class="flex flex-wrap items-center justify-between gap-2 w-full">
@@ -634,8 +636,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </button>
                       <span class="connection-status-shortcut-hint kbd-hint">
                         <Kbd shortcut="cmd+shift+p" />
-                      </span>
-                    </div>
+                     </span>
+                     </div>
 
                     <div class="flex-1 flex items-center justify-center min-w-0">
                       <span
@@ -646,7 +648,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </span>
                     </div>
 
-                    <Show when={!props.mobileFullscreenMode}>
+                    <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
                       <IconButton
                         color="inherit"
                         onClick={props.onEnterMobileFullscreen}
@@ -670,16 +672,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         {rightAppBarButtonIcon()}
                       </IconButton>
                     </Show>
-                  </div>
+                    </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                      <ContextMeter
-                        usedTokens={tokenStats().used}
-                        availableTokens={tokenStats().avail}
-                        formatTokens={formatTokenTotal}
-                        usedLabel={t("instanceShell.metrics.usedLabel")}
-                        availableLabel={t("instanceShell.metrics.availableLabel")}
-                      />
+                      <Show when={!showingInfoView()}>
+                        <ContextMeter
+                          usedTokens={tokenStats().used}
+                          availableTokens={tokenStats().avail}
+                          formatTokens={formatTokenTotal}
+                          usedLabel={t("instanceShell.metrics.usedLabel")}
+                          availableLabel={t("instanceShell.metrics.availableLabel")}
+                        />
+                      </Show>
                     </div>
                 </div>
               }
