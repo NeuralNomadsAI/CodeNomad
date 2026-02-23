@@ -61,6 +61,11 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
         lineNumbersMinChars: 4,
         lineDecorationsWidth: 12,
+        // Use legacy diff algorithm for better performance with large files
+        // See: https://github.com/microsoft/vscode/issues/184037
+        diffAlgorithm: "legacy",
+        // Limit computation time to avoid freezing on large files
+        maxComputationTime: 10000,
       })
 
       setReady(true)
