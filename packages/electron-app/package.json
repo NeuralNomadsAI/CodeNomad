@@ -15,7 +15,10 @@
   },
   "homepage": "https://github.com/NeuralNomadsAI/CodeNomad",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "npm run dev:info",
+    "dev:info": "CLI_LOG_LEVEL=info electron-vite dev",
+    "dev:debug": "CLI_LOG_LEVEL=debug electron-vite dev",
+    "dev:trace": "CLI_LOG_LEVEL=trace electron-vite dev",
     "dev:electron": "NODE_ENV=development ELECTRON_ENABLE_LOGGING=1 NODE_OPTIONS=\"--import tsx\" electron electron/main/main.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
