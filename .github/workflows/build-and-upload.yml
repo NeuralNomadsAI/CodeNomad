@@ -61,7 +61,21 @@ jobs:
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
-        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+        shell: bash
+        env:
+          NPM_CONFIG_FETCH_RETRIES: 5
+          NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 20000
+          NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 120000
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm version "${VERSION}" --workspaces --include-workspace-root --no-git-tag-version --allow-same-version; then
+              exit 0
+            fi
+            echo "npm version failed (attempt $attempt/3); retrying..." >&2
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
