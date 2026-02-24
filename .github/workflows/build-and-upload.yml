@@ -84,9 +84,12 @@ jobs:
           fi
 
           release_root="packages/electron-app/release"
-          shopt -s nullglob globstar
-
-          apps=("$release_root"/**/CodeNomad.app)
+          # macOS GitHub runners ship /bin/bash 3.2 which doesn't support `shopt -s globstar`.
+          # Use find to locate built app bundles instead of ** globs.
+          apps=()
+          while IFS= read -r -d '' app; do
+            apps+=("$app")
+          done < <(find "$release_root" -type d -name 'CodeNomad.app' -print0)
           if [ "${#apps[@]}" -eq 0 ]; then
             echo "No CodeNomad.app found under $release_root" >&2
             exit 1
