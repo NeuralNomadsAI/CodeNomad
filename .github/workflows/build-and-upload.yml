@@ -86,6 +86,37 @@ jobs:
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
+      - name: Ad-hoc sign Electron macOS app bundles (seal resources)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_root="packages/electron-app/release"
+          apps=()
+          while IFS= read -r -d '' app; do
+            apps+=("$app")
+          done < <(find "$release_root" -type d -name 'CodeNomad.app' -print0)
+
+          if [ "${#apps[@]}" -eq 0 ]; then
+            echo "No CodeNomad.app found under $release_root" >&2
+            exit 1
+          fi
+
+          # GitHub macOS runners typically have no signing identity. Without any signature,
+          # the shipped .app can fail Gatekeeper with:
+          #   code has no resources but signature indicates they must be present
+          # Ad-hoc signing seals bundle resources and makes the signature internally consistent.
+          if security find-identity -p codesigning -v | grep -q "0 valid identities found"; then
+            echo "No valid macOS codesigning identity found; applying ad-hoc signature"
+            for app in "${apps[@]}"; do
+              echo "codesign (adhoc): $app"
+              codesign --force --deep --sign - "$app"
+              codesign --verify --deep --strict --verbose=2 "$app"
+            done
+          else
+            echo "macOS codesigning identity present; skipping ad-hoc signing"
+          fi
+
       - name: Repackage Electron macOS zips (ditto)
         shell: bash
         run: |
@@ -127,13 +158,6 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-
-          # Dev CI builds typically don't have a macOS signing identity available.
-          # When no identity is present, electron-builder skips signing and strict verification will fail.
-          if security find-identity -p codesigning -v | grep -q "0 valid identities found"; then
-            echo "No valid macOS codesigning identity found; skipping codesign verification"
-            exit 0
-          fi
 
           tmp_dir=$(mktemp -d)
           trap 'rm -rf "$tmp_dir"' EXIT
