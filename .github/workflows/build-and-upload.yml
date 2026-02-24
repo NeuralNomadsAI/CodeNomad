@@ -114,6 +114,13 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
+          # Dev CI builds typically don't have a macOS signing identity available.
+          # When no identity is present, electron-builder skips signing and strict verification will fail.
+          if security find-identity -p codesigning -v | grep -q "0 valid identities found"; then
+            echo "No valid macOS codesigning identity found; skipping codesign verification"
+            exit 0
+          fi
+
           tmp_dir=$(mktemp -d)
           trap 'rm -rf "$tmp_dir"' EXIT
 
