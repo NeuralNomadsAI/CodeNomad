@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, Trash2 } from "lucide-solid"
+import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, MessageSquareX, Trash2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -13,6 +13,7 @@ import { sessions, setActiveParentSession, setActiveSession } from "../stores/se
 import { setActiveInstanceId } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessagePart } from "../stores/session-actions"
+import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
 
 const TOOL_ICON = "🔧"
@@ -196,6 +197,7 @@ interface MessageContentItemProps {
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -282,6 +284,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           sessionId={props.sessionId}
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
+          showDeleteMessage={props.showDeleteMessage}
           onRevert={props.onRevert}
           onFork={props.onFork}
           onContentRendered={props.onContentRendered}
@@ -298,11 +301,13 @@ interface ToolCallItemProps {
   messageId: string
   partId: string
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
 }
 
 function ToolCallItem(props: ToolCallItemProps) {
   const { t } = useI18n()
   const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -370,6 +375,27 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
+  const handleDeleteMessage = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!props.showDeleteMessage) return
+    if (deletingMessage()) return
+
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
@@ -381,7 +407,7 @@ function ToolCallItem(props: ToolCallItemProps) {
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
             </div>
 
-            <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2">
               <Show when={taskSessionId()}>
                 <button
                   class="tool-call-header-button"
@@ -395,18 +421,31 @@ function ToolCallItem(props: ToolCallItemProps) {
                 </button>
               </Show>
 
-              <button
-                class="tool-call-header-button"
-                type="button"
-                disabled={deleteDisabled()}
-                onClick={handleDeleteToolPart}
-                title={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
-                aria-label={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
-              >
-                <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+                <button
+                  class="tool-call-header-button"
+                  type="button"
+                  disabled={deleteDisabled()}
+                  onClick={handleDeleteToolPart}
+                  title={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
+                  aria-label={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
+                >
+                  <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+
+                <Show when={props.showDeleteMessage}>
+                  <button
+                    class="tool-call-header-button"
+                    type="button"
+                    disabled={deletingMessage()}
+                    onClick={handleDeleteMessage}
+                    title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                    aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  >
+                    <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
+              </div>
             </div>
-          </div>
 
           <ToolCall
             toolCall={resolvedToolPart()}
@@ -670,7 +709,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       {(resolvedBlock) => (
         <div class="message-stream-block" data-message-id={resolvedBlock().record.id}>
           <For each={resolvedBlock().items}>
-            {(item) => (
+            {(item, index) => (
               <Switch>
                 <Match when={item.type === "content"}>
                   <MessageContentItem
@@ -681,6 +720,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     startPartId={(item as ContentDisplayItem).startPartId}
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
+                    showDeleteMessage={index() === 0}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
@@ -697,6 +737,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                           store={props.store}
                           messageId={toolItem.messageId}
                           partId={toolItem.partId}
+                          showDeleteMessage={index() === 0}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>
@@ -709,6 +750,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                     part={(item as StepDisplayItem).part}
                     messageInfo={(item as StepDisplayItem).messageInfo}
                     showAgentMeta
+                    showDeleteMessage={index() === 0}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    messageId={props.messageId}
                   />
                 </Match>
                 <Match when={item.type === "step-finish"}>
@@ -718,6 +763,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageInfo={(item as StepDisplayItem).messageInfo}
                     showUsage={props.showUsageMetrics()}
                     borderColor={(item as StepDisplayItem).accentColor}
+                    showDeleteMessage={index() === 0}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    messageId={props.messageId}
                   />
                 </Match>
                 <Match when={item.type === "compaction"}>
@@ -729,6 +778,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     sessionId={props.sessionId}
                     messageId={(item as CompactionDisplayItem).messageId}
                     partId={(item as CompactionDisplayItem).partId}
+                    showDeleteMessage={index() === 0}
                   />
                 </Match>
                 <Match when={item.type === "reasoning"}>
@@ -741,6 +791,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     partId={(item as ReasoningDisplayItem).partId}
                     showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
+                    showDeleteMessage={index() === 0}
                   />
                 </Match>
               </Switch>
@@ -759,6 +810,10 @@ interface StepCardProps {
   showAgentMeta?: boolean
   showUsage?: boolean
   borderColor?: string
+  showDeleteMessage?: boolean
+  instanceId?: string
+  sessionId?: string
+  messageId?: string
 }
 
 interface CompactionCardProps {
@@ -769,11 +824,13 @@ interface CompactionCardProps {
   sessionId: string
   messageId: string
   partId: string
+  showDeleteMessage?: boolean
 }
 
 function CompactionCard(props: CompactionCardProps) {
   const { t } = useI18n()
   const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
   const isAuto = () => Boolean((props.part as any)?.auto)
   const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
@@ -801,6 +858,27 @@ function CompactionCard(props: CompactionCardProps) {
     }
   }
 
+  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
+
+  const handleDeleteMessage = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.showDeleteMessage) return
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
   return (
     <div
       class={`${containerClass()} relative`}
@@ -808,15 +886,31 @@ function CompactionCard(props: CompactionCardProps) {
       role="status"
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
-      <button
-        type="button"
-        class="tool-call-header-button absolute right-2 top-1/2 -translate-y-1/2"
-        disabled={!canDelete()}
-        onClick={handleDelete}
-        title={t("messagePart.actions.deleteTitle")}
-      >
-        {deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-      </button>
+      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        <Show when={props.showDeleteMessage}>
+          <button
+            type="button"
+            class="tool-call-header-button"
+            disabled={!canDeleteMessage()}
+            onClick={handleDeleteMessage}
+            title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+          >
+            <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </Show>
+
+        <button
+          type="button"
+          class="tool-call-header-button"
+          disabled={!canDelete()}
+          onClick={handleDelete}
+          title={t("messagePart.actions.deleteTitle")}
+          aria-label={t("messagePart.actions.deleteTitle")}
+        >
+          {deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+        </button>
+      </div>
 
       <div class="message-compaction-row">
         <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
@@ -828,6 +922,7 @@ function CompactionCard(props: CompactionCardProps) {
 
 function StepCard(props: StepCardProps) {
   const { t } = useI18n()
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -872,6 +967,27 @@ function StepCard(props: StepCardProps) {
 
   const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
 
+  const canDeleteMessage = () =>
+    Boolean(props.showDeleteMessage && props.instanceId && props.sessionId && props.messageId) && !deletingMessage()
+
+  const handleDeleteMessage = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId!, props.sessionId!, props.messageId!)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
 
   const renderUsageChips = (usage: NonNullable<ReturnType<typeof usageStats>>) => {
     const entries = [
@@ -902,7 +1018,20 @@ function StepCard(props: StepCardProps) {
       return null
     }
     return (
-      <div class={`message-step-card message-step-finish message-step-finish-flush`} style={finishStyle()}>
+      <div class={`message-step-card message-step-finish message-step-finish-flush relative`} style={finishStyle()}>
+        <Show when={props.showDeleteMessage}>
+          <button
+            type="button"
+            class="message-action-button absolute right-2 top-1/2 -translate-y-1/2"
+            disabled={!canDeleteMessage()}
+            onClick={handleDeleteMessage}
+            title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+          >
+            <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </Show>
+
         {renderUsageChips(usage)}
       </div>
     )
@@ -942,12 +1071,14 @@ interface ReasoningCardProps {
   partId: string
   showAgentMeta?: boolean
   defaultExpanded?: boolean
+  showDeleteMessage?: boolean
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1035,6 +1166,27 @@ function ReasoningCard(props: ReasoningCardProps) {
     }
   }
 
+  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
+
+  const handleDeleteMessage = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.showDeleteMessage) return
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
   return (
     <div class="message-reasoning-card">
       <div class="message-reasoning-header">
@@ -1091,6 +1243,19 @@ function ReasoningCard(props: ReasoningCardProps) {
               title={t("messagePart.actions.deleteTitle")}
             >
               <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </Show>
+
+          <Show when={props.showDeleteMessage}>
+            <button
+              type="button"
+              class="message-action-button"
+              onClick={handleDeleteMessage}
+              disabled={!canDeleteMessage()}
+              aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+              title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            >
+              <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </Show>
 

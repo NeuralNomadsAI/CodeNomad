@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
-import { Copy, ExternalLink, Split, Trash2, Undo } from "lucide-solid"
+import { Copy, MessageSquareX, Split, Trash2, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -7,7 +7,7 @@ import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessagePart } from "../stores/session-actions"
+import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
 
 interface MessageItemProps {
@@ -21,12 +21,14 @@ interface MessageItemProps {
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
 }
 
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
   const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -234,6 +236,22 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
+  const handleDeleteMessage = async () => {
+    if (deletingMessage()) return
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId, props.sessionId, props.record.id)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
   if (!isUser() && !hasContent() && !isGenerating()) {
     return null
   }
@@ -326,6 +344,18 @@ export default function MessageItem(props: MessageItemProps) {
                 >
                   <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
+
+                <Show when={props.showDeleteMessage}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleDeleteMessage}
+                    disabled={deletingMessage()}
+                    title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                    aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  >
+                    <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
               </div>
             </Show>
             <Show when={!isUser()}>
@@ -351,6 +381,18 @@ export default function MessageItem(props: MessageItemProps) {
                       <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
                     </button>
                   )}
+                </Show>
+
+                <Show when={props.showDeleteMessage}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleDeleteMessage}
+                    disabled={deletingMessage()}
+                    title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                    aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  >
+                    <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
                 </Show>
               </div>
             </Show>
