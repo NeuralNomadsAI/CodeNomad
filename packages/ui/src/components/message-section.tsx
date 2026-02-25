@@ -10,6 +10,7 @@ import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
@@ -145,6 +146,8 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   }
   const [activeMessageId, setActiveMessageId] = createSignal<string | null>(null)
+
+  const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
  
   const changeToken = createMemo(() => String(sessionRevision()))
   const isActive = createMemo(() => props.isActive !== false)
@@ -899,6 +902,8 @@ export default function MessageSection(props: MessageSectionProps) {
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
+              deleteHover={deleteHover}
+              onDeleteHoverChange={setDeleteHover}
               setBottomSentinel={setBottomSentinel}
               suspendMeasurements={() => !isActive()}
             />
@@ -957,6 +962,7 @@ export default function MessageSection(props: MessageSectionProps) {
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
+              deleteHover={deleteHover}
             />
           </div>
         </Show>

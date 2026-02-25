@@ -2,6 +2,7 @@ import { Index, type Accessor } from "solid-js"
 import VirtualItem from "./virtual-item"
 import MessageBlock from "./message-block"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 export function getMessageAnchorId(messageId: string) {
   return `message-anchor-${messageId}`
@@ -23,6 +24,8 @@ interface MessageBlockListProps {
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  deleteHover?: Accessor<DeleteHoverState>
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
   setBottomSentinel: (element: HTMLDivElement | null) => void
   suspendMeasurements?: () => boolean
 }
@@ -51,6 +54,8 @@ export default function MessageBlockList(props: MessageBlockListProps) {
               showThinking={props.showThinking}
               thinkingDefaultExpanded={props.thinkingDefaultExpanded}
               showUsageMetrics={props.showUsageMetrics}
+              deleteHover={props.deleteHover}
+              onDeleteHoverChange={props.onDeleteHoverChange}
               onRevert={props.onRevert}
               onFork={props.onFork}
               onContentRendered={props.onContentRendered}

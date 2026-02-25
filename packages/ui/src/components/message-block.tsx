@@ -15,6 +15,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessagePart } from "../stores/session-actions"
 import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
@@ -198,7 +199,7 @@ interface MessageContentItemProps {
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
   showDeleteMessage?: boolean
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -286,7 +287,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
           showDeleteMessage={props.showDeleteMessage}
-          onDeleteMessageHoverChange={props.onDeleteMessageHoverChange}
+          onDeleteHoverChange={props.onDeleteHoverChange}
           onRevert={props.onRevert}
           onFork={props.onFork}
           onContentRendered={props.onContentRendered}
@@ -304,7 +305,7 @@ interface ToolCallItemProps {
   partId: string
   onContentRendered?: () => void
   showDeleteMessage?: boolean
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 function ToolCallItem(props: ToolCallItemProps) {
@@ -430,8 +431,14 @@ function ToolCallItem(props: ToolCallItemProps) {
                   type="button"
                   disabled={deleteDisabled()}
                   onClick={handleDeleteToolPart}
-                  onMouseEnter={() => setHoverDeletePart(true)}
-                  onMouseLeave={() => setHoverDeletePart(false)}
+                  onMouseEnter={() => {
+                    setHoverDeletePart(true)
+                    props.onDeleteHoverChange?.({ kind: "part", messageId: props.messageId, partId: props.partId, partType: "tool" })
+                  }}
+                  onMouseLeave={() => {
+                    setHoverDeletePart(false)
+                    props.onDeleteHoverChange?.({ kind: "none" })
+                  }}
                   title={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
                   aria-label={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
                 >
@@ -444,8 +451,8 @@ function ToolCallItem(props: ToolCallItemProps) {
                     type="button"
                     disabled={deletingMessage()}
                     onClick={handleDeleteMessage}
-                    onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-                    onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
@@ -517,6 +524,8 @@ interface MessageBlockProps {
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   showUsageMetrics: () => boolean
+  deleteHover?: () => DeleteHoverState
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
@@ -527,10 +536,10 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
-  const [deleteMessageHovered, setDeleteMessageHovered] = createSignal(false)
 
-  const handleDeleteMessageHoverChange = (hovered: boolean) => {
-    setDeleteMessageHovered(hovered)
+  const isDeleteMessageHovered = () => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    return hover.kind === "message" && hover.messageId === props.messageId
   }
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
@@ -723,7 +732,7 @@ export default function MessageBlock(props: MessageBlockProps) {
         <div
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
-          data-delete-message-hover={deleteMessageHovered() ? "true" : undefined}
+          data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
         >
           <For each={resolvedBlock().items}>
             {(item, index) => (
@@ -738,7 +747,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
                     showDeleteMessage={index() === 0}
-                    onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
@@ -756,7 +765,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                           messageId={toolItem.messageId}
                           partId={toolItem.partId}
                           showDeleteMessage={index() === 0}
-                          onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                          onDeleteHoverChange={props.onDeleteHoverChange}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>
@@ -773,7 +782,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
                 <Match when={item.type === "step-finish"}>
@@ -787,7 +796,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
-                    onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
                 <Match when={item.type === "compaction"}>
@@ -800,7 +809,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={(item as CompactionDisplayItem).messageId}
                     partId={(item as CompactionDisplayItem).partId}
                     showDeleteMessage={index() === 0}
-                    onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
                 <Match when={item.type === "reasoning"}>
@@ -814,7 +823,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
                     showDeleteMessage={index() === 0}
-                    onDeleteMessageHoverChange={handleDeleteMessageHoverChange}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
               </Switch>
@@ -837,7 +846,7 @@ interface StepCardProps {
   instanceId?: string
   sessionId?: string
   messageId?: string
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 interface CompactionCardProps {
@@ -849,7 +858,7 @@ interface CompactionCardProps {
   messageId: string
   partId: string
   showDeleteMessage?: boolean
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 function CompactionCard(props: CompactionCardProps) {
@@ -920,8 +929,8 @@ function CompactionCard(props: CompactionCardProps) {
             class="tool-call-header-button"
             disabled={!canDeleteMessage()}
             onClick={handleDeleteMessage}
-            onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-            onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+            onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+            onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
             title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
             aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
           >
@@ -934,8 +943,14 @@ function CompactionCard(props: CompactionCardProps) {
           class="tool-call-header-button"
           disabled={!canDelete()}
           onClick={handleDelete}
-          onMouseEnter={() => setHoverDeletePart(true)}
-          onMouseLeave={() => setHoverDeletePart(false)}
+          onMouseEnter={() => {
+            setHoverDeletePart(true)
+            props.onDeleteHoverChange?.({ kind: "part", messageId: props.messageId, partId: props.partId, partType: "compaction" })
+          }}
+          onMouseLeave={() => {
+            setHoverDeletePart(false)
+            props.onDeleteHoverChange?.({ kind: "none" })
+          }}
           title={t("messagePart.actions.deleteTitle")}
           aria-label={t("messagePart.actions.deleteTitle")}
         >
@@ -1056,8 +1071,8 @@ function StepCard(props: StepCardProps) {
             class="message-action-button absolute right-2 top-1/2 -translate-y-1/2"
             disabled={!canDeleteMessage()}
             onClick={handleDeleteMessage}
-            onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-            onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+            onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId! })}
+            onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
             title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
             aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
           >
@@ -1105,7 +1120,7 @@ interface ReasoningCardProps {
   showAgentMeta?: boolean
   defaultExpanded?: boolean
   showDeleteMessage?: boolean
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
@@ -1274,8 +1289,14 @@ function ReasoningCard(props: ReasoningCardProps) {
               class="message-action-button"
               onClick={handleDelete}
               disabled={!canDelete()}
-              onMouseEnter={() => setHoverDeletePart(true)}
-              onMouseLeave={() => setHoverDeletePart(false)}
+              onMouseEnter={() => {
+                setHoverDeletePart(true)
+                props.onDeleteHoverChange?.({ kind: "part", messageId: props.messageId, partId: props.partId, partType: "reasoning" })
+              }}
+              onMouseLeave={() => {
+                setHoverDeletePart(false)
+                props.onDeleteHoverChange?.({ kind: "none" })
+              }}
               aria-label={t("messagePart.actions.deleteTitle")}
               title={t("messagePart.actions.deleteTitle")}
             >
@@ -1289,8 +1310,8 @@ function ReasoningCard(props: ReasoningCardProps) {
               class="message-action-button"
               onClick={handleDeleteMessage}
               disabled={!canDeleteMessage()}
-              onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-              onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
               aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
               title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
             >

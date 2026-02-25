@@ -9,6 +9,7 @@ import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -22,7 +23,7 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
   showDeleteMessage?: boolean
-  onDeleteMessageHoverChange?: (hovered: boolean) => void
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
@@ -354,8 +355,8 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
-                    onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-                    onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
@@ -381,8 +382,14 @@ export default function MessageItem(props: MessageItemProps) {
                       class="message-action-button"
                       onClick={() => void handleDeletePart(partId())}
                       disabled={isDeletingPart(partId())}
-                      onMouseEnter={() => setHoveredDeletePartId(partId())}
-                      onMouseLeave={() => setHoveredDeletePartId(null)}
+                      onMouseEnter={() => {
+                        setHoveredDeletePartId(partId())
+                        props.onDeleteHoverChange?.({ kind: "part", messageId: props.record.id, partId: partId(), partType: "text" })
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredDeletePartId(null)
+                        props.onDeleteHoverChange?.({ kind: "none" })
+                      }}
                       title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                       aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                     >
@@ -396,8 +403,8 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
-                    onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
-                    onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
@@ -507,8 +514,16 @@ export default function MessageItem(props: MessageItemProps) {
                       onClick={() => void handleDeletePart(attachment.id)}
                       class="attachment-remove"
                       disabled={isDeletingPart(attachment.id)}
-                      onMouseEnter={() => (attachment.id ? setHoveredDeletePartId(attachment.id) : undefined)}
-                      onMouseLeave={() => setHoveredDeletePartId(null)}
+                      onMouseEnter={() => {
+                        if (attachment.id) {
+                          setHoveredDeletePartId(attachment.id)
+                          props.onDeleteHoverChange?.({ kind: "part", messageId: props.record.id, partId: attachment.id, partType: "file" })
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredDeletePartId(null)
+                        props.onDeleteHoverChange?.({ kind: "none" })
+                      }}
                       aria-label={t("messagePart.actions.deleteTitle")}
                       title={t("messagePart.actions.deleteTitle")}
                     >

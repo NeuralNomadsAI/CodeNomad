@@ -7,6 +7,7 @@ import { buildRecordDisplayData } from "../stores/message-v2/record-display-cach
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -19,6 +20,8 @@ export interface TimelineSegment {
   shortLabel?: string
   variant?: "auto" | "manual"
   toolPartIds?: string[]
+  partIds?: string[]
+  partId?: string
 }
 
 interface MessageTimelineProps {
@@ -28,6 +31,7 @@ interface MessageTimelineProps {
   instanceId: string
   sessionId: string
   showToolSegments?: boolean
+  deleteHover?: () => DeleteHoverState
 }
 
 const MAX_TOOLTIP_LENGTH = 220
@@ -42,6 +46,7 @@ interface PendingSegment {
   toolTypeLabels: string[]
   toolIcons: string[]
   toolPartIds: string[]
+  partIds: string[]
   hasPrimaryText: boolean
 }
 
@@ -191,6 +196,7 @@ export function buildTimelineSegments(
       tooltip,
       shortLabel,
       toolPartIds: isToolSegment ? pending.toolPartIds : undefined,
+      partIds: !isToolSegment ? pending.partIds : undefined,
     })
     segmentIndex += 1
     pending = null
@@ -199,7 +205,17 @@ export function buildTimelineSegments(
   const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
     if (!pending || pending.type !== type) {
       flushPending()
-      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], toolPartIds: [], hasPrimaryText: type !== "assistant" }
+      pending = {
+        type,
+        texts: [],
+        reasoningTexts: [],
+        toolTitles: [],
+        toolTypeLabels: [],
+        toolIcons: [],
+        toolPartIds: [],
+        partIds: [],
+        hasPrimaryText: type !== "assistant",
+      }
     }
     return pending!
   }
@@ -228,6 +244,9 @@ export function buildTimelineSegments(
       const target = ensureSegment(defaultContentType)
       if (target) {
         target.reasoningTexts.push(text)
+        if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
+          target.partIds.push((part as any).id)
+        }
       }
       continue
     }
@@ -235,6 +254,7 @@ export function buildTimelineSegments(
     if (part.type === "compaction") {
       flushPending()
       const isAuto = Boolean((part as any)?.auto)
+      const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
       result.push({
         id: `${record.id}:${segmentIndex}`,
         messageId: record.id,
@@ -242,6 +262,7 @@ export function buildTimelineSegments(
         label: segmentLabel("compaction"),
         tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
         variant: isAuto ? "auto" : "manual",
+        partId,
       })
       segmentIndex += 1
       continue
@@ -257,6 +278,9 @@ export function buildTimelineSegments(
     if (target) {
       target.texts.push(text)
       target.hasPrimaryText = true
+      if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
+        target.partIds.push((part as any).id)
+      }
     }
   }
 
@@ -278,6 +302,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
+  const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
  
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
     if (element) {
@@ -426,16 +451,34 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
            }
 
           return (
-             <button
-               ref={(el) => registerButtonRef(segment.id, el)}
-               type="button"
-               data-variant={segment.variant}
-               class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+              <button
+                ref={(el) => registerButtonRef(segment.id, el)}
+                type="button"
+                data-variant={segment.variant}
+                class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
 
-              aria-current={isActive() ? "true" : undefined}
-              aria-hidden={isHidden() ? "true" : undefined}
-              onClick={() => props.onSegmentClick?.(segment)}
-              onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                data-delete-hover={(() => {
+                  const hover = deleteHover() as DeleteHoverState
+                  if (hover.kind === "message") {
+                    return hover.messageId === segment.messageId ? "true" : undefined
+                  }
+                  if (hover.kind === "part") {
+                    if (hover.messageId !== segment.messageId) return undefined
+                    if (segment.type === "tool") {
+                      return segment.toolPartIds?.includes(hover.partId) ? "true" : undefined
+                    }
+                    if (segment.type === "compaction") {
+                      return segment.partId === hover.partId ? "true" : undefined
+                    }
+                    return segment.partIds?.includes(hover.partId) ? "true" : undefined
+                  }
+                  return undefined
+                })()}
+
+               aria-current={isActive() ? "true" : undefined}
+               aria-hidden={isHidden() ? "true" : undefined}
+               onClick={() => props.onSegmentClick?.(segment)}
+               onMouseEnter={(event) => handleMouseEnter(segment, event)}
               onMouseLeave={handleMouseLeave}
             >
               <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
