@@ -7,7 +7,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { FileContent, FileNode, File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"

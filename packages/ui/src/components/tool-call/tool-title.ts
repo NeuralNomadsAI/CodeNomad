@@ -1,4 +1,4 @@
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRendererContext, ToolRenderer, ToolCallPart } from "./types"
 import { getDefaultToolAction, getToolName, isToolStateCompleted, isToolStateRunning } from "./utils"
 import { enMessages } from "../../lib/i18n/messages/en"

@@ -44,7 +44,7 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
 
-type ToolState = import("@opencode-ai/sdk").ToolState
+type ToolState = import("@opencode-ai/sdk/v2").ToolState
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48

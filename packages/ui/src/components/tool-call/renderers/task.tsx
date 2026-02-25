@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
 import { resolveTitleForTool } from "../tool-title"

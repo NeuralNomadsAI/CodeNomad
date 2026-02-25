@@ -1,5 +1,5 @@
 import type { Accessor, JSXElement } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ClientPart } from "../../types/message"
 
 export type ToolCallPart = Extract<ClientPart, { type: "tool" }>

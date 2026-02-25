@@ -23,10 +23,10 @@ const TOOL_BORDER_COLOR = "var(--message-tool-border)"
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 
-type ToolState = import("@opencode-ai/sdk").ToolState
-type ToolStateRunning = import("@opencode-ai/sdk").ToolStateRunning
-type ToolStateCompleted = import("@opencode-ai/sdk").ToolStateCompleted
-type ToolStateError = import("@opencode-ai/sdk").ToolStateError
+type ToolState = import("@opencode-ai/sdk/v2").ToolState
+type ToolStateRunning = import("@opencode-ai/sdk/v2").ToolStateRunning
+type ToolStateCompleted = import("@opencode-ai/sdk/v2").ToolStateCompleted
+type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 function isToolStateRunning(state: ToolState | undefined): state is ToolStateRunning {
   return Boolean(state && state.status === "running")

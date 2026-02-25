@@ -1,6 +1,6 @@
 import { For, Show, createSignal } from "solid-js"
 import { Copy, ExternalLink, Split, Trash2, Undo } from "lucide-solid"
-import type { MessageInfo, ClientPart } from "../types/message"
+import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
@@ -258,8 +258,16 @@ export default function MessageItem(props: MessageItemProps) {
     if (!info || info.role !== "assistant") return ""
     const modelID = info.modelID || ""
     const providerID = info.providerID || ""
-    if (modelID && providerID) return `${providerID}/${modelID}`
-    return modelID
+
+    const base = modelID && providerID ? `${providerID}/${modelID}` : modelID
+    if (!base) return ""
+
+    const variant = (info as SDKAssistantMessageV2).variant
+    if (typeof variant === "string" && variant.trim().length > 0) {
+      return `${base} (${variant.trim()})`
+    }
+
+    return base
   }
 
   const agentMeta = () => {
