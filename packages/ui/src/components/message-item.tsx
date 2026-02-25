@@ -22,6 +22,7 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
   showDeleteMessage?: boolean
+  onDeleteMessageHoverChange?: (hovered: boolean) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
@@ -29,6 +30,7 @@ export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
   const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
   const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [hoveredDeletePartId, setHoveredDeletePartId] = createSignal<string | null>(null)
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -352,6 +354,8 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
+                    onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
+                    onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
@@ -377,6 +381,8 @@ export default function MessageItem(props: MessageItemProps) {
                       class="message-action-button"
                       onClick={() => void handleDeletePart(partId())}
                       disabled={isDeletingPart(partId())}
+                      onMouseEnter={() => setHoveredDeletePartId(partId())}
+                      onMouseLeave={() => setHoveredDeletePartId(null)}
                       title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                       aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
                     >
@@ -390,6 +396,8 @@ export default function MessageItem(props: MessageItemProps) {
                     class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
+                    onMouseEnter={() => props.onDeleteMessageHoverChange?.(true)}
+                    onMouseLeave={() => props.onDeleteMessageHoverChange?.(false)}
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
@@ -430,16 +438,27 @@ export default function MessageItem(props: MessageItemProps) {
         </Show>
 
         <For each={messageParts()}>
-          {(part) => (
-            <MessagePart
-              part={part}
-              messageType={props.record.role}
-              instanceId={props.instanceId}
-              sessionId={props.sessionId}
-              primaryUserTextPartId={primaryUserTextPartId()}
-              onRendered={props.onContentRendered}
-            />
-          )}
+          {(part) => {
+            const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
+            const isHoveredDeleteTarget = () => Boolean(partId) && hoveredDeletePartId() === partId
+
+            return (
+              <div
+                class="delete-hover-scope message-part-shell"
+                data-part-id={partId}
+                data-delete-part-hover={isHoveredDeleteTarget() ? "true" : undefined}
+              >
+                <MessagePart
+                  part={part}
+                  messageType={props.record.role}
+                  instanceId={props.instanceId}
+                  sessionId={props.sessionId}
+                  primaryUserTextPartId={primaryUserTextPartId()}
+                  onRendered={props.onContentRendered}
+                />
+              </div>
+            )
+          }}
         </For>
 
         <Show when={fileAttachments().length > 0}>
@@ -448,8 +467,13 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
+                const isHoveredDeleteTarget = () => hoveredDeletePartId() === attachment.id
                 return (
-                  <div class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`} title={name}>
+                  <div
+                    class={`delete-hover-scope attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
+                    data-delete-part-hover={isHoveredDeleteTarget() ? "true" : undefined}
+                    title={name}
+                  >
                     <Show when={isImage} fallback={
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path
@@ -483,6 +507,8 @@ export default function MessageItem(props: MessageItemProps) {
                       onClick={() => void handleDeletePart(attachment.id)}
                       class="attachment-remove"
                       disabled={isDeletingPart(attachment.id)}
+                      onMouseEnter={() => (attachment.id ? setHoveredDeletePartId(attachment.id) : undefined)}
+                      onMouseLeave={() => setHoveredDeletePartId(null)}
                       aria-label={t("messagePart.actions.deleteTitle")}
                       title={t("messagePart.actions.deleteTitle")}
                     >
