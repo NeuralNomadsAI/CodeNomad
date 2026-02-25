@@ -71,7 +71,7 @@ export const messagingMessages = {
   "messageItem.speaker.you": "Вы",
   "messageItem.speaker.assistant": "Ассистент",
   "messageItem.actions.revert": "Откатить",
-  "messageItem.actions.revertTitle": "Откатиться к этому сообщению",
+  "messageItem.actions.revertTitle": "Отменить изменения до этого места",
   "messageItem.actions.fork": "Форк",
   "messageItem.actions.forkTitle": "Форкнуть от этого сообщения",
   "messageItem.actions.copy": "Копировать",

@@ -71,7 +71,7 @@ export const messagingMessages = {
   "messageItem.speaker.you": "你",
   "messageItem.speaker.assistant": "助手",
   "messageItem.actions.revert": "回退",
-  "messageItem.actions.revertTitle": "回退到这条消息",
+  "messageItem.actions.revertTitle": "撤销到此处的更改",
   "messageItem.actions.fork": "分叉",
   "messageItem.actions.forkTitle": "从这条消息分叉",
   "messageItem.actions.copy": "复制",

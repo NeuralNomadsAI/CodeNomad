@@ -316,16 +316,15 @@ export default function MessageItem(props: MessageItemProps) {
           <div class="message-item-actions">
             <Show when={isUser()}>
               <div class="message-action-group">
-                <Show when={props.onRevert}>
-                  <button
-                    class="message-action-button"
-                    onClick={handleRevert}
-                    title={t("messageItem.actions.revert")}
-                    aria-label={t("messageItem.actions.revert")}
-                  >
-                    <Undo class="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
-                </Show>
+                <button
+                  class="message-action-button"
+                  onClick={handleCopy}
+                  title={copyLabel()}
+                  aria-label={copyLabel()}
+                >
+                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+
                 <Show when={props.onFork}>
                   <button
                     class="message-action-button"
@@ -336,14 +335,17 @@ export default function MessageItem(props: MessageItemProps) {
                     <Split class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
+
+                <Show when={props.onRevert}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleRevert}
+                    title={t("messageItem.actions.revertTitle")}
+                    aria-label={t("messageItem.actions.revertTitle")}
+                  >
+                    <Undo class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
 
                 <Show when={props.showDeleteMessage}>
                   <button

@@ -71,7 +71,7 @@ export const messagingMessages = {
   "messageItem.speaker.you": "Vous",
   "messageItem.speaker.assistant": "Assistant",
   "messageItem.actions.revert": "Revenir",
-  "messageItem.actions.revertTitle": "Revenir à ce message",
+  "messageItem.actions.revertTitle": "Annuler les changements jusqu'ici",
   "messageItem.actions.fork": "Fork",
   "messageItem.actions.forkTitle": "Fork depuis ce message",
   "messageItem.actions.copy": "Copier",
