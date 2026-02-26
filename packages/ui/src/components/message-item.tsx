@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
-import { Copy, MessageSquareX, Split, Trash2, Undo } from "lucide-solid"
+import { Copy, Split, Trash2, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -7,7 +7,7 @@ import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
+import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
 
@@ -23,21 +23,13 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
   showDeleteMessage?: boolean
-  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
-  const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
   const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [hoveredDeletePartId, setHoveredDeletePartId] = createSignal<string | null>(null)
-
-  const isDeleteHoveredFromStore = (partId: string) => {
-    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
-    return hover.kind === "part" && hover.messageId === props.record.id && hover.partId === partId
-  }
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -201,50 +193,6 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const deletableTextPartId = () => {
-    const part = props.parts.find((candidate) => {
-      if (!candidate || candidate.type !== "text") return false
-      const id = (candidate as any).id
-      if (typeof id !== "string" || id.length === 0) return false
-      return !Boolean((candidate as any).synthetic)
-    })
-    return (part as any)?.id as string | undefined
-  }
-
-  const isDeletingPart = (partId?: string) => {
-    if (!partId) return false
-    return deletingParts().has(partId)
-  }
-
-  const setPartDeleting = (partId: string, value: boolean) => {
-    setDeletingParts((prev) => {
-      const next = new Set(prev)
-      if (value) {
-        next.add(partId)
-      } else {
-        next.delete(partId)
-      }
-      return next
-    })
-  }
-
-  const handleDeletePart = async (partId?: string) => {
-    if (!partId) return
-    if (isDeletingPart(partId)) return
-    setPartDeleting(partId, true)
-    try {
-      await deleteMessagePart(props.instanceId, props.sessionId, props.record.id, partId)
-    } catch (error) {
-      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
-        title: t("messagePart.actions.deleteFailedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    } finally {
-      setPartDeleting(partId, false)
-    }
-  }
-
   const handleDeleteMessage = async () => {
     if (deletingMessage()) return
     setDeletingMessage(true)
@@ -366,7 +314,7 @@ export default function MessageItem(props: MessageItemProps) {
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
-                    <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
               </div>
@@ -382,28 +330,6 @@ export default function MessageItem(props: MessageItemProps) {
                   <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
 
-                <Show when={deletableTextPartId()}>
-                  {(partId) => (
-                    <button
-                      class="message-action-button"
-                      onClick={() => void handleDeletePart(partId())}
-                      disabled={isDeletingPart(partId())}
-                      onMouseEnter={() => {
-                        setHoveredDeletePartId(partId())
-                        props.onDeleteHoverChange?.({ kind: "part", messageId: props.record.id, partId: partId(), partType: "text" })
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredDeletePartId(null)
-                        props.onDeleteHoverChange?.({ kind: "none" })
-                      }}
-                      title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                      aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                    >
-                      <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  )}
-                </Show>
-
                 <Show when={props.showDeleteMessage}>
                   <button
                     class="message-action-button"
@@ -414,7 +340,7 @@ export default function MessageItem(props: MessageItemProps) {
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
-                    <MessageSquareX class="w-3.5 h-3.5" aria-hidden="true" />
+                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
               </div>
@@ -452,16 +378,8 @@ export default function MessageItem(props: MessageItemProps) {
 
         <For each={messageParts()}>
           {(part) => {
-            const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
-            const isHoveredDeleteTarget = () =>
-              Boolean(partId) && (hoveredDeletePartId() === partId || isDeleteHoveredFromStore(partId))
-
             return (
-              <div
-                class="delete-hover-scope message-part-shell"
-                data-part-id={partId}
-                data-delete-part-hover={isHoveredDeleteTarget() ? "true" : undefined}
-              >
+              <div class="message-part-shell">
                 <MessagePart
                   part={part}
                   messageType={props.record.role}
@@ -481,12 +399,9 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
-                const isHoveredDeleteTarget = () =>
-                  Boolean(attachment.id) && (hoveredDeletePartId() === attachment.id || isDeleteHoveredFromStore(attachment.id))
                 return (
                   <div
-                    class={`delete-hover-scope attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
-                    data-delete-part-hover={isHoveredDeleteTarget() ? "true" : undefined}
+                    class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
                     title={name}
                   >
                     <Show when={isImage} fallback={
@@ -516,29 +431,6 @@ export default function MessageItem(props: MessageItemProps) {
                         </svg>
                       </button>
                     </Show>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleDeletePart(attachment.id)}
-                      class="attachment-remove"
-                      disabled={isDeletingPart(attachment.id)}
-                      onMouseEnter={() => {
-                        if (attachment.id) {
-                          setHoveredDeletePartId(attachment.id)
-                          props.onDeleteHoverChange?.({ kind: "part", messageId: props.record.id, partId: attachment.id, partType: "file" })
-                        }
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredDeletePartId(null)
-                        props.onDeleteHoverChange?.({ kind: "none" })
-                      }}
-                      aria-label={t("messagePart.actions.deleteTitle")}
-                      title={t("messagePart.actions.deleteTitle")}
-                    >
-                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
                     <Show when={isImage}>
                       <div class="attachment-chip-preview">
                         <img src={attachment.url} alt={name} />

@@ -419,16 +419,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             if (hover.kind === "message") {
               return hover.messageId === segment.messageId
             }
-            if (hover.kind === "part") {
-              if (hover.messageId !== segment.messageId) return false
-              if (segment.type === "tool") {
-                return segment.toolPartIds?.includes(hover.partId) ?? false
-              }
-              if (segment.type === "compaction") {
-                return segment.partId === hover.partId
-              }
-              return segment.partIds?.includes(hover.partId) ?? false
-            }
             return false
           }
 
