@@ -22,6 +22,7 @@ interface MessageBlockListProps {
   scrollContainer: Accessor<HTMLDivElement | undefined>
   loading?: boolean
   onRevert?: (messageId: string) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
   deleteHover?: Accessor<DeleteHoverState>
@@ -57,6 +58,7 @@ export default function MessageBlockList(props: MessageBlockListProps) {
               deleteHover={props.deleteHover}
               onDeleteHoverChange={props.onDeleteHoverChange}
               onRevert={props.onRevert}
+              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
               onContentRendered={props.onContentRendered}
             />

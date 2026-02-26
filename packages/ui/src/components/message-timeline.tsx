@@ -33,6 +33,7 @@ interface MessageTimelineProps {
   showToolSegments?: boolean
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
 }
 
 const MAX_TOOLTIP_LENGTH = 220
@@ -419,6 +420,16 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             if (hover.kind === "message") {
               return hover.messageId === segment.messageId
             }
+
+            if (hover.kind === "deleteUpTo") {
+              const ids = store().getSessionMessageIds(props.sessionId)
+              const targetIndex = ids.indexOf(hover.messageId)
+              if (targetIndex === -1) return false
+              const segmentIndex = ids.indexOf(segment.messageId)
+              if (segmentIndex === -1) return false
+              return segmentIndex >= targetIndex
+            }
+
             return false
           }
 
@@ -490,6 +501,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 store={store}
                 deleteHover={props.deleteHover}
                 onDeleteHoverChange={props.onDeleteHoverChange}
+                onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               />
             </div>
           )

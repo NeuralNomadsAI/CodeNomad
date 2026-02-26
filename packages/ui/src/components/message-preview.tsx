@@ -10,6 +10,7 @@ interface MessagePreviewProps {
   store: () => InstanceMessageStore
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
 }
 
 const MessagePreview: Component<MessagePreviewProps> = (props) => {
@@ -29,6 +30,7 @@ const MessagePreview: Component<MessagePreviewProps> = (props) => {
         showUsageMetrics={() => false}
         deleteHover={props.deleteHover}
         onDeleteHoverChange={props.onDeleteHoverChange}
+        onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
       />
     </div>
   )

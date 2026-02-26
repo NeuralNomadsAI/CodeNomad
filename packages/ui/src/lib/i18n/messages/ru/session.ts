@@ -67,6 +67,8 @@ export const sessionMessages = {
   "sessionView.alerts.abortFailed.title": "Не удалось остановить",
   "sessionView.alerts.revertFailed.message": "Не удалось откатиться к сообщению",
   "sessionView.alerts.revertFailed.title": "Не удалось откатиться",
+  "sessionView.alerts.deleteUpToFailed.message": "Не удалось удалить сообщения",
+  "sessionView.alerts.deleteUpToFailed.title": "Ошибка удаления",
   "sessionView.alerts.forkFailed.message": "Не удалось форкнуть сессию",
   "sessionView.alerts.forkFailed.title": "Не удалось форкнуть",
   "sessionView.attachments.expandPastedTextAriaLabel": "Развернуть вставленный текст",

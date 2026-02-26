@@ -24,6 +24,7 @@ export interface MessageSectionProps {
   sessionId: string
   loading?: boolean
   onRevert?: (messageId: string) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   registerScrollToBottom?: (fn: () => void) => void
   showSidebarToggle?: boolean
@@ -900,6 +901,7 @@ export default function MessageSection(props: MessageSectionProps) {
               scrollContainer={scrollElement}
               loading={props.loading}
               onRevert={props.onRevert}
+              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
               deleteHover={deleteHover}
@@ -964,6 +966,7 @@ export default function MessageSection(props: MessageSectionProps) {
               showToolSegments={showTimelineToolsPreference()}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
+              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
             />
           </div>
         </Show>

@@ -67,6 +67,8 @@ export const sessionMessages = {
   "sessionView.alerts.abortFailed.title": "停止失败",
   "sessionView.alerts.revertFailed.message": "回退到消息失败",
   "sessionView.alerts.revertFailed.title": "回退失败",
+  "sessionView.alerts.deleteUpToFailed.message": "无法删除消息",
+  "sessionView.alerts.deleteUpToFailed.title": "删除失败",
   "sessionView.alerts.forkFailed.message": "分叉会话失败",
   "sessionView.alerts.forkFailed.title": "分叉失败",
   "sessionView.attachments.expandPastedTextAriaLabel": "展开粘贴的文本",

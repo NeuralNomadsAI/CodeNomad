@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js"
-import { Copy, Split, Trash2, Undo } from "lucide-solid"
+import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -11,6 +11,14 @@ import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
 
+function DeleteUpToIcon() {
+  return (
+    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
+      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
+    </span>
+  )
+}
+
 interface MessageItemProps {
   record: MessageRecord
   messageInfo?: MessageInfo
@@ -19,6 +27,7 @@ interface MessageItemProps {
   isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
   onContentRendered?: () => void
@@ -30,6 +39,7 @@ export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -209,6 +219,17 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
+  const handleDeleteUpTo = async () => {
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.record.id)
+    } finally {
+      setDeletingUpTo(false)
+    }
+  }
+
   if (!isUser() && !hasContent() && !isGenerating()) {
     return null
   }
@@ -307,6 +328,18 @@ export default function MessageItem(props: MessageItemProps) {
                 <Show when={props.showDeleteMessage}>
                   <button
                     class="message-action-button"
+                    onClick={() => void handleDeleteUpTo()}
+                    disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={t("messageItem.actions.deleteMessagesUpTo")}
+                    aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+                  >
+                    <DeleteUpToIcon />
+                  </button>
+
+                  <button
+                    class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
                     onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
@@ -314,7 +347,7 @@ export default function MessageItem(props: MessageItemProps) {
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
-                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                    <Trash class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
               </div>
@@ -333,6 +366,18 @@ export default function MessageItem(props: MessageItemProps) {
                 <Show when={props.showDeleteMessage}>
                   <button
                     class="message-action-button"
+                    onClick={() => void handleDeleteUpTo()}
+                    disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={t("messageItem.actions.deleteMessagesUpTo")}
+                    aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+                  >
+                    <DeleteUpToIcon />
+                  </button>
+
+                  <button
+                    class="message-action-button"
                     onClick={handleDeleteMessage}
                     disabled={deletingMessage()}
                     onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
@@ -340,7 +385,7 @@ export default function MessageItem(props: MessageItemProps) {
                     title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                     aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
                   >
-                    <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                    <Trash class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
               </div>

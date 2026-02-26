@@ -67,6 +67,8 @@ export const sessionMessages = {
   "sessionView.alerts.abortFailed.title": "Stop failed",
   "sessionView.alerts.revertFailed.message": "Failed to revert to message",
   "sessionView.alerts.revertFailed.title": "Revert failed",
+  "sessionView.alerts.deleteUpToFailed.message": "Failed to delete messages",
+  "sessionView.alerts.deleteUpToFailed.title": "Delete failed",
   "sessionView.alerts.forkFailed.message": "Failed to fork session",
   "sessionView.alerts.forkFailed.title": "Fork failed",
   "sessionView.attachments.expandPastedTextAriaLabel": "Expand pasted text",
