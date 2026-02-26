@@ -23,6 +23,7 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   onContentRendered?: () => void
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
@@ -32,6 +33,11 @@ export default function MessageItem(props: MessageItemProps) {
   const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [hoveredDeletePartId, setHoveredDeletePartId] = createSignal<string | null>(null)
+
+  const isDeleteHoveredFromStore = (partId: string) => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    return hover.kind === "part" && hover.messageId === props.record.id && hover.partId === partId
+  }
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -447,7 +453,8 @@ export default function MessageItem(props: MessageItemProps) {
         <For each={messageParts()}>
           {(part) => {
             const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
-            const isHoveredDeleteTarget = () => Boolean(partId) && hoveredDeletePartId() === partId
+            const isHoveredDeleteTarget = () =>
+              Boolean(partId) && (hoveredDeletePartId() === partId || isDeleteHoveredFromStore(partId))
 
             return (
               <div
@@ -474,7 +481,8 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
-                const isHoveredDeleteTarget = () => hoveredDeletePartId() === attachment.id
+                const isHoveredDeleteTarget = () =>
+                  Boolean(attachment.id) && (hoveredDeletePartId() === attachment.id || isDeleteHoveredFromStore(attachment.id))
                 return (
                   <div
                     class={`delete-hover-scope attachment-chip ${isImage ? "attachment-chip-image" : ""}`}

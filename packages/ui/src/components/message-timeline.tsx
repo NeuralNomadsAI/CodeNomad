@@ -32,6 +32,7 @@ interface MessageTimelineProps {
   sessionId: string
   showToolSegments?: boolean
   deleteHover?: () => DeleteHoverState
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 const MAX_TOOLTIP_LENGTH = 220
@@ -497,6 +498,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 instanceId={props.instanceId}
                 sessionId={props.sessionId}
                 store={store}
+                deleteHover={props.deleteHover}
+                onDeleteHoverChange={props.onDeleteHoverChange}
               />
             </div>
           )

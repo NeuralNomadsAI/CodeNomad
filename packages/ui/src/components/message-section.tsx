@@ -963,6 +963,7 @@ export default function MessageSection(props: MessageSectionProps) {
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
               deleteHover={deleteHover}
+              onDeleteHoverChange={setDeleteHover}
             />
           </div>
         </Show>

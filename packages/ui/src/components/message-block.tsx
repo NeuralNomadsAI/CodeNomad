@@ -199,6 +199,7 @@ interface MessageContentItemProps {
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
@@ -287,6 +288,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
           showDeleteMessage={props.showDeleteMessage}
+          deleteHover={props.deleteHover}
           onDeleteHoverChange={props.onDeleteHoverChange}
           onRevert={props.onRevert}
           onFork={props.onFork}
@@ -305,6 +307,7 @@ interface ToolCallItemProps {
   partId: string
   onContentRendered?: () => void
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
@@ -401,10 +404,18 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
+  const isDeleteHoveredFromStore = () => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    return hover.kind === "part" && hover.messageId === props.messageId && hover.partId === props.partId
+  }
+
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
-        <div class="delete-hover-scope" data-delete-part-hover={hoverDeletePart() ? "true" : undefined}>
+        <div
+          class="delete-hover-scope"
+          data-delete-part-hover={(hoverDeletePart() || isDeleteHoveredFromStore()) ? "true" : undefined}
+        >
           <div class="tool-call-header-label">
             <div class="tool-call-header-meta">
               <span class="tool-call-icon">{TOOL_ICON}</span>
@@ -747,6 +758,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
                     showDeleteMessage={index() === 0}
+                    deleteHover={props.deleteHover}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
                     onFork={props.onFork}
@@ -765,6 +777,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                           messageId={toolItem.messageId}
                           partId={toolItem.partId}
                           showDeleteMessage={index() === 0}
+                          deleteHover={props.deleteHover}
                           onDeleteHoverChange={props.onDeleteHoverChange}
                           onContentRendered={props.onContentRendered}
                         />
@@ -809,6 +822,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={(item as CompactionDisplayItem).messageId}
                     partId={(item as CompactionDisplayItem).partId}
                     showDeleteMessage={index() === 0}
+                    deleteHover={props.deleteHover}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
@@ -823,6 +837,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
                     showDeleteMessage={index() === 0}
+                    deleteHover={props.deleteHover}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                   />
                 </Match>
@@ -858,6 +873,7 @@ interface CompactionCardProps {
   messageId: string
   partId: string
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
@@ -914,10 +930,15 @@ function CompactionCard(props: CompactionCardProps) {
     }
   }
 
+  const isDeleteHoveredFromStore = () => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    return hover.kind === "part" && hover.messageId === props.messageId && hover.partId === props.partId
+  }
+
   return (
     <div
       class={`delete-hover-scope ${containerClass()} relative`}
-      data-delete-part-hover={hoverDeletePart() ? "true" : undefined}
+      data-delete-part-hover={(hoverDeletePart() || isDeleteHoveredFromStore()) ? "true" : undefined}
       style={{ "border-left": `4px solid ${borderColor()}` }}
       role="status"
       aria-label={t("messageBlock.compaction.ariaLabel")}
@@ -1120,6 +1141,7 @@ interface ReasoningCardProps {
   showAgentMeta?: boolean
   defaultExpanded?: boolean
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
@@ -1129,6 +1151,11 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [deleting, setDeleting] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [hoverDeletePart, setHoverDeletePart] = createSignal(false)
+
+  const isDeleteHoveredFromStore = () => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    return hover.kind === "part" && hover.messageId === props.messageId && hover.partId === props.partId
+  }
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1238,7 +1265,10 @@ function ReasoningCard(props: ReasoningCardProps) {
   }
 
   return (
-    <div class="delete-hover-scope message-reasoning-card" data-delete-part-hover={hoverDeletePart() ? "true" : undefined}>
+    <div
+      class="delete-hover-scope message-reasoning-card"
+      data-delete-part-hover={(hoverDeletePart() || isDeleteHoveredFromStore()) ? "true" : undefined}
+    >
       <div class="message-reasoning-header">
         <button
           type="button"
