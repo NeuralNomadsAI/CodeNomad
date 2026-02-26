@@ -42,10 +42,6 @@ interface PendingSegment {
   type: TimelineSegmentType
   texts: string[]
   reasoningTexts: string[]
-  toolTitles: string[]
-  toolTypeLabels: string[]
-  toolIcons: string[]
-  toolPartIds: string[]
   partIds: string[]
   hasPrimaryText: boolean
 }
@@ -176,17 +172,12 @@ export function buildTimelineSegments(
       pending = null
       return
     }
-    const isToolSegment = pending.type === "tool"
-    const label = isToolSegment
-      ? pending.toolTypeLabels[0] || segmentLabel("tool")
-      : segmentLabel(pending.type)
-    const shortLabel = isToolSegment ? pending.toolIcons[0] || getToolIcon("tool") : undefined
-    const tooltip = isToolSegment
-      ? formatToolTooltip(pending.toolTitles, t)
-      : formatTextsTooltip(
-          [...pending.texts, ...pending.reasoningTexts],
-          pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
-        )
+    const label = segmentLabel(pending.type)
+    const shortLabel = undefined
+    const tooltip = formatTextsTooltip(
+      [...pending.texts, ...pending.reasoningTexts],
+      pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
+    )
  
     result.push({
       id: `${record.id}:${segmentIndex}`,
@@ -195,8 +186,7 @@ export function buildTimelineSegments(
       label,
       tooltip,
       shortLabel,
-      toolPartIds: isToolSegment ? pending.toolPartIds : undefined,
-      partIds: !isToolSegment ? pending.partIds : undefined,
+      partIds: pending.partIds,
     })
     segmentIndex += 1
     pending = null
@@ -209,10 +199,6 @@ export function buildTimelineSegments(
         type,
         texts: [],
         reasoningTexts: [],
-        toolTitles: [],
-        toolTypeLabels: [],
-        toolIcons: [],
-        toolPartIds: [],
         partIds: [],
         hasPrimaryText: type !== "assistant",
       }
@@ -227,14 +213,20 @@ export function buildTimelineSegments(
     if (!part || typeof part !== "object") continue
 
     if (part.type === "tool") {
-      const target = ensureSegment("tool")
+      flushPending()
       const toolPart = part as ToolCallPart
-      target.toolTitles.push(getToolTitle(toolPart, t))
-      target.toolTypeLabels.push(getToolTypeLabel(toolPart, t))
-      target.toolIcons.push(getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"))
-      if (typeof toolPart.id === "string" && toolPart.id.length > 0) {
-        target.toolPartIds.push(toolPart.id)
-      }
+      const partId = typeof toolPart.id === "string" ? toolPart.id : ""
+      const title = getToolTitle(toolPart, t)
+      result.push({
+        id: `${record.id}:${segmentIndex}`,
+        messageId: record.id,
+        type: "tool",
+        label: getToolTypeLabel(toolPart, t) || segmentLabel("tool"),
+        tooltip: formatToolTooltip([title], t),
+        shortLabel: getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"),
+        toolPartIds: partId ? [partId] : undefined,
+      })
+      segmentIndex += 1
       continue
     }
 
@@ -421,6 +413,24 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           onCleanup(() => buttonRefs.delete(segment.id))
           const isActive = () => props.activeMessageId === segment.messageId
 
+          const isDeleteHovered = () => {
+            const hover = deleteHover() as DeleteHoverState
+            if (hover.kind === "message") {
+              return hover.messageId === segment.messageId
+            }
+            if (hover.kind === "part") {
+              if (hover.messageId !== segment.messageId) return false
+              if (segment.type === "tool") {
+                return segment.toolPartIds?.includes(hover.partId) ?? false
+              }
+              if (segment.type === "compaction") {
+                return segment.partId === hover.partId
+              }
+              return segment.partIds?.includes(hover.partId) ?? false
+            }
+            return false
+          }
+
           const hasActivePermission = () => {
             if (segment.type !== "tool") return false
             const partIds = segment.toolPartIds ?? []
@@ -432,7 +442,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             return false
           }
 
-          const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission())
+          const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission() || isDeleteHovered())
 
            const shortLabelContent = () => {
              if (segment.type === "tool") {
@@ -451,29 +461,13 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
            }
 
           return (
-              <button
+             <button
                 ref={(el) => registerButtonRef(segment.id, el)}
                 type="button"
                 data-variant={segment.variant}
                 class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
 
-                data-delete-hover={(() => {
-                  const hover = deleteHover() as DeleteHoverState
-                  if (hover.kind === "message") {
-                    return hover.messageId === segment.messageId ? "true" : undefined
-                  }
-                  if (hover.kind === "part") {
-                    if (hover.messageId !== segment.messageId) return undefined
-                    if (segment.type === "tool") {
-                      return segment.toolPartIds?.includes(hover.partId) ? "true" : undefined
-                    }
-                    if (segment.type === "compaction") {
-                      return segment.partId === hover.partId ? "true" : undefined
-                    }
-                    return segment.partIds?.includes(hover.partId) ? "true" : undefined
-                  }
-                  return undefined
-                })()}
+                data-delete-hover={isDeleteHovered() ? "true" : undefined}
 
                aria-current={isActive() ? "true" : undefined}
                aria-hidden={isHidden() ? "true" : undefined}
