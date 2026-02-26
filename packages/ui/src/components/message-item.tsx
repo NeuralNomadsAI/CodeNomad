@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
@@ -27,6 +27,8 @@ interface MessageItemProps {
   isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
@@ -40,6 +42,46 @@ export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
+
+  let topRowEl: HTMLDivElement | undefined
+  let actionsEl: HTMLDivElement | undefined
+  let speakerPrimaryEl: HTMLDivElement | undefined
+  let metaMeasureEl: HTMLSpanElement | undefined
+  const [showMetaInline, setShowMetaInline] = createSignal(true)
+
+  const metaText = () => agentMeta()
+
+  const updateMetaLayout = () => {
+    const text = metaText()
+    if (!text) return
+    if (!topRowEl || !actionsEl || !speakerPrimaryEl || !metaMeasureEl) return
+
+    const rowWidth = topRowEl.getBoundingClientRect().width
+    const actionsWidth = actionsEl.getBoundingClientRect().width
+    const primaryWidth = speakerPrimaryEl.getBoundingClientRect().width
+    const metaWidth = metaMeasureEl.getBoundingClientRect().width
+
+    // Allow for the flex gap between left and actions.
+    const availableLeft = Math.max(0, rowWidth - actionsWidth - 12)
+    setShowMetaInline(primaryWidth + metaWidth + 8 <= availableLeft)
+  }
+
+  createEffect(() => {
+    const text = metaText()
+    if (!text || typeof ResizeObserver === "undefined") {
+      setShowMetaInline(true)
+      return
+    }
+
+    updateMetaLayout()
+    const observer = new ResizeObserver(() => updateMetaLayout())
+    if (topRowEl) observer.observe(topRowEl)
+    if (actionsEl) observer.observe(actionsEl)
+    if (speakerPrimaryEl) observer.observe(speakerPrimaryEl)
+    onCleanup(() => observer.disconnect())
+  })
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -284,14 +326,47 @@ export default function MessageItem(props: MessageItemProps) {
   return (
     <div class={containerClass()}>
       <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
-        <div class="message-item-header-row message-item-header-row--top">
-          <div class="message-speaker">
-            <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
-              {speakerLabel()}
-            </span>
+        <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
+          <div class="message-header-left">
+            <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.record.id, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
+              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
+                {speakerLabel()}
+              </span>
+            </div>
+
+            <Show when={metaText() && showMetaInline()}>
+              <span class="message-agent-meta-inline">{metaText()}</span>
+            </Show>
+
+            <Show when={metaText()}>
+              <span
+                ref={(el) => (metaMeasureEl = el)}
+                class="message-agent-meta-inline message-agent-meta-inline--measure"
+              >
+                {metaText()}
+              </span>
+            </Show>
           </div>
 
-          <div class="message-item-actions">
+          <div class="message-item-actions" ref={(el) => (actionsEl = el)}>
             <Show when={isUser()}>
               <div class="message-action-group">
                 <button
@@ -394,12 +469,10 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </div>
 
-        <Show when={agentMeta()}>
-          {(meta) => (
-            <div class="message-item-header-row message-item-header-row--bottom">
-              <span class="message-agent-meta">{meta()}</span>
-            </div>
-          )}
+        <Show when={metaText() && !showMetaInline()}>
+          <div class="message-item-header-row message-item-header-row--meta">
+            <span class="message-agent-meta-block">{metaText()}</span>
+          </div>
         </Show>
 
       </header>

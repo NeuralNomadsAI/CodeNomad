@@ -1,4 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { CheckSquare, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import MessageBlockList, { getMessageAnchorId } from "./message-block-list"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -9,6 +10,8 @@ import { useScrollCache } from "../lib/hooks/use-scroll-cache"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
+import { showAlertDialog } from "../stores/alerts"
+import { deleteMessage } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 
@@ -149,6 +152,61 @@ export default function MessageSection(props: MessageSectionProps) {
   const [activeMessageId, setActiveMessageId] = createSignal<string | null>(null)
 
   const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
+
+  const [selectedForDeletion, setSelectedForDeletion] = createSignal<Set<string>>(new Set<string>())
+  const isDeleteMode = createMemo(() => selectedForDeletion().size > 0)
+  const selectedDeleteCount = createMemo(() => selectedForDeletion().size)
+
+  const isMessageSelectedForDeletion = (messageId: string) => selectedForDeletion().has(messageId)
+
+  const setMessageSelectedForDeletion = (messageId: string, selected: boolean) => {
+    if (!messageId) return
+    setSelectedForDeletion((prev) => {
+      const next = new Set(prev)
+      if (selected) {
+        next.add(messageId)
+      } else {
+        next.delete(messageId)
+      }
+      return next
+    })
+  }
+
+  const clearDeleteMode = () => {
+    setSelectedForDeletion(new Set<string>())
+    setDeleteHover({ kind: "none" })
+  }
+
+  const selectAllForDeletion = () => {
+    setSelectedForDeletion(new Set<string>(messageIds()))
+  }
+
+  const deleteSelectedMessages = async () => {
+    const selected = selectedForDeletion()
+    if (selected.size === 0) return
+
+    const idsInSessionOrder = messageIds()
+    const toDelete: string[] = []
+    for (let idx = idsInSessionOrder.length - 1; idx >= 0; idx -= 1) {
+      const id = idsInSessionOrder[idx]
+      if (selected.has(id)) {
+        toDelete.push(id)
+      }
+    }
+
+    try {
+      for (const messageId of toDelete) {
+        await deleteMessage(props.instanceId, props.sessionId, messageId)
+      }
+      clearDeleteMode()
+    } catch (error) {
+      showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
+        title: t("messageSection.bulkDelete.failedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    }
+  }
  
   const changeToken = createMemo(() => String(sessionRevision()))
   const isActive = createMemo(() => props.isActive !== false)
@@ -171,6 +229,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [autoScroll, setAutoScroll] = createSignal(true)
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
+  const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
   const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
   const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
@@ -855,7 +914,10 @@ export default function MessageSection(props: MessageSectionProps) {
 
   return (
     <div class="message-stream-container">
-      <div class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}>
+      <div
+        class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
+        data-scroll-buttons={scrollButtonsCount()}
+      >
         <div class="message-stream-shell" ref={setShellElement}>
           <div class="message-stream" ref={setContainerRef} onScroll={handleScroll} onMouseUp={handleStreamMouseUp}>
             <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
@@ -906,6 +968,8 @@ export default function MessageSection(props: MessageSectionProps) {
               onContentRendered={handleContentRendered}
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
+              selectedMessageIds={selectedForDeletion}
+              onToggleSelectedMessage={setMessageSelectedForDeletion}
               setBottomSentinel={setBottomSentinel}
               suspendMeasurements={() => !isActive()}
             />
@@ -967,7 +1031,51 @@ export default function MessageSection(props: MessageSectionProps) {
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+              selectedMessageIds={selectedForDeletion}
+              onToggleSelectedMessage={setMessageSelectedForDeletion}
             />
+          </div>
+        </Show>
+
+        <Show when={isDeleteMode()}>
+          <div
+            class="message-delete-mode-toolbar"
+            role="toolbar"
+            aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
+          >
+            <span class="message-delete-mode-count" aria-hidden="true">
+              {selectedDeleteCount()}
+            </span>
+
+            <button
+              type="button"
+              class="message-delete-mode-button"
+              onClick={() => void deleteSelectedMessages()}
+              title={t("messageSection.bulkDelete.deleteSelectedTitle")}
+              aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
+            >
+              <Trash class="w-4 h-4" aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
+              class="message-delete-mode-button"
+              onClick={selectAllForDeletion}
+              title={t("messageSection.bulkDelete.selectAllTitle")}
+              aria-label={t("messageSection.bulkDelete.selectAllTitle")}
+            >
+              <CheckSquare class="w-4 h-4" aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
+              class="message-delete-mode-button"
+              onClick={clearDeleteMode}
+              title={t("messageSection.bulkDelete.cancelTitle")}
+              aria-label={t("messageSection.bulkDelete.cancelTitle")}
+            >
+              <X class="w-4 h-4" aria-hidden="true" />
+            </button>
           </div>
         </Show>
       </div>

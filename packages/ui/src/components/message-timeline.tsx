@@ -34,6 +34,8 @@ interface MessageTimelineProps {
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 const MAX_TOOLTIP_LENGTH = 220
@@ -417,6 +419,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
           const isDeleteHovered = () => {
             const hover = deleteHover() as DeleteHoverState
+            const selected = props.selectedMessageIds?.() ?? new Set<string>()
+            if (selected.has(segment.messageId)) {
+              return true
+            }
             if (hover.kind === "message") {
               return hover.messageId === segment.messageId
             }
@@ -502,6 +508,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 deleteHover={props.deleteHover}
                 onDeleteHoverChange={props.onDeleteHoverChange}
                 onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                selectedMessageIds={props.selectedMessageIds}
               />
             </div>
           )

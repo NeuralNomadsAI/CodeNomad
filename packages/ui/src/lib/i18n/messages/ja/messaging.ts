@@ -82,6 +82,15 @@ export const messagingMessages = {
   "messageItem.actions.deletingMessage": "削除中...",
   "messageItem.actions.deleteMessageFailedTitle": "削除に失敗しました",
   "messageItem.actions.deleteMessageFailedMessage": "メッセージの削除に失敗しました",
+
+  "messageItem.selection.checkboxAriaLabel": "削除するメッセージを選択",
+
+  "messageSection.bulkDelete.toolbarAriaLabel": "選択したメッセージ（{count}）",
+  "messageSection.bulkDelete.deleteSelectedTitle": "選択したメッセージを削除",
+  "messageSection.bulkDelete.selectAllTitle": "すべて選択",
+  "messageSection.bulkDelete.cancelTitle": "選択をキャンセル",
+  "messageSection.bulkDelete.failedTitle": "削除に失敗しました",
+  "messageSection.bulkDelete.failedMessage": "選択したメッセージの削除に失敗しました",
   "messageItem.status.queued": "待機中",
   "messageItem.status.generating": "生成中...",
   "messageItem.status.sending": "送信中...",

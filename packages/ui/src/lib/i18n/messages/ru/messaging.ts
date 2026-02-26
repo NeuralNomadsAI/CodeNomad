@@ -82,6 +82,15 @@ export const messagingMessages = {
   "messageItem.actions.deletingMessage": "Удаление...",
   "messageItem.actions.deleteMessageFailedTitle": "Ошибка удаления",
   "messageItem.actions.deleteMessageFailedMessage": "Не удалось удалить сообщение",
+
+  "messageItem.selection.checkboxAriaLabel": "Выбрать сообщение для удаления",
+
+  "messageSection.bulkDelete.toolbarAriaLabel": "Выбранные сообщения ({count})",
+  "messageSection.bulkDelete.deleteSelectedTitle": "Удалить выбранные сообщения",
+  "messageSection.bulkDelete.selectAllTitle": "Выбрать все сообщения",
+  "messageSection.bulkDelete.cancelTitle": "Отменить выбор",
+  "messageSection.bulkDelete.failedTitle": "Ошибка удаления",
+  "messageSection.bulkDelete.failedMessage": "Не удалось удалить выбранные сообщения",
   "messageItem.status.queued": "В ОЧЕРЕДИ",
   "messageItem.status.generating": "Генерация…",
   "messageItem.status.sending": "Отправка…",

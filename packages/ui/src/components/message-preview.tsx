@@ -11,6 +11,8 @@ interface MessagePreviewProps {
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 const MessagePreview: Component<MessagePreviewProps> = (props) => {
@@ -31,6 +33,8 @@ const MessagePreview: Component<MessagePreviewProps> = (props) => {
         deleteHover={props.deleteHover}
         onDeleteHoverChange={props.onDeleteHoverChange}
         onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+        selectedMessageIds={props.selectedMessageIds}
+        onToggleSelectedMessage={props.onToggleSelectedMessage}
       />
     </div>
   )

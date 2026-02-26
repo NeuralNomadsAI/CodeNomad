@@ -2,6 +2,7 @@
 @import "./messaging/prompt-input.css";
 @import "./messaging/message-section.css";
 @import "./messaging/message-block-list.css";
+@import "./messaging/message-selection.css";
 @import "./messaging/delete-overlays.css";
 @import "./messaging/message-timeline.css";
 @import "./messaging/tool-call.css";

@@ -1,0 +1,84 @@
+/* Message multi-select delete mode UI. */
+
+.message-select-checkbox {
+  width: 14px;
+  height: 14px;
+  margin-right: 0.5rem;
+  cursor: pointer;
+  accent-color: var(--status-error);
+  flex: 0 0 auto;
+}
+
+.message-delete-mode-toolbar {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  background: color-mix(in oklab, var(--surface-secondary) 92%, var(--status-error-bg));
+  border: 1px solid var(--border-base);
+  border-radius: 12px;
+  z-index: 50;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+
+/* Avoid covering the scroll-to-top/bottom floating buttons. */
+.message-layout[data-scroll-buttons="1"] .message-delete-mode-toolbar {
+  bottom: 4.25rem;
+}
+
+.message-layout[data-scroll-buttons="2"] .message-delete-mode-toolbar {
+  bottom: 7.5rem;
+}
+
+/* When timeline is visible, pin the toolbar to the stream edge. */
+.message-layout--with-timeline .message-delete-mode-toolbar {
+  right: calc(64px + 12px);
+}
+
+@media (max-width: 720px) {
+  .message-layout--with-timeline .message-delete-mode-toolbar {
+    right: calc(40px + 12px);
+  }
+}
+
+.message-delete-mode-count {
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+}
+
+.message-delete-mode-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.message-delete-mode-button:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.message-delete-mode-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 45%, transparent);
+}

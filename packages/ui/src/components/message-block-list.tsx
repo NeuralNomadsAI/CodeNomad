@@ -27,6 +27,8 @@ interface MessageBlockListProps {
   onContentRendered?: () => void
   deleteHover?: Accessor<DeleteHoverState>
   onDeleteHoverChange?: (state: DeleteHoverState) => void
+  selectedMessageIds?: Accessor<Set<string>>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   setBottomSentinel: (element: HTMLDivElement | null) => void
   suspendMeasurements?: () => boolean
 }
@@ -57,6 +59,8 @@ export default function MessageBlockList(props: MessageBlockListProps) {
               showUsageMetrics={props.showUsageMetrics}
               deleteHover={props.deleteHover}
               onDeleteHoverChange={props.onDeleteHoverChange}
+              selectedMessageIds={props.selectedMessageIds}
+              onToggleSelectedMessage={props.onToggleSelectedMessage}
               onRevert={props.onRevert}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}

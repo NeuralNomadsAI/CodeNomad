@@ -82,6 +82,15 @@ export const messagingMessages = {
   "messageItem.actions.deletingMessage": "Eliminando...",
   "messageItem.actions.deleteMessageFailedTitle": "Error al eliminar",
   "messageItem.actions.deleteMessageFailedMessage": "No se pudo eliminar el mensaje",
+
+  "messageItem.selection.checkboxAriaLabel": "Seleccionar mensaje para eliminar",
+
+  "messageSection.bulkDelete.toolbarAriaLabel": "Mensajes seleccionados ({count})",
+  "messageSection.bulkDelete.deleteSelectedTitle": "Eliminar mensajes seleccionados",
+  "messageSection.bulkDelete.selectAllTitle": "Seleccionar todos los mensajes",
+  "messageSection.bulkDelete.cancelTitle": "Cancelar selección",
+  "messageSection.bulkDelete.failedTitle": "Error al eliminar",
+  "messageSection.bulkDelete.failedMessage": "No se pudieron eliminar los mensajes seleccionados",
   "messageItem.status.queued": "EN COLA",
   "messageItem.status.generating": "Generando...",
   "messageItem.status.sending": "Enviando...",

@@ -8,7 +8,8 @@
 }
 
 .message-item-header {
-  @apply flex flex-col gap-0.5;
+  @apply flex flex-col;
+  gap: 0.25rem;
 }
 
 .message-item-header-row {
@@ -19,12 +20,58 @@
   @apply flex justify-between items-start gap-2.5;
 }
 
+.message-item-header-row--meta {
+  @apply w-full;
+}
+
+.message-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .message-item-header-row--bottom {
   @apply flex items-start;
 }
 
 .message-speaker {
-  @apply flex flex-col gap-0.5 text-xs;
+  /* Allow agent meta to wrap to a second row with comfortable spacing. */
+  @apply flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.message-speaker-primary {
+  @apply inline-flex items-center;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.message-agent-meta-inline {
+  @apply text-[11px] font-medium;
+  color: var(--message-assistant-border);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  line-height: 1.1;
+}
+
+.message-agent-meta-inline--measure {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.message-agent-meta-block {
+  @apply text-[11px] font-medium;
+  color: var(--message-assistant-border);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.15;
 }
 
 .message-speaker-label {
@@ -46,19 +93,19 @@
 
 .message-item-actions {
   @apply flex items-center gap-2;
+  flex: 0 0 auto;
 }
 
 .message-action-group {
-  @apply flex items-center gap-2;
+  @apply flex items-center gap-0;
 }
 
 .message-action-button {
-  @apply bg-transparent border border-[var(--border-base)] text-[var(--text-muted)] cursor-pointer px-3 py-0.5 rounded text-xs font-semibold leading-none transition-all duration-200 flex items-center justify-center h-6;
+  @apply bg-transparent border-0 text-[var(--text-muted)] cursor-pointer px-2 py-0.5 rounded text-xs font-semibold leading-none transition-all duration-200 flex items-center justify-center h-6;
 }
 
 .message-action-button:hover {
   background-color: var(--surface-hover);
-  border-color: var(--accent-primary);
   color: var(--accent-primary);
 }
 
@@ -296,6 +343,12 @@
   color: var(--message-assistant-border);
 }
 
+/* Keep reasoning meta as a single unit so it drops to the next line when needed. */
+.message-reasoning-label .message-step-meta-inline {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 
 .message-step-reason {
   @apply text-[11px] font-medium;
@@ -320,7 +373,7 @@
 
 .message-reasoning-header {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
@@ -365,9 +418,34 @@
 }
 
 .message-reasoning-label {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.75rem;
   font-weight: var(--font-weight-medium);
   color: var(--message-assistant-border);
+}
+
+.message-reasoning-label-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.message-step-meta-inline--measure {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.message-reasoning-meta-row {
+  padding: 0 0.6rem 0.15rem 0.6rem;
 }
 
 .message-reasoning-meta {

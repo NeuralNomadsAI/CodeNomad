@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
@@ -208,6 +208,8 @@ interface MessageContentItemProps {
   onContentRendered?: () => void
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -296,6 +298,8 @@ function MessageContentItem(props: MessageContentItemProps) {
           showAgentMeta={showAgentMeta()}
           showDeleteMessage={props.showDeleteMessage}
           onDeleteHoverChange={props.onDeleteHoverChange}
+          selectedMessageIds={props.selectedMessageIds}
+          onToggleSelectedMessage={props.onToggleSelectedMessage}
           onRevert={props.onRevert}
           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
           onFork={props.onFork}
@@ -316,12 +320,16 @@ interface ToolCallItemProps {
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function ToolCallItem(props: ToolCallItemProps) {
   const { t } = useI18n()
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -403,6 +411,24 @@ function ToolCallItem(props: ToolCallItemProps) {
         <div class="delete-hover-scope">
           <div class="tool-call-header-label">
             <div class="tool-call-header-meta">
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.messageId, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
               <span class="tool-call-icon">{TOOL_ICON}</span>
               <span>{t("messageBlock.tool.header")}</span>
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
@@ -516,6 +542,8 @@ interface MessageBlockProps {
   showUsageMetrics: () => boolean
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
@@ -530,6 +558,11 @@ export default function MessageBlock(props: MessageBlockProps) {
 
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+
+    const selected = props.selectedMessageIds?.() ?? new Set<string>()
+    if (selected.has(props.messageId)) {
+      return true
+    }
 
     if (hover.kind === "message") {
       return hover.messageId === props.messageId
@@ -755,6 +788,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
                   />
@@ -773,6 +808,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                           showDeleteMessage={index() === 0}
                           onDeleteHoverChange={props.onDeleteHoverChange}
                           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                          selectedMessageIds={props.selectedMessageIds}
+                          onToggleSelectedMessage={props.onToggleSelectedMessage}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>
@@ -791,6 +828,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={props.messageId}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "step-finish"}>
@@ -806,6 +845,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={props.messageId}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "compaction"}>
@@ -819,6 +860,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                     showDeleteMessage={index() === 0}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "reasoning"}>
@@ -833,6 +876,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                     showDeleteMessage={index() === 0}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
               </Switch>
@@ -857,6 +902,8 @@ interface StepCardProps {
   messageId?: string
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 interface CompactionCardProps {
@@ -869,12 +916,15 @@ interface CompactionCardProps {
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function CompactionCard(props: CompactionCardProps) {
   const { t } = useI18n()
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
   const isAuto = () => Boolean((props.part as any)?.auto)
   const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
@@ -956,6 +1006,24 @@ function CompactionCard(props: CompactionCardProps) {
       </div>
 
       <div class="message-compaction-row">
+        <Show when={props.showDeleteMessage}>
+          <input
+            class="message-select-checkbox"
+            type="checkbox"
+            checked={isSelectedForDeletion()}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => {
+              event.stopPropagation()
+              const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+              props.onToggleSelectedMessage?.(props.messageId, next)
+            }}
+            aria-label={t("messageItem.selection.checkboxAriaLabel")}
+            title={t("messageItem.selection.checkboxAriaLabel")}
+          />
+        </Show>
+
         <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
         <span class="message-compaction-label">{label()}</span>
       </div>
@@ -967,6 +1035,7 @@ function StepCard(props: StepCardProps) {
   const { t } = useI18n()
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.messageId && props.selectedMessageIds?.().has(props.messageId))
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -1078,6 +1147,24 @@ function StepCard(props: StepCardProps) {
     }
     return (
       <div class={`message-step-card message-step-finish message-step-finish-flush relative`} style={finishStyle()}>
+        <Show when={props.showDeleteMessage && props.messageId}>
+          <input
+            class="message-select-checkbox absolute left-2 top-1/2 -translate-y-1/2"
+            type="checkbox"
+            checked={isSelectedForDeletion()}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => {
+              event.stopPropagation()
+              const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+              props.onToggleSelectedMessage?.(props.messageId!, next)
+            }}
+            aria-label={t("messageItem.selection.checkboxAriaLabel")}
+            title={t("messageItem.selection.checkboxAriaLabel")}
+          />
+        </Show>
+
         <Show when={props.showDeleteMessage}>
           <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
             <button
@@ -1114,10 +1201,28 @@ function StepCard(props: StepCardProps) {
   }
 
   return (
-    <div class={`message-step-card message-step-start`}>
+    <div class={`message-step-card message-step-start relative`}>
       <div class="message-step-heading">
         <div class="message-step-title">
           <div class="message-step-title-left">
+            <Show when={props.showDeleteMessage && props.messageId}>
+              <input
+                class="message-select-checkbox"
+                type="checkbox"
+                checked={isSelectedForDeletion()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                }}
+                onChange={(event) => {
+                  event.stopPropagation()
+                  const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                  props.onToggleSelectedMessage?.(props.messageId!, next)
+                }}
+                aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                title={t("messageItem.selection.checkboxAriaLabel")}
+              />
+            </Show>
+
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
               <span class="message-step-meta-inline">
                 <Show when={agentIdentifier()}>{(value) => <span>{t("messageBlock.step.agentLabel", { agent: value() })}</span>}</Show>
@@ -1149,6 +1254,8 @@ interface ReasoningCardProps {
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
@@ -1156,6 +1263,13 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+
+  let headerEl: HTMLDivElement | undefined
+  let actionsEl: HTMLDivElement | undefined
+  let primaryEl: HTMLSpanElement | undefined
+  let metaMeasureEl: HTMLSpanElement | undefined
+  const [showMetaInline, setShowMetaInline] = createSignal(true)
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1181,6 +1295,35 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (modelID && providerID) return `${providerID}/${modelID}`
     return modelID
   }
+
+  const hasMeta = () => Boolean(props.showAgentMeta && (agentIdentifier() || modelIdentifier()))
+
+  const updateMetaLayout = () => {
+    if (!hasMeta()) return
+    if (!headerEl || !actionsEl || !primaryEl || !metaMeasureEl) return
+
+    const headerWidth = headerEl.getBoundingClientRect().width
+    const actionsWidth = actionsEl.getBoundingClientRect().width
+    const primaryWidth = primaryEl.getBoundingClientRect().width
+    const metaWidth = metaMeasureEl.getBoundingClientRect().width
+
+    const availableLeft = Math.max(0, headerWidth - actionsWidth - 12)
+    setShowMetaInline(primaryWidth + metaWidth + 8 <= availableLeft)
+  }
+
+  createEffect(() => {
+    if (!hasMeta() || typeof ResizeObserver === "undefined") {
+      setShowMetaInline(true)
+      return
+    }
+
+    updateMetaLayout()
+    const observer = new ResizeObserver(() => updateMetaLayout())
+    if (headerEl) observer.observe(headerEl)
+    if (actionsEl) observer.observe(actionsEl)
+    if (primaryEl) observer.observe(primaryEl)
+    onCleanup(() => observer.disconnect())
+  })
 
   const reasoningText = () => {
     const part = props.part as any
@@ -1260,7 +1403,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   return (
     <div class="delete-hover-scope message-reasoning-card">
-      <div class="message-reasoning-header">
+      <div class="message-reasoning-header" ref={(el) => (headerEl = el)}>
         <button
           type="button"
           class="message-reasoning-toggle"
@@ -1268,10 +1411,49 @@ function ReasoningCard(props: ReasoningCardProps) {
           aria-expanded={expanded()}
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
-          <span class="message-reasoning-label flex flex-wrap items-center gap-2">
-            <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
-            <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
+          <span class="message-reasoning-label">
+            <span class="message-reasoning-label-primary" ref={(el) => (primaryEl = el)}>
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.messageId, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
+              <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
+            </span>
+
+            <Show when={hasMeta() && showMetaInline()}>
               <span class="message-step-meta-inline">
+                <Show when={agentIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+                  )}
+                </Show>
+                <Show when={modelIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+                  )}
+                </Show>
+              </span>
+            </Show>
+
+            <Show when={hasMeta()}>
+              <span
+                ref={(el) => (metaMeasureEl = el)}
+                class="message-step-meta-inline message-step-meta-inline--measure"
+              >
                 <Show when={agentIdentifier()}>
                   {(value) => (
                     <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
@@ -1287,7 +1469,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           </span>
         </button>
 
-        <div class="message-reasoning-actions">
+        <div class="message-reasoning-actions" ref={(el) => (actionsEl = el)}>
           <button
             type="button"
             class="message-action-button"
@@ -1335,6 +1517,23 @@ function ReasoningCard(props: ReasoningCardProps) {
           <span class="message-reasoning-time">{timestamp()}</span>
         </div>
       </div>
+
+      <Show when={hasMeta() && !showMetaInline()}>
+        <div class="message-reasoning-meta-row">
+          <span class="message-step-meta-inline">
+            <Show when={agentIdentifier()}>
+              {(value) => (
+                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+              )}
+            </Show>
+            <Show when={modelIdentifier()}>
+              {(value) => (
+                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+              )}
+            </Show>
+          </span>
+        </div>
+      </Show>
 
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">
