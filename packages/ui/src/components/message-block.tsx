@@ -434,7 +434,7 @@ function ToolCallItem(props: ToolCallItemProps) {
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
             </div>
 
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-0">
               <Show when={taskSessionId()}>
                 <button
                   class="tool-call-header-button"

@@ -21,9 +21,9 @@
 
 .tool-call-header-button {
   background-color: transparent;
-  border: 1px solid var(--tool-call-border-color, var(--border-base));
   color: var(--text-secondary);
-  padding: 0.15rem 0.75rem;
+  border: 0;
+  padding: 0.1rem 0.35rem;
   border-radius: 0.375rem;
   font-size: 0.75rem;
   font-weight: var(--font-weight-semibold);
@@ -37,7 +37,6 @@
 
 .tool-call-header-button:hover:not(:disabled) {
   background-color: var(--surface-hover);
-  border-color: var(--accent-primary);
   color: var(--accent-primary);
 }
 
