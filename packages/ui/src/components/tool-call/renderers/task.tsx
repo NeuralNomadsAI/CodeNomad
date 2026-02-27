@@ -178,28 +178,116 @@ export const taskRenderer: ToolRenderer = {
       void loadMessages(instanceId, id)
     })
 
-    const childToolKeys = createMemo(() => {
-      const id = childSessionId()
-      if (!id) return [] as string[]
-      if (!childSessionLoaded()) return [] as string[]
+    const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
 
-      // React to session changes, but do the scan untracked to avoid
-      // subscribing to every message/part node in the store.
+    let indexedSessionId = ""
+    let indexedMessageCount = 0
+    let indexedMessageTail = ""
+    const indexedPartCounts = new Map<string, number>()
+
+    function resetChildToolIndex(nextSessionId: string) {
+      indexedSessionId = nextSessionId
+      indexedMessageCount = 0
+      indexedMessageTail = ""
+      indexedPartCounts.clear()
+      setChildToolKeys([])
+    }
+
+    function scanMessageToolParts(messageId: string, startIndex: number) {
+      const record = store.getMessage(messageId)
+      if (!record) return [] as string[]
+
+      const partIds = record.partIds
+      const keys: string[] = []
+      for (let idx = startIndex; idx < partIds.length; idx += 1) {
+        const partId = partIds[idx]
+        const entry = record.parts?.[partId]
+        const data = entry?.data
+        if (!data || (data as any).type !== "tool") continue
+        keys.push(`${messageId}::${partId}`)
+      }
+      indexedPartCounts.set(messageId, partIds.length)
+      return keys
+    }
+
+    function fullRescanChildTools(sessionId: string, messageIds: string[]) {
+      indexedSessionId = sessionId
+      indexedMessageCount = messageIds.length
+      indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
+      indexedPartCounts.clear()
+
+      const nextKeys: string[] = []
+      for (const messageId of messageIds) {
+        nextKeys.push(...scanMessageToolParts(messageId, 0))
+      }
+      setChildToolKeys(nextKeys)
+    }
+
+    createEffect(() => {
+      const id = childSessionId()
+      const loaded = childSessionLoaded()
+
+      if (!id || !loaded) {
+        if (indexedSessionId) {
+          resetChildToolIndex("")
+        }
+        return
+      }
+
+      // We use the session revision as the reactive change point, but avoid
+      // rescanning the entire session on every update.
       store.getSessionRevision(id)
-      return untrack(() => {
+
+      untrack(() => {
         const messageIds = store.getSessionMessageIds(id)
-        const keys: string[] = []
-        for (const messageId of messageIds) {
-          const record = store.getMessage(messageId)
-          if (!record) continue
-          for (const partId of record.partIds) {
-            const entry = record.parts?.[partId]
-            const data = entry?.data
-            if (!data || (data as any).type !== "tool") continue
-            keys.push(`${messageId}::${partId}`)
+
+        if (!indexedSessionId || indexedSessionId !== id) {
+          fullRescanChildTools(id, messageIds)
+          return
+        }
+
+        // Detect structural changes (reorder/shrink) and fall back to a full rescan.
+        if (messageIds.length < indexedMessageCount) {
+          fullRescanChildTools(id, messageIds)
+          return
+        }
+        if (indexedMessageCount > 0) {
+          const expectedTailIndex = indexedMessageCount - 1
+          if (expectedTailIndex >= 0 && messageIds[expectedTailIndex] !== indexedMessageTail) {
+            fullRescanChildTools(id, messageIds)
+            return
           }
         }
-        return keys
+
+        const appendedKeys: string[] = []
+
+        // Scan any new messages appended since last index.
+        for (let idx = indexedMessageCount; idx < messageIds.length; idx += 1) {
+          const messageId = messageIds[idx]
+          appendedKeys.push(...scanMessageToolParts(messageId, 0))
+        }
+
+        // Scan a small window of recent messages for newly appended parts.
+        // Deltas typically affect the most recent tool call, so this avoids
+        // iterating every message on every revision.
+        const existingCount = Math.min(indexedMessageCount, messageIds.length)
+        const windowStart = Math.max(0, existingCount - 3)
+        for (let idx = windowStart; idx < existingCount; idx += 1) {
+          const messageId = messageIds[idx]
+          const previousPartCount = indexedPartCounts.get(messageId) ?? 0
+          const record = store.getMessage(messageId)
+          const nextPartCount = record?.partIds.length ?? 0
+          if (nextPartCount > previousPartCount) {
+            appendedKeys.push(...scanMessageToolParts(messageId, previousPartCount))
+          }
+        }
+
+        indexedMessageCount = messageIds.length
+        indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
+
+        if (appendedKeys.length > 0) {
+          setChildToolKeys((prev) => [...prev, ...appendedKeys])
+        }
       })
     })
     const promptContent = createMemo(() => {
@@ -354,7 +442,7 @@ export const taskRenderer: ToolRenderer = {
                     scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                   }
                 >
-                  <div class="tool-call-task-summary">
+                    <div class="tool-call-task-summary">
                     <For each={childToolKeys()}>
                       {(key) => (
                         <Show when={renderToolCall}>

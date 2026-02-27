@@ -117,6 +117,7 @@ export function applyPartDeltaV2(
     partId: input.partId,
     field: input.field,
     delta: input.delta,
+    bumpSessionRevision: false,
   })
 }
 

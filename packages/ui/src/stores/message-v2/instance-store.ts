@@ -189,7 +189,14 @@ export interface InstanceMessageStore {
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
-  applyPartDelta: (input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) => void
+  applyPartDelta: (input: {
+    messageId: string
+    partId: string
+    field: string
+    delta: string
+    bumpRevision?: boolean
+    bumpSessionRevision: boolean
+  }) => void
   removeMessage: (messageId: string) => void
   removeMessagePart: (messageId: string, partId: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
@@ -598,7 +605,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     bumpSessionRevision(message.sessionId)
   }
 
-  function applyPartDelta(input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) {
+  function applyPartDelta(input: {
+    messageId: string
+    partId: string
+    field: string
+    delta: string
+    bumpRevision?: boolean
+    bumpSessionRevision?: boolean
+  }) {
     if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
       return
     }
@@ -632,7 +646,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }),
     )
 
-    if (applied) {
+    if (applied && (input.bumpSessionRevision ?? true)) {
       bumpSessionRevision(message.sessionId)
     }
   }
@@ -1165,4 +1179,3 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearInstance,
     }
   }
-
