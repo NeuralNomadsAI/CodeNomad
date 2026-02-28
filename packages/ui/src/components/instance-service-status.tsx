@@ -4,7 +4,7 @@ import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { ensureInstanceConfigLoaded, getMcpSettingsForSession, saveMcpSettingForSession, useInstanceConfig, getSessionMcpMode } from "../stores/instance-config"
+import { useInstanceConfig } from "../stores/instance-config"
 import { activeSessionId } from "../stores/sessions"
 
 const log = getLogger("session")
@@ -84,92 +84,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     return activeSessionId().get(instanceId()) || null
   })
 
-  // Track the configuration reactively to correctly pick up mode toggles
-  const instanceConfig = useInstanceConfig(instanceId())
-  const mcpMode = createMemo(() => {
-    instanceConfig() // create dependency
-    return getSessionMcpMode(instanceId(), currentSessionId())
-  })
-
   const [isUserToggling, setIsUserToggling] = createSignal(false)
-  let isReconciling = false
-
-  createEffect(on([currentSessionId, mcpServers, mcpMode], async () => {
-    const sid = currentSessionId()
-    log.info("Session changed effect", { sessionId: sid, instanceId: instanceId() })
-
-    if (isReconciling || isUserToggling()) {
-      log.info("Skipping reconcile - busy", { isReconciling, isUserToggling: isUserToggling() })
-      return
-    }
-
-    isReconciling = true
-
-    try {
-      const client = instance().client
-      if (!client?.mcp) {
-        log.info("No MCP client", { instanceId: instanceId() })
-        return
-      }
-
-      const iid = instanceId()
-      await ensureInstanceConfigLoaded(iid)
-
-      const settings = getMcpSettingsForSession(iid, sid)
-      const allServers = mcpServers()
-
-      log.info("MCP Reconciliation START", {
-        sessionId: sid,
-        settings,
-        servers: allServers.map(s => s.name),
-        instanceId: iid
-      })
-
-      for (const server of allServers) {
-        const shouldEnable = settings[server.name] ?? true
-        const isCurrentlyRunning = server.status === "running"
-        log.info("Checking server", { serverName: server.name, shouldEnable, isCurrentlyRunning })
-
-        if (shouldEnable && !isCurrentlyRunning) {
-          try {
-            log.info("Connecting MCP server", { serverName: server.name, sessionId: sid })
-            await client.mcp.connect({ name: server.name })
-          } catch (error) {
-            log.error("Failed to connect MCP server", { serverName: server.name, error })
-          }
-        } else if (!shouldEnable && isCurrentlyRunning) {
-          try {
-            log.info("Disconnecting MCP server", { serverName: server.name, sessionId: sid })
-            await client.mcp.disconnect({ name: server.name })
-          } catch (error) {
-            log.error("Failed to disconnect MCP server", { serverName: server.name, error })
-          }
-        }
-      }
-
-      await refreshMetadata()
-      log.info("MCP Reconciliation END", { sessionId: sid })
-    } catch (e) {
-      log.error("Reconciliation error", { error: e })
-    } finally {
-      setTimeout(() => { isReconciling = false }, 500)
-    }
-  }))
-
-  // Eagerly load persisted config so switches render with correct state
-  createEffect(() => {
-    const iid = instanceId()
-    if (iid) void ensureInstanceConfigLoaded(iid)
-  })
-
-  // Returns the persisted desired state for a server, defaulting to enabled
-  const getEffectiveEnabled = (serverName: string, liveRunning: boolean): boolean => {
-    const settings = getMcpSettingsForSession(instanceId(), currentSessionId())
-    if (serverName in settings) {
-      return settings[serverName]
-    }
-    return true
-  }
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
 
@@ -184,15 +99,21 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
     const client = instance().client
-    if (!client?.mcp) return
+    if (!client?.mcp || !client?.config) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
     setPendingMcpAction(serverName, action)
     setIsUserToggling(true)
 
-    const sid = currentSessionId()
-    await saveMcpSettingForSession(instanceId(), sid, serverName, shouldEnable)
-
     try {
+      await client.config.update({
+        directory: instance().folder,
+        config: {
+          mcp: {
+            [serverName]: { enabled: shouldEnable }
+          }
+        }
+      })
+
       if (shouldEnable) {
         await client.mcp.connect({ name: serverName })
       } else {
@@ -297,7 +218,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                       </div>
                       <div class="flex items-center gap-1.5">
                         <Switch
-                          checked={getEffectiveEnabled(server.name, isRunning())}
+                          checked={isRunning()}
                           disabled={switchDisabled()}
                           color="success"
                           size="small"

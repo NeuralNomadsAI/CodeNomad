@@ -12,7 +12,6 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { useInstanceConfig, getSessionMcpMode, setSessionMcpMode } from "../../../../../stores/instance-config"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -39,23 +38,6 @@ interface StatusTabProps {
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
-
-  const instanceConfig = useInstanceConfig(props.instanceId)
-
-  const mcpMode = () => {
-    instanceConfig()
-    return getSessionMcpMode(props.instanceId, props.activeSessionId())
-  }
-
-  const toggleMcpMode = (e: MouseEvent) => {
-    e.stopPropagation()
-    const current = mcpMode()
-    const next = current === "global" ? "local" : "global"
-    const sid = props.activeSessionId()
-    if (sid && sid !== "info") {
-      void setSessionMcpMode(props.instanceId, sid, next)
-    }
-  }
 
   const renderStatusSessionChanges = () => {
     const sessionId = props.activeSessionId()
@@ -244,23 +226,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       id: "mcp",
       labelKey: "instanceShell.rightPanel.sections.mcp",
       tooltipKey: "instanceShell.rightPanel.sections.mcp.tooltip",
-      headerAction: () => {
-        const sid = props.activeSessionId()
-        if (!sid || sid === "info") return null
-        const isLocal = mcpMode() === "local"
-        return (
-          <button
-            class={`ml-auto mr-2 px-1.5 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded border ${isLocal
-              ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20"
-              : "bg-blue-500/10 text-blue-500 border-blue-500/30 hover:bg-blue-500/20"
-              } transition-colors z-10 flex-shrink-0`}
-            onClick={toggleMcpMode}
-            title={isLocal ? "Using isolated Session settings" : "Inheriting Workspace settings"}
-          >
-            {isLocal ? "Local" : "Global"}
-          </button>
-        )
-      },
       render: () => (
         <InstanceServiceStatus
           initialInstance={props.instance}
