@@ -8,6 +8,12 @@
   display: flex;
   flex-direction: column;
   gap: 0.0625rem;
+
+  /* Reduce render + paint work for offscreen (but mounted) blocks.
+     Keep a conservative intrinsic size to avoid scroll jumps. */
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 400px;
+  contain: layout paint style;
 }
 
 .virtual-item-wrapper {

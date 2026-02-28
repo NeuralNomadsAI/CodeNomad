@@ -1,4 +1,4 @@
-import { For, Show, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, createMemo, type Accessor, type Component, type JSX } from "solid-js"
 import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
@@ -46,17 +46,18 @@ interface GitChangesTabProps {
 }
 
 const GitChangesTab: Component<GitChangesTabProps> = (props) => {
-  const renderContent = (): JSX.Element => {
-    const sessionId = props.activeSessionId()
+  const sessionId = createMemo(() => props.activeSessionId())
+  const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
+  const entries = createMemo(() => (hasSession() ? props.entries() : null))
 
-    const hasSession = Boolean(sessionId && sessionId !== "info")
-    const entries = hasSession ? props.entries() : null
+  const sorted = createMemo<GitFileStatus[]>(() => {
+    const list = entries()
+    if (!Array.isArray(list)) return []
+    return [...list].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
+  })
 
-    const sorted = Array.isArray(entries)
-      ? [...entries].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
-      : []
-
-    const totals = sorted.reduce(
+  const totals = createMemo(() => {
+    return sorted().reduce(
       (acc, item) => {
         acc.additions += typeof item.added === "number" ? item.added : 0
         acc.deletions += typeof item.removed === "number" ? item.removed : 0
@@ -64,21 +65,33 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       },
       { additions: 0, deletions: 0 },
     )
+  })
 
-    const nonDeleted = sorted.filter((item) => item && item.status !== "deleted")
+  const nonDeleted = createMemo(() => sorted().filter((item) => item && item.status !== "deleted"))
 
-    const emptyViewerMessage = () => {
-      if (!hasSession) return "Select a session to view changes."
-      if (entries === null) return "Loading git changes…"
-      if (nonDeleted.length === 0) return "No git changes yet."
-      return "No file selected."
-    }
-
+  const selectedEntry = createMemo<GitFileStatus | null>(() => {
+    const list = sorted()
     const selectedPath = props.selectedPath()
     const fallbackPath = props.mostChangedPath()
-    const selectedEntry =
-      sorted.find((item) => item.path === selectedPath) ||
-      (fallbackPath ? sorted.find((item) => item.path === fallbackPath) : null)
+    const found =
+      list.find((item) => item.path === selectedPath) ||
+      (fallbackPath ? list.find((item) => item.path === fallbackPath) : undefined)
+    return found ?? null
+  })
+
+  const emptyViewerMessage = createMemo(() => {
+    if (!hasSession()) return "Select a session to view changes."
+    const currentEntries = entries()
+    if (currentEntries === null) return "Loading git changes…"
+    if (nonDeleted().length === 0) return "No git changes yet."
+    return "No file selected."
+  })
+
+  const renderContent = (): JSX.Element => {
+    const totalsValue = totals()
+    const selected = selectedEntry()
+    const sortedList = sorted()
+    const nonDeletedList = nonDeleted()
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
@@ -91,12 +104,12 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 fallback={
                   <Show
                     when={
-                      selectedEntry &&
+                      selected &&
                       props.selectedBefore() !== null &&
                       props.selectedAfter() !== null &&
-                      selectedEntry.status !== "deleted"
+                      selected.status !== "deleted"
                         ? {
-                            path: selectedEntry.path,
+                            path: selected.path,
                             before: props.selectedBefore() as string,
                             after: props.selectedAfter() as string,
                           }
@@ -109,16 +122,16 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     }
                   >
                     {(file) => (
-                      <MonacoDiffViewer
-                        scopeKey={props.scopeKey()}
-                        path={String(file().path || "")}
-                        before={String((file() as any).before || "")}
-                        after={String((file() as any).after || "")}
-                        viewMode={props.diffViewMode()}
-                        contextMode={props.diffContextMode()}
-                        wordWrap={props.diffWordWrapMode()}
-                      />
-                    )}
+                        <MonacoDiffViewer
+                          scopeKey={props.scopeKey()}
+                          path={String(file().path || "")}
+                          before={String((file() as any).before || "")}
+                          after={String((file() as any).after || "")}
+                          viewMode={props.diffViewMode()}
+                          contextMode={props.diffContextMode()}
+                          wordWrap={props.diffWordWrapMode()}
+                        />
+                      )}
                   </Show>
                 }
               >
@@ -141,8 +154,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     const renderEmptyList = () => <div class="p-3 text-xs text-secondary">{emptyViewerMessage()}</div>
 
     const renderListPanel = () => (
-      <Show when={nonDeleted.length > 0} fallback={renderEmptyList()}>
-        <For each={sorted}>
+      <Show when={nonDeletedList.length > 0} fallback={renderEmptyList()}>
+        <For each={sortedList}>
           {(item) => (
             <div
               class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
@@ -173,8 +186,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     )
 
     const renderListOverlay = () => (
-      <Show when={nonDeleted.length > 0} fallback={renderEmptyList()}>
-        <For each={sorted}>
+      <Show when={nonDeletedList.length > 0} fallback={renderEmptyList()}>
+        <For each={sortedList}>
           {(item) => (
             <div
               class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
@@ -204,19 +217,19 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     )
 
     return (
-      <SplitFilePanel
-        header={
-          <>
-            <span class="files-tab-selected-path" title={selectedEntry?.path || "Git Changes"}>
-              <span class="file-path-text">{selectedEntry?.path || "Git Changes"}</span>
-            </span>
+          <SplitFilePanel
+            header={
+              <>
+                <span class="files-tab-selected-path" title={selected?.path || "Git Changes"}>
+                  <span class="file-path-text">{selected?.path || "Git Changes"}</span>
+                </span>
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>
               <span class="files-tab-stat files-tab-stat-additions">
-                <span class="files-tab-stat-value">+{totals.additions}</span>
+                <span class="files-tab-stat-value">+{totalsValue.additions}</span>
               </span>
               <span class="files-tab-stat files-tab-stat-deletions">
-                <span class="files-tab-stat-value">-{totals.deletions}</span>
+                <span class="files-tab-stat-value">-{totalsValue.deletions}</span>
               </span>
               <Show when={props.statusError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
@@ -226,23 +239,23 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.refresh")}
               aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
-              disabled={!hasSession || props.statusLoading() || entries === null}
+              disabled={!hasSession() || props.statusLoading() || entries() === null}
               style={{ "margin-left": "auto" }}
               onClick={() => props.onRefresh()}
             >
               <RefreshCw class={`h-4 w-4${props.statusLoading() ? " animate-spin" : ""}`} />
             </button>
 
-            <DiffToolbar
-              viewMode={props.diffViewMode()}
-              contextMode={props.diffContextMode()}
-              wordWrapMode={props.diffWordWrapMode()}
-              onViewModeChange={props.onViewModeChange}
-              onContextModeChange={props.onContextModeChange}
-              onWordWrapModeChange={props.onWordWrapModeChange}
-            />
-          </>
-        }
+              <DiffToolbar
+                viewMode={props.diffViewMode()}
+                contextMode={props.diffContextMode()}
+                wordWrapMode={props.diffWordWrapMode()}
+                onViewModeChange={props.onViewModeChange}
+                onContextModeChange={props.onContextModeChange}
+                onWordWrapModeChange={props.onWordWrapModeChange}
+              />
+            </>
+          }
         list={{ panel: renderListPanel, overlay: renderListOverlay }}
         viewer={renderViewer()}
         listOpen={props.listOpen()}
