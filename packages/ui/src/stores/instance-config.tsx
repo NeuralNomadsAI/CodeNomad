@@ -22,6 +22,7 @@ function cloneInstanceData(data?: InstanceData | null): InstanceData {
     agentModelSelections: { ...(source.agentModelSelections ?? {}) },
     mcpDefaults: { ...(source.mcpDefaults ?? {}) },
     sessionMcpSettings: clonedSessionMcp,
+    sessionMcpModes: { ...(source.sessionMcpModes ?? {}) },
   }
 }
 
@@ -125,12 +126,39 @@ async function clearSessionMcpSettings(instanceId: string, sessionId: string): P
   setInstanceData(instanceId, draft)
 }
 
+function getSessionMcpMode(instanceId: string, sessionId: string | null): "global" | "local" {
+  if (!sessionId) return "global"
+  const config = getInstanceConfig(instanceId)
+  return config.sessionMcpModes?.[sessionId] ?? "global"
+}
+
+async function setSessionMcpMode(instanceId: string, sessionId: string, mode: "global" | "local"): Promise<void> {
+  await ensureInstanceConfig(instanceId)
+  await updateInstanceConfig(instanceId, (draft) => {
+    draft.sessionMcpModes = draft.sessionMcpModes ?? {}
+    draft.sessionMcpModes[sessionId] = mode
+  })
+}
+
 function getMcpSettingsForSession(instanceId: string, sessionId: string | null): Record<string, boolean> {
   const config = getInstanceConfig(instanceId)
   const defaults = config.mcpDefaults ?? {}
-  if (sessionId && config.sessionMcpSettings?.[sessionId] && Object.keys(config.sessionMcpSettings[sessionId]).length > 0) {
+  if (!sessionId) return defaults
+
+  const mode = getSessionMcpMode(instanceId, sessionId)
+
+  if (mode === "global") {
+    // In global mode, completely ignore session overrides and strictly use defaults
+    return defaults
+  }
+
+  // In local mode, we merge local settings on top of defaults.
+  // This ensures that servers implicitly "on" in the workspace stay on,
+  // until explicitly toggled off in the local session.
+  if (config.sessionMcpSettings?.[sessionId]) {
     return { ...defaults, ...config.sessionMcpSettings[sessionId] }
   }
+
   return defaults
 }
 
@@ -138,9 +166,24 @@ async function saveMcpSettingForSession(instanceId: string, sessionId: string | 
   await ensureInstanceConfig(instanceId)
   await updateInstanceConfig(instanceId, (draft) => {
     if (sessionId) {
+      const mode = draft.sessionMcpModes?.[sessionId] ?? "global"
+
       draft.sessionMcpSettings = draft.sessionMcpSettings ?? {}
-      draft.sessionMcpSettings[sessionId] = draft.sessionMcpSettings[sessionId] ?? {}
-      draft.sessionMcpSettings[sessionId][serverName] = enabled
+
+      if (mode === "global") {
+        // Toggling a switch while in Global mode completely OVERWRITES previous local settings
+        // We take a snapshot of the current workspace defaults, apply the toggle, and save it as the new Local state.
+        const currentDefaults = draft.mcpDefaults ?? {}
+        draft.sessionMcpSettings[sessionId] = { ...currentDefaults, [serverName]: enabled }
+
+        // Auto-switch to local mode
+        draft.sessionMcpModes = draft.sessionMcpModes ?? {}
+        draft.sessionMcpModes[sessionId] = "local"
+      } else {
+        // Already in local mode: just update the specific toggle, appending it to the existing local config
+        draft.sessionMcpSettings[sessionId] = draft.sessionMcpSettings[sessionId] ?? {}
+        draft.sessionMcpSettings[sessionId][serverName] = enabled
+      }
     } else {
       draft.mcpDefaults = draft.mcpDefaults ?? {}
       draft.mcpDefaults[serverName] = enabled
@@ -185,4 +228,6 @@ export {
   clearSessionMcpSettings,
   getMcpSettingsForSession,
   saveMcpSettingForSession,
+  getSessionMcpMode,
+  setSessionMcpMode,
 }

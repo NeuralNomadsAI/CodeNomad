@@ -4,7 +4,7 @@ import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { ensureInstanceConfigLoaded, getMcpSettingsForSession, saveMcpSettingForSession } from "../stores/instance-config"
+import { ensureInstanceConfigLoaded, getMcpSettingsForSession, saveMcpSettingForSession, useInstanceConfig, getSessionMcpMode } from "../stores/instance-config"
 import { activeSessionId } from "../stores/sessions"
 
 const log = getLogger("session")
@@ -84,10 +84,17 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     return activeSessionId().get(instanceId()) || null
   })
 
+  // Track the configuration reactively to correctly pick up mode toggles
+  const instanceConfig = useInstanceConfig(instanceId())
+  const mcpMode = createMemo(() => {
+    instanceConfig() // create dependency
+    return getSessionMcpMode(instanceId(), currentSessionId())
+  })
+
   const [isUserToggling, setIsUserToggling] = createSignal(false)
   let isReconciling = false
 
-  createEffect(on([currentSessionId, mcpServers], async () => {
+  createEffect(on([currentSessionId, mcpServers, mcpMode], async () => {
     const sid = currentSessionId()
     log.info("Session changed effect", { sessionId: sid, instanceId: instanceId() })
 
@@ -184,9 +191,6 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
     const sid = currentSessionId()
     await saveMcpSettingForSession(instanceId(), sid, serverName, shouldEnable)
-
-    // Also update workspace defaults for persistence across restarts
-    await saveMcpSettingForSession(instanceId(), null, serverName, shouldEnable)
 
     try {
       if (shouldEnable) {

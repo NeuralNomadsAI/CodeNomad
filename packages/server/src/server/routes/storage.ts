@@ -18,6 +18,7 @@ const InstanceDataSchema = z
     agentModelSelections: z.record(z.string(), ModelPreferenceSchema).default({}),
     mcpDefaults: z.record(z.string(), z.boolean()).optional(),
     sessionMcpSettings: z.record(z.string(), z.record(z.string(), z.boolean())).optional(),
+    sessionMcpModes: z.record(z.string(), z.enum(["global", "local"])).optional(),
   })
   .passthrough()
 

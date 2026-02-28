@@ -231,12 +231,14 @@ export class ServerStorage {
     const agentModelSelections = { ...(source.agentModelSelections ?? {}) }
     const mcpDefaults = source.mcpDefaults ?? {}
     const sessionMcpSettings = source.sessionMcpSettings ?? {}
+    const sessionMcpModes = { ...(source.sessionMcpModes ?? {}) }
     return {
       ...source,
       messageHistory,
       agentModelSelections,
       mcpDefaults,
       sessionMcpSettings,
+      sessionMcpModes,
     }
   }
 
