@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { Portal } from "solid-js/web"
 import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
@@ -42,6 +43,57 @@ export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+
+  type ImagePreviewState = {
+    url: string
+    name: string
+    anchor: HTMLElement
+  }
+
+  const [imagePreview, setImagePreview] = createSignal<ImagePreviewState | null>(null)
+
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+  const getImagePreviewPosition = () => {
+    const state = imagePreview()
+    if (!state) return null
+
+    const rect = state.anchor.getBoundingClientRect()
+
+    // Outer box: 320px image + 8px padding on each side.
+    const padding = 8
+    const maxImage = 320
+    const gap = 8
+    const chrome = padding * 2
+    const outerWidth = maxImage + chrome
+    const outerHeight = maxImage + chrome
+
+    const viewportW = window.innerWidth
+    const viewportH = window.innerHeight
+
+    const left = clamp(rect.left, 8, Math.max(8, viewportW - outerWidth - 8))
+
+    const fitsAbove = rect.top >= outerHeight + gap + 8
+    const preferredTop = fitsAbove ? rect.top - outerHeight - gap : rect.bottom + gap
+    const top = clamp(preferredTop, 8, Math.max(8, viewportH - outerHeight - 8))
+
+    return { left, top }
+  }
+
+  createEffect(() => {
+    const active = imagePreview()
+    if (!active) return
+
+    // If the user scrolls (message stream scroll container) or resizes, the anchor moves.
+    // Hide the popover to avoid showing it in the wrong place.
+    const hide = () => setImagePreview(null)
+    window.addEventListener("scroll", hide, true)
+    window.addEventListener("resize", hide)
+    onCleanup(() => {
+      window.removeEventListener("scroll", hide, true)
+      window.removeEventListener("resize", hide)
+    })
+  })
 
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
 
@@ -176,6 +228,11 @@ export default function MessageItem(props: MessageItemProps) {
     } catch (error) {
       directDownload(url)
     }
+  }
+
+  const showImagePreview = (anchor: HTMLElement, url: string, name: string) => {
+    if (!url) return
+    setImagePreview({ anchor, url, name })
   }
 
   const errorMessage = () => {
@@ -521,6 +578,12 @@ export default function MessageItem(props: MessageItemProps) {
                   <div
                     class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
                     title={name}
+                    onMouseEnter={(e) => {
+                      if (!isImage) return
+                      const el = e.currentTarget as HTMLElement
+                      showImagePreview(el, attachment.url || "", name)
+                    }}
+                    onMouseLeave={() => setImagePreview(null)}
                   >
                     <Show when={isImage} fallback={
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -549,16 +612,36 @@ export default function MessageItem(props: MessageItemProps) {
                         </svg>
                       </button>
                     </Show>
-                    <Show when={isImage}>
-                      <div class="attachment-chip-preview">
-                        <img src={attachment.url} alt={name} />
-                      </div>
-                    </Show>
                   </div>
                 )
               }}
             </For>
           </div>
+        </Show>
+
+        <Show when={imagePreview()}>
+          {(stateAccessor) => {
+            const state = stateAccessor()
+            const pos = () => getImagePreviewPosition()
+            return (
+              <Portal>
+                <Show when={pos()}>
+                  {(posAccessor) => {
+                    const coords = posAccessor()
+                    return (
+                      <div
+                        class="attachment-image-popover"
+                        style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
+                        aria-hidden="true"
+                      >
+                        <img src={state.url} alt={state.name} />
+                      </div>
+                    )
+                  }}
+                </Show>
+              </Portal>
+            )
+          }}
         </Show>
 
         <Show when={props.record.status === "sending"}>

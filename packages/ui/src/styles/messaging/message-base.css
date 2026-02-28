@@ -203,6 +203,27 @@
   border-top: 1px solid var(--border-base);
 }
 
+/* Image attachment preview popover.
+   Rendered via a Portal to avoid being clipped by the message stream scroller. */
+.attachment-image-popover {
+  position: fixed;
+  padding: 8px;
+  background-color: var(--surface-base);
+  border: 1px solid var(--border-base);
+  border-radius: 10px;
+  box-shadow: var(--popover-shadow);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.attachment-image-popover img {
+  display: block;
+  max-width: 320px;
+  max-height: 320px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
 .message-error {
   @apply text-xs mt-1;
   color: var(--status-error);
