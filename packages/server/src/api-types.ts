@@ -160,6 +160,8 @@ export type WorkspaceFileSearchResponse = FileSystemEntry[]
 export interface InstanceData {
   messageHistory: string[]
   agentModelSelections: AgentModelSelection
+  mcpDefaults?: Record<string, boolean>
+  sessionMcpSettings?: Record<string, Record<string, boolean>>
 }
 
 export type InstanceStreamStatus = "connecting" | "connected" | "error" | "disconnected"

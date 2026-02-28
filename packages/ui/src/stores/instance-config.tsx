@@ -5,7 +5,7 @@ import { getLogger } from "../lib/logger"
 
 const log = getLogger("api")
 
-const DEFAULT_INSTANCE_DATA: InstanceData = { messageHistory: [], agentModelSelections: {} }
+const DEFAULT_INSTANCE_DATA: InstanceData = { messageHistory: [], agentModelSelections: {}, mcpDefaults: {}, sessionMcpSettings: {} }
 
 const [instanceDataMap, setInstanceDataMap] = createSignal<Map<string, InstanceData>>(new Map())
 const loadPromises = new Map<string, Promise<void>>()
@@ -13,10 +13,15 @@ const instanceSubscriptions = new Map<string, () => void>()
 
 function cloneInstanceData(data?: InstanceData | null): InstanceData {
   const source = data ?? DEFAULT_INSTANCE_DATA
+  const clonedSessionMcp: Record<string, Record<string, boolean>> = {}
+  for (const [k, v] of Object.entries(source.sessionMcpSettings ?? {})) {
+    clonedSessionMcp[k] = { ...v }
+  }
   return {
-    ...source,
     messageHistory: Array.isArray(source.messageHistory) ? [...source.messageHistory] : [],
     agentModelSelections: { ...(source.agentModelSelections ?? {}) },
+    mcpDefaults: { ...(source.mcpDefaults ?? {}) },
+    sessionMcpSettings: clonedSessionMcp,
   }
 }
 
@@ -104,6 +109,45 @@ function clearInstanceConfig(instanceId: string): void {
   detachSubscription(instanceId)
 }
 
+async function clearSessionMcpSettings(instanceId: string, sessionId: string): Promise<void> {
+  if (!instanceId || !sessionId) return
+  await ensureInstanceConfig(instanceId)
+  const current = instanceDataMap().get(instanceId) ?? DEFAULT_INSTANCE_DATA
+  const sessionSettings = current.sessionMcpSettings ?? {}
+  if (!sessionSettings[sessionId]) return
+  const draft = cloneInstanceData(current)
+  delete draft.sessionMcpSettings?.[sessionId]
+  try {
+    await storage.saveInstanceData(instanceId, draft)
+  } catch (error) {
+    log.warn("Failed to clear session MCP settings", error)
+  }
+  setInstanceData(instanceId, draft)
+}
+
+function getMcpSettingsForSession(instanceId: string, sessionId: string | null): Record<string, boolean> {
+  const config = getInstanceConfig(instanceId)
+  const defaults = config.mcpDefaults ?? {}
+  if (sessionId && config.sessionMcpSettings?.[sessionId] && Object.keys(config.sessionMcpSettings[sessionId]).length > 0) {
+    return { ...defaults, ...config.sessionMcpSettings[sessionId] }
+  }
+  return defaults
+}
+
+async function saveMcpSettingForSession(instanceId: string, sessionId: string | null, serverName: string, enabled: boolean): Promise<void> {
+  await ensureInstanceConfig(instanceId)
+  await updateInstanceConfig(instanceId, (draft) => {
+    if (sessionId) {
+      draft.sessionMcpSettings = draft.sessionMcpSettings ?? {}
+      draft.sessionMcpSettings[sessionId] = draft.sessionMcpSettings[sessionId] ?? {}
+      draft.sessionMcpSettings[sessionId][serverName] = enabled
+    } else {
+      draft.mcpDefaults = draft.mcpDefaults ?? {}
+      draft.mcpDefaults[serverName] = enabled
+    }
+  })
+}
+
 interface InstanceConfigContextValue {
   getInstanceConfig: typeof getInstanceConfig
   ensureInstanceConfig: typeof ensureInstanceConfig
@@ -138,4 +182,7 @@ export {
   getInstanceConfig,
   updateInstanceConfig,
   clearInstanceConfig,
+  clearSessionMcpSettings,
+  getMcpSettingsForSession,
+  saveMcpSettingForSession,
 }

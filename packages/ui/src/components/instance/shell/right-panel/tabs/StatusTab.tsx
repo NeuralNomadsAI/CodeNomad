@@ -232,6 +232,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           sections={["mcp"]}
           showSectionHeadings={false}
           class="space-y-2"
+          sessionId={props.activeSessionId}
         />
       ),
     },
