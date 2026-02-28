@@ -496,17 +496,24 @@ const App: Component = () => {
                   const isActiveInstance = () => activeInstanceId() === instance.id
                   const isVisible = () => isActiveInstance() && !showFolderSelection()
                     return (
-                      <div class="flex-1 min-h-0 overflow-hidden" style={{ display: isVisible() ? "flex" : "none" }}>
-                        <InstanceMetadataProvider instance={instance}>
-                          <InstanceShell
-                            instance={instance}
-                            escapeInDebounce={escapeInDebounce()}
-                            paletteCommands={paletteCommands}
-                            onCloseSession={(sessionId) => handleCloseSession(instance.id, sessionId)}
-                            onNewSession={() => handleNewSession(instance.id)}
-                            handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
-                            handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
-                            onExecuteCommand={executeCommand}
+                       <div
+                         class="flex-1 min-h-0 overflow-hidden"
+                         style={{ display: isVisible() ? "flex" : "none" }}
+                         data-instance-id={instance.id}
+                         data-instance-active={isActiveInstance() ? "true" : "false"}
+                         data-instance-visible={isVisible() ? "true" : "false"}
+                       >
+                         <InstanceMetadataProvider instance={instance}>
+                           <InstanceShell
+                             instance={instance}
+                             isActiveInstance={isActiveInstance()}
+                             escapeInDebounce={escapeInDebounce()}
+                             paletteCommands={paletteCommands}
+                             onCloseSession={(sessionId) => handleCloseSession(instance.id, sessionId)}
+                             onNewSession={() => handleNewSession(instance.id)}
+                             handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(instance.id, sessionId, agent)}
+                             handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(instance.id, sessionId, model)}
+                             onExecuteCommand={executeCommand}
                             tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
                             mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
                             onEnterMobileFullscreen={() => void enterMobileFullscreen()}

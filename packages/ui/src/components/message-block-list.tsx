@@ -8,7 +8,7 @@ export function getMessageAnchorId(messageId: string) {
   return `message-anchor-${messageId}`
 }
 
-const VIRTUAL_ITEM_MARGIN_PX = 300
+const VIRTUAL_ITEM_MARGIN_PX = 800
 
 interface MessageBlockListProps {
   instanceId: string

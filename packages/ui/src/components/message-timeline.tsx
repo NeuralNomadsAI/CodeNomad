@@ -411,7 +411,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
  
   return (
-    <div class="message-timeline" role="navigation" aria-label={t("messageTimeline.ariaLabel")}>
+    <div
+      class="message-timeline"
+      role="navigation"
+      aria-label={t("messageTimeline.ariaLabel")}
+      data-view="timeline"
+      data-instance-id={props.instanceId}
+      data-session-id={props.sessionId}
+    >
       <For each={props.segments}>
         {(segment) => {
           onCleanup(() => buttonRefs.delete(segment.id))

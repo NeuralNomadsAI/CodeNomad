@@ -62,6 +62,42 @@ function shouldRenderEntry(entry: IntersectionObserverEntry) {
   return true
 }
 
+function getViewportRect(): { top: number; bottom: number } {
+  if (typeof window === "undefined") {
+    return { top: 0, bottom: 0 }
+  }
+  return { top: 0, bottom: window.innerHeight }
+}
+
+function isRenderableRoot(root: ObserverRoot): boolean {
+  if (!root) return true
+  if (root instanceof Document) return true
+  if (typeof window === "undefined") return false
+
+  const element = root as Element
+  const style = window.getComputedStyle(element as Element)
+  if (style.display === "none" || style.visibility === "hidden") {
+    return false
+  }
+  const rect = (element as Element).getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function shouldRenderByRects(params: {
+  wrapperRect: DOMRect
+  rootRect: { top: number; bottom: number }
+  margin: number
+}): boolean {
+  const { wrapperRect, rootRect, margin } = params
+  const distanceAbove = rootRect.top - wrapperRect.bottom
+  const distanceBelow = wrapperRect.top - rootRect.bottom
+  const threshold = margin + VISIBILITY_BUFFER_PX
+  if (distanceAbove > threshold || distanceBelow > threshold) {
+    return false
+  }
+  return true
+}
+
 function subscribeToSharedObserver(
   target: Element,
   root: ObserverRoot,
@@ -120,7 +156,10 @@ interface VirtualItemProps {
 export default function VirtualItem(props: VirtualItemProps) {
   const resolved = resolveChildren(() => props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
-  const [isIntersecting, setIsIntersecting] = createSignal(true)
+  // Default to hidden until we can determine visibility.
+  // This avoids keeping heavy DOM alive when IntersectionObserver
+  // doesn't fire (common for hidden/zero-sized scroll roots).
+  const [isIntersecting, setIsIntersecting] = createSignal(false)
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? 0)
   const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
@@ -148,12 +187,12 @@ export default function VirtualItem(props: VirtualItemProps) {
     })
   }
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
+  const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
   const shouldHideContent = createMemo(() => {
     if (props.forceVisible?.()) return false
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
-  const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
  
    let wrapperRef: HTMLDivElement | undefined
  
@@ -229,14 +268,44 @@ export default function VirtualItem(props: VirtualItemProps) {
   function refreshIntersectionObserver(targetRoot: Element | Document | null) {
     cleanupIntersectionObserver()
     if (!wrapperRef) {
-      setIsIntersecting(true)
+      setIsIntersecting(false)
       return
     }
     if (typeof IntersectionObserver === "undefined") {
       setIsIntersecting(true)
       return
     }
+
     const margin = props.threshold ?? DEFAULT_MARGIN_PX
+
+    // If the scroll root is hidden / 0x0, IntersectionObserver can report
+    // `isIntersecting` in unexpected ways (often "true" with null rootBounds),
+    // which keeps heavy DOM alive in background tabs.
+    //
+    // In that state, force-hide and skip attaching the observer. When the
+    // pane becomes visible again, VirtualItem will re-run this setup and
+    // re-attach the observer.
+    const renderable = isRenderableRoot(targetRoot)
+    if (!renderable) {
+      setIsIntersecting(false)
+      return
+    }
+
+    // Compute an immediate best-effort visibility so switching tabs doesn't
+    // depend on the first IntersectionObserver callback.
+    try {
+      const rootRect =
+        targetRoot && !(targetRoot instanceof Document)
+          ? (targetRoot as Element).getBoundingClientRect()
+          : null
+      const bounds = rootRect ? { top: rootRect.top, bottom: rootRect.bottom } : getViewportRect()
+      setIsIntersecting(
+        shouldRenderByRects({ wrapperRect: wrapperRef.getBoundingClientRect(), rootRect: bounds, margin }),
+      )
+    } catch {
+      // Ignore measurement failures; IntersectionObserver will correct us.
+    }
+
     intersectionCleanup = subscribeToSharedObserver(wrapperRef, targetRoot, margin, (entry) => {
       const nextVisible = shouldRenderEntry(entry)
       queueVisibility(nextVisible)
@@ -340,4 +409,3 @@ export default function VirtualItem(props: VirtualItemProps) {
     </div>
   )
 }
-

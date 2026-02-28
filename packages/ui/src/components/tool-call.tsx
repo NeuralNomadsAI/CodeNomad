@@ -976,6 +976,12 @@ export default function ToolCall(props: ToolCallProps) {
         setToolCallRootEl(element || undefined)
       }}
       class={`tool-call ${combinedStatusClass()}`}
+      data-part-type="tool"
+      data-tool-name={toolName()}
+      data-instance-id={props.instanceId}
+      data-session-id={props.sessionId}
+      data-message-id={props.messageId}
+      data-part-id={toolCallIdentifier()}
     >
       <div class="tool-call-header">
         <button

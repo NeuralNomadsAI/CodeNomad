@@ -913,13 +913,30 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   return (
-    <div class="message-stream-container">
+    <div
+      class="message-stream-container"
+      data-instance-id={props.instanceId}
+      data-session-id={props.sessionId}
+      data-stream-active={isActive() ? "true" : "false"}
+    >
       <div
         class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
-        <div class="message-stream-shell" ref={setShellElement}>
-          <div class="message-stream" ref={setContainerRef} onScroll={handleScroll} onMouseUp={handleStreamMouseUp}>
+        <div
+          class="message-stream-shell"
+          ref={setShellElement}
+          data-instance-id={props.instanceId}
+          data-session-id={props.sessionId}
+        >
+          <div
+            class="message-stream"
+            ref={setContainerRef}
+            onScroll={handleScroll}
+            onMouseUp={handleStreamMouseUp}
+            data-instance-id={props.instanceId}
+            data-session-id={props.sessionId}
+          >
             <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
             <Show when={!props.loading && messageIds().length === 0}>
               <div class="empty-state">

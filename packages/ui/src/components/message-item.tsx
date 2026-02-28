@@ -381,7 +381,15 @@ export default function MessageItem(props: MessageItemProps) {
 
 
   return (
-    <div class={containerClass()}>
+    <div
+      class={containerClass()}
+      data-view="message-item"
+      data-instance-id={props.instanceId}
+      data-session-id={props.sessionId}
+      data-message-id={props.record.id}
+      data-message-role={isUser() ? "user" : "assistant"}
+      data-message-status={props.record.status}
+    >
       <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
           <div class="message-header-left">

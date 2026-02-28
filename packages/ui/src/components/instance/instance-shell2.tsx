@@ -62,6 +62,9 @@ const log = getLogger("session")
 
 interface InstanceShellProps {
   instance: Instance
+  // Provided by App-level instance tabs; lets us pause heavy rendering
+  // work for inactive instances while keeping them mounted for fast switching.
+  isActiveInstance?: boolean
   escapeInDebounce: boolean
   paletteCommands: Accessor<Command[]>
   onCloseSession: (sessionId: string) => Promise<void> | void
@@ -800,12 +803,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               >
                 <For each={cachedSessionIds()}>
                   {(sessionId) => {
-                    const isActive = () => activeSessionIdForInstance() === sessionId
+                    const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
                     return (
                       <div
                         class="session-cache-pane flex flex-col flex-1 min-h-0"
                         style={{ display: isActive() ? "flex" : "none" }}
                         data-session-id={sessionId}
+                        data-instance-id={props.instance.id}
+                        data-session-active={isActive() ? "true" : "false"}
                         aria-hidden={!isActive()}
                       >
                         <SessionView
@@ -841,7 +846,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   return (
     <>
-      <div class="instance-shell2 flex flex-col flex-1 min-h-0">
+      <div
+        class="instance-shell2 flex flex-col flex-1 min-h-0"
+        data-instance-id={props.instance.id}
+      >
         <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>

@@ -202,5 +202,15 @@ export function Markdown(props: MarkdownProps) {
 
   const proseClass = () => "markdown-body"
 
-  return <div ref={containerRef} class={proseClass()} innerHTML={html()} />
+  return (
+    <div
+      ref={containerRef}
+      class={proseClass()}
+      data-view="markdown"
+      data-part-id={resolved().partId}
+      data-markdown-theme={resolved().themeKey}
+      data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
+      innerHTML={html()}
+    />
+  )
 }
