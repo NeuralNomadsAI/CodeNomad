@@ -17,10 +17,10 @@ import type { DeleteHoverState } from "../types/delete-hover"
 
 const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
-const USER_SCROLL_INTENT_WINDOW_MS = 600
-const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+
+const SCROLL_CHASE_CHECK_FRAMES = 10
 
 export interface MessageSectionProps {
   instanceId: string
@@ -219,80 +219,124 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
-  const [topSentinel, setTopSentinel] = createSignal<HTMLDivElement | null>(null)
-  const [bottomSentinelSignal, setBottomSentinelSignal] = createSignal<HTMLDivElement | null>(null)
-  const bottomSentinel = () => bottomSentinelSignal()
-  const setBottomSentinel = (element: HTMLDivElement | null) => {
-    setBottomSentinelSignal(element)
-    resolvePendingActiveScroll()
+  const [oldestSentinel, setOldestSentinel] = createSignal<HTMLDivElement | null>(null)
+  const [newestSentinelSignal, setNewestSentinelSignal] = createSignal<HTMLDivElement | null>(null)
+  const newestSentinel = () => newestSentinelSignal()
+  const setNewestSentinel = (element: HTMLDivElement | null) => {
+    setNewestSentinelSignal(element)
   }
-  const [autoScroll, setAutoScroll] = createSignal(true)
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
-  const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
-  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
+  const [oldestSentinelVisible, setOldestSentinelVisible] = createSignal(true)
+  const [newestSentinelVisible, setNewestSentinelVisible] = createSignal(true)
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
 
   let containerRef: HTMLDivElement | undefined
   let shellRef: HTMLDivElement | undefined
   let pendingScrollFrame: number | null = null
 
-  let pendingAnchorScroll: number | null = null
-
   let pendingScrollPersist: number | null = null
-  let userScrollIntentUntil = 0
-  let detachScrollIntentListeners: (() => void) | undefined
   let hasRestoredScroll = false
-  let suppressAutoScrollOnce = false
-  let pendingActiveScroll = false
-  let scrollToBottomFrame: number | null = null
-  let scrollToBottomDelayedFrame: number | null = null
-  let pendingInitialScroll = true
 
-  function markUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    userScrollIntentUntil = now + USER_SCROLL_INTENT_WINDOW_MS
-  }
+  let chaseFrame: number | null = null
+  let chaseMode: "newest" | "oldest" | null = null
+  let detachChaseIntent: (() => void) | undefined
 
-  function hasUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    return now <= userScrollIntentUntil
-  }
-
-  function attachScrollIntentListeners(element: HTMLDivElement | undefined) {
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
+  function clearScrollChase() {
+    if (chaseFrame !== null) {
+      cancelAnimationFrame(chaseFrame)
+      chaseFrame = null
     }
-    if (!element) return
-    const handlePointerIntent = () => markUserScrollIntent()
-    const handleKeyIntent = (event: KeyboardEvent) => {
-      if (SCROLL_INTENT_KEYS.has(event.key)) {
-        markUserScrollIntent()
+    chaseMode = null
+    if (detachChaseIntent) {
+      detachChaseIntent()
+      detachChaseIntent = undefined
+    }
+  }
+
+  function performEdgeScroll(mode: "newest" | "oldest", behavior: ScrollBehavior) {
+    if (!containerRef) return
+    if (mode === "newest") {
+      const sentinel = newestSentinel()
+      if (sentinel) {
+        sentinel.scrollIntoView({ block: "end", inline: "nearest", behavior })
+      } else {
+        // With the reversed scroll container, newest corresponds to scrollTop=0.
+        containerRef.scrollTo({ top: 0, behavior })
       }
+      return
     }
-    element.addEventListener("wheel", handlePointerIntent, { passive: true })
-    element.addEventListener("pointerdown", handlePointerIntent)
-    element.addEventListener("touchstart", handlePointerIntent, { passive: true })
-    element.addEventListener("keydown", handleKeyIntent)
-    detachScrollIntentListeners = () => {
-      element.removeEventListener("wheel", handlePointerIntent)
-      element.removeEventListener("pointerdown", handlePointerIntent)
-      element.removeEventListener("touchstart", handlePointerIntent)
-      element.removeEventListener("keydown", handleKeyIntent)
+
+    // Oldest
+    const sentinel = oldestSentinel()
+    if (sentinel) {
+      sentinel.scrollIntoView({ block: "start", inline: "nearest", behavior })
+    } else {
+      // Best-effort: jump to far edge.
+      containerRef.scrollTo({ top: containerRef.scrollHeight, behavior })
     }
   }
+
+  function isEdgeVisible(mode: "newest" | "oldest") {
+    return mode === "newest" ? newestSentinelVisible() : oldestSentinelVisible()
+  }
+
+  function startScrollChase(mode: "newest" | "oldest") {
+    if (!containerRef) return
+    clearScrollChase()
+    chaseMode = mode
+
+    // If the user starts interacting, stop chasing.
+    const element = containerRef
+    const cancel = () => clearScrollChase()
+    element.addEventListener("wheel", cancel, { passive: true })
+    element.addEventListener("pointerdown", cancel)
+    element.addEventListener("touchstart", cancel, { passive: true })
+    detachChaseIntent = () => {
+      element.removeEventListener("wheel", cancel)
+      element.removeEventListener("pointerdown", cancel)
+      element.removeEventListener("touchstart", cancel)
+    }
+
+    // Always use instant scroll.
+    performEdgeScroll(mode, "auto")
+
+    // After the click-triggered scroll, give layout a few frames to settle.
+    // If the sentinel still isn't visible, request another scrollIntoView.
+    let framesRemaining = SCROLL_CHASE_CHECK_FRAMES
+    const tick = () => {
+      chaseFrame = null
+      if (!containerRef || !chaseMode) return
+
+      framesRemaining -= 1
+      if (framesRemaining > 0) {
+        chaseFrame = requestAnimationFrame(tick)
+        return
+      }
+
+      if (isEdgeVisible(chaseMode)) {
+        clearScrollChase()
+        return
+      }
+
+      // Retry with instant behavior.
+      performEdgeScroll(chaseMode, "auto")
+      framesRemaining = SCROLL_CHASE_CHECK_FRAMES
+      chaseFrame = requestAnimationFrame(tick)
+    }
+
+    chaseFrame = requestAnimationFrame(tick)
+  }
+
 
   function setContainerRef(element: HTMLDivElement | null) {
     containerRef = element || undefined
     setScrollElement(containerRef)
-    attachScrollIntentListeners(containerRef)
     if (!containerRef) {
       clearQuoteSelection()
       return
     }
-    resolvePendingActiveScroll()
   }
 
   function setShellElement(element: HTMLDivElement | null) {
@@ -305,10 +349,10 @@ export default function MessageSection(props: MessageSectionProps) {
   function updateScrollIndicatorsFromVisibility() {
 
     const hasItems = messageIds().length > 0
-    const bottomVisible = bottomSentinelVisible()
-    const topVisible = topSentinelVisible()
-    setShowScrollBottomButton(hasItems && !bottomVisible)
-    setShowScrollTopButton(hasItems && !topVisible)
+    const latestVisible = newestSentinelVisible()
+    const oldestVisible = oldestSentinelVisible()
+    setShowScrollBottomButton(hasItems && !latestVisible)
+    setShowScrollTopButton(hasItems && !oldestVisible)
   }
 
   function scheduleScrollPersist() {
@@ -320,84 +364,18 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   }
  
-  function scrollToBottom(immediate = false, options?: { suppressAutoAnchor?: boolean }) {
+  function scrollToBottom(immediate = false) {
+    // In reversed mode, the visual "latest" position is scrollTop=0.
     if (!containerRef) return
-    const sentinel = bottomSentinel()
-    const behavior = immediate ? "auto" : "smooth"
-    const suppressAutoAnchor = options?.suppressAutoAnchor ?? !immediate
-    if (suppressAutoAnchor) {
-      suppressAutoScrollOnce = true
-    }
-    sentinel?.scrollIntoView({ block: "end", inline: "nearest", behavior })
-    setAutoScroll(true)
+    startScrollChase("newest")
     scheduleScrollPersist()
   }
 
-  function clearScrollToBottomFrames() {
-    if (scrollToBottomFrame !== null) {
-      cancelAnimationFrame(scrollToBottomFrame)
-      scrollToBottomFrame = null
-    }
-    if (scrollToBottomDelayedFrame !== null) {
-      cancelAnimationFrame(scrollToBottomDelayedFrame)
-      scrollToBottomDelayedFrame = null
-    }
-  }
-
-  function requestScrollToBottom(immediate = true) {
-    if (!isActive()) {
-      pendingActiveScroll = true
-      return
-    }
-    if (!containerRef || !bottomSentinel()) {
-      pendingActiveScroll = true
-      return
-    }
-    pendingActiveScroll = false
-    clearScrollToBottomFrames()
-    scrollToBottomFrame = requestAnimationFrame(() => {
-      scrollToBottomFrame = null
-      scrollToBottomDelayedFrame = requestAnimationFrame(() => {
-        scrollToBottomDelayedFrame = null
-        scrollToBottom(immediate)
-      })
-    })
-  }
-
-  function resolvePendingActiveScroll() {
-    if (!pendingActiveScroll) return
-    if (!isActive()) return
-    requestScrollToBottom(true)
-  }
  
   function scrollToTop(immediate = false) {
     if (!containerRef) return
-    const behavior = immediate ? "auto" : "smooth"
-    setAutoScroll(false)
-    topSentinel()?.scrollIntoView({ block: "start", inline: "nearest", behavior })
+    startScrollChase("oldest")
     scheduleScrollPersist()
-  }
-
-
-  function scheduleAnchorScroll(immediate = false) {
-    if (!autoScroll()) return
-    if (!isActive()) {
-      pendingActiveScroll = true
-      return
-    }
-    const sentinel = bottomSentinel()
-    if (!sentinel) {
-      pendingActiveScroll = true
-      return
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    pendingAnchorScroll = requestAnimationFrame(() => {
-      pendingAnchorScroll = null
-      sentinel.scrollIntoView({ block: "end", inline: "nearest", behavior: immediate ? "auto" : "smooth" })
-    })
   }
 
   function clearQuoteSelection() {
@@ -487,10 +465,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
  
   function handleContentRendered() {
-    if (props.loading) {
-      return
-    }
-    scheduleAnchorScroll()
+    // No-op: scroll behavior is handled by explicit jumps + chase.
   }
 
   function handleScroll() {
@@ -499,20 +474,9 @@ export default function MessageSection(props: MessageSectionProps) {
     if (pendingScrollFrame !== null) {
       cancelAnimationFrame(pendingScrollFrame)
     }
-    const isUserScroll = hasUserScrollIntent()
     pendingScrollFrame = requestAnimationFrame(() => {
       pendingScrollFrame = null
       if (!containerRef) return
-      const atBottom = bottomSentinelVisible()
-
-      if (isUserScroll) {
-        if (atBottom) {
-          if (!autoScroll()) setAutoScroll(true)
-        } else if (autoScroll()) {
-          setAutoScroll(false)
-        }
-      }
-
       clearQuoteSelection()
       scheduleScrollPersist()
     })
@@ -522,40 +486,8 @@ export default function MessageSection(props: MessageSectionProps) {
 
   createEffect(() => {
     if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => requestScrollToBottom(true))
+      props.registerScrollToBottom(() => scrollToBottom(true))
     }
-  })
-
-  let lastActiveState = false
-  createEffect(() => {
-    const active = isActive()
-    if (active) {
-      resolvePendingActiveScroll()
-      if (!lastActiveState && autoScroll()) {
-        requestScrollToBottom(true)
-      }
-    } else if (autoScroll()) {
-      pendingActiveScroll = true
-    }
-    lastActiveState = active
-  })
-
-  createEffect(() => {
-    const loading = Boolean(props.loading)
-    if (loading) {
-      pendingInitialScroll = true
-      return
-    }
-    if (!pendingInitialScroll) {
-      return
-    }
-    const container = scrollElement()
-    const sentinel = bottomSentinel()
-    if (!container || !sentinel || messageIds().length === 0) {
-      return
-    }
-    pendingInitialScroll = false
-    requestScrollToBottom(true)
   })
 
   let previousTimelineIds: string[] = []
@@ -789,58 +721,28 @@ export default function MessageSection(props: MessageSectionProps) {
     hasRestoredScroll = true
   })
 
-  let previousToken: string | undefined
-  createEffect(() => {
-    const token = changeToken()
-    const loading = props.loading
-    if (loading || !token || token === previousToken) {
-      return
-    }
-    previousToken = token
-    if (suppressAutoScrollOnce) {
-      suppressAutoScrollOnce = false
-      return
-    }
-    if (autoScroll()) {
-      scheduleAnchorScroll(true)
-    }
-  })
-
-  createEffect(() => {
-    preferenceSignature()
-    if (props.loading || !autoScroll()) {
-      return
-    }
-    if (suppressAutoScrollOnce) {
-      suppressAutoScrollOnce = false
-      return
-    }
-    scheduleAnchorScroll(true)
-  })
-
   createEffect(() => {
     if (messageIds().length === 0) {
       setShowScrollTopButton(false)
       setShowScrollBottomButton(false)
-      setAutoScroll(true)
       return
     }
     updateScrollIndicatorsFromVisibility()
   })
   createEffect(() => {
     const container = scrollElement()
-    const topTarget = topSentinel()
-    const bottomTarget = bottomSentinel()
+    const topTarget = oldestSentinel()
+    const bottomTarget = newestSentinel()
     if (!container || !topTarget || !bottomTarget) return
     const observer = new IntersectionObserver(
       (entries) => {
         let visibilityChanged = false
         for (const entry of entries) {
           if (entry.target === topTarget) {
-            setTopSentinelVisible(entry.isIntersecting)
+            setOldestSentinelVisible(entry.isIntersecting)
             visibilityChanged = true
           } else if (entry.target === bottomTarget) {
-            setBottomSentinelVisible(entry.isIntersecting)
+            setNewestSentinelVisible(entry.isIntersecting)
             visibilityChanged = true
           }
         }
@@ -898,14 +800,8 @@ export default function MessageSection(props: MessageSectionProps) {
     if (pendingScrollPersist !== null) {
       cancelAnimationFrame(pendingScrollPersist)
     }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-    }
-    clearScrollToBottomFrames()
+    clearScrollChase()
     clearPendingTimelinePartUpdateFrame()
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-    }
     if (containerRef) {
       // scrollCache.persist(containerRef, { atBottomOffset: SCROLL_SENTINEL_MARGIN_PX })
     }
@@ -937,8 +833,34 @@ export default function MessageSection(props: MessageSectionProps) {
             data-instance-id={props.instanceId}
             data-session-id={props.sessionId}
           >
-            <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
-            <Show when={!props.loading && messageIds().length === 0}>
+            <MessageBlockList
+              instanceId={props.instanceId}
+              sessionId={props.sessionId}
+              store={store}
+              messageIds={messageIds}
+              lastAssistantIndex={lastAssistantIndex}
+              showThinking={() => preferences().showThinkingBlocks}
+              thinkingDefaultExpanded={() => (preferences().thinkingBlocksExpansion ?? "expanded") === "expanded"}
+              showUsageMetrics={showUsagePreference}
+              scrollContainer={scrollElement}
+              onRevert={props.onRevert}
+              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+              onFork={props.onFork}
+              onContentRendered={handleContentRendered}
+              deleteHover={deleteHover}
+              onDeleteHoverChange={setDeleteHover}
+              selectedMessageIds={selectedForDeletion}
+              onToggleSelectedMessage={setMessageSelectedForDeletion}
+              setNewestSentinel={setNewestSentinel}
+              setOldestSentinel={setOldestSentinel}
+              suspendMeasurements={() => !isActive()}
+            />
+
+
+          </div>
+
+          <Show when={!props.loading && messageIds().length === 0}>
+            <div class="message-stream-overlay">
               <div class="empty-state">
                 <div class="empty-state-content">
                   <div class="flex flex-col items-center gap-3 mb-6">
@@ -959,40 +881,17 @@ export default function MessageSection(props: MessageSectionProps) {
                   </ul>
                 </div>
               </div>
-            </Show>
- 
-            <Show when={props.loading}>
+            </div>
+          </Show>
+
+          <Show when={props.loading}>
+            <div class="message-stream-overlay">
               <div class="loading-state">
                 <div class="spinner" />
                 <p>{t("messageSection.loading.messages")}</p>
               </div>
-            </Show>
- 
-            <MessageBlockList
-              instanceId={props.instanceId}
-              sessionId={props.sessionId}
-              store={store}
-              messageIds={messageIds}
-              lastAssistantIndex={lastAssistantIndex}
-              showThinking={() => preferences().showThinkingBlocks}
-              thinkingDefaultExpanded={() => (preferences().thinkingBlocksExpansion ?? "expanded") === "expanded"}
-              showUsageMetrics={showUsagePreference}
-              scrollContainer={scrollElement}
-              loading={props.loading}
-              onRevert={props.onRevert}
-              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-              onFork={props.onFork}
-              onContentRendered={handleContentRendered}
-              deleteHover={deleteHover}
-              onDeleteHoverChange={setDeleteHover}
-              selectedMessageIds={selectedForDeletion}
-              onToggleSelectedMessage={setMessageSelectedForDeletion}
-              setBottomSentinel={setBottomSentinel}
-              suspendMeasurements={() => !isActive()}
-            />
-
-
-          </div>
+            </div>
+          </Show>
  
           <Show when={showScrollTopButton() || showScrollBottomButton()}>
             <div class="message-scroll-button-wrapper">
@@ -1005,7 +904,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 <button
                   type="button"
                   class="message-scroll-button"
-                  onClick={() => scrollToBottom(false, { suppressAutoAnchor: false })}
+                  onClick={() => scrollToBottom(false)}
                   aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                 >
                   <span class="message-scroll-icon" aria-hidden="true">↓</span>

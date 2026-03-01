@@ -1,7 +1,10 @@
 .message-stream {
-  @apply flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5;
+  @apply flex-1 min-h-0 overflow-y-auto flex flex-col-reverse gap-0.5;
   background-color: var(--surface-base);
   color: inherit;
+  /* Disable browser scroll anchoring; VirtualItem mounts can otherwise
+     re-anchor the viewport and create "jumpiness" near the newest edge. */
+  overflow-anchor: none;
 }
 
 .message-stream-block {

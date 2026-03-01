@@ -2,7 +2,7 @@ import { JSX, Accessor, children as resolveChildren, createEffect, createMemo, c
 
 const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
-const MIN_PLACEHOLDER_HEIGHT = 32
+const MIN_PLACEHOLDER_HEIGHT = 100
 const VISIBILITY_BUFFER_PX = 48
 
 type ObserverRoot = Element | Document | null
@@ -156,10 +156,12 @@ interface VirtualItemProps {
 export default function VirtualItem(props: VirtualItemProps) {
   const resolved = resolveChildren(() => props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
+
   // Default to hidden until we can determine visibility.
   // This avoids keeping heavy DOM alive when IntersectionObserver
   // doesn't fire (common for hidden/zero-sized scroll roots).
   const [isIntersecting, setIsIntersecting] = createSignal(false)
+  const [hasWrapper, setHasWrapper] = createSignal(false)
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? 0)
   const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
@@ -191,6 +193,9 @@ export default function VirtualItem(props: VirtualItemProps) {
   const shouldHideContent = createMemo(() => {
     if (props.forceVisible?.()) return false
     if (!virtualizationEnabled()) return false
+    // Avoid mounting everything on first paint; wait until the wrapper ref is
+    // attached so we can run the rect pre-check and/or observer.
+    if (!hasWrapper()) return true
     return !isIntersecting()
   })
  
@@ -200,11 +205,20 @@ export default function VirtualItem(props: VirtualItemProps) {
 
   let resizeObserver: ResizeObserver | undefined
   let intersectionCleanup: (() => void) | undefined
+  let precheckRetryFrame: number | null = null
+  let precheckRetryCount = 0
 
   function cleanupResizeObserver() {
     if (resizeObserver) {
       resizeObserver.disconnect()
       resizeObserver = undefined
+    }
+  }
+
+  function cleanupPrecheckRetry() {
+    if (precheckRetryFrame !== null) {
+      cancelAnimationFrame(precheckRetryFrame)
+      precheckRetryFrame = null
     }
   }
 
@@ -267,7 +281,17 @@ export default function VirtualItem(props: VirtualItemProps) {
 
   function refreshIntersectionObserver(targetRoot: Element | Document | null) {
     cleanupIntersectionObserver()
+    cleanupPrecheckRetry()
     if (!wrapperRef) {
+      setIsIntersecting(false)
+      return
+    }
+
+    // If the caller provided an explicit scroll root but it isn't available yet
+    // (common during pane/session switches), don't fall back to viewport-based
+    // visibility. Hidden/display:none panes can yield 0x0 wrapper rects which
+    // would incorrectly mark every item as visible and mount heavy DOM.
+    if (props.scrollContainer && !targetRoot) {
       setIsIntersecting(false)
       return
     }
@@ -299,9 +323,25 @@ export default function VirtualItem(props: VirtualItemProps) {
           ? (targetRoot as Element).getBoundingClientRect()
           : null
       const bounds = rootRect ? { top: rootRect.top, bottom: rootRect.bottom } : getViewportRect()
-      setIsIntersecting(
-        shouldRenderByRects({ wrapperRect: wrapperRef.getBoundingClientRect(), rootRect: bounds, margin }),
-      )
+      const wrapperRect = wrapperRef.getBoundingClientRect()
+      // During display toggles (e.g. session switches), layout can momentarily
+      // report 0x0 rects even though the root is renderable. Treat that as
+      // unknown visibility and defer to the observer (or a retry) instead of
+      // marking everything visible and mounting heavy DOM.
+      if (wrapperRect.width === 0 && wrapperRect.height === 0) {
+        setIsIntersecting(false)
+        if (precheckRetryCount < 3 && typeof requestAnimationFrame !== "undefined") {
+          precheckRetryCount += 1
+          precheckRetryFrame = requestAnimationFrame(() => {
+            precheckRetryFrame = null
+            refreshIntersectionObserver(targetRoot)
+          })
+        }
+        return
+      }
+      precheckRetryCount = 0
+      const visibleNow = shouldRenderByRects({ wrapperRect, rootRect: bounds, margin })
+      setIsIntersecting(visibleNow)
     } catch {
       // Ignore measurement failures; IntersectionObserver will correct us.
     }
@@ -314,6 +354,7 @@ export default function VirtualItem(props: VirtualItemProps) {
 
   function setWrapperRef(element: HTMLDivElement | null) {
     wrapperRef = element ?? undefined
+    setHasWrapper(Boolean(wrapperRef))
     const root = props.scrollContainer ? props.scrollContainer() : null
     refreshIntersectionObserver(root ?? null)
   }
@@ -342,6 +383,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       })
     }
   })
+
 
  
   createEffect(() => {
@@ -375,6 +417,7 @@ export default function VirtualItem(props: VirtualItemProps) {
   onCleanup(() => {
     cleanupResizeObserver()
     cleanupIntersectionObserver()
+    cleanupPrecheckRetry()
     flushVisibility()
   })
  
