@@ -215,18 +215,6 @@
   align-items: flex-end;
 }
 
-.message-stream-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  min-height: 0;
-  pointer-events: none;
-}
-
-.message-stream-overlay > * {
-  pointer-events: auto;
-}
-
 .message-scroll-button {
   @apply inline-flex items-center justify-center;
   width: 2.75rem;
