@@ -114,17 +114,26 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
 
+  const [anchorLock, setAnchorLock] = createSignal<{ key: string; block: ScrollLogicalPosition } | null>(null)
+
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
 
   let containerRef: HTMLDivElement | undefined
   let shellRef: HTMLDivElement | undefined
   let pendingScrollFrame: number | null = null
   let pendingAnchorScroll: number | null = null
+  let pendingAnchorCorrectionFrame: number | null = null
+  let pendingScrollCompensationScheduled = false
+  let pendingScrollCompensations = new Map<string, number>()
+  let scrollCompensationGen = 0
   let pendingActiveScroll = false
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
   let scrollToBottomFrame: number | null = null
   let scrollToBottomDelayedFrame: number | null = null
+
+  let lastKnownScrollTop = 0
+  let lastUserScrollIntentDirection: "up" | "down" | null = null
 
   let userScrollIntentUntil = 0
   let detachScrollIntentListeners: (() => void) | undefined
@@ -137,9 +146,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     activeKey,
   }
 
-  function markUserScrollIntent() {
+  function markUserScrollIntent(direction?: "up" | "down" | null) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     userScrollIntentUntil = now + USER_SCROLL_INTENT_WINDOW_MS
+    if (direction) {
+      lastUserScrollIntentDirection = direction
+    }
   }
 
   function hasUserScrollIntent() {
@@ -153,18 +165,32 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       detachScrollIntentListeners = undefined
     }
     if (!element) return
-    const handlePointerIntent = () => markUserScrollIntent()
-    const handleKeyIntent = (event: KeyboardEvent) => {
-      if (SCROLL_INTENT_KEYS.has(event.key)) {
-        markUserScrollIntent()
-      }
+    const handleWheelIntent = (event: WheelEvent) => {
+      const dir: "up" | "down" | null = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
+      markUserScrollIntent(dir)
     }
-    element.addEventListener("wheel", handlePointerIntent, { passive: true })
+    const handlePointerIntent = () => markUserScrollIntent(null)
+    const handleKeyIntent = (event: KeyboardEvent) => {
+      if (!SCROLL_INTENT_KEYS.has(event.key)) return
+      const key = event.key
+      const dir: "up" | "down" | null =
+        key === "ArrowUp" || key === "PageUp" || key === "Home"
+          ? "up"
+          : key === "ArrowDown" || key === "PageDown" || key === "End"
+            ? "down"
+            : key === " " || key === "Spacebar"
+              ? event.shiftKey
+                ? "up"
+                : "down"
+              : null
+      markUserScrollIntent(dir)
+    }
+    element.addEventListener("wheel", handleWheelIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
     element.addEventListener("touchstart", handlePointerIntent, { passive: true })
     element.addEventListener("keydown", handleKeyIntent)
     detachScrollIntentListeners = () => {
-      element.removeEventListener("wheel", handlePointerIntent)
+      element.removeEventListener("wheel", handleWheelIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
       element.removeEventListener("touchstart", handlePointerIntent)
       element.removeEventListener("keydown", handleKeyIntent)
@@ -192,6 +218,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function scrollToBottom(immediate = false, options?: { suppressAutoAnchor?: boolean }) {
     if (!containerRef) return
+    if (anchorLock()) {
+      clearAnchorLock()
+    }
     const sentinel = bottomSentinel()
     const behavior: ScrollBehavior = immediate ? "auto" : "smooth"
     const suppressAutoAnchor = options?.suppressAutoAnchor ?? !immediate
@@ -231,6 +260,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function scrollToTop(immediate = false) {
     if (!containerRef) return
     const behavior: ScrollBehavior = immediate ? "auto" : "smooth"
+    if (anchorLock()) {
+      clearAnchorLock()
+    }
     setAutoScroll(false)
     topSentinel()?.scrollIntoView({ block: "start", inline: "nearest", behavior })
   }
@@ -256,6 +288,57 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
+  function clearAnchorLock() {
+    setAnchorLock(null)
+    if (pendingAnchorCorrectionFrame !== null) {
+      cancelAnimationFrame(pendingAnchorCorrectionFrame)
+      pendingAnchorCorrectionFrame = null
+    }
+  }
+
+  function computeDesiredOffset(block: ScrollLogicalPosition, container: HTMLElement, anchorRect: DOMRect) {
+    if (block === "end") {
+      return Math.max(0, container.clientHeight - anchorRect.height)
+    }
+    if (block === "center") {
+      return Math.max(0, container.clientHeight / 2 - anchorRect.height / 2)
+    }
+    // Default to start.
+    return 0
+  }
+
+  function applyAnchorCorrection() {
+    const lock = anchorLock()
+    if (!lock) return
+    if (autoScroll()) return
+    if (!containerRef) return
+    if (typeof document === "undefined") return
+
+    const anchorId = getAnchorId(lock.key)
+    const anchor = document.getElementById(anchorId)
+    if (!anchor) return
+
+    const containerRect = containerRef.getBoundingClientRect()
+    const anchorRect = anchor.getBoundingClientRect()
+    const currentOffset = anchorRect.top - containerRect.top
+    const desiredOffset = computeDesiredOffset(lock.block, containerRef, anchorRect)
+    const delta = currentOffset - desiredOffset
+    if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) {
+      return
+    }
+    const nextTop = containerRef.scrollTop + delta
+    const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
+    containerRef.scrollTop = Math.min(maxScrollTop, Math.max(0, nextTop))
+  }
+
+  function scheduleAnchorCorrection() {
+    if (pendingAnchorCorrectionFrame !== null) return
+    pendingAnchorCorrectionFrame = requestAnimationFrame(() => {
+      pendingAnchorCorrectionFrame = null
+      applyAnchorCorrection()
+    })
+  }
+
   function handleContentRendered() {
     if (isLoading()) return
     scheduleAnchorScroll()
@@ -270,7 +353,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingScrollFrame = requestAnimationFrame(() => {
       pendingScrollFrame = null
       if (!containerRef) return
+      const currentScrollTop = containerRef.scrollTop
+      if (currentScrollTop !== lastKnownScrollTop) {
+        lastKnownScrollTop = currentScrollTop
+      }
       const atBottom = bottomSentinelVisible()
+
+      // If the user scrolls manually, exit key-anchored mode.
+      if (isUserScroll && anchorLock()) {
+        clearAnchorLock()
+      }
 
       if (isUserScroll) {
         if (atBottom) {
@@ -289,10 +381,73 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setScrollElement(containerRef)
     props.onScrollElementChange?.(containerRef)
     attachScrollIntentListeners(containerRef)
+    lastKnownScrollTop = containerRef?.scrollTop ?? 0
+    lastUserScrollIntentDirection = null
     if (!containerRef) {
       return
     }
     resolvePendingActiveScroll()
+  }
+
+  function scheduleScrollCompensation(key: string, delta: number) {
+    if (!containerRef) return
+    if (!delta || !Number.isFinite(delta)) return
+    if (typeof document === "undefined") return
+
+    // Only compensate while the user scrolls upward (testing default).
+    if (!hasUserScrollIntent() || lastUserScrollIntentDirection !== "up") return
+    if (autoScroll() || anchorLock()) return
+
+    const anchorId = getAnchorId(key)
+    const anchor = document.getElementById(anchorId)
+    if (!anchor) return
+    const containerRect = containerRef.getBoundingClientRect()
+    const rect = anchor.getBoundingClientRect()
+    const isAboveViewport = rect.bottom < containerRect.top
+    if (!isAboveViewport) {
+      return
+    }
+
+    const next = (pendingScrollCompensations.get(key) ?? 0) + delta
+    pendingScrollCompensations.set(key, next)
+
+    if (pendingScrollCompensationScheduled) return
+    pendingScrollCompensationScheduled = true
+    const gen = scrollCompensationGen
+
+    // Flush in a microtask so compensation lands before the next paint.
+    queueMicrotask(() => {
+      if (gen !== scrollCompensationGen) return
+      pendingScrollCompensationScheduled = false
+      if (!containerRef) return
+      if (!hasUserScrollIntent() || lastUserScrollIntentDirection !== "up") {
+        pendingScrollCompensations = new Map()
+        return
+      }
+      if (autoScroll() || anchorLock()) {
+        pendingScrollCompensations = new Map()
+        return
+      }
+
+      let applied = 0
+      let count = 0
+      for (const pendingDelta of pendingScrollCompensations.values()) {
+        if (!pendingDelta) continue
+        applied += pendingDelta
+        count += 1
+      }
+      pendingScrollCompensations = new Map()
+      if (!applied) return
+
+      const before = containerRef.scrollTop
+      const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
+      const nextTop = Math.min(maxScrollTop, Math.max(0, before + applied))
+      if (nextTop !== before) {
+        containerRef.scrollTop = nextTop
+        lastKnownScrollTop = nextTop
+      }
+
+    })
   }
 
   function setShellRef(element: HTMLDivElement | null) {
@@ -316,6 +471,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const block = opts?.block ?? "start"
       const nextAutoScroll = opts?.setAutoScroll ?? false
       setAutoScroll(nextAutoScroll)
+      if (!nextAutoScroll) {
+        if (anchorLock()) {
+          clearAnchorLock()
+        }
+        setAnchorLock({ key, block })
+      } else {
+        if (anchorLock()) {
+          clearAnchorLock()
+        }
+      }
       const first = document.getElementById(anchorId)
       first?.scrollIntoView({ block, behavior })
       // When using virtualization, the placeholder height can be stale until the
@@ -394,6 +559,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     if (autoScroll()) {
       scheduleAnchorScroll(true)
+    }
+  })
+
+  // Drop anchor lock if the anchored key is removed.
+  createEffect(() => {
+    const lock = anchorLock()
+    if (!lock) return
+    const keys = props.items().map((item, idx) => props.getKey(item, idx))
+    if (!keys.includes(lock.key)) {
+      clearAnchorLock()
     }
   })
 
@@ -485,6 +660,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (pendingAnchorScroll !== null) {
       cancelAnimationFrame(pendingAnchorScroll)
     }
+    if (pendingAnchorCorrectionFrame !== null) {
+      cancelAnimationFrame(pendingAnchorCorrectionFrame)
+    }
+    scrollCompensationGen += 1
+    pendingScrollCompensationScheduled = false
+    pendingScrollCompensations = new Map()
     clearScrollToBottomFrames()
     if (detachScrollIntentListeners) {
       detachScrollIntentListeners()
@@ -556,6 +737,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 placeholderClass="message-stream-placeholder"
                 virtualizationEnabled={() => virtualizationEnabled() && !isLoading()}
                 suspendMeasurements={suspendMeasurements}
+                onHeightChange={(nextHeight, previousHeight) => {
+                  const delta = nextHeight - previousHeight
+
+                  // Key-anchored mode: keep the target key in view when
+                  // items above it mount/measure and shift layout.
+                  if (anchorLock() && !autoScroll()) {
+                    scheduleAnchorCorrection()
+                    return
+                  }
+
+                  // Free-scroll mode: if items above the viewport change height
+                  // while scrolling upward, compensate scrollTop so visible
+                  // content stays stable.
+                  if (delta) {
+                    scheduleScrollCompensation(key(), delta)
+                  }
+                }}
               >
                 {props.renderItem(item(), index)}
               </VirtualItem>

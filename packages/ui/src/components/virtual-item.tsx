@@ -2,8 +2,8 @@ import { JSX, Accessor, children as resolveChildren, createEffect, createMemo, c
 
 const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
-const MIN_PLACEHOLDER_HEIGHT = 32
-const VISIBILITY_BUFFER_PX = 48
+const MIN_PLACEHOLDER_HEIGHT = 400
+const VISIBILITY_BUFFER_PX = 0
 
 type ObserverRoot = Element | Document | null
 
@@ -54,11 +54,20 @@ function shouldRenderEntry(entry: IntersectionObserverEntry) {
   if (!rootBounds) {
     return entry.isIntersecting
   }
-  const distanceAbove = rootBounds.top - entry.boundingClientRect.bottom
-  const distanceBelow = entry.boundingClientRect.top - rootBounds.bottom
-  if (distanceAbove > VISIBILITY_BUFFER_PX || distanceBelow > VISIBILITY_BUFFER_PX) {
-    return false
+
+  // Above the root: compare bottom edge to root top.
+  if (entry.boundingClientRect.bottom < rootBounds.top) {
+    const distance = rootBounds.top - entry.boundingClientRect.bottom
+    return distance <= VISIBILITY_BUFFER_PX
   }
+
+  // Below the root: compare top edge to root bottom.
+  if (entry.boundingClientRect.top > rootBounds.bottom) {
+    const distance = entry.boundingClientRect.top - rootBounds.bottom
+    return distance <= VISIBILITY_BUFFER_PX
+  }
+
+  // Overlapping the root bounds.
   return true
 }
 
@@ -89,12 +98,20 @@ function shouldRenderByRects(params: {
   margin: number
 }): boolean {
   const { wrapperRect, rootRect, margin } = params
-  const distanceAbove = rootRect.top - wrapperRect.bottom
-  const distanceBelow = wrapperRect.top - rootRect.bottom
   const threshold = margin + VISIBILITY_BUFFER_PX
-  if (distanceAbove > threshold || distanceBelow > threshold) {
-    return false
+
+  // Above the root: compare bottom edge to root top.
+  if (wrapperRect.bottom < rootRect.top) {
+    const distance = rootRect.top - wrapperRect.bottom
+    return distance <= threshold
   }
+
+  // Below the root: compare top edge to root bottom.
+  if (wrapperRect.top > rootRect.bottom) {
+    const distance = wrapperRect.top - rootRect.bottom
+    return distance <= threshold
+  }
+
   return true
 }
 
@@ -150,6 +167,7 @@ interface VirtualItemProps {
   forceVisible?: Accessor<boolean>
   suspendMeasurements?: Accessor<boolean>
   onMeasured?: () => void
+  onHeightChange?: (nextHeight: number, previousHeight: number) => void
   id?: string
 }
 
@@ -219,9 +237,14 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (!Number.isFinite(nextHeight) || nextHeight < 0) {
       return
     }
+    const before = measuredHeight()
     const normalized = nextHeight
     const previous = sizeCache.get(props.cacheKey) ?? measuredHeight()
-    const shouldKeepPrevious = previous > 0 && (normalized === 0 || (normalized > 0 && normalized < previous))
+    // Only keep the previous measurement when the element reports 0 height.
+    // Allow shrinkage so placeholder height matches real content height;
+    // keeping the max height can cause mount/unmount jitter near the
+    // virtualization boundary.
+    const shouldKeepPrevious = previous > 0 && normalized === 0
     if (shouldKeepPrevious) {
       if (!hasReportedMeasurement) {
         hasReportedMeasurement = true
@@ -230,6 +253,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       setHasMeasured(true)
       sizeCache.set(props.cacheKey, previous)
       setMeasuredHeight(previous)
+      if (previous !== before) props.onHeightChange?.(previous, before)
       return
     }
     if (normalized > 0) {
@@ -241,11 +265,15 @@ export default function VirtualItem(props: VirtualItemProps) {
       }
     }
     setMeasuredHeight(normalized)
+    if (normalized !== before) props.onHeightChange?.(normalized, before)
   }
 
   function updateMeasuredHeight() {
     if (!contentRef || measurementsSuspended()) return
-    const next = contentRef.offsetHeight
+    // Prefer subpixel-accurate height for scroll compensation.
+    // offsetHeight rounds to integers which can accumulate error.
+    const rect = contentRef.getBoundingClientRect()
+    const next = Math.max(0, Math.round(rect.height * 2) / 2)
     if (next === measuredHeight()) return
     persistMeasurement(next)
   }
@@ -392,7 +420,6 @@ export default function VirtualItem(props: VirtualItemProps) {
     return resolved()
   })
 
- 
   return (
     <div ref={setWrapperRef} id={props.id} class={wrapperClass()} style={{ width: "100%" }}>
       <div
