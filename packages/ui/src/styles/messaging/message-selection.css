@@ -11,37 +11,25 @@
 
 .message-delete-mode-toolbar {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 5rem;
+  bottom: 1rem;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px;
-  background: color-mix(in oklab, var(--surface-secondary) 92%, var(--status-error-bg));
-  border: 1px solid var(--border-base);
+  gap: 6px;
+  padding: 6px 10px;
+  background: color-mix(in oklab, var(--surface-base) 62%, var(--accent-primary));
+  border: 1px solid var(--accent-primary);
   border-radius: 12px;
   z-index: 50;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--accent-primary) 25%, transparent),
+    0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
-/* Avoid covering the scroll-to-top/bottom floating buttons. */
-.message-layout[data-scroll-buttons="1"] .message-delete-mode-toolbar {
-  bottom: 4.25rem;
-}
-
-.message-layout[data-scroll-buttons="2"] .message-delete-mode-toolbar {
-  bottom: 7.5rem;
-}
-
-/* When timeline is visible, pin the toolbar to the stream edge. */
-.message-layout--with-timeline .message-delete-mode-toolbar {
-  right: calc(64px + 12px);
-}
-
-@media (max-width: 720px) {
-  .message-layout--with-timeline .message-delete-mode-toolbar {
-    right: calc(40px + 12px);
-  }
+.message-delete-mode-token-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .message-delete-mode-count {
@@ -52,11 +40,38 @@
   justify-content: center;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--text-primary);
-  background: var(--surface-secondary);
-  border: 1px solid var(--border-base);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-primary);
+  background: color-mix(in oklab, var(--surface-base) 85%, var(--accent-primary));
+  border: 1px solid color-mix(in oklab, var(--accent-primary) 50%, transparent);
+}
+
+.message-delete-mode-count--before {
+  color: var(--text-muted);
+  background: color-mix(in oklab, var(--surface-base) 90%, var(--text-muted));
+  border-color: color-mix(in oklab, var(--text-muted) 30%, transparent);
+}
+
+.message-delete-mode-count--selection {
+  color: var(--status-error);
+  background: color-mix(in oklab, var(--surface-base) 85%, var(--status-error));
+  border-color: color-mix(in oklab, var(--status-error) 40%, transparent);
+}
+
+.message-delete-mode-count--after {
+  color: var(--status-success);
+  background: color-mix(in oklab, var(--surface-base) 85%, var(--status-success));
+  border-color: color-mix(in oklab, var(--status-success) 40%, transparent);
+}
+
+.message-delete-mode-arrow {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  line-height: 1;
+  user-select: none;
 }
 
 .message-delete-mode-button {
@@ -66,19 +81,45 @@
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 1px solid var(--border-base);
+  border: 1px solid color-mix(in oklab, var(--accent-primary) 30%, transparent);
   border-radius: 10px;
-  color: var(--text-muted);
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .message-delete-mode-button:hover {
-  background-color: var(--surface-hover);
+  background-color: color-mix(in oklab, var(--accent-primary) 15%, transparent);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.message-delete-mode-button--delete {
+  color: var(--status-error);
+  border-color: color-mix(in oklab, var(--status-error) 30%, transparent);
+}
+
+.message-delete-mode-button--delete:hover {
+  background-color: var(--status-error-bg);
   border-color: var(--status-error);
   color: var(--status-error);
+}
+
+.message-delete-mode-button--cancel:hover {
+  background-color: color-mix(in oklab, var(--text-muted) 12%, transparent);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
 }
 
 .message-delete-mode-button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 45%, transparent);
+}
+
+.message-delete-mode-hint {
+  margin-left: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
 }

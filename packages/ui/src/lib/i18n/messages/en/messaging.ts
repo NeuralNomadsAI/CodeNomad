@@ -23,7 +23,6 @@ export const messagingMessages = {
   "messageSection.quote.copy": "Copy",
   "messageSection.quote.copied": "Copied!",
   "messageSection.quote.copyFailed": "Copy failed",
-
   "messageTimeline.ariaLabel": "Message timeline",
   "messageTimeline.segment.user.label": "You",
   "messageTimeline.segment.assistant.label": "Asst",
@@ -35,7 +34,6 @@ export const messagingMessages = {
   "messageTimeline.tooltip.compaction.manual": "User Compaction",
   "messageTimeline.text.filePrefix": "[File] {filename}",
   "messageTimeline.text.attachment": "Attachment",
-
   "messageBlock.tool.header": "Tool Call",
   "messageBlock.tool.unknown": "unknown",
   "messageBlock.tool.goToSession.label": "Go to Session",
@@ -91,6 +89,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.cancelTitle": "Cancel selection",
   "messageSection.bulkDelete.failedTitle": "Delete failed",
   "messageSection.bulkDelete.failedMessage": "Failed to delete selected messages",
+  "messageSection.bulkDelete.selectionHint": "Ctrl+Click toggle \u00b7 Shift+Click range \u00b7 Esc clear",
   "messageItem.status.queued": "QUEUED",
   "messageItem.status.generating": "Generating...",
   "messageItem.status.sending": "Sending...",

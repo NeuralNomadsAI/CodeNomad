@@ -6,6 +6,9 @@
   min-height: 0;
   flex: 1 1 auto;
   position: relative;
+  /* Isolate stacking context so sidebar z-indices don't compete with
+     Portals (Command Palette, modals) that live at the body level. */
+  isolation: isolate;
 }
 
 .message-layout--with-timeline {
@@ -51,6 +54,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 100;
  }
 
 
@@ -67,9 +72,14 @@
   gap: 0.35rem;
   padding: 0.25rem;
   overflow-y: auto;
+  overflow-x: visible;
   border-radius: 8px;
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow);
+}
+
+.message-timeline--selection-active {
+  padding-bottom: 4rem;
 }
 
 .message-timeline::-webkit-scrollbar {
@@ -97,6 +107,11 @@
   text-transform: uppercase;
   color: var(--text-primary);
   transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
 }
 
 .message-timeline-segment[data-delete-hover="true"]::before {
@@ -258,4 +273,135 @@
 
 .message-preview .message-item-base {
   font-size: 0.85rem;
+}
+
+/* --- Selection & Histogram Ribs --- */
+
+.message-timeline-segment-selected {
+  border-color: var(--accent-primary) !important;
+  background-color: color-mix(in oklab, var(--accent-primary) 25%, var(--surface-base)) !important;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 50%, transparent) inset !important;
+  color: var(--accent-primary) !important;
+}
+
+.message-timeline-segment-selected:hover,
+.message-timeline-segment-selected:focus-visible {
+  background-color: color-mix(in oklab, var(--accent-primary) 35%, var(--surface-base)) !important;
+  color: var(--accent-primary) !important;
+  transform: none;
+}
+
+/* --- Group indicators: tools belong to the same message as their assistant --- */
+
+/* Tool segments that are part of a group get a left accent border. */
+.message-timeline-group-child {
+  border-left: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
+}
+
+/* The assistant "parent" at the bottom of a tool group gets the same border. */
+.message-timeline-group-parent {
+  border-left: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
+}
+
+/* Extra spacing before the first tool in a group to separate from the
+   preceding user/assistant badge. */
+.message-timeline-group-start {
+  margin-top: 0.35rem;
+}
+
+/* Subtle extra spacing after the group parent (assistant) to separate
+   from the next user badge below. Uses adjacent sibling targeting. */
+.message-timeline-group-parent + .message-timeline-user,
+.message-timeline-group-parent + .message-timeline-compaction {
+  margin-top: 0.35rem;
+}
+
+.message-timeline-container {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.message-timeline-xray-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  /* Below Command Palette (z-50) but above normal content. */
+  z-index: 40;
+}
+
+.message-timeline-xray-rib {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  transform: translate(-100%, -50%);
+}
+
+.message-timeline-xray-token-label {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 4px;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #1a1a2e;
+  background: #ffffff;
+  padding: 1px 5px;
+  border: 1px solid #1a1a2e;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.message-timeline-relative-bar {
+  height: 5px;
+  width: calc(var(--segment-weight) * var(--max-rib-width, 50vw));
+  background-color: color-mix(
+    in srgb,
+    var(--status-success) calc(100% - var(--segment-weight) * 100%),
+    var(--status-error) calc(var(--segment-weight) * 100%)
+  );
+  border-radius: 3px 0 0 3px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+  box-shadow: -2px 0 4px rgba(0, 0, 0, 0.25);
+}
+
+.message-timeline-absolute-bar {
+  height: 3px;
+  width: calc(var(--segment-weight) * var(--max-rib-width, 50vw));
+  background-color: var(--text-muted);
+  border-radius: 2px 0 0 2px;
+  transition: width 0.3s ease;
+  opacity: 0.5;
+  position: relative;
+}
+
+.message-timeline-absolute-bar-overflow {
+  opacity: 0.8;
+}
+
+.message-timeline-absolute-bar-overflow::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--status-error);
+  box-shadow: 0 0 6px 2px var(--status-error);
 }

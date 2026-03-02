@@ -14,7 +14,6 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
-
 const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -79,11 +78,177 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
+    setLastSelectionAnchorId(segment.id)
+    setActiveSegmentId(segment.id)
     if (typeof document === "undefined") return
     const anchor = document.getElementById(getMessageAnchorId(segment.messageId))
     anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
   }
- 
+
+  const [selectedTimelineIds, setSelectedTimelineIds] = createSignal<Set<string>>(new Set())
+  const [lastSelectionAnchorId, setLastSelectionAnchorId] = createSignal<string | null>(null)
+  const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
+
+  // Build the message group for a segment.
+  // Tool calls belong to the same message as their assistant.  Only the
+  // assistant badge triggers group selection; user badges are standalone.
+  const getAdjacentGroup = (_clickedIndex: number, segments: TimelineSegment[]): TimelineSegment[] => {
+    const clicked = segments[_clickedIndex]
+    if (clicked.type === "assistant") {
+      // Group = all segments from the same message (assistant + its tools).
+      // Uses messageId instead of positional adjacency to avoid cross-message
+      // overlap when tool-only messages produce no assistant segment separator.
+      return segments.filter((s) => s.messageId === clicked.messageId)
+    }
+    // User, tool, and compaction segments are standalone.
+    return [clicked]
+  }
+
+  const handleToggleTimelineSelection = (id: string) => {
+    setLastSelectionAnchorId(id)
+    const segments = timelineSegments()
+    const segmentIndex = segments.findIndex((s) => s.id === id)
+    if (segmentIndex === -1) return
+    const segment = segments[segmentIndex]
+
+    const isCurrentlySelected = selectedTimelineIds().has(id)
+    const group = getAdjacentGroup(segmentIndex, segments)
+    const hasToolsInGroup = group.some((s) => s.type === "tool")
+    const toolMsgIds = new Set(group.filter((s) => s.type === "tool").map((s) => s.messageId))
+    const isGroupExpanded = toolMsgIds.size > 0 && [...toolMsgIds].every((mid) => expandedMessageIds().has(mid))
+
+    if (!isCurrentlySelected && (segment.type === "assistant" || segment.type === "user") && hasToolsInGroup && !isGroupExpanded) {
+      // First click on a parent with sibling tools: expand + select entire group
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        for (const s of group) next.add(s.id)
+        return next
+      })
+      setExpandedMessageIds((prev) => {
+        const next = new Set(prev)
+        for (const s of group) {
+          if (s.type === "tool") next.add(s.messageId)
+        }
+        return next
+      })
+    } else if (isCurrentlySelected) {
+      if ((segment.type === "assistant" || segment.type === "user") && isGroupExpanded) {
+        // Parent re-click: collapse + deselect entire group
+        const newSelected = new Set(selectedTimelineIds())
+        for (const s of group) newSelected.delete(s.id)
+        setSelectedTimelineIds(newSelected)
+        setExpandedMessageIds((prev) => {
+          const next = new Set(prev)
+          for (const s of group) {
+            if (s.type === "tool") next.delete(s.messageId)
+          }
+          return next
+        })
+      } else if (segment.type === "tool") {
+        // Individual tool deselect
+        const newSelected = new Set(selectedTimelineIds())
+        newSelected.delete(id)
+        setSelectedTimelineIds(newSelected)
+        // Collapse tool's messageId if no other selected segment needs it
+        const anyOtherSelected = group.some((s) => s.type === "tool" && s.id !== id && newSelected.has(s.id))
+        if (!anyOtherSelected) {
+          setExpandedMessageIds((prev) => {
+            const next = new Set(prev)
+            for (const s of group) {
+              if (s.type === "tool") next.delete(s.messageId)
+            }
+            return next
+          })
+        }
+      } else {
+        // Deselect just this non-tool segment
+        const newSelected = new Set(selectedTimelineIds())
+        newSelected.delete(id)
+        setSelectedTimelineIds(newSelected)
+      }
+    } else {
+      // Select just this segment (tool badge or already-expanded parent)
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+    }
+  }
+
+  const handleSelectRangeTimeline = (id: string) => {
+    const anchorId = lastSelectionAnchorId()
+    if (!anchorId) {
+      handleToggleTimelineSelection(id)
+      return
+    }
+
+    const segments = timelineSegments()
+    const anchorIndex = segments.findIndex((s) => s.id === anchorId)
+    const targetIndex = segments.findIndex((s) => s.id === id)
+
+    if (anchorIndex === -1 || targetIndex === -1) {
+      handleToggleTimelineSelection(id)
+      return
+    }
+
+    const start = Math.min(anchorIndex, targetIndex)
+    const end = Math.max(anchorIndex, targetIndex)
+
+    // Range action follows the anchor state:
+    // - If the anchor is selected → add the range (extend selection)
+    // - If the anchor is NOT selected → remove the range (extend deselection)
+    const anchorSelected = selectedTimelineIds().has(anchorId)
+
+    if (anchorSelected) {
+      // Additive: select everything in range
+      const messagesToExpand = new Set<string>()
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        for (let i = start; i <= end; i++) {
+          next.add(segments[i].id)
+          if (segments[i].type === "tool") messagesToExpand.add(segments[i].messageId)
+        }
+        return next
+      })
+      if (messagesToExpand.size > 0) {
+        setExpandedMessageIds((prev) => {
+          const next = new Set(prev)
+          for (const msgId of messagesToExpand) next.add(msgId)
+          return next
+        })
+      }
+    } else {
+      // Subtractive: deselect everything in range
+      const messagesToCollapse = new Set<string>()
+      const newSelected = new Set(selectedTimelineIds())
+      for (let i = start; i <= end; i++) {
+        newSelected.delete(segments[i].id)
+        if (segments[i].type === "tool") messagesToCollapse.add(segments[i].messageId)
+      }
+      setSelectedTimelineIds(newSelected)
+      if (messagesToCollapse.size > 0) {
+        setExpandedMessageIds((prev) => {
+          const next = new Set(prev)
+          for (const msgId of messagesToCollapse) {
+            // Only collapse if no other selected segment still needs this message expanded
+            const stillNeeded = segments.some((s) =>
+              s.messageId === msgId && s.type === "tool" && newSelected.has(s.id)
+            )
+            if (!stillNeeded) next.delete(msgId)
+          }
+          return next
+        })
+      }
+    }
+  }
+
+  const handleClearTimelineSelection = () => {
+    setSelectedTimelineIds(new Set<string>())
+    setLastSelectionAnchorId(null)
+    setExpandedMessageIds(new Set<string>())
+  }
+
   const lastAssistantIndex = createMemo(() => {
     const ids = messageIds()
     const resolvedStore = store()
@@ -149,13 +314,34 @@ export default function MessageSection(props: MessageSectionProps) {
       setTimelineSegments((prev) => [...prev, ...newSegments])
     }
   }
-  const [activeMessageId, setActiveMessageId] = createSignal<string | null>(null)
+  const [activeSegmentId, setActiveSegmentId] = createSignal<string | null>(null)
 
   const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
 
   const [selectedForDeletion, setSelectedForDeletion] = createSignal<Set<string>>(new Set<string>())
   const isDeleteMode = createMemo(() => selectedForDeletion().size > 0)
   const selectedDeleteCount = createMemo(() => selectedForDeletion().size)
+
+  const selectedTokenTotal = createMemo(() => {
+    const selected = selectedForDeletion()
+    if (selected.size === 0) return 0
+    const segments = timelineSegments()
+    let total = 0
+    for (const messageId of selected) {
+      let charTotal = 0
+      for (const seg of segments) {
+        if (seg.messageId === messageId) charTotal += seg.totalChars
+      }
+      total += Math.max(Math.round(charTotal / 4), 1)
+    }
+    return total
+  })
+
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
+    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+    return String(tokens)
+  }
 
   const isMessageSelectedForDeletion = (messageId: string) => selectedForDeletion().has(messageId)
 
@@ -175,10 +361,37 @@ export default function MessageSection(props: MessageSectionProps) {
   const clearDeleteMode = () => {
     setSelectedForDeletion(new Set<string>())
     setDeleteHover({ kind: "none" })
+    setSelectedTimelineIds(new Set<string>())
+    setLastSelectionAnchorId(null)
+    setExpandedMessageIds(new Set<string>())
   }
 
+  createEffect(() => {
+    const timelineIds = selectedTimelineIds()
+    if (timelineIds.size === 0) {
+      setSelectedForDeletion(new Set<string>())
+      return
+    }
+    const segments = timelineSegments()
+    const affectedMessageIds = new Set<string>()
+    for (const segId of timelineIds) {
+      const segment = segments.find((s) => s.id === segId)
+      if (segment) affectedMessageIds.add(segment.messageId)
+    }
+    setSelectedForDeletion(affectedMessageIds)
+  })
+
   const selectAllForDeletion = () => {
-    setSelectedForDeletion(new Set<string>(messageIds()))
+    const allMessageIds = messageIds()
+    setSelectedForDeletion(new Set<string>(allMessageIds))
+    // Also select all timeline segments and expand tool groups
+    const segments = timelineSegments()
+    setSelectedTimelineIds(new Set(segments.map((s) => s.id)))
+    const toolMessageIds = new Set<string>()
+    for (const seg of segments) {
+      if (seg.type === "tool") toolMessageIds.add(seg.messageId)
+    }
+    setExpandedMessageIds(toolMessageIds)
   }
 
   const deleteSelectedMessages = async () => {
@@ -565,6 +778,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const ids = messageIds()
 
     if (loading) {
+      handleClearTimelineSelection()
       previousTimelineIds = []
       setTimelineSegments([])
       seenTimelineMessageIds.clear()
@@ -770,6 +984,17 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
+    if (typeof document === "undefined") return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (selectedTimelineIds().size > 0 || selectedForDeletion().size > 0)) {
+        clearDeleteMode()
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
+  })
+
+  createEffect(() => {
     const target = containerRef
     const loading = props.loading
     if (!target || loading || hasRestoredScroll) return
@@ -873,7 +1098,10 @@ export default function MessageSection(props: MessageSectionProps) {
         if (best) {
           const anchorId = (best.target as HTMLElement).id
           const messageId = anchorId.startsWith("message-anchor-") ? anchorId.slice("message-anchor-".length) : anchorId
-          setActiveMessageId((current) => (current === messageId ? current : messageId))
+          const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
+          if (firstSeg) {
+            setActiveSegmentId((current) => (current === firstSeg.id ? current : firstSeg.id))
+          }
         }
       },
       { root: container, rootMargin: "-10% 0px -80% 0px", threshold: 0 },
@@ -1017,14 +1245,75 @@ export default function MessageSection(props: MessageSectionProps) {
               </div>
             )}
           </Show>
+
+          <Show when={isDeleteMode()}>
+            <div
+              class="message-delete-mode-toolbar"
+              role="toolbar"
+              aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
+            >
+              <span class="message-delete-mode-token-group" aria-hidden="true">
+                <span class="message-delete-mode-count message-delete-mode-count--before" title={`${tokenStats().used} tokens currently in context`}>
+                  {formatTokenCount(tokenStats().used)}
+                </span>
+                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
+                <span class="message-delete-mode-count message-delete-mode-count--selection" title={`${selectedTokenTotal()} tokens selected (${selectedDeleteCount()} messages)`}>
+                  {formatTokenCount(selectedTokenTotal())}
+                </span>
+                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
+                <span class="message-delete-mode-count message-delete-mode-count--after" title={`${Math.max(0, tokenStats().used - selectedTokenTotal())} tokens remaining after deletion`}>
+                  {formatTokenCount(Math.max(0, tokenStats().used - selectedTokenTotal()))}
+                </span>
+              </span>
+
+              <button
+                type="button"
+                class="message-delete-mode-button message-delete-mode-button--delete"
+                onClick={() => void deleteSelectedMessages()}
+                title={t("messageSection.bulkDelete.deleteSelectedTitle")}
+                aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
+              >
+                <Trash class="w-4 h-4" aria-hidden="true" />
+              </button>
+
+              <button
+                type="button"
+                class="message-delete-mode-button"
+                onClick={selectAllForDeletion}
+                title={t("messageSection.bulkDelete.selectAllTitle")}
+                aria-label={t("messageSection.bulkDelete.selectAllTitle")}
+              >
+                <CheckSquare class="w-4 h-4" aria-hidden="true" />
+              </button>
+
+              <button
+                type="button"
+                class="message-delete-mode-button message-delete-mode-button--cancel"
+                onClick={clearDeleteMode}
+                title={t("messageSection.bulkDelete.cancelTitle")}
+                aria-label={t("messageSection.bulkDelete.cancelTitle")}
+              >
+                <X class="w-4 h-4" aria-hidden="true" />
+              </button>
+
+              <span class="message-delete-mode-hint keyboard-hints" aria-hidden="true">
+                {t("messageSection.bulkDelete.selectionHint")}
+              </span>
+            </div>
+          </Show>
         </div>
- 
+
         <Show when={hasTimelineSegments()}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
-              activeMessageId={activeMessageId()}
+              onToggleSelection={handleToggleTimelineSelection}
+              onSelectRange={handleSelectRangeTimeline}
+              onClearSelection={handleClearTimelineSelection}
+              selectedIds={selectedTimelineIds}
+              expandedMessageIds={expandedMessageIds}
+              activeSegmentId={activeSegmentId()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
@@ -1034,48 +1323,6 @@ export default function MessageSection(props: MessageSectionProps) {
               selectedMessageIds={selectedForDeletion}
               onToggleSelectedMessage={setMessageSelectedForDeletion}
             />
-          </div>
-        </Show>
-
-        <Show when={isDeleteMode()}>
-          <div
-            class="message-delete-mode-toolbar"
-            role="toolbar"
-            aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
-          >
-            <span class="message-delete-mode-count" aria-hidden="true">
-              {selectedDeleteCount()}
-            </span>
-
-            <button
-              type="button"
-              class="message-delete-mode-button"
-              onClick={() => void deleteSelectedMessages()}
-              title={t("messageSection.bulkDelete.deleteSelectedTitle")}
-              aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
-            >
-              <Trash class="w-4 h-4" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              class="message-delete-mode-button"
-              onClick={selectAllForDeletion}
-              title={t("messageSection.bulkDelete.selectAllTitle")}
-              aria-label={t("messageSection.bulkDelete.selectAllTitle")}
-            >
-              <CheckSquare class="w-4 h-4" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              class="message-delete-mode-button"
-              onClick={clearDeleteMode}
-              title={t("messageSection.bulkDelete.cancelTitle")}
-              aria-label={t("messageSection.bulkDelete.cancelTitle")}
-            >
-              <X class="w-4 h-4" aria-hidden="true" />
-            </button>
           </div>
         </Show>
       </div>
