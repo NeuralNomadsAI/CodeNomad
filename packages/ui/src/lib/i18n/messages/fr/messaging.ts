@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.cancelTitle": "Annuler la sélection",
   "messageSection.bulkDelete.failedTitle": "Échec de suppression",
   "messageSection.bulkDelete.failedMessage": "Impossible de supprimer les messages sélectionnés",
+  "messageSection.bulkDelete.selectionHint": "Ctrl+Click toggle \u00b7 Shift+Click range \u00b7 Esc clear",
   "messageItem.status.queued": "EN FILE",
   "messageItem.status.generating": "Génération...",
   "messageItem.status.sending": "Envoi...",

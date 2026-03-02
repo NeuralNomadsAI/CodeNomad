@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.cancelTitle": "Отменить выбор",
   "messageSection.bulkDelete.failedTitle": "Ошибка удаления",
   "messageSection.bulkDelete.failedMessage": "Не удалось удалить выбранные сообщения",
+  "messageSection.bulkDelete.selectionHint": "Ctrl+Click toggle \u00b7 Shift+Click range \u00b7 Esc clear",
   "messageItem.status.queued": "В ОЧЕРЕДИ",
   "messageItem.status.generating": "Генерация…",
   "messageItem.status.sending": "Отправка…",

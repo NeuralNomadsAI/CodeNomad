@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.cancelTitle": "取消选择",
   "messageSection.bulkDelete.failedTitle": "删除失败",
   "messageSection.bulkDelete.failedMessage": "无法删除已选择的消息",
+  "messageSection.bulkDelete.selectionHint": "Ctrl+Click toggle \u00b7 Shift+Click range \u00b7 Esc clear",
   "messageItem.status.queued": "排队中",
   "messageItem.status.generating": "正在生成...",
   "messageItem.status.sending": "正在发送...",

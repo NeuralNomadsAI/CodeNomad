@@ -519,17 +519,19 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   createEffect(() => {
     if (isSelectionActive()) {
       computeBadgeLayout()
-      // Deferred pass: tool segments become visible when selection activates,
-      // but they may need a layout pass before getBoundingClientRect is accurate.
-      requestAnimationFrame(computeBadgeLayout)
-      window.addEventListener("resize", computeBadgeLayout)
-      onCleanup(() => {
-        window.removeEventListener("resize", computeBadgeLayout)
-        if (scrollRafId !== null) {
-          cancelAnimationFrame(scrollRafId)
-          scrollRafId = null
-        }
-      })
+      if (typeof window !== "undefined") {
+        // Deferred pass: tool segments become visible when selection activates,
+        // but they may need a layout pass before getBoundingClientRect is accurate.
+        requestAnimationFrame(computeBadgeLayout)
+        window.addEventListener("resize", computeBadgeLayout)
+        onCleanup(() => {
+          window.removeEventListener("resize", computeBadgeLayout)
+          if (scrollRafId !== null) {
+            cancelAnimationFrame(scrollRafId)
+            scrollRafId = null
+          }
+        })
+      }
     }
   })
 
@@ -548,26 +550,29 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const liveSegmentChars = createMemo(() => {
     if (!isSelectionActive()) return {} as Record<string, number>
     const result: Record<string, number> = {}
-    const processedMessages = new Set<string>()
     const resolvedStore = store()
 
-    for (const segment of props.segments) {
-      if (processedMessages.has(segment.messageId)) continue
-      processedMessages.add(segment.messageId)
+    // O(n) pre-pass: group segments by messageId for O(1) lookups below.
+    const segmentsByMessageId = new Map<string, TimelineSegment[]>()
+    for (const s of props.segments) {
+      let list = segmentsByMessageId.get(s.messageId)
+      if (!list) {
+        list = []
+        segmentsByMessageId.set(s.messageId, list)
+      }
+      list.push(s)
+    }
 
-      const record = resolvedStore.getMessage(segment.messageId)
+    for (const [messageId, segs] of segmentsByMessageId) {
+      const record = resolvedStore.getMessage(messageId)
       if (!record) {
-        for (const s of props.segments) {
-          if (s.messageId === segment.messageId) result[s.id] = s.totalChars
-        }
+        for (const s of segs) result[s.id] = s.totalChars
         continue
       }
 
       const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
       if (!orderedParts?.length) {
-        for (const s of props.segments) {
-          if (s.messageId === segment.messageId) result[s.id] = s.totalChars
-        }
+        for (const s of segs) result[s.id] = s.totalChars
         continue
       }
 
@@ -579,8 +584,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       }
 
       // Assign fresh chars to each segment of this message
-      for (const s of props.segments) {
-        if (s.messageId !== segment.messageId) continue
+      for (const s of segs) {
         const ids = [...(s.partIds ?? []), ...(s.toolPartIds ?? [])]
         let chars = 0
         for (const pid of ids) chars += partChars.get(pid) ?? 0

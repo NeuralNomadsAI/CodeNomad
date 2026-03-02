@@ -325,14 +325,15 @@ export default function MessageSection(props: MessageSectionProps) {
   const selectedTokenTotal = createMemo(() => {
     const selected = selectedForDeletion()
     if (selected.size === 0) return 0
-    const segments = timelineSegments()
+    // O(n) pre-pass: aggregate chars by messageId once.
+    const charsByMessageId: Record<string, number> = {}
+    for (const seg of timelineSegments()) {
+      charsByMessageId[seg.messageId] = (charsByMessageId[seg.messageId] ?? 0) + seg.totalChars
+    }
+    // O(selected.size) lookup pass.
     let total = 0
     for (const messageId of selected) {
-      let charTotal = 0
-      for (const seg of segments) {
-        if (seg.messageId === messageId) charTotal += seg.totalChars
-      }
-      total += Math.max(Math.round(charTotal / 4), 1)
+      total += Math.max(Math.round((charsByMessageId[messageId] ?? 0) / 4), 1)
     }
     return total
   })

@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.cancelTitle": "選択をキャンセル",
   "messageSection.bulkDelete.failedTitle": "削除に失敗しました",
   "messageSection.bulkDelete.failedMessage": "選択したメッセージの削除に失敗しました",
+  "messageSection.bulkDelete.selectionHint": "Ctrl+Click toggle \u00b7 Shift+Click range \u00b7 Esc clear",
   "messageItem.status.queued": "待機中",
   "messageItem.status.generating": "生成中...",
   "messageItem.status.sending": "送信中...",
