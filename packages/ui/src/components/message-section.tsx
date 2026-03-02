@@ -558,7 +558,6 @@ export default function MessageSection(props: MessageSectionProps) {
           getKeyFromAnchorId={getMessageIdFromAnchorId}
           overscanPx={800}
           scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
-          virtualizationEnabled={() => !props.loading}
           suspendMeasurements={() => !isActive()}
           loading={() => Boolean(props.loading)}
           isActive={isActive}

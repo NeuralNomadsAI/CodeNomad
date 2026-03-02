@@ -340,7 +340,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleContentRendered() {
-    if (isLoading()) return
     scheduleAnchorScroll()
   }
 
@@ -523,25 +522,32 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(() => {
     const loading = isLoading()
     if (loading) {
+      // Keep the initial scroll pending while loading so we can
+      // anchor to the bottom as soon as items appear.
       pendingInitialScroll = true
-      return
     }
-    if (!pendingInitialScroll) {
-      return
-    }
+
+    if (!pendingInitialScroll) return
+
     const container = scrollElement()
     const sentinel = bottomSentinel()
-    if (!container || !sentinel || props.items().length === 0) {
-      return
+    if (!container || !sentinel || props.items().length === 0) return
+
+    // Ensure we're in follow-to-bottom mode for the initial position.
+    if (anchorLock()) {
+      clearAnchorLock()
     }
+    setAutoScroll(true)
+
     pendingInitialScroll = false
-    requestScrollToBottom(true)
+    // Scroll synchronously so the first paint prefers bottom content.
+    scrollToBottom(true)
   })
 
   let previousFollowToken: string | number | undefined
   createEffect(() => {
     const token = props.followToken?.()
-    if (isLoading() || token === undefined) {
+    if (token === undefined) {
       previousFollowToken = token
       return
     }
@@ -735,7 +741,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 scrollContainer={scrollElement}
                 threshold={overscanPx}
                 placeholderClass="message-stream-placeholder"
-                virtualizationEnabled={() => virtualizationEnabled() && !isLoading()}
+                virtualizationEnabled={virtualizationEnabled}
                 suspendMeasurements={suspendMeasurements}
                 onHeightChange={(nextHeight, previousHeight) => {
                   const delta = nextHeight - previousHeight
