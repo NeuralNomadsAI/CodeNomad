@@ -92,7 +92,6 @@ export function Markdown(props: MarkdownProps) {
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
       setHtml(globalCache.html)
-      part.renderCache = globalCache
       notifyRendered()
       return
     }
@@ -100,14 +99,11 @@ export function Markdown(props: MarkdownProps) {
     const commitCacheEntry = (renderedHtml: string) => {
       const cacheEntry: RenderCache = { text, html: renderedHtml, theme: themeKey, mode: version }
       setHtml(renderedHtml)
-      part.renderCache = cacheEntry
       cacheHandle.set(cacheEntry)
       notifyRendered()
     }
 
     if (!highlightEnabled) {
-      part.renderCache = undefined
-
       try {
         const rendered = await renderMarkdown(text, { suppressHighlight: true })
 
@@ -185,7 +181,6 @@ export function Markdown(props: MarkdownProps) {
         if (latestRequestedText === text) {
           const cacheEntry: RenderCache = { text, html: rendered, theme: themeKey, mode: version }
           setHtml(rendered)
-          part.renderCache = cacheEntry
           cacheHandle.set(cacheEntry)
           notifyRendered()
         }
