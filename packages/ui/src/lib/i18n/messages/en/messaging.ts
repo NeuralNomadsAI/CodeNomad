@@ -23,7 +23,6 @@ export const messagingMessages = {
   "messageSection.quote.copy": "Copy",
   "messageSection.quote.copied": "Copied!",
   "messageSection.quote.copyFailed": "Copy failed",
-
   "messageTimeline.ariaLabel": "Message timeline",
   "messageTimeline.segment.user.label": "You",
   "messageTimeline.segment.assistant.label": "Asst",
@@ -35,7 +34,6 @@ export const messagingMessages = {
   "messageTimeline.tooltip.compaction.manual": "User Compaction",
   "messageTimeline.text.filePrefix": "[File] {filename}",
   "messageTimeline.text.attachment": "Attachment",
-
   "messageBlock.tool.header": "Tool Call",
   "messageBlock.tool.unknown": "unknown",
   "messageBlock.tool.goToSession.label": "Go to Session",
@@ -85,12 +83,19 @@ export const messagingMessages = {
 
   "messageItem.selection.checkboxAriaLabel": "Select message for deletion",
 
-  "messageSection.bulkDelete.toolbarAriaLabel": "Selected messages ({count})",
-  "messageSection.bulkDelete.deleteSelectedTitle": "Delete selected messages",
+  "messageSection.bulkDelete.toolbarAriaLabel": "Selected items ({count})",
+  "messageSection.bulkDelete.deleteSelectedTitle": "Delete selected items",
   "messageSection.bulkDelete.selectAllTitle": "Select all messages",
+  "messageSection.bulkDelete.moreOptionsTitle": "More options",
+  "messageSection.bulkDelete.selectionModeLabel": "Selection",
+  "messageSection.bulkDelete.selectionModeAll": "All",
+  "messageSection.bulkDelete.selectionModeTools": "Tools only",
+  "messageSection.bulkDelete.selectionHint.toggle": "Select item",
+  "messageSection.bulkDelete.selectionHint.range": "Select range",
+  "messageSection.bulkDelete.selectionHint.clear": "Clear Selection",
   "messageSection.bulkDelete.cancelTitle": "Cancel selection",
   "messageSection.bulkDelete.failedTitle": "Delete failed",
-  "messageSection.bulkDelete.failedMessage": "Failed to delete selected messages",
+  "messageSection.bulkDelete.failedMessage": "Failed to delete selected items",
   "messageItem.status.queued": "QUEUED",
   "messageItem.status.generating": "Generating...",
   "messageItem.status.sending": "Sending...",
