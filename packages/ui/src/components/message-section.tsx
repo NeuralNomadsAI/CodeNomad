@@ -1401,99 +1401,101 @@ export default function MessageSection(props: MessageSectionProps) {
               role="toolbar"
               aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
             >
-              <span class="message-delete-mode-token-group" aria-hidden="true">
-                <span class="message-delete-mode-count message-delete-mode-count--before" title={`${tokenStats().used} tokens currently in context`}>
-                  {formatTokenCount(tokenStats().used)}
+              <div class="message-delete-mode-toolbar-row" aria-hidden="true">
+                <span class="message-delete-mode-token-group">
+                  <span class="message-delete-mode-count message-delete-mode-count--before" title={`${tokenStats().used} tokens currently in context`}>
+                    {formatTokenCount(tokenStats().used)}
+                  </span>
+                  <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
+                  <span class="message-delete-mode-count message-delete-mode-count--selection" title={`${selectedTokenTotal()} tokens selected (${selectedDeleteCount()} messages)`}>
+                    {formatTokenCount(selectedTokenTotal())}
+                  </span>
+                  <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
+                  <span class="message-delete-mode-count message-delete-mode-count--after" title={`${Math.max(0, tokenStats().used - selectedTokenTotal())} tokens remaining after deletion`}>
+                    {formatTokenCount(Math.max(0, tokenStats().used - selectedTokenTotal()))}
+                  </span>
                 </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span class="message-delete-mode-count message-delete-mode-count--selection" title={`${selectedTokenTotal()} tokens selected (${selectedDeleteCount()} messages)`}>
-                  {formatTokenCount(selectedTokenTotal())}
-                </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span class="message-delete-mode-count message-delete-mode-count--after" title={`${Math.max(0, tokenStats().used - selectedTokenTotal())} tokens remaining after deletion`}>
-                  {formatTokenCount(Math.max(0, tokenStats().used - selectedTokenTotal()))}
-                </span>
-              </span>
 
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--delete"
-                onClick={() => void deleteSelectedMessages()}
-                title={t("messageSection.bulkDelete.deleteSelectedTitle")}
-                aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
-              >
-                <Trash class="w-4 h-4" aria-hidden="true" />
-              </button>
-
-              <div class="message-delete-mode-menu-container">
                 <button
-                  ref={(el) => {
-                    deleteMenuButtonRef = el
-                  }}
                   type="button"
-                  class="message-delete-mode-button message-delete-mode-button--menu"
-                  onClick={() => setIsDeleteMenuOpen((prev) => !prev)}
-                  title={t("messageSection.bulkDelete.moreOptionsTitle")}
-                  aria-label={t("messageSection.bulkDelete.moreOptionsTitle")}
+                  class="message-delete-mode-button message-delete-mode-button--delete"
+                  onClick={() => void deleteSelectedMessages()}
+                  title={t("messageSection.bulkDelete.deleteSelectedTitle")}
+                  aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
                 >
-                  <MoreHorizontal class="w-4 h-4" aria-hidden="true" />
+                  <Trash class="w-4 h-4" aria-hidden="true" />
                 </button>
-                <Show when={isDeleteMenuOpen()}>
-                  <div
+
+                <div class="message-delete-mode-menu-container">
+                  <button
                     ref={(el) => {
-                      deleteMenuRef = el
+                      deleteMenuButtonRef = el
                     }}
-                    class="message-delete-mode-menu dropdown-surface"
+                    type="button"
+                    class="message-delete-mode-button message-delete-mode-button--menu"
+                    onClick={() => setIsDeleteMenuOpen((prev) => !prev)}
+                    title={t("messageSection.bulkDelete.moreOptionsTitle")}
+                    aria-label={t("messageSection.bulkDelete.moreOptionsTitle")}
                   >
-                    <button
-                      type="button"
-                      class="dropdown-item"
-                      onClick={() => {
-                        selectAllForDeletion()
-                        setIsDeleteMenuOpen(false)
+                    <MoreHorizontal class="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <Show when={isDeleteMenuOpen()}>
+                    <div
+                      ref={(el) => {
+                        deleteMenuRef = el
                       }}
+                      class="message-delete-mode-menu dropdown-surface"
                     >
-                      {t("messageSection.bulkDelete.selectAllTitle")}
-                    </button>
-                    <div class="message-delete-mode-menu-divider" aria-hidden="true" />
-                    <div class="message-delete-mode-menu-row">
-                      <span class="message-delete-mode-menu-label">
-                        {t("messageSection.bulkDelete.selectionModeLabel")}
-                      </span>
-                      <div class="message-delete-mode-menu-toggle">
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="all"
-                          data-active={selectionMode() === "all"}
-                          onClick={() => applySelectionMode("all")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeAll")}
-                        </button>
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="tools"
-                          data-active={selectionMode() === "tools"}
-                          onClick={() => applySelectionMode("tools")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeTools")}
-                        </button>
+                      <button
+                        type="button"
+                        class="dropdown-item"
+                        onClick={() => {
+                          selectAllForDeletion()
+                          setIsDeleteMenuOpen(false)
+                        }}
+                      >
+                        {t("messageSection.bulkDelete.selectAllTitle")}
+                      </button>
+                      <div class="message-delete-mode-menu-divider" aria-hidden="true" />
+                      <div class="message-delete-mode-menu-row">
+                        <span class="message-delete-mode-menu-label">
+                          {t("messageSection.bulkDelete.selectionModeLabel")}
+                        </span>
+                        <div class="message-delete-mode-menu-toggle">
+                          <button
+                            type="button"
+                            class="message-delete-mode-menu-toggle-button"
+                            data-mode="all"
+                            data-active={selectionMode() === "all"}
+                            onClick={() => applySelectionMode("all")}
+                          >
+                            {t("messageSection.bulkDelete.selectionModeAll")}
+                          </button>
+                          <button
+                            type="button"
+                            class="message-delete-mode-menu-toggle-button"
+                            data-mode="tools"
+                            data-active={selectionMode() === "tools"}
+                            onClick={() => applySelectionMode("tools")}
+                          >
+                            {t("messageSection.bulkDelete.selectionModeTools")}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Show>
-              </div>
+                  </Show>
+                </div>
 
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--cancel"
-                onClick={clearDeleteMode}
-                title={t("messageSection.bulkDelete.cancelTitle")}
-                aria-label={t("messageSection.bulkDelete.cancelTitle")}
-              >
-                <X class="w-4 h-4" aria-hidden="true" />
-              </button>
+                <button
+                  type="button"
+                  class="message-delete-mode-button message-delete-mode-button--cancel"
+                  onClick={clearDeleteMode}
+                  title={t("messageSection.bulkDelete.cancelTitle")}
+                  aria-label={t("messageSection.bulkDelete.cancelTitle")}
+                >
+                  <X class="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
 
               <div class="message-delete-mode-hint-row keyboard-hints" aria-hidden="true">
                 <Kbd shortcut="cmd+click" />
