@@ -86,7 +86,7 @@ export const messagingMessages = {
   "messageItem.selection.checkboxAriaLabel": "Выбрать сообщение для удаления",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Выбранные элементы ({count})",
-  "messageSection.bulkDelete.deleteSelectedTitle": "Удалить выбранные сообщения",
+  "messageSection.bulkDelete.deleteSelectedTitle": "Удалить выбранные элементы",
   "messageSection.bulkDelete.selectAllTitle": "Выбрать все сообщения",
   "messageSection.bulkDelete.moreOptionsTitle": "Больше настроек",
   "messageSection.bulkDelete.selectionModeLabel": "Выбор",
@@ -95,7 +95,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.selectionHint": "{modifier}+клик переключить · Shift+клик диапазон · Esc очистить",
   "messageSection.bulkDelete.cancelTitle": "Отменить выбор",
   "messageSection.bulkDelete.failedTitle": "Ошибка удаления",
-  "messageSection.bulkDelete.failedMessage": "Не удалось удалить выбранные сообщения",
+  "messageSection.bulkDelete.failedMessage": "Не удалось удалить выбранные элементы",
   "messageItem.status.queued": "В ОЧЕРЕДИ",
   "messageItem.status.generating": "Генерация…",
   "messageItem.status.sending": "Отправка…",

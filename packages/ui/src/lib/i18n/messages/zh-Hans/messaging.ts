@@ -86,7 +86,7 @@ export const messagingMessages = {
   "messageItem.selection.checkboxAriaLabel": "选择要删除的消息",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "已选择的项目（{count}）",
-  "messageSection.bulkDelete.deleteSelectedTitle": "删除已选择的消息",
+  "messageSection.bulkDelete.deleteSelectedTitle": "删除已选择的项目",
   "messageSection.bulkDelete.selectAllTitle": "全选消息",
   "messageSection.bulkDelete.moreOptionsTitle": "更多选项",
   "messageSection.bulkDelete.selectionModeLabel": "选择",
@@ -95,7 +95,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.selectionHint": "{modifier}+点击切换 · Shift+点击范围 · Esc 清除",
   "messageSection.bulkDelete.cancelTitle": "取消选择",
   "messageSection.bulkDelete.failedTitle": "删除失败",
-  "messageSection.bulkDelete.failedMessage": "无法删除已选择的消息",
+  "messageSection.bulkDelete.failedMessage": "无法删除已选择的项目",
   "messageItem.status.queued": "排队中",
   "messageItem.status.generating": "正在生成...",
   "messageItem.status.sending": "正在发送...",

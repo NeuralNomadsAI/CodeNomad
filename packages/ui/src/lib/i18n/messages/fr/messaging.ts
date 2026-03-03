@@ -86,7 +86,7 @@ export const messagingMessages = {
   "messageItem.selection.checkboxAriaLabel": "Sélectionner le message pour suppression",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "Éléments sélectionnés ({count})",
-  "messageSection.bulkDelete.deleteSelectedTitle": "Supprimer les messages sélectionnés",
+  "messageSection.bulkDelete.deleteSelectedTitle": "Supprimer les éléments sélectionnés",
   "messageSection.bulkDelete.selectAllTitle": "Tout sélectionner",
   "messageSection.bulkDelete.moreOptionsTitle": "Plus d'options",
   "messageSection.bulkDelete.selectionModeLabel": "Sélection",
@@ -95,7 +95,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.selectionHint": "{modifier}+clic pour basculer · Maj+clic pour la plage · Échap effacer",
   "messageSection.bulkDelete.cancelTitle": "Annuler la sélection",
   "messageSection.bulkDelete.failedTitle": "Échec de suppression",
-  "messageSection.bulkDelete.failedMessage": "Impossible de supprimer les messages sélectionnés",
+  "messageSection.bulkDelete.failedMessage": "Impossible de supprimer les éléments sélectionnés",
   "messageItem.status.queued": "EN FILE",
   "messageItem.status.generating": "Génération...",
   "messageItem.status.sending": "Envoi...",

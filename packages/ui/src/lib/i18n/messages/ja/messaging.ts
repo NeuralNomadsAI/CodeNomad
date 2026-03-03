@@ -86,7 +86,7 @@ export const messagingMessages = {
   "messageItem.selection.checkboxAriaLabel": "削除するメッセージを選択",
 
   "messageSection.bulkDelete.toolbarAriaLabel": "選択した項目（{count}）",
-  "messageSection.bulkDelete.deleteSelectedTitle": "選択したメッセージを削除",
+  "messageSection.bulkDelete.deleteSelectedTitle": "選択した項目を削除",
   "messageSection.bulkDelete.selectAllTitle": "すべて選択",
   "messageSection.bulkDelete.moreOptionsTitle": "その他のオプション",
   "messageSection.bulkDelete.selectionModeLabel": "選択",
@@ -95,7 +95,7 @@ export const messagingMessages = {
   "messageSection.bulkDelete.selectionHint": "{modifier}+クリックで切り替え · Shift+クリックで範囲選択 · Esc でクリア",
   "messageSection.bulkDelete.cancelTitle": "選択をキャンセル",
   "messageSection.bulkDelete.failedTitle": "削除に失敗しました",
-  "messageSection.bulkDelete.failedMessage": "選択したメッセージの削除に失敗しました",
+  "messageSection.bulkDelete.failedMessage": "選択した項目の削除に失敗しました",
   "messageItem.status.queued": "待機中",
   "messageItem.status.generating": "生成中...",
   "messageItem.status.sending": "送信中...",
