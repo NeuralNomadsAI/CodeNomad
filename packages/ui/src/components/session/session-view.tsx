@@ -56,12 +56,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
 
+  const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
+
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+
+  function shouldScrollToBottomOnActivate() {
+    const current = session()
+    if (!current) return true
+    const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_SCROLL_CACHE_SCOPE)
+    return !snapshot || snapshot.atBottom
+  }
+
   function scheduleScrollToBottom() {
     if (!scrollToBottomHandle) return
     requestAnimationFrame(() => {
@@ -70,6 +80,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
   createEffect(() => {
     if (!props.isActive) return
+    if (!shouldScrollToBottomOnActivate()) return
     scheduleScrollToBottom()
   })
 
@@ -321,7 +332,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                 registerScrollToBottom={(fn) => {
                   scrollToBottomHandle = fn
                   if (props.isActive) {
-                    scheduleScrollToBottom()
+                    if (shouldScrollToBottomOnActivate()) {
+                      scheduleScrollToBottom()
+                    }
                   }
                 }}
 

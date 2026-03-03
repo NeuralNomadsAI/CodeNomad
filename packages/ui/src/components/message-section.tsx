@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
 import { CheckSquare, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import MessageBlock from "./message-block"
@@ -9,6 +9,7 @@ import { useConfig } from "../stores/preferences"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
+import { useScrollCache } from "../lib/hooks/use-scroll-cache"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import { showAlertDialog } from "../stores/alerts"
@@ -17,6 +18,7 @@ import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 
 const SCROLL_SENTINEL_MARGIN_PX = 48
+const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -42,6 +44,12 @@ export default function MessageSection(props: MessageSectionProps) {
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+
+  const scrollCache = useScrollCache({
+    instanceId: props.instanceId,
+    sessionId: props.sessionId,
+    scope: MESSAGE_SCROLL_CACHE_SCOPE,
+  })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
   const usageSnapshot = createMemo(() => store().getSessionUsage(props.sessionId))
@@ -221,6 +229,32 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const followToken = createMemo(() => `${sessionRevision()}|${preferenceSignature()}`)
 
+  const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
+  const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
+
+  const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
+  createEffect(
+    on(
+      () => props.sessionId,
+      () => {
+        setDidRestoreScroll(false)
+      },
+    ),
+  )
+
+  // Persist scroll position when switching sessions. This effect's cleanup runs
+  // when `props.sessionId` changes, before the next session is rendered.
+  createEffect(() => {
+    const sessionId = props.sessionId
+    onCleanup(() => {
+      const element = streamElement()
+      if (!element) return
+      const scrollTop = element.scrollTop
+      const atBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 48
+      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, { scrollTop, atBottom })
+    })
+  })
+
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
 
   createEffect(() => {
@@ -229,6 +263,33 @@ export default function MessageSection(props: MessageSectionProps) {
     if (props.registerScrollToBottom) {
       props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
     }
+  })
+
+  // Restore scroll position when the stream element is available.
+  createEffect(() => {
+    const element = streamElement()
+    const api = listApi()
+    if (!element || !api) return
+    if (props.loading) return
+    if (messageIds().length === 0) return
+    if (didRestoreScroll()) return
+
+    scrollCache.restore(element, {
+      behavior: "auto",
+      fallback: () => {
+        api.setAutoScroll(true)
+        api.scrollToBottom({ immediate: true })
+      },
+      onApplied: (snapshot) => {
+        // Keep follow mode consistent with the restored state.
+        api.setAutoScroll(snapshot?.atBottom ?? true)
+        setDidRestoreScroll(true)
+      },
+    })
+  })
+
+  onCleanup(() => {
+    scrollCache.persist(streamElement())
   })
 
   function clearQuoteSelection() {
@@ -551,24 +612,31 @@ export default function MessageSection(props: MessageSectionProps) {
         class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
-        <VirtualFollowList
-          items={messageIds}
-          getKey={(messageId) => messageId}
-          getAnchorId={getMessageAnchorId}
-          getKeyFromAnchorId={getMessageIdFromAnchorId}
-          overscanPx={800}
-          scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
-          suspendMeasurements={() => !isActive()}
-          loading={() => Boolean(props.loading)}
-          isActive={isActive}
-          followToken={followToken}
-          onScroll={() => clearQuoteSelection()}
-          onMouseUp={() => handleStreamMouseUp()}
-          onActiveKeyChange={setActiveMessageId}
-          onScrollElementChange={(element) => {
-            setStreamElement(element)
-            if (!element) clearQuoteSelection()
-          }}
+          <VirtualFollowList
+            items={messageIds}
+            getKey={(messageId) => messageId}
+            getAnchorId={getMessageAnchorId}
+            getKeyFromAnchorId={getMessageIdFromAnchorId}
+            overscanPx={800}
+            scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
+            suspendMeasurements={() => !isActive()}
+            loading={() => Boolean(props.loading)}
+            isActive={isActive}
+            scrollToBottomOnActivate={() => false}
+            initialScrollToBottom={() => false}
+            initialAutoScroll={initialAutoScroll}
+            resetKey={() => props.sessionId}
+            followToken={followToken}
+            onScroll={() => {
+              clearQuoteSelection()
+              scrollCache.persist(streamElement())
+            }}
+            onMouseUp={() => handleStreamMouseUp()}
+            onActiveKeyChange={setActiveMessageId}
+            onScrollElementChange={(element) => {
+              setStreamElement(element)
+              if (!element) clearQuoteSelection()
+            }}
           onShellElementChange={(element) => {
             setStreamShellElement(element)
             if (!element) clearQuoteSelection()

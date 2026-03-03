@@ -52,6 +52,34 @@ export interface VirtualFollowListProps<T> {
   isActive?: Accessor<boolean>
 
   /**
+   * When switching back to an inactive (cached) pane, the list historically
+   * re-pinned to the bottom if autoScroll was enabled.
+   *
+   * Disable this to preserve the existing scroll position across pane switches.
+   */
+  scrollToBottomOnActivate?: Accessor<boolean>
+
+  /**
+   * Controls whether the list should scroll to bottom the first time items
+   * appear (default behavior for chat streams).
+   *
+   * Set to false when an outer component restores scroll from a cache.
+   */
+  initialScrollToBottom?: Accessor<boolean>
+
+  /**
+   * Initial value for the internal autoScroll signal.
+   * Useful when restoring scroll state (e.g. start in non-follow mode).
+   */
+  initialAutoScroll?: Accessor<boolean>
+
+  /**
+   * When this value changes, the list resets internal follow/anchor state.
+   * Useful when reusing the same list instance across different datasets.
+   */
+  resetKey?: Accessor<string | number>
+
+  /**
    * If this value changes and autoScroll is enabled, the list will
    * anchor-scroll to the bottom (unless suppressed).
    */
@@ -103,11 +131,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const bottomSentinel = () => bottomSentinelSignal()
 
   const isActive = () => (props.isActive ? props.isActive() : true)
+  const scrollToBottomOnActivate = () => (props.scrollToBottomOnActivate ? props.scrollToBottomOnActivate() : true)
+  const initialScrollToBottom = () => (props.initialScrollToBottom ? props.initialScrollToBottom() : true)
+  const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
   const isLoading = () => Boolean(props.loading?.())
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
   const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
 
-  const [autoScroll, setAutoScroll] = createSignal(true)
+  const [autoScroll, setAutoScroll] = createSignal(Boolean(initialAutoScroll()))
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
@@ -137,6 +168,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   let userScrollIntentUntil = 0
   let detachScrollIntentListeners: (() => void) | undefined
+
+  let lastResetKey: string | number | undefined
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -352,11 +385,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingScrollFrame = requestAnimationFrame(() => {
       pendingScrollFrame = null
       if (!containerRef) return
+      const previousScrollTop = lastKnownScrollTop
       const currentScrollTop = containerRef.scrollTop
+      const deltaScrollTop = currentScrollTop - previousScrollTop
       if (currentScrollTop !== lastKnownScrollTop) {
         lastKnownScrollTop = currentScrollTop
       }
       const atBottom = bottomSentinelVisible()
+
+      const beforeAutoScroll = autoScroll()
+
+      const inferredDirection: "up" | "down" | null =
+        lastUserScrollIntentDirection ?? (deltaScrollTop < 0 ? "up" : deltaScrollTop > 0 ? "down" : null)
 
       // If the user scrolls manually, exit key-anchored mode.
       if (isUserScroll && anchorLock()) {
@@ -364,9 +404,30 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (isUserScroll) {
-        if (atBottom) {
-          if (!autoScroll()) setAutoScroll(true)
-        } else if (autoScroll()) {
+        // If the user is actively scrolling upward, exit follow-to-bottom mode
+        // immediately. The bottom sentinel can remain "visible" for a short
+        // distance due to its observer margin, which otherwise keeps autoScroll
+        // enabled and makes the list feel stuck.
+        if (inferredDirection === "up" && deltaScrollTop < -0.5 && autoScroll()) {
+          if (pendingAnchorScroll !== null) {
+            cancelAnimationFrame(pendingAnchorScroll)
+            pendingAnchorScroll = null
+          }
+          setAutoScroll(false)
+        }
+
+        // Do not re-enable follow mode while the user's current scroll intent
+        // is upward. This prevents transient anchor/pin scrolls from pulling
+        // the list back into autoScroll(true).
+        if (inferredDirection !== "up") {
+          if (atBottom) {
+            if (!autoScroll()) setAutoScroll(true)
+          } else if (autoScroll()) {
+            setAutoScroll(false)
+          }
+        } else if (!atBottom && autoScroll()) {
+          // If the user is scrolling up and we are no longer at the bottom,
+          // ensure follow mode is disabled.
           setAutoScroll(false)
         }
       }
@@ -532,12 +593,58 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.registerState?.(state)
   })
 
+  createEffect(() => {
+    const nextKey = props.resetKey?.()
+    if (nextKey === undefined) return
+    if (lastResetKey === undefined) {
+      lastResetKey = nextKey
+      return
+    }
+    if (nextKey === lastResetKey) return
+    lastResetKey = nextKey
+
+    // Reset internal state when consumers swap datasets (e.g. session switch).
+    if (pendingScrollFrame !== null) {
+      cancelAnimationFrame(pendingScrollFrame)
+      pendingScrollFrame = null
+    }
+    if (pendingAnchorScroll !== null) {
+      cancelAnimationFrame(pendingAnchorScroll)
+      pendingAnchorScroll = null
+    }
+    if (pendingAnchorCorrectionFrame !== null) {
+      cancelAnimationFrame(pendingAnchorCorrectionFrame)
+      pendingAnchorCorrectionFrame = null
+    }
+    clearScrollToBottomFrames()
+
+    scrollCompensationGen += 1
+    pendingScrollCompensationScheduled = false
+    pendingScrollCompensations = new Map()
+    pendingAutoPin = false
+
+    suppressAutoScrollOnce = false
+    pendingActiveScroll = false
+    pendingInitialScroll = true
+
+    setAnchorLock(null)
+    setActiveKey(null)
+    setShowScrollTopButton(false)
+    setShowScrollBottomButton(false)
+    setTopSentinelVisible(true)
+    setBottomSentinelVisible(true)
+    setAutoScroll(Boolean(initialAutoScroll()))
+
+    lastKnownScrollTop = containerRef?.scrollTop ?? 0
+    lastUserScrollIntentDirection = null
+  })
+
   let lastActiveState = false
   createEffect(() => {
     const active = isActive()
     if (active) {
       resolvePendingActiveScroll()
-      if (!lastActiveState && autoScroll()) {
+      if (!lastActiveState && autoScroll() && scrollToBottomOnActivate()) {
         requestScrollToBottom(true)
 
         // When switching back to a cached session pane, items can mount/measure
@@ -549,7 +656,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           })
         })
       }
-    } else if (autoScroll()) {
+    } else if (autoScroll() && scrollToBottomOnActivate()) {
       pendingActiveScroll = true
     }
     lastActiveState = active
@@ -568,6 +675,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const container = scrollElement()
     const sentinel = bottomSentinel()
     if (!container || !sentinel || props.items().length === 0) return
+
+    if (!initialScrollToBottom()) {
+      // An outer component is responsible for restoring scroll.
+      pendingInitialScroll = false
+      return
+    }
 
     // Ensure we're in follow-to-bottom mode for the initial position.
     if (anchorLock()) {
@@ -599,9 +712,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       suppressAutoScrollOnce = false
       return
     }
-    if (autoScroll()) {
-      scheduleAnchorScroll(true)
-    }
+    if (autoScroll()) scheduleAnchorScroll(true)
   })
 
   // Drop anchor lock if the anchored key is removed.
