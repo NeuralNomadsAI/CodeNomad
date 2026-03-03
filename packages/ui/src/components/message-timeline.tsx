@@ -1,5 +1,4 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
-import { Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
@@ -416,12 +415,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   // Stable layout offsets per badge (relative to scroll content), recomputed only
   // on activation, resize, or expansion — NOT on every scroll frame.
   const [badgeOffsets, setBadgeOffsets] = createSignal<Record<string, { layoutTop: number; height: number }>>({})
-  // Lightweight scroll state: 1 getBoundingClientRect on container per frame.
-  const [containerScroll, setContainerScroll] = createSignal({ containerTop: 0, scrollTop: 0, left: 0 })
   const [windowWidth, setWindowWidth] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1200)
-  const [clipBounds, setClipBounds] = createSignal<{ top: number; bottom: number }>({ top: 0, bottom: typeof window !== "undefined" ? window.innerHeight : 800 })
   let scrollContainerRef: HTMLDivElement | undefined
-  let scrollRafId: number | null = null
+  let xrayOverlayRef: HTMLDivElement | undefined
 
   // Full layout recomputation: reads every badge's getBoundingClientRect once,
   // then stores offsets relative to the scroll content so they survive scrolling.
@@ -441,37 +437,19 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       }
     }
     setBadgeOffsets(offsets)
-    setContainerScroll({ containerTop: containerRect.top, scrollTop, left: containerRect.left })
+    if (xrayOverlayRef) {
+      xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollTop}px`)
+    }
 
     if (typeof window !== "undefined") {
       setWindowWidth(window.innerWidth)
-      const layout = scrollContainerRef.closest(".message-layout")
-      if (layout) {
-        const layoutRect = layout.getBoundingClientRect()
-        // Shrink clip bottom when the delete toolbar is visible so bars
-        // disappear behind it instead of overlapping.
-        const toolbar = layout.querySelector(".message-delete-mode-toolbar")
-        const toolbarInset = toolbar ? toolbar.getBoundingClientRect().height + 16 : 0
-        setClipBounds({ top: layoutRect.top, bottom: layoutRect.bottom - toolbarInset })
-      }
     }
   }
 
-  // RAF-throttled scroll handler: only 1 container getBoundingClientRect per frame
-  // instead of N badge getBoundingClientRect calls.
-  const handleScrollRaf = () => {
+  const handleScroll = () => {
     if (!isSelectionActive()) return
-    if (scrollRafId !== null) return
-    scrollRafId = requestAnimationFrame(() => {
-      scrollRafId = null
-      if (!scrollContainerRef) return
-      const containerRect = scrollContainerRef.getBoundingClientRect()
-      setContainerScroll({
-        containerTop: containerRect.top,
-        scrollTop: scrollContainerRef.scrollTop,
-        left: containerRect.left,
-      })
-    })
+    if (!scrollContainerRef || !xrayOverlayRef) return
+    xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
   }
 
   createEffect(() => {
@@ -484,10 +462,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         window.addEventListener("resize", computeBadgeLayout)
         onCleanup(() => {
           window.removeEventListener("resize", computeBadgeLayout)
-          if (scrollRafId !== null) {
-            cancelAnimationFrame(scrollRafId)
-            scrollRafId = null
-          }
         })
       }
     }
@@ -733,7 +707,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         class={`message-timeline${isSelectionActive() ? " message-timeline--selection-active" : ""}`}
         role="navigation"
         aria-label={t("messageTimeline.ariaLabel")}
-        onScroll={handleScrollRaf}
+        onScroll={handleScroll}
       >
         <For each={props.segments}>
           {(segment, segIndex) => {
@@ -895,57 +869,60 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         </Show>
       </div>
 
-      <Portal>
-        <Show when={isSelectionActive()}>
-          <div class="message-timeline-xray-overlay" style={{ "--max-rib-width": `${maxRibWidth()}px`, "clip-path": `inset(${clipBounds().top}px 0 ${(typeof window !== "undefined" ? window.innerHeight : 0) - clipBounds().bottom}px 0)` }}>
-            <For each={xraySegments()}>
-              {(segment) => {
-                // Derive screen position from stable layout offset + scroll state.
-                // Only arithmetic — no DOM reads per segment per scroll frame.
-                const pos = () => {
-                  const offset = badgeOffsets()[segment.id]
-                  if (!offset) return null
-                  const scroll = containerScroll()
-                  const top = scroll.containerTop + offset.layoutTop - scroll.scrollTop + offset.height / 2
-                  const bounds = clipBounds()
-                  if (top < bounds.top - 20 || top > bounds.bottom + 20) return null
-                  return { top, left: scroll.left }
-                }
-                const tokens = () => getSegmentTokens(segment)
-                const relativeWeight = () => tokens() / maxTokens()
-                const absoluteWeight = () => Math.min(tokens() / ABSOLUTE_TOKEN_CAP, 1.0)
-                const isOverflow = () => tokens() > ABSOLUTE_TOKEN_CAP
-                const isParent = segment.type === "assistant" || segment.type === "user"
-                const displayTokens = () =>
-                  isParent ? getMessageAggregateTokens(segment.messageId) : tokens()
-                return (
-                  <Show when={pos()}>
+      <Show when={isSelectionActive()}>
+        <div
+          ref={(el) => {
+            xrayOverlayRef = el
+            if (xrayOverlayRef && scrollContainerRef) {
+              xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
+            }
+          }}
+          class="message-timeline-xray-overlay"
+          style={{ "--max-rib-width": `${maxRibWidth()}px` }}
+        >
+          <div class="message-timeline-xray-overlay-inner">
+          <For each={xraySegments()}>
+            {(segment) => {
+              const pos = () => {
+                const offset = badgeOffsets()[segment.id]
+                if (!offset) return null
+                return { top: offset.layoutTop + offset.height / 2 }
+              }
+              const tokens = () => getSegmentTokens(segment)
+              const relativeWeight = () => tokens() / maxTokens()
+              const absoluteWeight = () => Math.min(tokens() / ABSOLUTE_TOKEN_CAP, 1.0)
+              const isOverflow = () => tokens() > ABSOLUTE_TOKEN_CAP
+              const isParent = segment.type === "assistant" || segment.type === "user"
+              const displayTokens = () =>
+                isParent ? getMessageAggregateTokens(segment.messageId) : tokens()
+              return (
+                <Show when={pos()}>
+                  <div
+                    class="message-timeline-xray-rib"
+                    style={{
+                      top: `${pos()!.top}px`,
+                      left: "var(--xray-overhang)",
+                    }}
+                  >
+                    <span class="message-timeline-xray-token-label">
+                      {formatTokenLabel(displayTokens())}
+                    </span>
                     <div
-                      class="message-timeline-xray-rib"
-                      style={{
-                        top: `${pos()!.top}px`,
-                        left: `${pos()!.left}px`,
-                      }}
-                    >
-                      <span class="message-timeline-xray-token-label">
-                        {formatTokenLabel(displayTokens())}
-                      </span>
-                      <div
-                        class="message-timeline-relative-bar"
-                        style={{ "--segment-weight": relativeWeight() }}
-                      />
-                      <div
-                        class={`message-timeline-absolute-bar${isOverflow() ? " message-timeline-absolute-bar-overflow" : ""}`}
-                        style={{ "--segment-weight": absoluteWeight() }}
-                      />
-                    </div>
-                  </Show>
-                )
-              }}
-            </For>
+                      class="message-timeline-relative-bar"
+                      style={{ "--segment-weight": relativeWeight() }}
+                    />
+                    <div
+                      class={`message-timeline-absolute-bar${isOverflow() ? " message-timeline-absolute-bar-overflow" : ""}`}
+                      style={{ "--segment-weight": absoluteWeight() }}
+                    />
+                  </div>
+                </Show>
+              )
+            }}
+          </For>
           </div>
-        </Show>
-      </Portal>
+        </div>
+      </Show>
     </div>
   )
 }

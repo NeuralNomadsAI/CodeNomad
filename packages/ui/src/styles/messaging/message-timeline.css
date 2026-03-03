@@ -325,18 +325,30 @@
 }
 
 .message-timeline-xray-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
+  position: absolute;
+  inset: 0;
+  /* Extend the overlay box into the stream so ribs are not relying on
+     overflow-visible behavior (which is brittle around scroll containers). */
+  --xray-overhang: calc(var(--max-rib-width, 50vw) + 84px);
+  left: calc(-1 * var(--xray-overhang));
+  width: calc(100% + var(--xray-overhang));
+  overflow: hidden;
+  padding: 0.25rem;
   pointer-events: none;
-  /* Below Command Palette (z-50) but above normal content. */
-  z-index: 40;
+  /* Above the scroll container background; still non-interactive. */
+  z-index: 2;
+  --xray-scroll-y: 0px;
+}
+
+.message-timeline-xray-overlay-inner {
+  position: absolute;
+  inset: 0;
+  transform: translateY(var(--xray-scroll-y));
+  will-change: transform;
 }
 
 .message-timeline-xray-rib {
-  position: fixed;
+  position: absolute;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
