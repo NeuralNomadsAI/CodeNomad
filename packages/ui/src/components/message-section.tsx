@@ -16,7 +16,6 @@ import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
-import { isMac } from "../lib/keyboard-utils"
 const SCROLL_SCOPE = "session"
 const SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -1496,9 +1495,16 @@ export default function MessageSection(props: MessageSectionProps) {
                 <X class="w-4 h-4" aria-hidden="true" />
               </button>
 
-              <span class="message-delete-mode-hint keyboard-hints" aria-hidden="true">
-                {t("messageSection.bulkDelete.selectionHint", { modifier: isMac() ? "Cmd" : "Ctrl" })}
-              </span>
+              <div class="message-delete-mode-hint-row keyboard-hints" aria-hidden="true">
+                <Kbd shortcut="cmd+click" />
+                <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.toggle")}</span>
+                <span class="message-delete-mode-hint-sep">·</span>
+                <Kbd shortcut="shift+click" />
+                <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.range")}</span>
+                <span class="message-delete-mode-hint-sep">·</span>
+                <Kbd shortcut="esc" />
+                <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.clear")}</span>
+              </div>
             </div>
           </Show>
         </div>

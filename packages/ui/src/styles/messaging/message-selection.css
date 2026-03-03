@@ -14,6 +14,7 @@
   right: 5rem;
   bottom: 1rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -200,10 +201,23 @@
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 45%, transparent);
 }
 
-.message-delete-mode-hint {
-  margin-left: 2px;
+.message-delete-mode-hint-row {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 2px;
   font-size: 10px;
   color: var(--text-muted);
+  user-select: none;
+}
+
+.message-delete-mode-hint-text {
   white-space: nowrap;
+}
+
+.message-delete-mode-hint-sep {
+  color: var(--text-muted);
   user-select: none;
 }
