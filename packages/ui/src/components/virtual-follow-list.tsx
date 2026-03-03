@@ -449,6 +449,29 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
+  let pendingAutoPin = false
+  function scheduleAutoPinToBottom() {
+    if (!containerRef) return
+    if (pendingAutoPin) return
+    pendingAutoPin = true
+    const gen = scrollCompensationGen
+
+    // Flush in a microtask so adjustments land before the next paint.
+    queueMicrotask(() => {
+      if (gen !== scrollCompensationGen) return
+      pendingAutoPin = false
+      if (!containerRef) return
+      if (!autoScroll()) return
+      if (anchorLock()) return
+
+      const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
+      if (containerRef.scrollTop !== maxScrollTop) {
+        containerRef.scrollTop = maxScrollTop
+        lastKnownScrollTop = maxScrollTop
+      }
+    })
+  }
+
   function setShellRef(element: HTMLDivElement | null) {
     shellRef = element || undefined
     setShellElement(shellRef)
@@ -508,14 +531,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastActiveState = false
   createEffect(() => {
     const active = isActive()
-    if (active) {
-      resolvePendingActiveScroll()
-      if (!lastActiveState && autoScroll()) {
-        requestScrollToBottom(true)
+      if (active) {
+        resolvePendingActiveScroll()
+        if (!lastActiveState && autoScroll()) {
+          requestScrollToBottom(true)
+
+          // When switching back to a cached session pane, items can mount/measure
+          // after the initial scroll jump. Re-pin once layout settles so the
+          // viewport stays at the bottom.
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              scheduleAutoPinToBottom()
+            })
+          })
+        }
+      } else if (autoScroll()) {
+        pendingActiveScroll = true
       }
-    } else if (autoScroll()) {
-      pendingActiveScroll = true
-    }
     lastActiveState = active
   })
 
@@ -745,6 +777,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 suspendMeasurements={suspendMeasurements}
                 onHeightChange={(nextHeight, previousHeight) => {
                   const delta = nextHeight - previousHeight
+
+                  // Follow mode: keep the viewport pinned to the bottom as
+                  // items mount/measure and change height.
+                  if (delta && autoScroll() && !anchorLock()) {
+                    scheduleAutoPinToBottom()
+                    return
+                  }
 
                   // Key-anchored mode: keep the target key in view when
                   // items above it mount/measure and shift layout.
