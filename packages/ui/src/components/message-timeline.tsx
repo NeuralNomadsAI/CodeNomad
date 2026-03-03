@@ -484,45 +484,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const result: Record<string, number> = {}
     const resolvedStore = store()
 
-    // O(n) pre-pass: group segments by messageId for O(1) lookups below.
-    const segmentsByMessageId = new Map<string, TimelineSegment[]>()
-    for (const s of xraySegments()) {
-      let list = segmentsByMessageId.get(s.messageId)
-      if (!list) {
-        list = []
-        segmentsByMessageId.set(s.messageId, list)
-      }
-      list.push(s)
-    }
-
-    for (const [messageId, segs] of segmentsByMessageId) {
-      const record = resolvedStore.getMessage(messageId)
+    // Compute live char counts by reading only the parts that the segment
+    // references (partIds/toolPartIds). This stays accurate for streamed tool
+    // outputs without scanning every part in the message.
+    for (const segment of xraySegments()) {
+      const record = resolvedStore.getMessage(segment.messageId)
       if (!record) {
-        for (const s of segs) result[s.id] = s.totalChars
+        result[segment.id] = segment.totalChars
         continue
       }
 
-      const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
-      if (!orderedParts?.length) {
-        for (const s of segs) result[s.id] = s.totalChars
-        continue
+      const ids = [...(segment.partIds ?? []), ...(segment.toolPartIds ?? [])]
+      let chars = 0
+      for (const partId of ids) {
+        const part = record.parts?.[partId]?.data
+        if (!part) continue
+        chars += getPartCharCount(part)
       }
 
-      // Map partId → fresh char count
-      const partChars = new Map<string, number>()
-      for (const part of orderedParts) {
-        const pid = typeof (part as any)?.id === "string" ? (part as any).id : null
-        if (pid) partChars.set(pid, getPartCharCount(part))
-      }
-
-      // Assign fresh chars to each segment of this message
-      for (const s of segs) {
-        const ids = [...(s.partIds ?? []), ...(s.toolPartIds ?? [])]
-        let chars = 0
-        for (const pid of ids) chars += partChars.get(pid) ?? 0
-        result[s.id] = chars > 0 ? chars : s.totalChars
-      }
+      result[segment.id] = chars > 0 ? chars : segment.totalChars
     }
+
     return result
   })
 
