@@ -11,7 +11,7 @@ import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage } from "../stores/session-actions"
+import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
@@ -192,7 +192,17 @@ export default function MessageSection(props: MessageSectionProps) {
       handleToggleTimelineSelection(segment.id)
       return
     }
-    const newSelected = new Set(selectedTimelineIds())
+    const selected = selectedTimelineIds()
+    const hasAnySelected = group.some((s) => selected.has(s.id))
+    if (!hasAnySelected) {
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        for (const s of group) next.add(s.id)
+        return next
+      })
+      return
+    }
+    const newSelected = new Set(selected)
     for (const s of group) newSelected.delete(s.id)
     setSelectedTimelineIds(newSelected)
   }
@@ -311,12 +321,39 @@ export default function MessageSection(props: MessageSectionProps) {
   const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
 
   const [selectedForDeletion, setSelectedForDeletion] = createSignal<Set<string>>(new Set<string>())
-  const isDeleteMode = createMemo(() => selectedForDeletion().size > 0)
-  const selectedDeleteCount = createMemo(() => selectedForDeletion().size)
+  const selectedToolParts = createMemo(() => {
+    const selected = selectedTimelineIds()
+    if (selected.size === 0) return [] as { messageId: string; partId: string }[]
+    const segments = timelineSegments()
+    const segmentById = new Map<string, TimelineSegment>()
+    for (const segment of segments) segmentById.set(segment.id, segment)
+    const toolParts: { messageId: string; partId: string }[] = []
+    const seen = new Set<string>()
+    for (const segId of selected) {
+      const segment = segmentById.get(segId)
+      if (!segment || segment.type !== "tool") continue
+      for (const partId of segment.toolPartIds ?? []) {
+        if (!partId) continue
+        const key = `${segment.messageId}:${partId}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        toolParts.push({ messageId: segment.messageId, partId })
+      }
+    }
+    return toolParts
+  })
+  const deleteMessageIds = createMemo(() => selectedForDeletion())
+  const deleteToolParts = createMemo(() => {
+    const messageIds = deleteMessageIds()
+    return selectedToolParts().filter((entry) => !messageIds.has(entry.messageId))
+  })
+  const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
+  const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
 
   const selectedTokenTotal = createMemo(() => {
-    const selected = selectedForDeletion()
-    if (selected.size === 0) return 0
+    const selected = deleteMessageIds()
+    const toolParts = deleteToolParts()
+    if (selected.size === 0 && toolParts.length === 0) return 0
     // Fresh-from-store chars: read parts directly via buildRecordDisplayData +
     // getPartCharCount so the toolbar stays consistent with the xray overlay
     // (which also reads live from the store). Falls back to segment totalChars
@@ -338,6 +375,27 @@ export default function MessageSection(props: MessageSectionProps) {
         }
       }
       total += Math.max(Math.round(chars / 4), 1)
+    }
+    if (toolParts.length > 0) {
+      const partFallbackChars = new Map<string, number>()
+      for (const segment of timelineSegments()) {
+        if (segment.type !== "tool") continue
+        for (const partId of segment.toolPartIds ?? []) {
+          if (!partId || partFallbackChars.has(partId)) continue
+          partFallbackChars.set(partId, segment.totalChars)
+        }
+      }
+      for (const { messageId, partId } of toolParts) {
+        let chars = 0
+        const record = s.getMessage(messageId)
+        const partRecord = record?.parts?.[partId]
+        if (partRecord?.data) {
+          chars = getPartCharCount(partRecord.data)
+        } else {
+          chars = partFallbackChars.get(partId) ?? 0
+        }
+        total += Math.max(Math.round(chars / 4), 1)
+      }
     }
     return total
   })
@@ -377,10 +435,12 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
     const segments = timelineSegments()
+    const segmentById = new Map<string, TimelineSegment>()
+    for (const segment of segments) segmentById.set(segment.id, segment)
     const affectedMessageIds = new Set<string>()
     for (const segId of timelineIds) {
-      const segment = segments.find((s) => s.id === segId)
-      if (segment) affectedMessageIds.add(segment.messageId)
+      const segment = segmentById.get(segId)
+      if (segment && segment.type !== "tool") affectedMessageIds.add(segment.messageId)
     }
     setSelectedForDeletion(affectedMessageIds)
   })
@@ -395,8 +455,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const deleteSelectedMessages = async () => {
-    const selected = selectedForDeletion()
-    if (selected.size === 0) return
+    const selected = deleteMessageIds()
+    const toolParts = deleteToolParts()
+    if (selected.size === 0 && toolParts.length === 0) return
 
     const idsInSessionOrder = messageIds()
     const toDelete: string[] = []
@@ -410,6 +471,9 @@ export default function MessageSection(props: MessageSectionProps) {
     try {
       for (const messageId of toDelete) {
         await deleteMessage(props.instanceId, props.sessionId, messageId)
+      }
+      for (const { messageId, partId } of toolParts) {
+        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
       }
       clearDeleteMode()
     } catch (error) {

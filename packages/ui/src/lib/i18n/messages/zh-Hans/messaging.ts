@@ -85,7 +85,7 @@ export const messagingMessages = {
 
   "messageItem.selection.checkboxAriaLabel": "选择要删除的消息",
 
-  "messageSection.bulkDelete.toolbarAriaLabel": "已选择的消息（{count}）",
+  "messageSection.bulkDelete.toolbarAriaLabel": "已选择的项目（{count}）",
   "messageSection.bulkDelete.deleteSelectedTitle": "删除已选择的消息",
   "messageSection.bulkDelete.selectAllTitle": "全选消息",
   "messageSection.bulkDelete.moreOptionsTitle": "更多选项",

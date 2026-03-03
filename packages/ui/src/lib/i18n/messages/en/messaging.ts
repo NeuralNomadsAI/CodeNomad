@@ -83,7 +83,7 @@ export const messagingMessages = {
 
   "messageItem.selection.checkboxAriaLabel": "Select message for deletion",
 
-  "messageSection.bulkDelete.toolbarAriaLabel": "Selected messages ({count})",
+  "messageSection.bulkDelete.toolbarAriaLabel": "Selected items ({count})",
   "messageSection.bulkDelete.deleteSelectedTitle": "Delete selected messages",
   "messageSection.bulkDelete.selectAllTitle": "Select all messages",
   "messageSection.bulkDelete.moreOptionsTitle": "More options",

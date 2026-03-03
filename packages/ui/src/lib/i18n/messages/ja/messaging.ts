@@ -85,7 +85,7 @@ export const messagingMessages = {
 
   "messageItem.selection.checkboxAriaLabel": "削除するメッセージを選択",
 
-  "messageSection.bulkDelete.toolbarAriaLabel": "選択したメッセージ（{count}）",
+  "messageSection.bulkDelete.toolbarAriaLabel": "選択した項目（{count}）",
   "messageSection.bulkDelete.deleteSelectedTitle": "選択したメッセージを削除",
   "messageSection.bulkDelete.selectAllTitle": "すべて選択",
   "messageSection.bulkDelete.moreOptionsTitle": "その他のオプション",
