@@ -7,8 +7,10 @@ import type { ClientPart } from "../types/message"
  * bulk-delete toolbar token pills (message-section) so both surfaces
  * derive token estimates from the same logic.
  *
- * Skips `filediff` metadata — it contains full before/after file content
- * and would inflate the character count by 10-100x for large files.
+ * Note: For tool parts we intentionally only count `state.input` and
+ * `state.output`. We exclude `state.metadata` from token estimation since
+ * metadata can contain large or verbose diagnostic payloads that are not
+ * representative of model context.
  */
 export function getPartCharCount(part: ClientPart): number {
   if (!part) return 0
@@ -33,18 +35,6 @@ export function getPartCharCount(part: ClientPart): number {
           try {
             count += JSON.stringify(state.output).length
           } catch {}
-        }
-      }
-      if (state.metadata) {
-        for (const [key, val] of Object.entries(state.metadata)) {
-          if (key === "filediff") continue
-          if (typeof val === "string") {
-            count += val.length
-          } else if (val && typeof val === "object") {
-            try {
-              count += JSON.stringify(val).length
-            } catch {}
-          }
         }
       }
     }
