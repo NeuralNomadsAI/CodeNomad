@@ -36,6 +36,9 @@ interface MessageTimelineProps {
   onClearSelection?: () => void
   selectedIds?: Accessor<Set<string>>
   expandedMessageIds?: Accessor<Set<string>>
+  // Optional: restrict histogram/xray overlay to only show for these message ids.
+  // Used to hide ribs for messages before the last compaction.
+  deletableMessageIds?: Accessor<Set<string>>
   activeSegmentId?: string | null
   instanceId: string
   sessionId: string
@@ -319,6 +322,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const showTools = () => props.showToolSegments ?? true
   const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
 
+  const isHistogramEligible = (segment: TimelineSegment): boolean => {
+    const allowed = props.deletableMessageIds?.()
+    if (!allowed) return true
+    return allowed.has(segment.messageId)
+  }
+
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
     if (element) {
       buttonRefs.set(segmentId, element)
@@ -395,6 +404,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   // --- Selection & histogram rib state ---
   const isSelectionActive = createMemo(() => (props.selectedIds?.().size ?? 0) > 0)
+
+  // Segments eligible for xray ribs. We intentionally exclude messages before
+  // the last compaction (when provided by the parent) to avoid misleading token
+  // weights for content that's no longer in context.
+  const xraySegments = createMemo(() => {
+    if (!isSelectionActive()) return [] as TimelineSegment[]
+    return props.segments.filter((segment) => isHistogramEligible(segment))
+  })
 
   // Stable layout offsets per badge (relative to scroll content), recomputed only
   // on activation, resize, or expansion — NOT on every scroll frame.
@@ -495,7 +512,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
     // O(n) pre-pass: group segments by messageId for O(1) lookups below.
     const segmentsByMessageId = new Map<string, TimelineSegment[]>()
-    for (const s of props.segments) {
+    for (const s of xraySegments()) {
       let list = segmentsByMessageId.get(s.messageId)
       if (!list) {
         list = []
@@ -540,7 +557,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const aggregateTokensByMessageId = createMemo(() => {
     const chars = liveSegmentChars()
     const result: Record<string, number> = {}
-    for (const s of props.segments) {
+    for (const s of xraySegments()) {
       result[s.messageId] = (result[s.messageId] ?? 0) + (chars[s.id] ?? s.totalChars)
     }
     for (const id of Object.keys(result)) {
@@ -574,7 +591,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const maxTokens = createMemo(() => {
     let max = 0
-    for (const s of props.segments) {
+    for (const s of xraySegments()) {
       const tokens = getSegmentTokens(s)
       if (tokens > max) max = tokens
     }
@@ -881,7 +898,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       <Portal>
         <Show when={isSelectionActive()}>
           <div class="message-timeline-xray-overlay" style={{ "--max-rib-width": `${maxRibWidth()}px`, "clip-path": `inset(${clipBounds().top}px 0 ${(typeof window !== "undefined" ? window.innerHeight : 0) - clipBounds().bottom}px 0)` }}>
-            <For each={props.segments}>
+            <For each={xraySegments()}>
               {(segment) => {
                 // Derive screen position from stable layout offset + scroll state.
                 // Only arithmetic — no DOM reads per segment per scroll frame.

@@ -103,6 +103,42 @@ export default function MessageSection(props: MessageSectionProps) {
   let deleteMenuRef: HTMLDivElement | undefined
   let deleteMenuButtonRef: HTMLButtonElement | undefined
 
+  // Deletion is only allowed for messages/tool parts that occur AFTER the most
+  // recent compaction. Compaction effectively resets the stored context; deleting
+  // earlier items would not reliably reflect what the model sees.
+  const messageIndexById = createMemo(() => {
+    const ids = messageIds()
+    const map = new Map<string, number>()
+    for (let i = 0; i < ids.length; i++) {
+      map.set(ids[i], i)
+    }
+    return map
+  })
+
+  const lastCompactionIndex = createMemo(() => {
+    // Depend on a single session revision signal (not every message/part read)
+    // to keep reactive overhead small.
+    sessionRevision()
+    return untrack(() => store().getLastCompactionMessageIndex(props.sessionId))
+  })
+
+  const deletableStartIndex = createMemo(() => {
+    const idx = lastCompactionIndex()
+    return idx === -1 ? 0 : idx + 1
+  })
+
+  const deletableMessageIds = createMemo(() => {
+    const ids = messageIds()
+    const start = deletableStartIndex()
+    return new Set(ids.slice(start))
+  })
+
+  const isMessageDeletable = (messageId: string): boolean => {
+    const idx = messageIndexById().get(messageId)
+    if (idx === undefined) return false
+    return idx >= deletableStartIndex()
+  }
+
   // Build the message group for a segment.
   // Tool calls belong to the same assistant turn (between user messages).
   // Only assistant badges trigger group selection; user/tool badges are standalone.
@@ -132,11 +168,16 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const handleToggleTimelineSelection = (id: string) => {
-    setLastSelectionAnchorId(id)
     const segments = timelineSegments()
     const segmentIndex = segments.findIndex((s) => s.id === id)
     if (segmentIndex === -1) return
     const segment = segments[segmentIndex]
+
+    if (!isMessageDeletable(segment.messageId)) {
+      return
+    }
+
+    setLastSelectionAnchorId(id)
 
     if (selectionMode() === "tools" && segment.type !== "tool") {
       return
@@ -177,10 +218,15 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const handleLongPressTimelineSelection = (segment: TimelineSegment) => {
-    setLastSelectionAnchorId(segment.id)
     const segments = timelineSegments()
     const segmentIndex = segments.findIndex((s) => s.id === segment.id)
     if (segmentIndex === -1) return
+
+    if (!isMessageDeletable(segment.messageId)) {
+      return
+    }
+
+    setLastSelectionAnchorId(segment.id)
 
     if (selectionMode() === "tools" && segment.type !== "tool") {
       return
@@ -227,8 +273,8 @@ export default function MessageSection(props: MessageSectionProps) {
     const end = Math.max(anchorIndex, targetIndex)
 
     const rangeSegments = selectionMode() === "tools"
-      ? segments.slice(start, end + 1).filter((s) => s.type === "tool")
-      : segments.slice(start, end + 1)
+      ? segments.slice(start, end + 1).filter((s) => s.type === "tool" && isMessageDeletable(s.messageId))
+      : segments.slice(start, end + 1).filter((s) => isMessageDeletable(s.messageId))
     // Range selection replaces current selection so it can grow or shrink.
     setSelectedTimelineIds(new Set(rangeSegments.map((segment) => segment.id)))
   }
@@ -242,7 +288,11 @@ export default function MessageSection(props: MessageSectionProps) {
     setSelectionMode(mode)
     if (mode !== "tools") return
     const segments = timelineSegments()
-    const toolIds = new Set(segments.filter((segment) => segment.type === "tool").map((segment) => segment.id))
+    const toolIds = new Set(
+      segments
+        .filter((segment) => segment.type === "tool" && isMessageDeletable(segment.messageId))
+        .map((segment) => segment.id),
+    )
     setSelectedTimelineIds((prev) => {
       if (prev.size === 0) return prev
       const next = new Set([...prev].filter((id) => toolIds.has(id)))
@@ -345,7 +395,8 @@ export default function MessageSection(props: MessageSectionProps) {
   const deleteMessageIds = createMemo(() => selectedForDeletion())
   const deleteToolParts = createMemo(() => {
     const messageIds = deleteMessageIds()
-    return selectedToolParts().filter((entry) => !messageIds.has(entry.messageId))
+    const allowed = deletableMessageIds()
+    return selectedToolParts().filter((entry) => allowed.has(entry.messageId) && !messageIds.has(entry.messageId))
   })
   const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
   const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
@@ -410,6 +461,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const setMessageSelectedForDeletion = (messageId: string, selected: boolean) => {
     if (!messageId) return
+    if (!isMessageDeletable(messageId)) return
     setSelectedForDeletion((prev) => {
       const next = new Set(prev)
       if (selected) {
@@ -440,18 +492,20 @@ export default function MessageSection(props: MessageSectionProps) {
     const affectedMessageIds = new Set<string>()
     for (const segId of timelineIds) {
       const segment = segmentById.get(segId)
-      if (segment && segment.type !== "tool") affectedMessageIds.add(segment.messageId)
+      if (segment && segment.type !== "tool" && isMessageDeletable(segment.messageId)) {
+        affectedMessageIds.add(segment.messageId)
+      }
     }
     setSelectedForDeletion(affectedMessageIds)
   })
 
   const selectAllForDeletion = () => {
-    const allMessageIds = messageIds()
+    const allMessageIds = [...deletableMessageIds()]
     setSelectedForDeletion(new Set<string>(allMessageIds))
     // Also select all timeline segments — tool visibility is handled by
     // isSelectionActive() in isHidden(), no expand/collapse needed.
     const segments = timelineSegments()
-    setSelectedTimelineIds(new Set(segments.map((s) => s.id)))
+    setSelectedTimelineIds(new Set(segments.filter((s) => isMessageDeletable(s.messageId)).map((s) => s.id)))
   }
 
   const deleteSelectedMessages = async () => {
@@ -459,11 +513,13 @@ export default function MessageSection(props: MessageSectionProps) {
     const toolParts = deleteToolParts()
     if (selected.size === 0 && toolParts.length === 0) return
 
+    const allowed = deletableMessageIds()
+
     const idsInSessionOrder = messageIds()
     const toDelete: string[] = []
     for (let idx = idsInSessionOrder.length - 1; idx >= 0; idx -= 1) {
       const id = idsInSessionOrder[idx]
-      if (selected.has(id)) {
+      if (allowed.has(id) && selected.has(id)) {
         toDelete.push(id)
       }
     }
@@ -473,6 +529,7 @@ export default function MessageSection(props: MessageSectionProps) {
         await deleteMessage(props.instanceId, props.sessionId, messageId)
       }
       for (const { messageId, partId } of toolParts) {
+        if (!allowed.has(messageId)) continue
         await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
       }
       clearDeleteMode()
@@ -1457,6 +1514,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onClearSelection={handleClearTimelineSelection}
               selectedIds={selectedTimelineIds}
               expandedMessageIds={expandedMessageIds}
+              deletableMessageIds={deletableMessageIds}
               activeSegmentId={activeSegmentId()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
