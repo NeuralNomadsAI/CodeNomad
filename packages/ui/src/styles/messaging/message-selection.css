@@ -111,6 +111,90 @@
   color: var(--text-primary);
 }
 
+.message-delete-mode-button--menu {
+  color: var(--text-muted);
+}
+
+.message-delete-mode-button--menu:hover {
+  color: var(--text-primary);
+}
+
+.message-delete-mode-menu-container {
+  position: relative;
+}
+
+.message-delete-mode-menu {
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 150px;
+  width: max-content;
+  max-width: min(70vw, 220px);
+  padding: 2px 0;
+}
+
+.message-delete-mode-menu-divider {
+  height: 1px;
+  margin: 3px 0;
+  background-color: var(--border-base);
+}
+
+.message-delete-mode-menu-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 8px 6px;
+}
+
+.message-delete-mode-menu-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.message-delete-mode-menu-toggle {
+  display: inline-flex;
+  border-radius: 999px;
+  border: 1px solid var(--border-base);
+  background-color: var(--surface-secondary);
+  overflow: hidden;
+  width: 100%;
+}
+
+.message-delete-mode-menu-toggle-button {
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.message-delete-mode-menu-toggle-button[data-mode="all"] {
+  flex: 0 0 auto;
+  min-width: 56px;
+}
+
+.message-delete-mode-menu-toggle-button[data-mode="tools"] {
+  flex: 1 1 auto;
+}
+
+.message-delete-mode-menu-toggle-button[data-active="true"] {
+  color: var(--text-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 18%, transparent);
+}
+
+.message-delete-mode-menu .dropdown-item {
+  width: calc(100% - 8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
 .message-delete-mode-button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 45%, transparent);

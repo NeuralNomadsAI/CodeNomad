@@ -5,6 +5,7 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
+import { getPartCharCount } from "../lib/token-utils"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
@@ -30,6 +31,7 @@ interface MessageTimelineProps {
   segments: TimelineSegment[]
   onSegmentClick?: (segment: TimelineSegment) => void
   onToggleSelection?: (id: string) => void
+  onLongPressSelection?: (segment: TimelineSegment) => void
   onSelectRange?: (id: string) => void
   onClearSelection?: () => void
   selectedIds?: Accessor<Set<string>>
@@ -66,67 +68,6 @@ function truncateText(value: string): string {
     return value
   }
   return `${value.slice(0, MAX_TOOLTIP_LENGTH - 1).trimEnd()}…`
-}
-
-function getPartCharCount(part: ClientPart): number {
-  if (!part) return 0
-  let count = 0
-
-  if (typeof (part as any).text === "string") {
-    count += (part as any).text.length
-  }
-
-  if (part.type === "tool") {
-    const state = (part as any).state
-    if (state) {
-      if (state.input) {
-        try {
-          count += JSON.stringify(state.input).length
-        } catch {}
-      }
-      if (state.output) {
-        if (typeof state.output === "string") {
-          count += state.output.length
-        } else {
-          try {
-            count += JSON.stringify(state.output).length
-          } catch {}
-        }
-      }
-      if (state.metadata) {
-        for (const [key, val] of Object.entries(state.metadata)) {
-          // Skip filediff — it contains full before/after file content and
-          // would inflate the character count by 10-100x for large files.
-          if (key === "filediff") continue
-          if (typeof val === "string") {
-            count += val.length
-          } else if (val && typeof val === "object") {
-            try {
-              count += JSON.stringify(val).length
-            } catch {}
-          }
-        }
-      }
-    }
-  }
-
-  if (Array.isArray((part as any).content)) {
-    count += (part as any).content.reduce((acc: number, entry: unknown) => {
-      if (typeof entry === "string") return acc + entry.length
-      if (entry && typeof entry === "object") {
-        let entryCount = (String((entry as any).text || "")).length + (String((entry as any).value || "")).length
-        if (Array.isArray((entry as any).content)) {
-          entryCount += (entry as any).content.reduce((innerAcc: number, sub: unknown) => {
-            if (typeof sub === "string") return innerAcc + sub.length
-            return innerAcc + (String((sub as any)?.text || "")).length
-          }, 0)
-        }
-        return acc + entryCount
-      }
-      return acc
-    }, 0)
-  }
-  return count
 }
 
 function collectReasoningText(part: ClientPart): string {
@@ -610,7 +551,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const getSegmentTokens = (segment: TimelineSegment): number => {
     const isExpanded = props.expandedMessageIds?.().has(segment.messageId) ?? false
-    if (!isExpanded && (segment.type === "assistant" || segment.type === "user")) {
+    // When tools are hidden (not expanded, not in selection mode), assistant/user
+    // bars show aggregate tokens for the whole message.  When tools are visible
+    // (expanded or selection mode active), each segment shows its own tokens to
+    // avoid double-counting.
+    if (!isExpanded && !isSelectionActive() && (segment.type === "assistant" || segment.type === "user")) {
       return aggregateTokensByMessageId()[segment.messageId] ?? 1
     }
     const chars = liveSegmentChars()[segment.id] ?? segment.totalChars
@@ -641,7 +586,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   let wasLongPress = false
   let pressStartPos = { x: 0, y: 0 }
 
-  const handlePointerDown = (id: string, event: PointerEvent) => {
+  const handlePointerDown = (segment: TimelineSegment, event: PointerEvent) => {
     if (event.button !== 0) return
     wasLongPress = false
     pressStartPos = { x: event.clientX, y: event.clientY }
@@ -659,13 +604,17 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         wasLongPress = true
 
         // Scroll anchoring: preserve visual position of the pressed badge.
-        const btn = buttonRefs.get(id)
+        const btn = buttonRefs.get(segment.id)
         let anchorOffset: number | null = null
         if (btn && scrollContainerRef) {
           anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
         }
 
-        props.onToggleSelection?.(id)
+        if (props.onLongPressSelection) {
+          props.onLongPressSelection(segment)
+        } else {
+          props.onToggleSelection?.(segment.id)
+        }
 
         if (anchorOffset !== null && btn && scrollContainerRef) {
           const desired = btn.offsetTop - anchorOffset
@@ -741,6 +690,25 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return { messageId: segment.messageId }
   })
 
+  // Pre-computed set of messageIds that have at least one tool segment.
+  // Used by groupRole() inside <For> to avoid O(n) .some() per segment → O(1) .has().
+  const messagesWithTools = createMemo(() => {
+    const set = new Set<string>()
+    for (const s of props.segments) {
+      if (s.type === "tool") set.add(s.messageId)
+    }
+    return set
+  })
+
+  // Pre-computed index map for session message ordering.
+  // Used by isDeleteHovered() to replace O(n) indexOf with O(1) Map.get().
+  const messageIdToSessionIndex = createMemo(() => {
+    const ids = store().getSessionMessageIds(props.sessionId)
+    const map = new Map<string, number>()
+    for (let i = 0; i < ids.length; i++) map.set(ids[i], i)
+    return map
+  })
+
   return (
     <div class="message-timeline-container">
       <div
@@ -763,11 +731,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               }
 
               if (hover.kind === "deleteUpTo") {
-                const ids = store().getSessionMessageIds(props.sessionId)
-                const targetIndex = ids.indexOf(hover.messageId)
-                if (targetIndex === -1) return false
-                const segmentIndex = ids.indexOf(segment.messageId)
-                if (segmentIndex === -1) return false
+                const indexMap = messageIdToSessionIndex()
+                const targetIndex = indexMap.get(hover.messageId)
+                if (targetIndex === undefined) return false
+                const segmentIndex = indexMap.get(segment.messageId)
+                if (segmentIndex === undefined) return false
                 return segmentIndex >= targetIndex
               }
 
@@ -792,12 +760,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             // assistant.  Uses messageId for correctness (not positional adjacency).
             const groupRole = (): "child" | "parent" | "none" => {
               if (segment.type === "tool") return "child"
-              if (segment.type === "assistant") {
-                const hasSiblingTools = props.segments.some(
-                  (s) => s.messageId === segment.messageId && s.type === "tool",
-                )
-                if (hasSiblingTools) return "parent"
-              }
+              if (segment.type === "assistant" && messagesWithTools().has(segment.messageId)) return "parent"
               return "none"
             }
             const isGroupStart = () => {
@@ -857,7 +820,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                    } else if (event.ctrlKey || event.metaKey) {
                      props.onToggleSelection?.(segment.id)
                    } else if (isMultiSelectActive) {
-                     props.onClearSelection?.()
+                     // In selection mode, plain click scrolls to the message
+                     // instead of clearing. Selection is cleared by clicking
+                     // anywhere inside the chat container or pressing Esc.
+                     props.onSegmentClick?.(segment)
                    } else {
                      props.onSegmentClick?.(segment)
                    }
@@ -871,7 +837,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                      }
                    }
                  }}
-                 onPointerDown={(e) => handlePointerDown(segment.id, e)}
+                onPointerDown={(e) => handlePointerDown(segment, e)}
                  onPointerUp={handlePointerUp}
                  onPointerCancel={handlePointerUp}
                  onPointerMove={handlePointerMove}

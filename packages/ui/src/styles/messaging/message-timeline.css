@@ -357,10 +357,10 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  color: #1a1a2e;
-  background: #ffffff;
+  color: var(--text-primary);
+  background: var(--surface-base);
   padding: 1px 5px;
-  border: 1px solid #1a1a2e;
+  border: 1px solid var(--border-base);
   border-radius: 999px;
   white-space: nowrap;
   pointer-events: none;
