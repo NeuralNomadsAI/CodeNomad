@@ -1,4 +1,4 @@
-import { JSX, Accessor, children as resolveChildren, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { JSX, Accessor, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 
 const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
@@ -156,7 +156,7 @@ function subscribeToSharedObserver(
 
 interface VirtualItemProps {
   cacheKey: string
-  children: JSX.Element
+  children: JSX.Element | (() => JSX.Element)
   scrollContainer?: Accessor<HTMLElement | undefined | null>
   threshold?: number
   minPlaceholderHeight?: number
@@ -172,7 +172,7 @@ interface VirtualItemProps {
 }
 
 export default function VirtualItem(props: VirtualItemProps) {
-  const resolved = resolveChildren(() => props.children)
+  const resolveContent = () => (typeof props.children === "function" ? (props.children as () => JSX.Element)() : props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
   // Default to hidden until we can determine visibility.
   // This avoids keeping heavy DOM alive when IntersectionObserver
@@ -319,20 +319,11 @@ export default function VirtualItem(props: VirtualItemProps) {
       return
     }
 
-    // Compute an immediate best-effort visibility so switching tabs doesn't
-    // depend on the first IntersectionObserver callback.
-    try {
-      const rootRect =
-        targetRoot && !(targetRoot instanceof Document)
-          ? (targetRoot as Element).getBoundingClientRect()
-          : null
-      const bounds = rootRect ? { top: rootRect.top, bottom: rootRect.bottom } : getViewportRect()
-      setIsIntersecting(
-        shouldRenderByRects({ wrapperRect: wrapperRef.getBoundingClientRect(), rootRect: bounds, margin }),
-      )
-    } catch {
-      // Ignore measurement failures; IntersectionObserver will correct us.
-    }
+    // Avoid doing an eager geometry read here.
+    // During large list hydration / initial layout, wrapper rects can be
+    // transiently 0/incorrect and cause many offscreen items to mount.
+    // Rely on the observer callback (which we harden below) to determine
+    // visibility.
 
     const wrapperEl = wrapperRef
     intersectionCleanup = subscribeToSharedObserver(wrapperEl, targetRoot, margin, (entry) => {
@@ -441,7 +432,7 @@ export default function VirtualItem(props: VirtualItemProps) {
   const placeholderClass = () => ["virtual-item-placeholder", props.placeholderClass].filter(Boolean).join(" ")
   const lazyContent = createMemo<JSX.Element | null>(() => {
     if (shouldHideContent()) return null
-    return resolved()
+    return resolveContent()
   })
 
   return (

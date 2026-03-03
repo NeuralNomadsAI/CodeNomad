@@ -761,7 +761,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                   }
                 }}
               >
-                {props.renderItem(item(), index)}
+                {() => props.renderItem(item(), index)}
               </VirtualItem>
             )
           }}
