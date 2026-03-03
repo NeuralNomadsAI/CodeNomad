@@ -174,11 +174,15 @@ interface VirtualItemProps {
 export default function VirtualItem(props: VirtualItemProps) {
   const resolveContent = () => (typeof props.children === "function" ? (props.children as () => JSX.Element)() : props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
+  const fallbackPlaceholderHeight = () => props.minPlaceholderHeight ?? MIN_PLACEHOLDER_HEIGHT
   // Default to hidden until we can determine visibility.
   // This avoids keeping heavy DOM alive when IntersectionObserver
   // doesn't fire (common for hidden/zero-sized scroll roots).
   const [isIntersecting, setIsIntersecting] = createSignal(false)
-  const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? 0)
+  // Keep measuredHeight aligned with the *effective layout height* while hidden.
+  // When content first mounts, onHeightChange deltas should reflect the DOM's
+  // placeholder height (not 0), otherwise scroll compensation can overshoot.
+  const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
   const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
@@ -395,7 +399,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       setMeasuredHeight(cached)
       setHasMeasured(true)
     } else {
-      setMeasuredHeight(0)
+      setMeasuredHeight(fallbackPlaceholderHeight())
       setHasMeasured(false)
     }
   })

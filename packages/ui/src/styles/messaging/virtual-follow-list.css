@@ -2,6 +2,8 @@
   @apply flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5;
   background-color: var(--surface-base);
   color: inherit;
+  /* Prevent browser scroll anchoring fighting our virtualization compensation. */
+  overflow-anchor: none;
 }
 
 .message-stream-block {

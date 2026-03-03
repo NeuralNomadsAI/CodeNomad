@@ -402,8 +402,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!anchor) return
     const containerRect = containerRef.getBoundingClientRect()
     const rect = anchor.getBoundingClientRect()
-    const isAboveViewport = rect.bottom < containerRect.top
-    if (!isAboveViewport) {
+    // Determine whether the item was fully above the viewport *before* the
+    // height delta applied. Items can expand downward into the viewport; in that
+    // case we still need to compensate to keep existing visible content stable.
+    const bottomAfter = rect.bottom
+    const bottomBefore = bottomAfter - delta
+    const wasAboveViewport = bottomBefore < containerRect.top
+    if (!wasAboveViewport) {
       return
     }
 
@@ -445,7 +450,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         containerRef.scrollTop = nextTop
         lastKnownScrollTop = nextTop
       }
-
     })
   }
 
@@ -531,23 +535,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastActiveState = false
   createEffect(() => {
     const active = isActive()
-      if (active) {
-        resolvePendingActiveScroll()
-        if (!lastActiveState && autoScroll()) {
-          requestScrollToBottom(true)
+    if (active) {
+      resolvePendingActiveScroll()
+      if (!lastActiveState && autoScroll()) {
+        requestScrollToBottom(true)
 
-          // When switching back to a cached session pane, items can mount/measure
-          // after the initial scroll jump. Re-pin once layout settles so the
-          // viewport stays at the bottom.
+        // When switching back to a cached session pane, items can mount/measure
+        // after the initial scroll jump. Re-pin once layout settles so the
+        // viewport stays at the bottom.
+        requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              scheduleAutoPinToBottom()
-            })
+            scheduleAutoPinToBottom()
           })
-        }
-      } else if (autoScroll()) {
-        pendingActiveScroll = true
+        })
       }
+    } else if (autoScroll()) {
+      pendingActiveScroll = true
+    }
     lastActiveState = active
   })
 
