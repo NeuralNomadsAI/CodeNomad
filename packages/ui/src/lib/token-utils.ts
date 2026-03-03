@@ -22,6 +22,12 @@ export function getPartCharCount(part: ClientPart): number {
 
   if (part.type === "tool") {
     const state = (part as any).state
+    // Tool calls may be compacted server-side. When that happens we treat the
+    // tool payload as effectively absent from context for token estimation.
+    const compacted = (state as any)?.time?.compacted
+    if (compacted !== undefined && compacted !== null) {
+      return 0
+    }
     if (state) {
       if (state.input) {
         try {
