@@ -114,6 +114,7 @@ export interface VirtualFollowListProps<T> {
    */
   onScroll?: () => void
   onMouseUp?: (event: MouseEvent) => void
+  onClick?: (event: MouseEvent) => void
   onActiveKeyChange?: (key: string | null) => void
   registerApi?: (api: VirtualFollowListApi) => void
   registerState?: (state: VirtualFollowListState) => void
@@ -872,6 +873,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         ref={setContainerRef}
         onScroll={handleScroll}
         onMouseUp={(event) => props.onMouseUp?.(event)}
+        onClick={(event) => props.onClick?.(event)}
       >
         <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
         {props.renderBeforeItems?.()}

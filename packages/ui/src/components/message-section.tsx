@@ -1001,6 +1001,12 @@ export default function MessageSection(props: MessageSectionProps) {
             scrollCache.persist(streamElement())
           }}
           onMouseUp={() => handleStreamMouseUp()}
+          onClick={(e) => {
+            if (selectedTimelineIds().size === 0) return
+            const target = e.target as HTMLElement
+            if (target.closest("button, a, input, [role='button']")) return
+            handleClearTimelineSelection()
+          }}
           onActiveKeyChange={(messageId) => {
             if (!messageId) return
             const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
