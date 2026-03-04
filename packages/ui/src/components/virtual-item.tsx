@@ -1,9 +1,9 @@
-import { JSX, Accessor, children as resolveChildren, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { JSX, Accessor, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 
 const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
-const MIN_PLACEHOLDER_HEIGHT = 32
-const VISIBILITY_BUFFER_PX = 48
+const MIN_PLACEHOLDER_HEIGHT = 400
+const VISIBILITY_BUFFER_PX = 0
 
 type ObserverRoot = Element | Document | null
 
@@ -54,11 +54,64 @@ function shouldRenderEntry(entry: IntersectionObserverEntry) {
   if (!rootBounds) {
     return entry.isIntersecting
   }
-  const distanceAbove = rootBounds.top - entry.boundingClientRect.bottom
-  const distanceBelow = entry.boundingClientRect.top - rootBounds.bottom
-  if (distanceAbove > VISIBILITY_BUFFER_PX || distanceBelow > VISIBILITY_BUFFER_PX) {
+
+  // Above the root: compare bottom edge to root top.
+  if (entry.boundingClientRect.bottom < rootBounds.top) {
+    const distance = rootBounds.top - entry.boundingClientRect.bottom
+    return distance <= VISIBILITY_BUFFER_PX
+  }
+
+  // Below the root: compare top edge to root bottom.
+  if (entry.boundingClientRect.top > rootBounds.bottom) {
+    const distance = entry.boundingClientRect.top - rootBounds.bottom
+    return distance <= VISIBILITY_BUFFER_PX
+  }
+
+  // Overlapping the root bounds.
+  return true
+}
+
+function getViewportRect(): { top: number; bottom: number } {
+  if (typeof window === "undefined") {
+    return { top: 0, bottom: 0 }
+  }
+  return { top: 0, bottom: window.innerHeight }
+}
+
+function isRenderableRoot(root: ObserverRoot): boolean {
+  if (!root) return true
+  if (root instanceof Document) return true
+  if (typeof window === "undefined") return false
+
+  const element = root as Element
+  const style = window.getComputedStyle(element as Element)
+  if (style.display === "none" || style.visibility === "hidden") {
     return false
   }
+  const rect = (element as Element).getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function shouldRenderByRects(params: {
+  wrapperRect: DOMRect
+  rootRect: { top: number; bottom: number }
+  margin: number
+}): boolean {
+  const { wrapperRect, rootRect, margin } = params
+  const threshold = margin + VISIBILITY_BUFFER_PX
+
+  // Above the root: compare bottom edge to root top.
+  if (wrapperRect.bottom < rootRect.top) {
+    const distance = rootRect.top - wrapperRect.bottom
+    return distance <= threshold
+  }
+
+  // Below the root: compare top edge to root bottom.
+  if (wrapperRect.top > rootRect.bottom) {
+    const distance = wrapperRect.top - rootRect.bottom
+    return distance <= threshold
+  }
+
   return true
 }
 
@@ -103,7 +156,7 @@ function subscribeToSharedObserver(
 
 interface VirtualItemProps {
   cacheKey: string
-  children: JSX.Element
+  children: JSX.Element | (() => JSX.Element)
   scrollContainer?: Accessor<HTMLElement | undefined | null>
   threshold?: number
   minPlaceholderHeight?: number
@@ -114,14 +167,22 @@ interface VirtualItemProps {
   forceVisible?: Accessor<boolean>
   suspendMeasurements?: Accessor<boolean>
   onMeasured?: () => void
+  onHeightChange?: (nextHeight: number, previousHeight: number) => void
   id?: string
 }
 
 export default function VirtualItem(props: VirtualItemProps) {
-  const resolved = resolveChildren(() => props.children)
+  const resolveContent = () => (typeof props.children === "function" ? (props.children as () => JSX.Element)() : props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
-  const [isIntersecting, setIsIntersecting] = createSignal(true)
-  const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? 0)
+  const fallbackPlaceholderHeight = () => props.minPlaceholderHeight ?? MIN_PLACEHOLDER_HEIGHT
+  // Default to hidden until we can determine visibility.
+  // This avoids keeping heavy DOM alive when IntersectionObserver
+  // doesn't fire (common for hidden/zero-sized scroll roots).
+  const [isIntersecting, setIsIntersecting] = createSignal(false)
+  // Keep measuredHeight aligned with the *effective layout height* while hidden.
+  // When content first mounts, onHeightChange deltas should reflect the DOM's
+  // placeholder height (not 0), otherwise scroll compensation can overshoot.
+  const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
   const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
@@ -148,12 +209,12 @@ export default function VirtualItem(props: VirtualItemProps) {
     })
   }
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
+  const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
   const shouldHideContent = createMemo(() => {
     if (props.forceVisible?.()) return false
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
-  const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
  
    let wrapperRef: HTMLDivElement | undefined
  
@@ -180,9 +241,14 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (!Number.isFinite(nextHeight) || nextHeight < 0) {
       return
     }
+    const before = measuredHeight()
     const normalized = nextHeight
     const previous = sizeCache.get(props.cacheKey) ?? measuredHeight()
-    const shouldKeepPrevious = previous > 0 && (normalized === 0 || (normalized > 0 && normalized < previous))
+    // Only keep the previous measurement when the element reports 0 height.
+    // Allow shrinkage so placeholder height matches real content height;
+    // keeping the max height can cause mount/unmount jitter near the
+    // virtualization boundary.
+    const shouldKeepPrevious = previous > 0 && normalized === 0
     if (shouldKeepPrevious) {
       if (!hasReportedMeasurement) {
         hasReportedMeasurement = true
@@ -191,6 +257,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       setHasMeasured(true)
       sizeCache.set(props.cacheKey, previous)
       setMeasuredHeight(previous)
+      if (previous !== before) props.onHeightChange?.(previous, before)
       return
     }
     if (normalized > 0) {
@@ -202,11 +269,15 @@ export default function VirtualItem(props: VirtualItemProps) {
       }
     }
     setMeasuredHeight(normalized)
+    if (normalized !== before) props.onHeightChange?.(normalized, before)
   }
 
   function updateMeasuredHeight() {
     if (!contentRef || measurementsSuspended()) return
-    const next = contentRef.offsetHeight
+    // Prefer subpixel-accurate height for scroll compensation.
+    // offsetHeight rounds to integers which can accumulate error.
+    const rect = contentRef.getBoundingClientRect()
+    const next = Math.max(0, Math.round(rect.height * 2) / 2)
     if (next === measuredHeight()) return
     persistMeasurement(next)
   }
@@ -229,15 +300,60 @@ export default function VirtualItem(props: VirtualItemProps) {
   function refreshIntersectionObserver(targetRoot: Element | Document | null) {
     cleanupIntersectionObserver()
     if (!wrapperRef) {
-      setIsIntersecting(true)
+      setIsIntersecting(false)
       return
     }
     if (typeof IntersectionObserver === "undefined") {
       setIsIntersecting(true)
       return
     }
+
     const margin = props.threshold ?? DEFAULT_MARGIN_PX
-    intersectionCleanup = subscribeToSharedObserver(wrapperRef, targetRoot, margin, (entry) => {
+
+    // If the scroll root is hidden / 0x0, IntersectionObserver can report
+    // `isIntersecting` in unexpected ways (often "true" with null rootBounds),
+    // which keeps heavy DOM alive in background tabs.
+    //
+    // In that state, force-hide and skip attaching the observer. When the
+    // pane becomes visible again, VirtualItem will re-run this setup and
+    // re-attach the observer.
+    const renderable = isRenderableRoot(targetRoot)
+    if (!renderable) {
+      setIsIntersecting(false)
+      return
+    }
+
+    // Avoid doing an eager geometry read here.
+    // During large list hydration / initial layout, wrapper rects can be
+    // transiently 0/incorrect and cause many offscreen items to mount.
+    // Rely on the observer callback (which we harden below) to determine
+    // visibility.
+
+    const wrapperEl = wrapperRef
+    intersectionCleanup = subscribeToSharedObserver(wrapperEl, targetRoot, margin, (entry) => {
+      // IntersectionObserver can produce transient false-positives during pane
+      // activation/layout transitions (e.g. `isIntersecting: true` for items far
+      // outside the scroll root). For element roots, prefer explicit rect math.
+      if (targetRoot && !(targetRoot instanceof Document)) {
+        // When rootBounds is null we cannot trust the entry; treat as hidden.
+        if (entry.rootBounds === null) {
+          queueVisibility(false)
+          return
+        }
+        try {
+          const rootRect = (targetRoot as Element).getBoundingClientRect()
+          const visible = shouldRenderByRects({
+            wrapperRect: wrapperEl.getBoundingClientRect(),
+            rootRect: { top: rootRect.top, bottom: rootRect.bottom },
+            margin,
+          })
+          queueVisibility(visible)
+          return
+        } catch {
+          // Fall through to the entry-based heuristic.
+        }
+      }
+
       const nextVisible = shouldRenderEntry(entry)
       queueVisibility(nextVisible)
     })
@@ -283,7 +399,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       setMeasuredHeight(cached)
       setHasMeasured(true)
     } else {
-      setMeasuredHeight(0)
+      setMeasuredHeight(fallbackPlaceholderHeight())
       setHasMeasured(false)
     }
   })
@@ -320,10 +436,9 @@ export default function VirtualItem(props: VirtualItemProps) {
   const placeholderClass = () => ["virtual-item-placeholder", props.placeholderClass].filter(Boolean).join(" ")
   const lazyContent = createMemo<JSX.Element | null>(() => {
     if (shouldHideContent()) return null
-    return resolved()
+    return resolveContent()
   })
 
- 
   return (
     <div ref={setWrapperRef} id={props.id} class={wrapperClass()} style={{ width: "100%" }}>
       <div
@@ -340,4 +455,3 @@ export default function VirtualItem(props: VirtualItemProps) {
     </div>
   )
 }
-

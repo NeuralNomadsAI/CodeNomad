@@ -1,12 +1,14 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
+import { getPartCharCount } from "../lib/token-utils"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
+import type { DeleteHoverState } from "../types/delete-hover"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -19,18 +21,38 @@ export interface TimelineSegment {
   shortLabel?: string
   variant?: "auto" | "manual"
   toolPartIds?: string[]
+  partIds?: string[]
+  partId?: string
+  totalChars: number
 }
 
 interface MessageTimelineProps {
   segments: TimelineSegment[]
   onSegmentClick?: (segment: TimelineSegment) => void
-  activeMessageId?: string | null
+  onToggleSelection?: (id: string) => void
+  onLongPressSelection?: (segment: TimelineSegment) => void
+  onSelectRange?: (id: string) => void
+  onClearSelection?: () => void
+  selectedIds?: Accessor<Set<string>>
+  expandedMessageIds?: Accessor<Set<string>>
+  // Optional: restrict histogram/xray overlay to only show for these message ids.
+  // Used to hide ribs for messages before the last compaction.
+  deletableMessageIds?: Accessor<Set<string>>
+  activeSegmentId?: string | null
   instanceId: string
   sessionId: string
   showToolSegments?: boolean
+  deleteHover?: () => DeleteHoverState
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 const MAX_TOOLTIP_LENGTH = 220
+const LONG_PRESS_MS = 500
+const JITTER_THRESHOLD = 10
+const ABSOLUTE_TOKEN_CAP = 10000
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -38,10 +60,8 @@ interface PendingSegment {
   type: TimelineSegmentType
   texts: string[]
   reasoningTexts: string[]
-  toolTitles: string[]
-  toolTypeLabels: string[]
-  toolIcons: string[]
-  toolPartIds: string[]
+  partIds: string[]
+  totalChars: number
   hasPrimaryText: boolean
 }
 
@@ -171,18 +191,13 @@ export function buildTimelineSegments(
       pending = null
       return
     }
-    const isToolSegment = pending.type === "tool"
-    const label = isToolSegment
-      ? pending.toolTypeLabels[0] || segmentLabel("tool")
-      : segmentLabel(pending.type)
-    const shortLabel = isToolSegment ? pending.toolIcons[0] || getToolIcon("tool") : undefined
-    const tooltip = isToolSegment
-      ? formatToolTooltip(pending.toolTitles, t)
-      : formatTextsTooltip(
-          [...pending.texts, ...pending.reasoningTexts],
-          pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
-        )
- 
+    const label = segmentLabel(pending.type)
+    const shortLabel = undefined
+    const tooltip = formatTextsTooltip(
+      [...pending.texts, ...pending.reasoningTexts],
+      pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
+    )
+
     result.push({
       id: `${record.id}:${segmentIndex}`,
       messageId: record.id,
@@ -190,16 +205,24 @@ export function buildTimelineSegments(
       label,
       tooltip,
       shortLabel,
-      toolPartIds: isToolSegment ? pending.toolPartIds : undefined,
+      partIds: pending.partIds,
+      totalChars: pending.totalChars,
     })
     segmentIndex += 1
     pending = null
   }
- 
+
   const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
     if (!pending || pending.type !== type) {
       flushPending()
-      pending = { type, texts: [], reasoningTexts: [], toolTitles: [], toolTypeLabels: [], toolIcons: [], toolPartIds: [], hasPrimaryText: type !== "assistant" }
+      pending = {
+        type,
+        texts: [],
+        reasoningTexts: [],
+        partIds: [],
+        totalChars: 0,
+        hasPrimaryText: type !== "assistant",
+      }
     }
     return pending!
   }
@@ -211,14 +234,21 @@ export function buildTimelineSegments(
     if (!part || typeof part !== "object") continue
 
     if (part.type === "tool") {
-      const target = ensureSegment("tool")
+      flushPending()
       const toolPart = part as ToolCallPart
-      target.toolTitles.push(getToolTitle(toolPart, t))
-      target.toolTypeLabels.push(getToolTypeLabel(toolPart, t))
-      target.toolIcons.push(getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"))
-      if (typeof toolPart.id === "string" && toolPart.id.length > 0) {
-        target.toolPartIds.push(toolPart.id)
-      }
+      const partId = typeof toolPart.id === "string" ? toolPart.id : ""
+      const title = getToolTitle(toolPart, t)
+      result.push({
+        id: `${record.id}:${segmentIndex}`,
+        messageId: record.id,
+        type: "tool",
+        label: getToolTypeLabel(toolPart, t) || segmentLabel("tool"),
+        tooltip: formatToolTooltip([title], t),
+        shortLabel: getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"),
+        toolPartIds: partId ? [partId] : undefined,
+        totalChars: getPartCharCount(part),
+      })
+      segmentIndex += 1
       continue
     }
 
@@ -228,13 +258,18 @@ export function buildTimelineSegments(
       const target = ensureSegment(defaultContentType)
       if (target) {
         target.reasoningTexts.push(text)
+        if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
+          target.partIds.push((part as any).id)
+        }
+        target.totalChars += getPartCharCount(part)
       }
       continue
     }
- 
+
     if (part.type === "compaction") {
       flushPending()
       const isAuto = Boolean((part as any)?.auto)
+      const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
       result.push({
         id: `${record.id}:${segmentIndex}`,
         messageId: record.id,
@@ -242,6 +277,8 @@ export function buildTimelineSegments(
         label: segmentLabel("compaction"),
         tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
         variant: isAuto ? "auto" : "manual",
+        partId,
+        totalChars: 0,
       })
       segmentIndex += 1
       continue
@@ -250,19 +287,23 @@ export function buildTimelineSegments(
     if (part.type === "step-start" || part.type === "step-finish") {
       continue
     }
- 
+
     const text = collectTextFromPart(part, t)
     if (text.trim().length === 0) continue
     const target = ensureSegment(defaultContentType)
     if (target) {
       target.texts.push(text)
       target.hasPrimaryText = true
+      if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
+        target.partIds.push((part as any).id)
+      }
+      target.totalChars += getPartCharCount(part)
     }
   }
 
 
   flushPending()
- 
+
   return result
 }
 
@@ -278,7 +319,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
- 
+  const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
+
+  const isHistogramEligible = (segment: TimelineSegment): boolean => {
+    const allowed = props.deletableMessageIds?.()
+    if (!allowed) return true
+    return allowed.has(segment.messageId)
+  }
+
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
     if (element) {
       buttonRefs.set(segmentId, element)
@@ -286,7 +334,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       buttonRefs.delete(segmentId)
     }
   }
- 
+
   const clearHoverTimer = () => {
     if (hoverTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(hoverTimer)
@@ -312,8 +360,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       setHoverAnchorRect(null)
     }, 160)
   }
- 
+
   const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
+    // Suppress previews during long-press selection gestures.
+    if (longPressTimer !== null) return
+
     if (typeof window === "undefined") return
     clearHoverTimer()
     clearCloseTimer()
@@ -328,7 +379,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const handleMouseLeave = () => {
     scheduleClose()
   }
- 
+
   createEffect(() => {
     if (typeof window === "undefined") return
     const anchor = hoverAnchorRect()
@@ -350,13 +401,235 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     clearCloseTimer()
   })
 
-  createEffect(() => {
-    const activeId = props.activeMessageId
+  // --- Selection & histogram rib state ---
+  const isSelectionActive = createMemo(() => (props.selectedIds?.().size ?? 0) > 0)
 
+  // Segments eligible for xray ribs. We intentionally exclude messages before
+  // the last compaction (when provided by the parent) to avoid misleading token
+  // weights for content that's no longer in context.
+  const xraySegments = createMemo(() => {
+    if (!isSelectionActive()) return [] as TimelineSegment[]
+    return props.segments.filter((segment) => isHistogramEligible(segment))
+  })
+
+  // Stable layout offsets per badge (relative to scroll content), recomputed only
+  // on activation, resize, or expansion — NOT on every scroll frame.
+  const [badgeOffsets, setBadgeOffsets] = createSignal<Record<string, { layoutTop: number; height: number }>>({})
+  const [windowWidth, setWindowWidth] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1200)
+  let scrollContainerRef: HTMLDivElement | undefined
+  let xrayOverlayRef: HTMLDivElement | undefined
+
+  // Full layout recomputation: reads every badge's getBoundingClientRect once,
+  // then stores offsets relative to the scroll content so they survive scrolling.
+  const computeBadgeLayout = () => {
+    if (!isSelectionActive() || !scrollContainerRef) return
+    const containerRect = scrollContainerRef.getBoundingClientRect()
+    const scrollTop = scrollContainerRef.scrollTop
+    const offsets: Record<string, { layoutTop: number; height: number }> = {}
+
+    for (const [id, element] of buttonRefs.entries()) {
+      if (!element) continue
+      const rect = element.getBoundingClientRect()
+      // Store position relative to scroll content (survives scrolling).
+      offsets[id] = {
+        layoutTop: rect.top - containerRect.top + scrollTop,
+        height: rect.height,
+      }
+    }
+    setBadgeOffsets(offsets)
+    if (xrayOverlayRef) {
+      xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollTop}px`)
+    }
+
+    if (typeof window !== "undefined") {
+      setWindowWidth(window.innerWidth)
+    }
+  }
+
+  const handleScroll = () => {
+    if (!isSelectionActive()) return
+    if (!scrollContainerRef || !xrayOverlayRef) return
+    xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
+  }
+
+  createEffect(() => {
+    if (isSelectionActive()) {
+      computeBadgeLayout()
+      if (typeof window !== "undefined") {
+        // Deferred pass: tool segments become visible when selection activates,
+        // but they may need a layout pass before getBoundingClientRect is accurate.
+        requestAnimationFrame(computeBadgeLayout)
+        window.addEventListener("resize", computeBadgeLayout)
+        onCleanup(() => {
+          window.removeEventListener("resize", computeBadgeLayout)
+        })
+      }
+    }
+  })
+
+  // Re-compute badge layout after expansion changes (tools become visible in DOM)
+  createEffect(() => {
+    props.expandedMessageIds?.()
+    if (isSelectionActive()) {
+      requestAnimationFrame(computeBadgeLayout)
+    }
+  })
+
+  const maxRibWidth = createMemo(() => Math.round(windowWidth() * 0.5))
+
+  // Compute fresh char counts from the store. segment.totalChars can be stale for
+  // tool parts whose output arrived after the timeline segment was first built.
+  const liveSegmentChars = createMemo(() => {
+    if (!isSelectionActive()) return {} as Record<string, number>
+    const result: Record<string, number> = {}
+    const resolvedStore = store()
+
+    // Compute live char counts by reading only the parts that the segment
+    // references (partIds/toolPartIds). This stays accurate for streamed tool
+    // outputs without scanning every part in the message.
+    for (const segment of xraySegments()) {
+      const record = resolvedStore.getMessage(segment.messageId)
+      if (!record) {
+        result[segment.id] = segment.totalChars
+        continue
+      }
+
+      const ids = [...(segment.partIds ?? []), ...(segment.toolPartIds ?? [])]
+      let chars = 0
+      for (const partId of ids) {
+        const part = record.parts?.[partId]?.data
+        if (!part) continue
+        chars += getPartCharCount(part)
+      }
+
+      result[segment.id] = chars > 0 ? chars : segment.totalChars
+    }
+
+    return result
+  })
+
+  // Pre-compute aggregate tokens per message: O(n) once, O(1) per lookup.
+  // Avoids the previous O(n²) pattern of iterating all segments inside each <For> item.
+  const aggregateTokensByMessageId = createMemo(() => {
+    const chars = liveSegmentChars()
+    const result: Record<string, number> = {}
+    for (const s of xraySegments()) {
+      result[s.messageId] = (result[s.messageId] ?? 0) + (chars[s.id] ?? s.totalChars)
+    }
+    for (const id of Object.keys(result)) {
+      result[id] = Math.max(Math.round(result[id] / 4), 1)
+    }
+    return result
+  })
+
+  const getSegmentTokens = (segment: TimelineSegment): number => {
+    const isExpanded = props.expandedMessageIds?.().has(segment.messageId) ?? false
+    // When tools are hidden (not expanded, not in selection mode), assistant/user
+    // bars show aggregate tokens for the whole message.  When tools are visible
+    // (expanded or selection mode active), each segment shows its own tokens to
+    // avoid double-counting.
+    if (!isExpanded && !isSelectionActive() && (segment.type === "assistant" || segment.type === "user")) {
+      return aggregateTokensByMessageId()[segment.messageId] ?? 1
+    }
+    const chars = liveSegmentChars()[segment.id] ?? segment.totalChars
+    return Math.max(Math.round(chars / 4), 1)
+  }
+
+  const getMessageAggregateTokens = (messageId: string): number => {
+    return aggregateTokensByMessageId()[messageId] ?? 1
+  }
+
+  const formatTokenLabel = (tokens: number): string => {
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
+    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+    return String(tokens)
+  }
+
+  const maxTokens = createMemo(() => {
+    let max = 0
+    for (const s of xraySegments()) {
+      const tokens = getSegmentTokens(s)
+      if (tokens > max) max = tokens
+    }
+    return Math.max(max, 1)
+  })
+
+  // --- Long-press for mobile selection ---
+  let longPressTimer: number | null = null
+  let wasLongPress = false
+  let pressStartPos = { x: 0, y: 0 }
+
+  const handlePointerDown = (segment: TimelineSegment, event: PointerEvent) => {
+    if (event.button !== 0) return
+    wasLongPress = false
+    pressStartPos = { x: event.clientX, y: event.clientY }
+
+    clearHoverTimer()
+    clearCloseTimer()
+
+    if (longPressTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(longPressTimer)
+    }
+
+    if (typeof window !== "undefined") {
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null
+        wasLongPress = true
+
+        // Scroll anchoring: preserve visual position of the pressed badge.
+        const btn = buttonRefs.get(segment.id)
+        let anchorOffset: number | null = null
+        if (btn && scrollContainerRef) {
+          anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
+        }
+
+        if (props.onLongPressSelection) {
+          props.onLongPressSelection(segment)
+        } else {
+          props.onToggleSelection?.(segment.id)
+        }
+
+        if (anchorOffset !== null && btn && scrollContainerRef) {
+          const desired = btn.offsetTop - anchorOffset
+          if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
+            scrollContainerRef.scrollTop = desired
+          }
+        }
+      }, LONG_PRESS_MS)
+    }
+  }
+
+  const handlePointerUp = () => {
+    if (longPressTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(longPressTimer)
+      longPressTimer = null
+    }
+  }
+
+  const handlePointerMove = (event: PointerEvent) => {
+    if (longPressTimer !== null) {
+      const dist = Math.sqrt(
+        Math.pow(event.clientX - pressStartPos.x, 2) +
+        Math.pow(event.clientY - pressStartPos.y, 2),
+      )
+      if (dist > JITTER_THRESHOLD) {
+        if (typeof window !== "undefined") {
+          window.clearTimeout(longPressTimer)
+        }
+        longPressTimer = null
+      }
+    }
+  }
+
+  const handleContextMenu = (event: MouseEvent) => {
+    if (wasLongPress) {
+      event.preventDefault()
+    }
+  }
+
+  createEffect(on(() => props.activeSegmentId, (activeId) => {
     if (!activeId) return
-    const targetSegment = props.segments.find((segment) => segment.messageId === activeId)
-    if (!targetSegment) return
-    const element = buttonRefs.get(targetSegment.id)
+    const element = buttonRefs.get(activeId)
     if (!element) return
     const timer = typeof window !== "undefined" ? window.setTimeout(() => {
       element.scrollIntoView({ block: "nearest", behavior: "smooth" })
@@ -366,7 +639,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         window.clearTimeout(timer)
       }
     })
-  })
+  }))
 
   createEffect(() => {
     const element = tooltipElement()
@@ -383,92 +656,265 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const previewData = createMemo(() => {
-
     const segment = hoveredSegment()
     if (!segment) return null
     const record = store().getMessage(segment.messageId)
     if (!record) return null
     return { messageId: segment.messageId }
   })
- 
+
+  // Pre-computed set of messageIds that have at least one tool segment.
+  // Used by groupRole() inside <For> to avoid O(n) .some() per segment → O(1) .has().
+  const messagesWithTools = createMemo(() => {
+    const set = new Set<string>()
+    for (const s of props.segments) {
+      if (s.type === "tool") set.add(s.messageId)
+    }
+    return set
+  })
+
+  // Pre-computed index map for session message ordering.
+  // Used by isDeleteHovered() to replace O(n) indexOf with O(1) Map.get().
+  const messageIdToSessionIndex = createMemo(() => {
+    const ids = store().getSessionMessageIds(props.sessionId)
+    const map = new Map<string, number>()
+    for (let i = 0; i < ids.length; i++) map.set(ids[i], i)
+    return map
+  })
+
   return (
-    <div class="message-timeline" role="navigation" aria-label={t("messageTimeline.ariaLabel")}>
-      <For each={props.segments}>
-        {(segment) => {
-          onCleanup(() => buttonRefs.delete(segment.id))
-          const isActive = () => props.activeMessageId === segment.messageId
+    <div class="message-timeline-container">
+      <div
+        ref={scrollContainerRef}
+        class={`message-timeline${isSelectionActive() ? " message-timeline--selection-active" : ""}`}
+        role="navigation"
+        aria-label={t("messageTimeline.ariaLabel")}
+        onScroll={handleScroll}
+      >
+        <For each={props.segments}>
+          {(segment, segIndex) => {
+            onCleanup(() => buttonRefs.delete(segment.id))
+            const isActive = () => props.activeSegmentId === segment.id
+            const isSelected = () => props.selectedIds?.().has(segment.id)
 
-          const hasActivePermission = () => {
-            if (segment.type !== "tool") return false
-            const partIds = segment.toolPartIds ?? []
-            if (partIds.length === 0) return false
-            for (const partId of partIds) {
-              const permissionState = store().getPermissionState(segment.messageId, partId)
-              if (permissionState?.active) return true
+            const isDeleteHovered = () => {
+              const hover = deleteHover() as DeleteHoverState
+              if (hover.kind === "message") {
+                return hover.messageId === segment.messageId
+              }
+
+              if (hover.kind === "deleteUpTo") {
+                const indexMap = messageIdToSessionIndex()
+                const targetIndex = indexMap.get(hover.messageId)
+                if (targetIndex === undefined) return false
+                const segmentIndex = indexMap.get(segment.messageId)
+                if (segmentIndex === undefined) return false
+                return segmentIndex >= targetIndex
+              }
+
+              return false
             }
-            return false
-          }
 
-          const isHidden = () => segment.type === "tool" && !(showTools() || isActive() || hasActivePermission())
+            const isDeleteSelected = () => {
+              const selected = props.selectedMessageIds?.()
+              if (!selected) return false
+              return selected.has(segment.messageId)
+            }
 
-           const shortLabelContent = () => {
-             if (segment.type === "tool") {
-               if (hasActivePermission()) {
-                 return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
+            const hasActivePermission = () => {
+              if (segment.type !== "tool") return false
+              const partIds = segment.toolPartIds ?? []
+              if (partIds.length === 0) return false
+              for (const partId of partIds) {
+                const permissionState = store().getPermissionState(segment.messageId, partId)
+                if (permissionState?.active) return true
+              }
+              return false
+            }
+
+            const isExpanded = () => props.expandedMessageIds?.().has(segment.messageId) ?? false
+            const isHidden = () =>
+              segment.type === "tool" &&
+              !(showTools() || isExpanded() || isSelectionActive() || isActive() || hasActivePermission() || isDeleteHovered() || isDeleteSelected())
+
+            // Group visual indicators: tools belong to the same message as their
+            // assistant.  Uses messageId for correctness (not positional adjacency).
+            const groupRole = (): "child" | "parent" | "none" => {
+              if (segment.type === "tool") return "child"
+              if (segment.type === "assistant" && messagesWithTools().has(segment.messageId)) return "parent"
+              return "none"
+            }
+            const isGroupStart = () => {
+              if (segment.type !== "tool") return false
+              const idx = segIndex()
+              const prev = idx > 0 ? props.segments[idx - 1] : null
+              // First tool in the message's run: either nothing before, or previous
+              // segment is from a different message or is not a tool.
+              return !prev || prev.type !== "tool" || prev.messageId !== segment.messageId
+            }
+
+             const shortLabelContent = () => {
+               if (segment.type === "tool") {
+                 if (hasActivePermission()) {
+                   return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
+                 }
+                 return segment.shortLabel ?? getToolIcon("tool")
                }
-               return segment.shortLabel ?? getToolIcon("tool")
+               if (segment.type === "compaction") {
+                 return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
+               }
+               if (segment.type === "user") {
+                 return <UserIcon class="message-timeline-icon" aria-hidden="true" />
+               }
+               return <BotIcon class="message-timeline-icon" aria-hidden="true" />
              }
-             if (segment.type === "compaction") {
-               return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
-             }
-             if (segment.type === "user") {
-               return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-             }
-             return <BotIcon class="message-timeline-icon" aria-hidden="true" />
-           }
 
-          return (
-             <button
-               ref={(el) => registerButtonRef(segment.id, el)}
-               type="button"
-               data-variant={segment.variant}
-               class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""}`}
+            return (
+              <button
+                  ref={(el) => registerButtonRef(segment.id, el)}
+                  type="button"
+                  data-variant={segment.variant}
+                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
 
-              aria-current={isActive() ? "true" : undefined}
-              aria-hidden={isHidden() ? "true" : undefined}
-              onClick={() => props.onSegmentClick?.(segment)}
-              onMouseEnter={(event) => handleMouseEnter(segment, event)}
-              onMouseLeave={handleMouseLeave}
-            >
-              <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
-              <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
-            </button>
-          )
-        }}
-      </For>
-      <Show when={previewData()}>
-        {(data) => {
-          onCleanup(() => setTooltipElement(null))
-          return (
-            <div
-              ref={(element) => setTooltipElement(element)}
-              class="message-timeline-tooltip"
-              style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
-              onMouseEnter={() => clearCloseTimer()}
-              onMouseLeave={() => scheduleClose()}
-            >
-              <MessagePreview
-                messageId={data().messageId}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                store={store}
-              />
-            </div>
-          )
-        }}
+                  data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
+
+                 aria-current={isActive() ? "true" : undefined}
+                 aria-hidden={isHidden() ? "true" : undefined}
+                 onClick={(event) => {
+                   if (wasLongPress) {
+                     wasLongPress = false
+                     return
+                   }
+
+                   // Capture scroll anchor before selection changes may toggle
+                   // tool segment visibility, which shifts timeline layout.
+                   const btn = buttonRefs.get(segment.id)
+                   let anchorOffset: number | null = null
+                   if (btn && scrollContainerRef) {
+                     anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
+                   }
+
+                   const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
+
+                   if (event.shiftKey) {
+                     props.onSelectRange?.(segment.id)
+                   } else if (event.ctrlKey || event.metaKey) {
+                     props.onToggleSelection?.(segment.id)
+                   } else if (isMultiSelectActive) {
+                     // In selection mode, plain click scrolls to the message
+                     // instead of clearing. Selection is cleared by clicking
+                     // anywhere inside the chat container or pressing Esc.
+                     props.onSegmentClick?.(segment)
+                   } else {
+                     props.onSegmentClick?.(segment)
+                   }
+
+                   // Restore scroll anchor: keep the clicked badge at the same
+                   // visual position after hidden tools appear or disappear.
+                   if (anchorOffset !== null && btn && scrollContainerRef) {
+                     const desired = btn.offsetTop - anchorOffset
+                     if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
+                       scrollContainerRef.scrollTop = desired
+                     }
+                   }
+                 }}
+                onPointerDown={(e) => handlePointerDown(segment, e)}
+                 onPointerUp={handlePointerUp}
+                 onPointerCancel={handlePointerUp}
+                 onPointerMove={handlePointerMove}
+                 onContextMenu={handleContextMenu}
+                 onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                 onMouseLeave={handleMouseLeave}
+              >
+                <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
+                <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
+              </button>
+            )
+          }}
+        </For>
+        <Show when={previewData()}>
+          {(data) => {
+            onCleanup(() => setTooltipElement(null))
+            return (
+              <div
+                ref={(element) => setTooltipElement(element)}
+                class="message-timeline-tooltip"
+                style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
+                onMouseEnter={() => clearCloseTimer()}
+                onMouseLeave={() => scheduleClose()}
+              >
+                <MessagePreview
+                  messageId={data().messageId}
+                  instanceId={props.instanceId}
+                  sessionId={props.sessionId}
+                  store={store}
+                  deleteHover={props.deleteHover}
+                  onDeleteHoverChange={props.onDeleteHoverChange}
+                  onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                  selectedMessageIds={props.selectedMessageIds}
+                />
+              </div>
+            )
+          }}
+        </Show>
+      </div>
+
+      <Show when={isSelectionActive()}>
+        <div
+          ref={(el) => {
+            xrayOverlayRef = el
+            if (xrayOverlayRef && scrollContainerRef) {
+              xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
+            }
+          }}
+          class="message-timeline-xray-overlay"
+          style={{ "--max-rib-width": `${maxRibWidth()}px` }}
+        >
+          <div class="message-timeline-xray-overlay-inner">
+          <For each={xraySegments()}>
+            {(segment) => {
+              const pos = () => {
+                const offset = badgeOffsets()[segment.id]
+                if (!offset) return null
+                return { top: offset.layoutTop + offset.height / 2 }
+              }
+              const tokens = () => getSegmentTokens(segment)
+              const relativeWeight = () => tokens() / maxTokens()
+              const absoluteWeight = () => Math.min(tokens() / ABSOLUTE_TOKEN_CAP, 1.0)
+              const isOverflow = () => tokens() > ABSOLUTE_TOKEN_CAP
+              const isParent = segment.type === "assistant" || segment.type === "user"
+              const displayTokens = () =>
+                isParent ? getMessageAggregateTokens(segment.messageId) : tokens()
+              return (
+                <Show when={pos()}>
+                  <div
+                    class="message-timeline-xray-rib"
+                    style={{
+                      top: `${pos()!.top}px`,
+                      left: "var(--xray-overhang)",
+                    }}
+                  >
+                    <span class="message-timeline-xray-token-label">
+                      {formatTokenLabel(displayTokens())}
+                    </span>
+                    <div
+                      class="message-timeline-relative-bar"
+                      style={{ "--segment-weight": relativeWeight() }}
+                    />
+                    <div
+                      class={`message-timeline-absolute-bar${isOverflow() ? " message-timeline-absolute-bar-overflow" : ""}`}
+                      style={{ "--segment-weight": absoluteWeight() }}
+                    />
+                  </div>
+                </Show>
+              )
+            }}
+          </For>
+          </div>
+        </div>
       </Show>
     </div>
   )
 }
- 
+
 export default MessageTimeline

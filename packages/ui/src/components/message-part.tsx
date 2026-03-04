@@ -131,7 +131,12 @@ export default function MessagePart(props: MessagePartProps) {
     <Switch>
       <Match when={partType() === "text"}>
         <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
-          <div class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()} data-role={textContainerRole()}>
+          <div
+            class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()}
+            data-role={textContainerRole()}
+            data-part-type="text"
+            data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+          >
             <Show when={canRenderMarkdown()} fallback={<span class="text-primary">{plainTextContent()}</span>}>
               <Markdown
                 part={createTextPartForMarkdown()}

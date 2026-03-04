@@ -67,6 +67,8 @@ export const sessionMessages = {
   "sessionView.alerts.abortFailed.title": "No se pudo detener",
   "sessionView.alerts.revertFailed.message": "No se pudo revertir al mensaje",
   "sessionView.alerts.revertFailed.title": "No se pudo revertir",
+  "sessionView.alerts.deleteUpToFailed.message": "No se pudieron eliminar los mensajes",
+  "sessionView.alerts.deleteUpToFailed.title": "Error al eliminar",
   "sessionView.alerts.forkFailed.message": "No se pudo hacer fork de la sesión",
   "sessionView.alerts.forkFailed.title": "No se pudo hacer fork",
   "sessionView.attachments.expandPastedTextAriaLabel": "Expandir texto pegado",

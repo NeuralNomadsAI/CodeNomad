@@ -1,4 +1,4 @@
-// SDK types
+// SDK v2 types
 import type {
   EventMessageUpdated as MessageUpdateEvent,
   EventMessageRemoved as MessageRemovedEvent,
@@ -6,7 +6,8 @@ import type {
   EventMessagePartRemoved as MessagePartRemovedEvent,
   Part as SDKPart,
   Message as SDKMessage,
-} from "@opencode-ai/sdk"
+  AssistantMessage as SDKAssistantMessageV2,
+} from "@opencode-ai/sdk/v2"
 
 import type { PermissionRequestLike } from "./permission"
 
@@ -17,7 +18,8 @@ export type {
   MessagePartUpdatedEvent,
   MessagePartRemovedEvent,
   SDKPart,
-  SDKMessage
+  SDKMessage,
+  SDKAssistantMessageV2,
 }
 
 // Server streaming event: append-only delta updates.

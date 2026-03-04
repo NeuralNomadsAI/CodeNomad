@@ -10,6 +10,7 @@ import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
 import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
+import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { requestData } from "../../lib/opencode-api"
@@ -55,12 +56,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
 
+  const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
+
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+
+  function shouldScrollToBottomOnActivate() {
+    const current = session()
+    if (!current) return true
+    const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_SCROLL_CACHE_SCOPE)
+    return !snapshot || snapshot.atBottom
+  }
+
   function scheduleScrollToBottom() {
     if (!scrollToBottomHandle) return
     requestAnimationFrame(() => {
@@ -69,6 +80,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
   createEffect(() => {
     if (!props.isActive) return
+    if (!shouldScrollToBottomOnActivate()) return
     scheduleScrollToBottom()
   })
 
@@ -225,6 +237,35 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   }
 
+  async function handleDeleteMessagesUpTo(messageId: string) {
+    const ids = messageStore().getSessionMessageIds(props.sessionId)
+    const index = ids.indexOf(messageId)
+    if (index === -1) return
+
+    const restoredText = getUserMessageText(messageId)
+    const toDelete = ids.slice(index)
+
+    try {
+      for (let idx = toDelete.length - 1; idx >= 0; idx -= 1) {
+        await deleteMessage(props.instanceId, props.sessionId, toDelete[idx])
+      }
+    } catch (error) {
+      log.error("Failed to delete messages up to", error)
+      showAlertDialog(t("sessionView.alerts.deleteUpToFailed.message"), {
+        title: t("sessionView.alerts.deleteUpToFailed.title"),
+        variant: "error",
+      })
+    } finally {
+      if (restoredText) {
+        if (promptInputApi) {
+          promptInputApi.setPromptText(restoredText, { focus: true })
+        } else {
+          pendingPromptText = restoredText
+        }
+      }
+    }
+  }
+
   async function handleFork(messageId?: string) {
     if (!messageId) {
       log.warn("Fork requires a user message id")
@@ -283,14 +324,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             <MessageSection
                instanceId={props.instanceId}
                sessionId={activeSession.id}
-               loading={messagesLoading()}
-               onRevert={handleRevert}
-               onFork={handleFork}
-               isActive={props.isActive}
+                loading={messagesLoading()}
+                onRevert={handleRevert}
+                onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
+                onFork={handleFork}
+                isActive={props.isActive}
                 registerScrollToBottom={(fn) => {
                   scrollToBottomHandle = fn
                   if (props.isActive) {
-                    scheduleScrollToBottom()
+                    if (shouldScrollToBottomOnActivate()) {
+                      scheduleScrollToBottom()
+                    }
                   }
                 }}
 

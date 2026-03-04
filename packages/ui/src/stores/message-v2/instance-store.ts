@@ -189,7 +189,14 @@ export interface InstanceMessageStore {
   hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
   upsertMessage: (input: MessageUpsertInput) => void
   applyPartUpdate: (input: PartUpdateInput) => void
-  applyPartDelta: (input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) => void
+  applyPartDelta: (input: {
+    messageId: string
+    partId: string
+    field: string
+    delta: string
+    bumpRevision?: boolean
+    bumpSessionRevision: boolean
+  }) => void
   removeMessage: (messageId: string) => void
   removeMessagePart: (messageId: string, partId: string) => void
   bufferPendingPart: (entry: PendingPartEntry) => void
@@ -211,6 +218,9 @@ export interface InstanceMessageStore {
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
+  // Index of the most recent message in the session that contains a compaction part.
+  // Returns -1 if there has been no compaction.
+  getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
   clearSession: (sessionId: string) => void
@@ -223,6 +233,24 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+
+  function getLastCompactionMessageIndex(sessionId: string): number {
+    if (!sessionId) return -1
+    const ids = state.sessions[sessionId]?.messageIds ?? []
+    // Scan from the end: we only care about the most recent compaction.
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const messageId = ids[i]
+      const record = state.messages[messageId]
+      if (!record || !Array.isArray(record.partIds) || record.partIds.length === 0) continue
+      for (const partId of record.partIds) {
+        const part = record.parts[partId]?.data
+        if ((part as any)?.type === "compaction") {
+          return i
+        }
+      }
+    }
+    return -1
+  }
 
   function isCompletedTodoPart(part: ClientPart | undefined): boolean {
     if (!part || (part as any).type !== "tool") {
@@ -598,7 +626,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     bumpSessionRevision(message.sessionId)
   }
 
-  function applyPartDelta(input: { messageId: string; partId: string; field: string; delta: string; bumpRevision?: boolean }) {
+  function applyPartDelta(input: {
+    messageId: string
+    partId: string
+    field: string
+    delta: string
+    bumpRevision?: boolean
+    bumpSessionRevision?: boolean
+  }) {
     if (!input?.messageId || !input.partId || !input.field || typeof input.delta !== "string") {
       return
     }
@@ -632,7 +667,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }),
     )
 
-    if (applied) {
+    if (applied && (input.bumpSessionRevision ?? true)) {
       bumpSessionRevision(message.sessionId)
     }
   }
@@ -1124,8 +1159,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
  
    function clearInstance() {
      messageInfoCache.clear()
-     setState(reconcile(createInitialState(instanceId)))
-   }
+      setState(reconcile(createInitialState(instanceId)))
+    }
  
     return {
 
@@ -1158,11 +1193,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      setScrollSnapshot,
      getScrollSnapshot,
      getSessionRevision: getSessionRevisionValue,
-      getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
-      getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
-      clearSession,
-      clearInstance,
+       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
+       getLastCompactionMessageIndex,
+       getMessage: (messageId: string) => state.messages[messageId],
+       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+       clearSession,
+       clearInstance,
     }
   }
-

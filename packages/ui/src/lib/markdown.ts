@@ -127,17 +127,23 @@ async function ensureLanguages(content: string) {
   if (highlightSuppressed) {
     return
   }
-  // Parse code fences to extract language tokens
-  // Updated regex to capture optional language tokens and handle trailing annotations
-  const codeBlockRegex = /```[ \t]*([A-Za-z0-9_.+#-]+)?[^`]*?```/g
-  const foundLanguages = new Set<string>()
-  let match
 
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    const langToken = match[1]
-    if (langToken && langToken.trim()) {
-      foundLanguages.add(langToken.trim())
-    }
+  // Extract code-fence language tokens via `marked` so we correctly handle code blocks
+  // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
+  // to miss these and prevent languages from loading.
+  const foundLanguages = new Set<string>()
+  try {
+    const tokens = marked.lexer(content) as any
+    marked.walkTokens(tokens, (token: any) => {
+      if (token?.type !== "code") return
+      const langToken = typeof token.lang === "string" ? token.lang : ""
+      if (langToken.trim()) {
+        foundLanguages.add(langToken.trim())
+      }
+    })
+  } catch {
+    // If tokenization fails for any reason, skip language preloading.
+    return
   }
 
   // Queue language loading tasks

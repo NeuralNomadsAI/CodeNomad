@@ -1,4 +1,4 @@
-import { For, Show, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, createMemo, type Accessor, type Component, type JSX } from "solid-js"
 
 import { MonacoDiffViewer } from "../../../../file-viewer/monaco-diff-viewer"
 
@@ -32,14 +32,18 @@ interface ChangesTabProps {
 }
 
 const ChangesTab: Component<ChangesTabProps> = (props) => {
-  const renderContent = (): JSX.Element => {
-    const sessionId = props.activeSessionId()
+  const sessionId = createMemo(() => props.activeSessionId())
+  const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
+  const diffs = createMemo(() => (hasSession() ? props.activeSessionDiffs() : null))
 
-    const hasSession = Boolean(sessionId && sessionId !== "info")
-    const diffs = hasSession ? props.activeSessionDiffs() : null
+  const sorted = createMemo<any[]>(() => {
+    const list = diffs()
+    if (!Array.isArray(list)) return []
+    return [...list].sort((a, b) => String(a.file || "").localeCompare(String(b.file || "")))
+  })
 
-    const sorted = Array.isArray(diffs) ? [...diffs].sort((a, b) => String(a.file || "").localeCompare(String(b.file || ""))) : []
-    const totals = sorted.reduce(
+  const totals = createMemo(() => {
+    return sorted().reduce(
       (acc, item) => {
         acc.additions += typeof item.additions === "number" ? item.additions : 0
         acc.deletions += typeof item.deletions === "number" ? item.deletions : 0
@@ -47,41 +51,61 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
       },
       { additions: 0, deletions: 0 },
     )
+  })
 
-    const mostChanged = sorted.length
-      ? sorted.reduce((best, item) => {
-          const bestAdd = typeof (best as any)?.additions === "number" ? (best as any).additions : 0
-          const bestDel = typeof (best as any)?.deletions === "number" ? (best as any).deletions : 0
-          const bestScore = bestAdd + bestDel
+  const mostChanged = createMemo<any | null>(() => {
+    const items = sorted()
+    if (items.length === 0) return null
+    return items.reduce((best, item) => {
+      const bestAdd = typeof (best as any)?.additions === "number" ? (best as any).additions : 0
+      const bestDel = typeof (best as any)?.deletions === "number" ? (best as any).deletions : 0
+      const bestScore = bestAdd + bestDel
 
-          const add = typeof (item as any)?.additions === "number" ? (item as any).additions : 0
-          const del = typeof (item as any)?.deletions === "number" ? (item as any).deletions : 0
-          const score = add + del
+      const add = typeof (item as any)?.additions === "number" ? (item as any).additions : 0
+      const del = typeof (item as any)?.deletions === "number" ? (item as any).deletions : 0
+      const score = add + del
 
-          if (score > bestScore) return item
-          if (score < bestScore) return best
-          return String(item.file || "").localeCompare(String((best as any)?.file || "")) < 0 ? item : best
-        }, sorted[0])
-      : null
+      if (score > bestScore) return item
+      if (score < bestScore) return best
+      return String(item.file || "").localeCompare(String((best as any)?.file || "")) < 0 ? item : best
+    }, items[0])
+  })
 
-    // Auto-select the most-changed file if none selected.
+  const selectedFileData = createMemo<any | null>(() => {
     const currentSelected = props.selectedFile()
-    const selectedFileData = sorted.find((f) => f.file === currentSelected) || mostChanged
-
-    const scopeKey = `${props.instanceId}:${hasSession ? sessionId : "no-session"}`
-
-    const emptyViewerMessage = () => {
-      if (!hasSession) return props.t("instanceShell.sessionChanges.noSessionSelected")
-      if (diffs === undefined) return props.t("instanceShell.sessionChanges.loading")
-      if (!Array.isArray(diffs) || diffs.length === 0) return props.t("instanceShell.sessionChanges.empty")
-      return props.t("instanceShell.filesShell.viewerEmpty")
+    const items = sorted()
+    if (currentSelected) {
+      const match = items.find((f) => f.file === currentSelected)
+      if (match) return match
     }
+    return mostChanged()
+  })
+
+  const scopeKey = createMemo(() => `${props.instanceId}:${hasSession() ? sessionId() : "no-session"}`)
+
+  const emptyViewerMessage = createMemo(() => {
+    if (!hasSession()) return props.t("instanceShell.sessionChanges.noSessionSelected")
+    const currentDiffs = diffs()
+    if (currentDiffs === undefined) return props.t("instanceShell.sessionChanges.loading")
+    if (!Array.isArray(currentDiffs) || currentDiffs.length === 0) return props.t("instanceShell.sessionChanges.empty")
+    return props.t("instanceShell.filesShell.viewerEmpty")
+  })
+
+  const headerPath = createMemo(() => {
+    const file = selectedFileData()
+    return file?.file ? String(file.file) : props.t("instanceShell.rightPanel.tabs.changes")
+  })
+
+  const renderContent = (): JSX.Element => {
+    const sortedList = sorted()
+    const totalsValue = totals()
+    const selected = selectedFileData()
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
         <div class="file-viewer-content file-viewer-content--monaco">
           <Show
-            when={selectedFileData && hasSession && Array.isArray(diffs) && diffs.length > 0 ? selectedFileData : null}
+            when={selected && hasSession() && sortedList.length > 0 ? selected : null}
             fallback={
               <div class="file-viewer-empty">
                 <span class="file-viewer-empty-text">{emptyViewerMessage()}</span>
@@ -90,7 +114,7 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
           >
             {(file) => (
               <MonacoDiffViewer
-                scopeKey={scopeKey}
+                scopeKey={scopeKey()}
                 path={String(file().file || "")}
                 before={String((file() as any).before || "")}
                 after={String((file() as any).after || "")}
@@ -109,11 +133,11 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
     )
 
     const renderListPanel = () => (
-      <Show when={sorted.length > 0} fallback={renderEmptyList()}>
-        <For each={sorted}>
+      <Show when={sortedList.length > 0} fallback={renderEmptyList()}>
+        <For each={sortedList}>
           {(item) => (
             <div
-              class={`file-list-item ${selectedFileData?.file === item.file ? "file-list-item-active" : ""}`}
+              class={`file-list-item ${selected?.file === item.file ? "file-list-item-active" : ""}`}
               onClick={() => {
                 props.onSelectFile(item.file, props.isPhoneLayout())
               }}
@@ -134,11 +158,11 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
     )
 
     const renderListOverlay = () => (
-      <Show when={sorted.length > 0} fallback={renderEmptyList()}>
-        <For each={sorted}>
+      <Show when={sortedList.length > 0} fallback={renderEmptyList()}>
+        <For each={sortedList}>
           {(item) => (
             <div
-              class={`file-list-item ${selectedFileData?.file === item.file ? "file-list-item-active" : ""}`}
+              class={`file-list-item ${selected?.file === item.file ? "file-list-item-active" : ""}`}
               onClick={() => {
                 props.onSelectFile(item.file, true)
               }}
@@ -159,8 +183,6 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
       </Show>
     )
 
-    const headerPath = () => (selectedFileData?.file ? selectedFileData.file : props.t("instanceShell.rightPanel.tabs.changes"))
-
     return (
       <SplitFilePanel
         header={
@@ -171,10 +193,10 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>
               <span class="files-tab-stat files-tab-stat-additions">
-                <span class="files-tab-stat-value">+{totals.additions}</span>
+                <span class="files-tab-stat-value">+{totalsValue.additions}</span>
               </span>
               <span class="files-tab-stat files-tab-stat-deletions">
-                <span class="files-tab-stat-value">-{totals.deletions}</span>
+                <span class="files-tab-stat-value">-{totalsValue.deletions}</span>
               </span>
             </div>
 

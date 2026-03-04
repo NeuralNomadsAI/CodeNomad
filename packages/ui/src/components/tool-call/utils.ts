@@ -1,15 +1,15 @@
 import { isRenderableDiffText } from "../../lib/diff-utils"
 import { getLanguageFromPath } from "../../lib/markdown"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
 const log = getLogger("session")
 
 
-export type ToolStateRunning = import("@opencode-ai/sdk").ToolStateRunning
-export type ToolStateCompleted = import("@opencode-ai/sdk").ToolStateCompleted
-export type ToolStateError = import("@opencode-ai/sdk").ToolStateError
+export type ToolStateRunning = import("@opencode-ai/sdk/v2").ToolStateRunning
+export type ToolStateCompleted = import("@opencode-ai/sdk/v2").ToolStateCompleted
+export type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 export const diffCapableTools = new Set(["edit", "patch"])
 

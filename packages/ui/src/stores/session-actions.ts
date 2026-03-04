@@ -7,7 +7,7 @@ import { providers, sessions, withSession } from "./session-state"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
-import { removeMessagePartV2 } from "./message-v2/bridge"
+import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 
@@ -439,8 +439,33 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   updateSessionInfo(instanceId, sessionId)
 }
 
+async function deleteMessage(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  if (!instanceId || !sessionId || !messageId) return
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
+  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
+  // The SDK generator does not currently expose a typed method for deleting a message,
+  // but the API is available at DELETE /session/:sessionID/message/:messageID.
+  await requestData(
+    (client as any).client.delete({
+      url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
+    }),
+    "session.message.delete",
+  )
+
+  // Optimistic removal; SSE will also broadcast a message-removed event.
+  removeMessageV2(instanceId, messageId)
+  updateSessionInfo(instanceId, sessionId)
+}
+
 export {
   abortSession,
+  deleteMessage,
   deleteMessagePart,
   executeCustomCommand,
   renameSession,

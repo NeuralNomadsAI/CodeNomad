@@ -1,5 +1,5 @@
 import { createMemo, Show, For, createEffect, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useI18n } from "../../lib/i18n"
 

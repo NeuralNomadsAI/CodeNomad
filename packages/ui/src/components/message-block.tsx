@@ -1,5 +1,5 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, Trash2 } from "lucide-solid"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
 import MessageItem from "./message-item"
 import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -12,8 +12,17 @@ import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
 import { setActiveInstanceId } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessagePart } from "../stores/session-actions"
+import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
+import type { DeleteHoverState } from "../types/delete-hover"
+
+function DeleteUpToIcon() {
+  return (
+    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
+      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
+    </span>
+  )
+}
 
 const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
@@ -23,10 +32,10 @@ const TOOL_BORDER_COLOR = "var(--message-tool-border)"
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 
-type ToolState = import("@opencode-ai/sdk").ToolState
-type ToolStateRunning = import("@opencode-ai/sdk").ToolStateRunning
-type ToolStateCompleted = import("@opencode-ai/sdk").ToolStateCompleted
-type ToolStateError = import("@opencode-ai/sdk").ToolStateError
+type ToolState = import("@opencode-ai/sdk/v2").ToolState
+type ToolStateRunning = import("@opencode-ai/sdk/v2").ToolStateRunning
+type ToolStateCompleted = import("@opencode-ai/sdk/v2").ToolStateCompleted
+type ToolStateError = import("@opencode-ai/sdk/v2").ToolStateError
 
 function isToolStateRunning(state: ToolState | undefined): state is ToolStateRunning {
   return Boolean(state && state.status === "running")
@@ -194,8 +203,13 @@ interface MessageContentItemProps {
   messageIndex: number
   lastAssistantIndex: () => number
   onRevert?: (messageId: string) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function isSupportedPartType(part: unknown): boolean {
@@ -282,7 +296,12 @@ function MessageContentItem(props: MessageContentItemProps) {
           sessionId={props.sessionId}
           isQueued={isQueued()}
           showAgentMeta={showAgentMeta()}
+          showDeleteMessage={props.showDeleteMessage}
+          onDeleteHoverChange={props.onDeleteHoverChange}
+          selectedMessageIds={props.selectedMessageIds}
+          onToggleSelectedMessage={props.onToggleSelectedMessage}
           onRevert={props.onRevert}
+          onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
           onFork={props.onFork}
           onContentRendered={props.onContentRendered}
         />
@@ -298,11 +317,41 @@ interface ToolCallItemProps {
   messageId: string
   partId: string
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function ToolCallItem(props: ToolCallItemProps) {
   const { t } = useI18n()
-  const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+
+  const isSelectedToolPartForDeletion = () => Boolean(props.selectedToolPartKeys?.().has(`${props.messageId}:${props.partId}`))
+
+  const isDeleteOverlayActive = () => {
+    if (isSelectedForDeletion()) return true
+    if (isSelectedToolPartForDeletion()) return true
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    if (hover.kind === "message") {
+      return hover.messageId === props.messageId
+    }
+    if (hover.kind === "deleteUpTo") {
+      const ids = props.store().getSessionMessageIds(props.sessionId)
+      const targetIndex = ids.indexOf(hover.messageId)
+      if (targetIndex === -1) return false
+      const currentIndex = ids.indexOf(props.messageId)
+      if (currentIndex === -1) return false
+      return currentIndex >= targetIndex
+    }
+    return false
+  }
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -318,14 +367,6 @@ function ToolCallItem(props: ToolCallItemProps) {
   const toolName = createMemo(() => toolPart()?.tool || "")
   const messageVersion = createMemo(() => record()?.revision ?? 0)
   const partVersion = createMemo(() => partEntry()?.revision ?? 0)
-
-  const deleteDisabled = createMemo(() => {
-    if (deleting()) return true
-    // Avoid deleting while a tool is actively running to prevent confusing UI states.
-    if (isToolStateRunning(toolState())) return true
-    // Avoid deleting permission prompts from here; those are interactive.
-    return Boolean(toolPart()?.pendingPermission)
-  })
 
   const taskSessionId = createMemo(() => {
     const state = toolState()
@@ -350,38 +391,72 @@ function ToolCallItem(props: ToolCallItemProps) {
     navigateToTaskSession(location)
   }
 
-  const handleDeleteToolPart = async (event: MouseEvent) => {
+  const handleDeleteMessage = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
 
-    if (deleteDisabled()) return
+    if (!props.showDeleteMessage) return
+    if (deletingMessage()) return
 
-    setDeleting(true)
+    setDeletingMessage(true)
     try {
-      await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
     } catch (error) {
-      showAlertDialog(t("messageBlock.tool.deletePart.failed.message"), {
-        title: t("messageBlock.tool.deletePart.failed.title"),
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
     } finally {
-      setDeleting(false)
+      setDeletingMessage(false)
+    }
+  }
+
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.showDeleteMessage) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
     }
   }
 
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
-        <>
+        <div class="delete-hover-scope" data-delete-part-hover={isDeleteOverlayActive() ? "true" : undefined}>
           <div class="tool-call-header-label">
             <div class="tool-call-header-meta">
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.messageId, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
               <span class="tool-call-icon">{TOOL_ICON}</span>
               <span>{t("messageBlock.tool.header")}</span>
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
             </div>
 
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-0">
               <Show when={taskSessionId()}>
                 <button
                   class="tool-call-header-button"
@@ -395,16 +470,33 @@ function ToolCallItem(props: ToolCallItemProps) {
                 </button>
               </Show>
 
-              <button
-                class="tool-call-header-button"
-                type="button"
-                disabled={deleteDisabled()}
-                onClick={handleDeleteToolPart}
-                title={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
-                aria-label={deleting() ? t("messageBlock.tool.deletePart.deleting") : t("messageBlock.tool.deletePart.label")}
-              >
-                <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+              <Show when={props.showDeleteMessage}>
+                <button
+                  class="tool-call-header-button"
+                  type="button"
+                  disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+                  onClick={handleDeleteUpTo}
+                  onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId })}
+                  onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                  title={t("messageItem.actions.deleteMessagesUpTo")}
+                  aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+                >
+                  <DeleteUpToIcon />
+                </button>
+
+                <button
+                  class="tool-call-header-button"
+                  type="button"
+                  disabled={deletingMessage()}
+                  onClick={handleDeleteMessage}
+                  onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+                  onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                  title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                >
+                  <Trash class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </Show>
             </div>
           </div>
 
@@ -418,7 +510,7 @@ function ToolCallItem(props: ToolCallItemProps) {
             sessionId={props.sessionId}
             onContentRendered={props.onContentRendered}
           />
-        </>
+        </div>
       )}
     </Show>
   )
@@ -470,7 +562,13 @@ interface MessageBlockProps {
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   showUsageMetrics: () => boolean
+  deleteHover?: () => DeleteHoverState
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onRevert?: (messageId: string) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
 }
@@ -480,6 +578,30 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
+
+  const isDeleteMessageHovered = () => {
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+
+    const selected = props.selectedMessageIds?.() ?? new Set<string>()
+    if (selected.has(props.messageId)) {
+      return true
+    }
+
+    if (hover.kind === "message") {
+      return hover.messageId === props.messageId
+    }
+
+    if (hover.kind === "deleteUpTo") {
+      const ids = props.store().getSessionMessageIds(props.sessionId)
+      const targetIndex = ids.indexOf(hover.messageId)
+      if (targetIndex === -1) return false
+      const currentIndex = ids.indexOf(props.messageId)
+      if (currentIndex === -1) return false
+      return currentIndex >= targetIndex
+    }
+
+    return false
+  }
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
     const current = record()
@@ -668,9 +790,13 @@ export default function MessageBlock(props: MessageBlockProps) {
   return (
     <Show when={block()}>
       {(resolvedBlock) => (
-        <div class="message-stream-block" data-message-id={resolvedBlock().record.id}>
+        <div
+          class="message-stream-block"
+          data-message-id={resolvedBlock().record.id}
+          data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
+        >
           <For each={resolvedBlock().items}>
-            {(item) => (
+            {(item, index) => (
               <Switch>
                 <Match when={item.type === "content"}>
                   <MessageContentItem
@@ -681,7 +807,12 @@ export default function MessageBlock(props: MessageBlockProps) {
                     startPartId={(item as ContentDisplayItem).startPartId}
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
+                    showDeleteMessage={index() === 0}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
                   />
@@ -697,6 +828,13 @@ export default function MessageBlock(props: MessageBlockProps) {
                           store={props.store}
                           messageId={toolItem.messageId}
                           partId={toolItem.partId}
+                          showDeleteMessage={index() === 0}
+                          deleteHover={props.deleteHover}
+                          onDeleteHoverChange={props.onDeleteHoverChange}
+                          onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                          selectedMessageIds={props.selectedMessageIds}
+                          selectedToolPartKeys={props.selectedToolPartKeys}
+                          onToggleSelectedMessage={props.onToggleSelectedMessage}
                           onContentRendered={props.onContentRendered}
                         />
                       </div>
@@ -709,6 +847,14 @@ export default function MessageBlock(props: MessageBlockProps) {
                     part={(item as StepDisplayItem).part}
                     messageInfo={(item as StepDisplayItem).messageInfo}
                     showAgentMeta
+                    showDeleteMessage={index() === 0}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    messageId={props.messageId}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "step-finish"}>
@@ -718,6 +864,14 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageInfo={(item as StepDisplayItem).messageInfo}
                     showUsage={props.showUsageMetrics()}
                     borderColor={(item as StepDisplayItem).accentColor}
+                    showDeleteMessage={index() === 0}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    messageId={props.messageId}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "compaction"}>
@@ -728,7 +882,11 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item as CompactionDisplayItem).messageId}
-                    partId={(item as CompactionDisplayItem).partId}
+                    showDeleteMessage={index() === 0}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
                 <Match when={item.type === "reasoning"}>
@@ -738,9 +896,13 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item as ReasoningDisplayItem).messageId}
-                    partId={(item as ReasoningDisplayItem).partId}
                     showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
+                    showDeleteMessage={index() === 0}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                    onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
               </Switch>
@@ -759,6 +921,14 @@ interface StepCardProps {
   showAgentMeta?: boolean
   showUsage?: boolean
   borderColor?: string
+  showDeleteMessage?: boolean
+  instanceId?: string
+  sessionId?: string
+  messageId?: string
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 interface CompactionCardProps {
@@ -768,12 +938,18 @@ interface CompactionCardProps {
   instanceId: string
   sessionId: string
   messageId: string
-  partId: string
+  showDeleteMessage?: boolean
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function CompactionCard(props: CompactionCardProps) {
   const { t } = useI18n()
-  const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
   const isAuto = () => Boolean((props.part as any)?.auto)
   const label = () => (isAuto() ? t("messageBlock.compaction.autoLabel") : t("messageBlock.compaction.manualLabel"))
   const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
@@ -781,44 +957,98 @@ function CompactionCard(props: CompactionCardProps) {
   const containerClass = () =>
     `message-compaction-card ${isAuto() ? "message-compaction-card--auto" : "message-compaction-card--manual"}`
 
-  const canDelete = () => Boolean(props.partId) && !deleting()
+  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
-  const handleDelete = async (event: MouseEvent) => {
+  const handleDeleteMessage = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (!canDelete()) return
-    setDeleting(true)
+    if (!props.showDeleteMessage) return
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
     try {
-      await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
     } catch (error) {
-      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
-        title: t("messagePart.actions.deleteFailedTitle"),
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
     } finally {
-      setDeleting(false)
+      setDeletingMessage(false)
+    }
+  }
+
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.showDeleteMessage) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
     }
   }
 
   return (
     <div
-      class={`${containerClass()} relative`}
+      class={`delete-hover-scope ${containerClass()} relative`}
       style={{ "border-left": `4px solid ${borderColor()}` }}
       role="status"
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
-      <button
-        type="button"
-        class="tool-call-header-button absolute right-2 top-1/2 -translate-y-1/2"
-        disabled={!canDelete()}
-        onClick={handleDelete}
-        title={t("messagePart.actions.deleteTitle")}
-      >
-        {deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-      </button>
+      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        <Show when={props.showDeleteMessage}>
+          <button
+            type="button"
+            class="tool-call-header-button"
+            disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+            onClick={handleDeleteUpTo}
+            onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId })}
+            onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+            title={t("messageItem.actions.deleteMessagesUpTo")}
+            aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+          >
+            <DeleteUpToIcon />
+          </button>
+
+          <button
+            type="button"
+            class="tool-call-header-button"
+            disabled={!canDeleteMessage()}
+            onClick={handleDeleteMessage}
+            onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+            onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+            title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+          >
+            <Trash class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </Show>
+      </div>
 
       <div class="message-compaction-row">
+        <Show when={props.showDeleteMessage}>
+          <input
+            class="message-select-checkbox"
+            type="checkbox"
+            checked={isSelectedForDeletion()}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => {
+              event.stopPropagation()
+              const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+              props.onToggleSelectedMessage?.(props.messageId, next)
+            }}
+            aria-label={t("messageItem.selection.checkboxAriaLabel")}
+            title={t("messageItem.selection.checkboxAriaLabel")}
+          />
+        </Show>
+
         <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
         <span class="message-compaction-label">{label()}</span>
       </div>
@@ -828,6 +1058,9 @@ function CompactionCard(props: CompactionCardProps) {
 
 function StepCard(props: StepCardProps) {
   const { t } = useI18n()
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.messageId && props.selectedMessageIds?.().has(props.messageId))
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -872,6 +1105,42 @@ function StepCard(props: StepCardProps) {
 
   const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
 
+  const canDeleteMessage = () =>
+    Boolean(props.showDeleteMessage && props.instanceId && props.sessionId && props.messageId) && !deletingMessage()
+
+  const handleDeleteMessage = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
+    try {
+      await deleteMessage(props.instanceId!, props.sessionId!, props.messageId!)
+    } catch (error) {
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingMessage(false)
+    }
+  }
+
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.messageId) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
+    }
+  }
+
 
   const renderUsageChips = (usage: NonNullable<ReturnType<typeof usageStats>>) => {
     const entries = [
@@ -902,17 +1171,83 @@ function StepCard(props: StepCardProps) {
       return null
     }
     return (
-      <div class={`message-step-card message-step-finish message-step-finish-flush`} style={finishStyle()}>
+      <div class={`message-step-card message-step-finish message-step-finish-flush relative`} style={finishStyle()}>
+        <Show when={props.showDeleteMessage && props.messageId}>
+          <input
+            class="message-select-checkbox absolute left-2 top-1/2 -translate-y-1/2"
+            type="checkbox"
+            checked={isSelectedForDeletion()}
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            onChange={(event) => {
+              event.stopPropagation()
+              const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+              props.onToggleSelectedMessage?.(props.messageId!, next)
+            }}
+            aria-label={t("messageItem.selection.checkboxAriaLabel")}
+            title={t("messageItem.selection.checkboxAriaLabel")}
+          />
+        </Show>
+
+        <Show when={props.showDeleteMessage}>
+          <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <button
+              type="button"
+              class="message-action-button"
+              disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+              onClick={handleDeleteUpTo}
+              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId! })}
+              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+              title={t("messageItem.actions.deleteMessagesUpTo")}
+              aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+            >
+              <DeleteUpToIcon />
+            </button>
+
+            <button
+              type="button"
+              class="message-action-button"
+              disabled={!canDeleteMessage()}
+              onClick={handleDeleteMessage}
+              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId! })}
+              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+              title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+              aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            >
+              <Trash class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </Show>
+
         {renderUsageChips(usage)}
       </div>
     )
   }
 
   return (
-    <div class={`message-step-card message-step-start`}>
+    <div class={`message-step-card message-step-start relative`}>
       <div class="message-step-heading">
         <div class="message-step-title">
           <div class="message-step-title-left">
+            <Show when={props.showDeleteMessage && props.messageId}>
+              <input
+                class="message-select-checkbox"
+                type="checkbox"
+                checked={isSelectedForDeletion()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                }}
+                onChange={(event) => {
+                  event.stopPropagation()
+                  const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                  props.onToggleSelectedMessage?.(props.messageId!, next)
+                }}
+                aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                title={t("messageItem.selection.checkboxAriaLabel")}
+              />
+            </Show>
+
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
               <span class="message-step-meta-inline">
                 <Show when={agentIdentifier()}>{(value) => <span>{t("messageBlock.step.agentLabel", { agent: value() })}</span>}</Show>
@@ -939,15 +1274,27 @@ interface ReasoningCardProps {
   instanceId: string
   sessionId: string
   messageId: string
-  partId: string
   showAgentMeta?: boolean
   defaultExpanded?: boolean
+  showDeleteMessage?: boolean
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
-  const [deleting, setDeleting] = createSignal(false)
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+
+  let headerEl: HTMLDivElement | undefined
+  let actionsEl: HTMLDivElement | undefined
+  let primaryEl: HTMLSpanElement | undefined
+  let metaMeasureEl: HTMLSpanElement | undefined
+  const [showMetaInline, setShowMetaInline] = createSignal(true)
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -973,6 +1320,35 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (modelID && providerID) return `${providerID}/${modelID}`
     return modelID
   }
+
+  const hasMeta = () => Boolean(props.showAgentMeta && (agentIdentifier() || modelIdentifier()))
+
+  const updateMetaLayout = () => {
+    if (!hasMeta()) return
+    if (!headerEl || !actionsEl || !primaryEl || !metaMeasureEl) return
+
+    const headerWidth = headerEl.getBoundingClientRect().width
+    const actionsWidth = actionsEl.getBoundingClientRect().width
+    const primaryWidth = primaryEl.getBoundingClientRect().width
+    const metaWidth = metaMeasureEl.getBoundingClientRect().width
+
+    const availableLeft = Math.max(0, headerWidth - actionsWidth - 12)
+    setShowMetaInline(primaryWidth + metaWidth + 8 <= availableLeft)
+  }
+
+  createEffect(() => {
+    if (!hasMeta() || typeof ResizeObserver === "undefined") {
+      setShowMetaInline(true)
+      return
+    }
+
+    updateMetaLayout()
+    const observer = new ResizeObserver(() => updateMetaLayout())
+    if (headerEl) observer.observe(headerEl)
+    if (actionsEl) observer.observe(actionsEl)
+    if (primaryEl) observer.observe(primaryEl)
+    onCleanup(() => observer.disconnect())
+  })
 
   const reasoningText = () => {
     const part = props.part as any
@@ -1014,30 +1390,45 @@ function ReasoningCard(props: ReasoningCardProps) {
   const viewHideLabel = () =>
     expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
 
-  const hasDeleteTarget = () => Boolean(props.partId)
-  const canDelete = () => hasDeleteTarget() && !deleting()
+  const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
-  const handleDelete = async (event: MouseEvent) => {
+  const handleDeleteMessage = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (!canDelete()) return
-    setDeleting(true)
+    if (!props.showDeleteMessage) return
+    if (!canDeleteMessage()) return
+    setDeletingMessage(true)
     try {
-      await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
+      await deleteMessage(props.instanceId, props.sessionId, props.messageId)
     } catch (error) {
-      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
-        title: t("messagePart.actions.deleteFailedTitle"),
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
     } finally {
-      setDeleting(false)
+      setDeletingMessage(false)
+    }
+  }
+
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!props.showDeleteMessage) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
     }
   }
 
   return (
-    <div class="message-reasoning-card">
-      <div class="message-reasoning-header">
+    <div class="delete-hover-scope message-reasoning-card">
+      <div class="message-reasoning-header" ref={(el) => (headerEl = el)}>
         <button
           type="button"
           class="message-reasoning-toggle"
@@ -1045,10 +1436,49 @@ function ReasoningCard(props: ReasoningCardProps) {
           aria-expanded={expanded()}
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
-          <span class="message-reasoning-label flex flex-wrap items-center gap-2">
-            <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
-            <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
+          <span class="message-reasoning-label">
+            <span class="message-reasoning-label-primary" ref={(el) => (primaryEl = el)}>
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.messageId, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
+              <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
+            </span>
+
+            <Show when={hasMeta() && showMetaInline()}>
               <span class="message-step-meta-inline">
+                <Show when={agentIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+                  )}
+                </Show>
+                <Show when={modelIdentifier()}>
+                  {(value) => (
+                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+                  )}
+                </Show>
+              </span>
+            </Show>
+
+            <Show when={hasMeta()}>
+              <span
+                ref={(el) => (metaMeasureEl = el)}
+                class="message-step-meta-inline message-step-meta-inline--measure"
+              >
                 <Show when={agentIdentifier()}>
                   {(value) => (
                     <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
@@ -1064,7 +1494,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           </span>
         </button>
 
-        <div class="message-reasoning-actions">
+        <div class="message-reasoning-actions" ref={(el) => (actionsEl = el)}>
           <button
             type="button"
             class="message-action-button"
@@ -1081,22 +1511,54 @@ function ReasoningCard(props: ReasoningCardProps) {
             </Show>
           </button>
 
-          <Show when={hasDeleteTarget()}>
+          <Show when={props.showDeleteMessage}>
             <button
               type="button"
               class="message-action-button"
-              onClick={handleDelete}
-              disabled={!canDelete()}
-              aria-label={t("messagePart.actions.deleteTitle")}
-              title={t("messagePart.actions.deleteTitle")}
+              onClick={handleDeleteUpTo}
+              disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId })}
+              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+              aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+              title={t("messageItem.actions.deleteMessagesUpTo")}
             >
-              <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+              <DeleteUpToIcon />
+            </button>
+
+            <button
+              type="button"
+              class="message-action-button"
+              onClick={handleDeleteMessage}
+              disabled={!canDeleteMessage()}
+              onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId })}
+              onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+              aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+              title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+            >
+              <Trash class="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </Show>
 
           <span class="message-reasoning-time">{timestamp()}</span>
         </div>
       </div>
+
+      <Show when={hasMeta() && !showMetaInline()}>
+        <div class="message-reasoning-meta-row">
+          <span class="message-step-meta-inline">
+            <Show when={agentIdentifier()}>
+              {(value) => (
+                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
+              )}
+            </Show>
+            <Show when={modelIdentifier()}>
+              {(value) => (
+                <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
+              )}
+            </Show>
+          </span>
+        </div>
+      </Show>
 
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">

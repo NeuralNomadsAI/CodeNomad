@@ -431,7 +431,9 @@ export class CliProcessManager extends EventEmitter {
 
     if (options.dev) {
       const devServer = process.env.VITE_DEV_SERVER_URL || process.env.ELECTRON_RENDERER_URL || "http://localhost:3000"
-      args.push("--ui-dev-server", devServer, "--log-level", "debug")
+      const rawLogLevel = (process.env.CLI_LOG_LEVEL ?? "info").trim()
+      const logLevel = rawLogLevel.length > 0 ? rawLogLevel.toLowerCase() : "info"
+      args.push("--ui-dev-server", devServer, "--log-level", logLevel)
     }
 
     return args

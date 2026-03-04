@@ -1,5 +1,5 @@
 import { For, Show, type Accessor, type Component } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 

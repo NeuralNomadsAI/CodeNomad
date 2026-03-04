@@ -61,7 +61,21 @@ jobs:
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
-        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
+        shell: bash
+        env:
+          NPM_CONFIG_FETCH_RETRIES: 5
+          NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 20000
+          NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 120000
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm version "${VERSION}" --workspaces --include-workspace-root --no-git-tag-version --allow-same-version; then
+              exit 0
+            fi
+            echo "npm version failed (attempt $attempt/3); retrying..." >&2
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
@@ -71,6 +85,112 @@ jobs:
 
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
+
+      - name: Ad-hoc sign Electron macOS app bundles (seal resources)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_root="packages/electron-app/release"
+          apps=()
+          while IFS= read -r -d '' app; do
+            apps+=("$app")
+          done < <(find "$release_root" -type d -name 'CodeNomad.app' -print0)
+
+          if [ "${#apps[@]}" -eq 0 ]; then
+            echo "No CodeNomad.app found under $release_root" >&2
+            exit 1
+          fi
+
+          # GitHub macOS runners typically have no signing identity. Without any signature,
+          # the shipped .app can fail Gatekeeper with:
+          #   code has no resources but signature indicates they must be present
+          # Ad-hoc signing seals bundle resources and makes the signature internally consistent.
+          if security find-identity -p codesigning -v | grep -q "0 valid identities found"; then
+            echo "No valid macOS codesigning identity found; applying ad-hoc signature"
+            for app in "${apps[@]}"; do
+              echo "codesign (adhoc): $app"
+              codesign --force --deep --sign - "$app"
+              codesign --verify --deep --strict --verbose=2 "$app"
+            done
+          else
+            echo "macOS codesigning identity present; skipping ad-hoc signing"
+          fi
+
+      - name: Repackage Electron macOS zips (ditto)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Prefer the workflow-provided version; fall back to package.json.
+          VERSION_TO_USE="${VERSION:-}"
+          if [ -z "$VERSION_TO_USE" ]; then
+            VERSION_TO_USE=$(node -p "require('./packages/electron-app/package.json').version")
+          fi
+
+          release_root="packages/electron-app/release"
+          # macOS GitHub runners ship /bin/bash 3.2 which doesn't support `shopt -s globstar`.
+          # Use find to locate built app bundles instead of ** globs.
+          apps=()
+          while IFS= read -r -d '' app; do
+            apps+=("$app")
+          done < <(find "$release_root" -type d -name 'CodeNomad.app' -print0)
+          if [ "${#apps[@]}" -eq 0 ]; then
+            echo "No CodeNomad.app found under $release_root" >&2
+            exit 1
+          fi
+
+          for app in "${apps[@]}"; do
+            bundle_dir=$(basename "$(dirname "$app")")
+            arch="x64"
+            if [[ "$bundle_dir" == *"arm64"* ]]; then
+              arch="arm64"
+            fi
+
+            out_zip="$release_root/CodeNomad-${VERSION_TO_USE}-mac-${arch}.zip"
+            rm -f "$out_zip"
+            echo "ditto -ck: $app -> $out_zip"
+            ditto -ck --sequesterRsrc --keepParent "$app" "$out_zip"
+          done
+
+      - name: Validate Electron macOS codesign (unzipped)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          tmp_dir=$(mktemp -d)
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          zips=(packages/electron-app/release/CodeNomad-*-mac-*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "No Electron macOS zip artifacts found to validate" >&2
+            exit 1
+          fi
+
+          for zip in "${zips[@]}"; do
+            echo "Validating codesign for: $zip"
+            extract_dir="$tmp_dir/$(basename "$zip" .zip)"
+            mkdir -p "$extract_dir"
+
+            # Use ditto for extraction as well to preserve bundle metadata.
+            ditto -x -k "$zip" "$extract_dir"
+
+            app_path=""
+            for candidate in "$extract_dir"/*.app "$extract_dir"/*/*.app; do
+              if [ -d "$candidate" ]; then
+                app_path="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$app_path" ]; then
+              echo "No .app found after extracting $zip" >&2
+              exit 1
+            fi
+
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+          done
 
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}

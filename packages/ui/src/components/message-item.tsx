@@ -1,14 +1,24 @@
-import { For, Show, createSignal } from "solid-js"
-import { Copy, ExternalLink, Split, Trash2, Undo } from "lucide-solid"
-import type { MessageInfo, ClientPart } from "../types/message"
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { Portal } from "solid-js/web"
+import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
+import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessagePart } from "../stores/session-actions"
+import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
+import type { DeleteHoverState } from "../types/delete-hover"
+
+function DeleteUpToIcon() {
+  return (
+    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
+      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
+    </span>
+  )
+}
 
 interface MessageItemProps {
   record: MessageRecord
@@ -18,15 +28,112 @@ interface MessageItemProps {
   isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
+  selectedMessageIds?: () => Set<string>
+  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   showAgentMeta?: boolean
   onContentRendered?: () => void
+  showDeleteMessage?: boolean
+  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
   const { t } = useI18n()
   const [copied, setCopied] = createSignal(false)
-  const [deletingParts, setDeletingParts] = createSignal<Set<string>>(new Set())
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+
+  type ImagePreviewState = {
+    url: string
+    name: string
+    anchor: HTMLElement
+  }
+
+  const [imagePreview, setImagePreview] = createSignal<ImagePreviewState | null>(null)
+
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+  const getImagePreviewPosition = () => {
+    const state = imagePreview()
+    if (!state) return null
+
+    const rect = state.anchor.getBoundingClientRect()
+
+    // Outer box: 320px image + 8px padding on each side.
+    const padding = 8
+    const maxImage = 320
+    const gap = 8
+    const chrome = padding * 2
+    const outerWidth = maxImage + chrome
+    const outerHeight = maxImage + chrome
+
+    const viewportW = window.innerWidth
+    const viewportH = window.innerHeight
+
+    const left = clamp(rect.left, 8, Math.max(8, viewportW - outerWidth - 8))
+
+    const fitsAbove = rect.top >= outerHeight + gap + 8
+    const preferredTop = fitsAbove ? rect.top - outerHeight - gap : rect.bottom + gap
+    const top = clamp(preferredTop, 8, Math.max(8, viewportH - outerHeight - 8))
+
+    return { left, top }
+  }
+
+  createEffect(() => {
+    const active = imagePreview()
+    if (!active) return
+
+    // If the user scrolls (message stream scroll container) or resizes, the anchor moves.
+    // Hide the popover to avoid showing it in the wrong place.
+    const hide = () => setImagePreview(null)
+    window.addEventListener("scroll", hide, true)
+    window.addEventListener("resize", hide)
+    onCleanup(() => {
+      window.removeEventListener("scroll", hide, true)
+      window.removeEventListener("resize", hide)
+    })
+  })
+
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
+
+  let topRowEl: HTMLDivElement | undefined
+  let actionsEl: HTMLDivElement | undefined
+  let speakerPrimaryEl: HTMLDivElement | undefined
+  let metaMeasureEl: HTMLSpanElement | undefined
+  const [showMetaInline, setShowMetaInline] = createSignal(true)
+
+  const metaText = () => agentMeta()
+
+  const updateMetaLayout = () => {
+    const text = metaText()
+    if (!text) return
+    if (!topRowEl || !actionsEl || !speakerPrimaryEl || !metaMeasureEl) return
+
+    const rowWidth = topRowEl.getBoundingClientRect().width
+    const actionsWidth = actionsEl.getBoundingClientRect().width
+    const primaryWidth = speakerPrimaryEl.getBoundingClientRect().width
+    const metaWidth = metaMeasureEl.getBoundingClientRect().width
+
+    // Allow for the flex gap between left and actions.
+    const availableLeft = Math.max(0, rowWidth - actionsWidth - 12)
+    setShowMetaInline(primaryWidth + metaWidth + 8 <= availableLeft)
+  }
+
+  createEffect(() => {
+    const text = metaText()
+    if (!text || typeof ResizeObserver === "undefined") {
+      setShowMetaInline(true)
+      return
+    }
+
+    updateMetaLayout()
+    const observer = new ResizeObserver(() => updateMetaLayout())
+    if (topRowEl) observer.observe(topRowEl)
+    if (actionsEl) observer.observe(actionsEl)
+    if (speakerPrimaryEl) observer.observe(speakerPrimaryEl)
+    onCleanup(() => observer.disconnect())
+  })
 
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
@@ -123,6 +230,11 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
+  const showImagePreview = (anchor: HTMLElement, url: string, name: string) => {
+    if (!url) return
+    setImagePreview({ anchor, url, name })
+  }
+
   const errorMessage = () => {
     const info = props.messageInfo
     if (!info || info.role !== "assistant" || !info.error) return null
@@ -190,47 +302,30 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const deletableTextPartId = () => {
-    const part = props.parts.find((candidate) => {
-      if (!candidate || candidate.type !== "text") return false
-      const id = (candidate as any).id
-      if (typeof id !== "string" || id.length === 0) return false
-      return !Boolean((candidate as any).synthetic)
-    })
-    return (part as any)?.id as string | undefined
-  }
-
-  const isDeletingPart = (partId?: string) => {
-    if (!partId) return false
-    return deletingParts().has(partId)
-  }
-
-  const setPartDeleting = (partId: string, value: boolean) => {
-    setDeletingParts((prev) => {
-      const next = new Set(prev)
-      if (value) {
-        next.add(partId)
-      } else {
-        next.delete(partId)
-      }
-      return next
-    })
-  }
-
-  const handleDeletePart = async (partId?: string) => {
-    if (!partId) return
-    if (isDeletingPart(partId)) return
-    setPartDeleting(partId, true)
+  const handleDeleteMessage = async () => {
+    if (deletingMessage()) return
+    setDeletingMessage(true)
     try {
-      await deleteMessagePart(props.instanceId, props.sessionId, props.record.id, partId)
+      await deleteMessage(props.instanceId, props.sessionId, props.record.id)
     } catch (error) {
-      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
-        title: t("messagePart.actions.deleteFailedTitle"),
+      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+        title: t("messageItem.actions.deleteMessageFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
     } finally {
-      setPartDeleting(partId, false)
+      setDeletingMessage(false)
+    }
+  }
+
+  const handleDeleteUpTo = async () => {
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.record.id)
+    } finally {
+      setDeletingUpTo(false)
     }
   }
 
@@ -258,8 +353,16 @@ export default function MessageItem(props: MessageItemProps) {
     if (!info || info.role !== "assistant") return ""
     const modelID = info.modelID || ""
     const providerID = info.providerID || ""
-    if (modelID && providerID) return `${providerID}/${modelID}`
-    return modelID
+
+    const base = modelID && providerID ? `${providerID}/${modelID}` : modelID
+    if (!base) return ""
+
+    const variant = (info as SDKAssistantMessageV2).variant
+    if (typeof variant === "string" && variant.trim().length > 0) {
+      return `${base} (${variant.trim()})`
+    }
+
+    return base
   }
 
   const agentMeta = () => {
@@ -278,28 +381,68 @@ export default function MessageItem(props: MessageItemProps) {
 
 
   return (
-    <div class={containerClass()}>
+    <div
+      class={containerClass()}
+      data-view="message-item"
+      data-instance-id={props.instanceId}
+      data-session-id={props.sessionId}
+      data-message-id={props.record.id}
+      data-message-role={isUser() ? "user" : "assistant"}
+      data-message-status={props.record.status}
+    >
       <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
-        <div class="message-item-header-row message-item-header-row--top">
-          <div class="message-speaker">
-            <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
-              {speakerLabel()}
-            </span>
+        <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
+          <div class="message-header-left">
+            <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
+              <Show when={props.showDeleteMessage}>
+                <input
+                  class="message-select-checkbox"
+                  type="checkbox"
+                  checked={isSelectedForDeletion()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                  }}
+                  onChange={(event) => {
+                    event.stopPropagation()
+                    const next = Boolean((event.currentTarget as HTMLInputElement).checked)
+                    props.onToggleSelectedMessage?.(props.record.id, next)
+                  }}
+                  aria-label={t("messageItem.selection.checkboxAriaLabel")}
+                  title={t("messageItem.selection.checkboxAriaLabel")}
+                />
+              </Show>
+
+              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
+                {speakerLabel()}
+              </span>
+            </div>
+
+            <Show when={metaText() && showMetaInline()}>
+              <span class="message-agent-meta-inline">{metaText()}</span>
+            </Show>
+
+            <Show when={metaText()}>
+              <span
+                ref={(el) => (metaMeasureEl = el)}
+                class="message-agent-meta-inline message-agent-meta-inline--measure"
+              >
+                {metaText()}
+              </span>
+            </Show>
           </div>
 
-          <div class="message-item-actions">
+          <div class="message-item-actions" ref={(el) => (actionsEl = el)}>
             <Show when={isUser()}>
               <div class="message-action-group">
-                <Show when={props.onRevert}>
-                  <button
-                    class="message-action-button"
-                    onClick={handleRevert}
-                    title={t("messageItem.actions.revert")}
-                    aria-label={t("messageItem.actions.revert")}
-                  >
-                    <Undo class="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
-                </Show>
+                <button
+                  class="message-action-button"
+                  onClick={handleCopy}
+                  title={copyLabel()}
+                  aria-label={copyLabel()}
+                >
+                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+
                 <Show when={props.onFork}>
                   <button
                     class="message-action-button"
@@ -310,14 +453,43 @@ export default function MessageItem(props: MessageItemProps) {
                     <Split class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
+
+                <Show when={props.onRevert}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleRevert}
+                    title={t("messageItem.actions.revertTitle")}
+                    aria-label={t("messageItem.actions.revertTitle")}
+                  >
+                    <Undo class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
+
+                <Show when={props.showDeleteMessage}>
+                  <button
+                    class="message-action-button"
+                    onClick={() => void handleDeleteUpTo()}
+                    disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={t("messageItem.actions.deleteMessagesUpTo")}
+                    aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+                  >
+                    <DeleteUpToIcon />
+                  </button>
+
+                  <button
+                    class="message-action-button"
+                    onClick={handleDeleteMessage}
+                    disabled={deletingMessage()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                    aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  >
+                    <Trash class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
               </div>
             </Show>
             <Show when={!isUser()}>
@@ -331,18 +503,30 @@ export default function MessageItem(props: MessageItemProps) {
                   <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
 
-                <Show when={deletableTextPartId()}>
-                  {(partId) => (
-                    <button
-                      class="message-action-button"
-                      onClick={() => void handleDeletePart(partId())}
-                      disabled={isDeletingPart(partId())}
-                      title={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                      aria-label={isDeletingPart(partId()) ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
-                    >
-                      <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  )}
+                <Show when={props.showDeleteMessage}>
+                  <button
+                    class="message-action-button"
+                    onClick={() => void handleDeleteUpTo()}
+                    disabled={!props.onDeleteMessagesUpTo || deletingUpTo()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={t("messageItem.actions.deleteMessagesUpTo")}
+                    aria-label={t("messageItem.actions.deleteMessagesUpTo")}
+                  >
+                    <DeleteUpToIcon />
+                  </button>
+
+                  <button
+                    class="message-action-button"
+                    onClick={handleDeleteMessage}
+                    disabled={deletingMessage()}
+                    onMouseEnter={() => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id })}
+                    onMouseLeave={() => props.onDeleteHoverChange?.({ kind: "none" })}
+                    title={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                    aria-label={deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage")}
+                  >
+                    <Trash class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
                 </Show>
               </div>
             </Show>
@@ -350,12 +534,10 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </div>
 
-        <Show when={agentMeta()}>
-          {(meta) => (
-            <div class="message-item-header-row message-item-header-row--bottom">
-              <span class="message-agent-meta">{meta()}</span>
-            </div>
-          )}
+        <Show when={metaText() && !showMetaInline()}>
+          <div class="message-item-header-row message-item-header-row--meta">
+            <span class="message-agent-meta-block">{metaText()}</span>
+          </div>
         </Show>
 
       </header>
@@ -378,16 +560,20 @@ export default function MessageItem(props: MessageItemProps) {
         </Show>
 
         <For each={messageParts()}>
-          {(part) => (
-            <MessagePart
-              part={part}
-              messageType={props.record.role}
-              instanceId={props.instanceId}
-              sessionId={props.sessionId}
-              primaryUserTextPartId={primaryUserTextPartId()}
-              onRendered={props.onContentRendered}
-            />
-          )}
+          {(part) => {
+            return (
+              <div class="message-part-shell">
+                <MessagePart
+                  part={part}
+                  messageType={props.record.role}
+                  instanceId={props.instanceId}
+                  sessionId={props.sessionId}
+                  primaryUserTextPartId={primaryUserTextPartId()}
+                  onRendered={props.onContentRendered}
+                />
+              </div>
+            )
+          }}
         </For>
 
         <Show when={fileAttachments().length > 0}>
@@ -397,7 +583,16 @@ export default function MessageItem(props: MessageItemProps) {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
                 return (
-                  <div class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`} title={name}>
+                  <div
+                    class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
+                    title={name}
+                    onMouseEnter={(e) => {
+                      if (!isImage) return
+                      const el = e.currentTarget as HTMLElement
+                      showImagePreview(el, attachment.url || "", name)
+                    }}
+                    onMouseLeave={() => setImagePreview(null)}
+                  >
                     <Show when={isImage} fallback={
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path
@@ -425,29 +620,36 @@ export default function MessageItem(props: MessageItemProps) {
                         </svg>
                       </button>
                     </Show>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleDeletePart(attachment.id)}
-                      class="attachment-remove"
-                      disabled={isDeletingPart(attachment.id)}
-                      aria-label={t("messagePart.actions.deleteTitle")}
-                      title={t("messagePart.actions.deleteTitle")}
-                    >
-                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                    <Show when={isImage}>
-                      <div class="attachment-chip-preview">
-                        <img src={attachment.url} alt={name} />
-                      </div>
-                    </Show>
                   </div>
                 )
               }}
             </For>
           </div>
+        </Show>
+
+        <Show when={imagePreview()}>
+          {(stateAccessor) => {
+            const state = stateAccessor()
+            const pos = () => getImagePreviewPosition()
+            return (
+              <Portal>
+                <Show when={pos()}>
+                  {(posAccessor) => {
+                    const coords = posAccessor()
+                    return (
+                      <div
+                        class="attachment-image-popover"
+                        style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
+                        aria-hidden="true"
+                      >
+                        <img src={state.url} alt={state.name} />
+                      </div>
+                    )
+                  }}
+                </Show>
+              </Portal>
+            )
+          }}
         </Show>
 
         <Show when={props.record.status === "sending"}>

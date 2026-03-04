@@ -1,0 +1,35 @@
+/* Hover overlays for destructive actions (delete part / delete message). */
+
+.message-stream-block[data-delete-message-hover="true"] {
+  position: relative;
+}
+
+.message-stream-block[data-delete-message-hover="true"]::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background: var(--status-error-bg);
+  border-radius: 0;
+  pointer-events: none;
+  /* Overlay must sit above the message cards (they have opaque backgrounds). */
+  z-index: 10;
+}
+
+.message-part-shell {
+  display: block;
+}
+
+.delete-hover-scope[data-delete-part-hover="true"] {
+  position: relative;
+}
+
+.delete-hover-scope[data-delete-part-hover="true"]::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background: var(--status-error-bg);
+  border-radius: 0;
+  pointer-events: none;
+  /* Overlay must sit above the part card background. */
+  z-index: 10;
+}

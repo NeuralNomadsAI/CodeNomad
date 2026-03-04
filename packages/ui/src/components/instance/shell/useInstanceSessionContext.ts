@@ -1,5 +1,5 @@
 import { batch, createMemo, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { Session } from "../../../types/session"
 import {
   activeParentSessionId,

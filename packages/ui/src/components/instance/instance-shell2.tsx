@@ -62,6 +62,9 @@ const log = getLogger("session")
 
 interface InstanceShellProps {
   instance: Instance
+  // Provided by App-level instance tabs; lets us pause heavy rendering
+  // work for inactive instances while keeping them mounted for fast switching.
+  isActiveInstance?: boolean
   escapeInDebounce: boolean
   paletteCommands: Accessor<Command[]>
   onCloseSession: (sessionId: string) => Promise<void> | void
@@ -115,6 +118,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
   const tabletQuery = useMediaQuery("(min-width: 768px)")
+  const compactHeaderQuery = useMediaQuery("(max-width: 1024px)")
 
   const layoutMode = createMemo<LayoutMode>(() => {
     if (desktopQuery()) return "desktop"
@@ -123,6 +127,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
+  const compactHeaderLayout = createMemo(() => isPhoneLayout() || compactHeaderQuery())
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode && isPhoneLayout())
   const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
   const leftPinningSupported = createMemo(() => layoutMode() !== "phone")
@@ -596,7 +601,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
             <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
               <Show
-                when={!isPhoneLayout()}
+                when={!compactHeaderLayout()}
                 fallback={
                   <div class="flex flex-col w-full gap-1.5">
                     <div class="flex flex-wrap items-center justify-between gap-2 w-full">
@@ -634,8 +639,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </button>
                       <span class="connection-status-shortcut-hint kbd-hint">
                         <Kbd shortcut="cmd+shift+p" />
-                      </span>
-                    </div>
+                     </span>
+                     </div>
 
                     <div class="flex-1 flex items-center justify-center min-w-0">
                       <span
@@ -646,7 +651,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       </span>
                     </div>
 
-                    <Show when={!props.mobileFullscreenMode}>
+                    <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
                       <IconButton
                         color="inherit"
                         onClick={props.onEnterMobileFullscreen}
@@ -670,16 +675,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         {rightAppBarButtonIcon()}
                       </IconButton>
                     </Show>
-                  </div>
+                    </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
-                      <ContextMeter
-                        usedTokens={tokenStats().used}
-                        availableTokens={tokenStats().avail}
-                        formatTokens={formatTokenTotal}
-                        usedLabel={t("instanceShell.metrics.usedLabel")}
-                        availableLabel={t("instanceShell.metrics.availableLabel")}
-                      />
+                      <Show when={!showingInfoView()}>
+                        <ContextMeter
+                          usedTokens={tokenStats().used}
+                          availableTokens={tokenStats().avail}
+                          formatTokens={formatTokenTotal}
+                          usedLabel={t("instanceShell.metrics.usedLabel")}
+                          availableLabel={t("instanceShell.metrics.availableLabel")}
+                        />
+                      </Show>
                     </div>
                 </div>
               }
@@ -796,12 +803,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               >
                 <For each={cachedSessionIds()}>
                   {(sessionId) => {
-                    const isActive = () => activeSessionIdForInstance() === sessionId
+                    const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId
                     return (
                       <div
                         class="session-cache-pane flex flex-col flex-1 min-h-0"
                         style={{ display: isActive() ? "flex" : "none" }}
                         data-session-id={sessionId}
+                        data-instance-id={props.instance.id}
+                        data-session-active={isActive() ? "true" : "false"}
                         aria-hidden={!isActive()}
                       >
                         <SessionView
@@ -837,7 +846,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   return (
     <>
-      <div class="instance-shell2 flex flex-col flex-1 min-h-0">
+      <div
+        class="instance-shell2 flex flex-col flex-1 min-h-0"
+        data-instance-id={props.instance.id}
+      >
         <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>

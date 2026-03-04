@@ -67,6 +67,8 @@ export const sessionMessages = {
   "sessionView.alerts.abortFailed.title": "停止に失敗",
   "sessionView.alerts.revertFailed.message": "メッセージへ戻せませんでした",
   "sessionView.alerts.revertFailed.title": "復元に失敗",
+  "sessionView.alerts.deleteUpToFailed.message": "メッセージの削除に失敗しました",
+  "sessionView.alerts.deleteUpToFailed.title": "削除に失敗しました",
   "sessionView.alerts.forkFailed.message": "セッションのフォークに失敗しました",
   "sessionView.alerts.forkFailed.title": "フォークに失敗",
   "sessionView.attachments.expandPastedTextAriaLabel": "貼り付けたテキストを展開",
