@@ -776,7 +776,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   data-variant={segment.variant}
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
 
-                  data-delete-hover={isDeleteHovered() || isDeleteSelected() ? "true" : undefined}
+                  data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
 
                  aria-current={isActive() ? "true" : undefined}
                  aria-hidden={isHidden() ? "true" : undefined}
