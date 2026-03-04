@@ -715,6 +715,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               return false
             }
 
+            const isDeleteSelected = () => {
+              const selected = props.selectedMessageIds?.()
+              if (!selected) return false
+              return selected.has(segment.messageId)
+            }
+
             const hasActivePermission = () => {
               if (segment.type !== "tool") return false
               const partIds = segment.toolPartIds ?? []
@@ -727,7 +733,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             }
 
             const isExpanded = () => props.expandedMessageIds?.().has(segment.messageId) ?? false
-            const isHidden = () => segment.type === "tool" && !(showTools() || isExpanded() || isSelectionActive() || isActive() || hasActivePermission() || isDeleteHovered())
+            const isHidden = () =>
+              segment.type === "tool" &&
+              !(showTools() || isExpanded() || isSelectionActive() || isActive() || hasActivePermission() || isDeleteHovered() || isDeleteSelected())
 
             // Group visual indicators: tools belong to the same message as their
             // assistant.  Uses messageId for correctness (not positional adjacency).
@@ -762,13 +770,13 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
              }
 
             return (
-               <button
+              <button
                   ref={(el) => registerButtonRef(segment.id, el)}
                   type="button"
                   data-variant={segment.variant}
-                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
+                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
 
-                  data-delete-hover={isDeleteHovered() ? "true" : undefined}
+                  data-delete-hover={isDeleteHovered() || isDeleteSelected() ? "true" : undefined}
 
                  aria-current={isActive() ? "true" : undefined}
                  aria-hidden={isHidden() ? "true" : undefined}

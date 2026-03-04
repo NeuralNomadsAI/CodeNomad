@@ -284,6 +284,22 @@
   color: var(--accent-primary) !important;
 }
 
+/* When a whole message is selected for deletion (via stream checkbox),
+   reflect that on all timeline segments for that message. */
+.message-timeline-segment-delete-selected {
+  border-color: color-mix(in oklab, var(--status-error) 55%, transparent) !important;
+  background-color: color-mix(in oklab, var(--status-error) 18%, var(--surface-base)) !important;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-error) 35%, transparent) inset !important;
+  color: var(--status-error) !important;
+}
+
+.message-timeline-segment-delete-selected:hover,
+.message-timeline-segment-delete-selected:focus-visible {
+  background-color: color-mix(in oklab, var(--status-error) 24%, var(--surface-base)) !important;
+  color: var(--status-error) !important;
+  transform: none;
+}
+
 .message-timeline-segment-selected:hover,
 .message-timeline-segment-selected:focus-visible {
   background-color: color-mix(in oklab, var(--accent-primary) 35%, var(--surface-base)) !important;

@@ -318,9 +318,11 @@ interface ToolCallItemProps {
   partId: string
   onContentRendered?: () => void
   showDeleteMessage?: boolean
+  deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
@@ -330,6 +332,26 @@ function ToolCallItem(props: ToolCallItemProps) {
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
 
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+
+  const isSelectedToolPartForDeletion = () => Boolean(props.selectedToolPartKeys?.().has(`${props.messageId}:${props.partId}`))
+
+  const isDeleteOverlayActive = () => {
+    if (isSelectedForDeletion()) return true
+    if (isSelectedToolPartForDeletion()) return true
+    const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
+    if (hover.kind === "message") {
+      return hover.messageId === props.messageId
+    }
+    if (hover.kind === "deleteUpTo") {
+      const ids = props.store().getSessionMessageIds(props.sessionId)
+      const targetIndex = ids.indexOf(hover.messageId)
+      if (targetIndex === -1) return false
+      const currentIndex = ids.indexOf(props.messageId)
+      if (currentIndex === -1) return false
+      return currentIndex >= targetIndex
+    }
+    return false
+  }
 
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -408,7 +430,7 @@ function ToolCallItem(props: ToolCallItemProps) {
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
-        <div class="delete-hover-scope">
+        <div class="delete-hover-scope" data-delete-part-hover={isDeleteOverlayActive() ? "true" : undefined}>
           <div class="tool-call-header-label">
             <div class="tool-call-header-meta">
               <Show when={props.showDeleteMessage}>
@@ -543,6 +565,7 @@ interface MessageBlockProps {
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
@@ -806,9 +829,11 @@ export default function MessageBlock(props: MessageBlockProps) {
                           messageId={toolItem.messageId}
                           partId={toolItem.partId}
                           showDeleteMessage={index() === 0}
+                          deleteHover={props.deleteHover}
                           onDeleteHoverChange={props.onDeleteHoverChange}
                           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                           selectedMessageIds={props.selectedMessageIds}
+                          selectedToolPartKeys={props.selectedToolPartKeys}
                           onToggleSelectedMessage={props.onToggleSelectedMessage}
                           onContentRendered={props.onContentRendered}
                         />

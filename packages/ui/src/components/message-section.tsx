@@ -294,8 +294,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const handleClearTimelineSelection = () => {
-    setSelectedTimelineIds(new Set<string>())
-    setLastSelectionAnchorId(null)
+    clearDeleteMode()
   }
 
   const applySelectionMode = (mode: "all" | "tools") => {
@@ -412,6 +411,14 @@ export default function MessageSection(props: MessageSectionProps) {
     const allowed = deletableMessageIds()
     return selectedToolParts().filter((entry) => allowed.has(entry.messageId) && !messageIds.has(entry.messageId))
   })
+
+  const deleteToolPartKeys = createMemo(() => {
+    const set = new Set<string>()
+    for (const entry of deleteToolParts()) {
+      set.add(`${entry.messageId}:${entry.partId}`)
+    }
+    return set
+  })
   const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
   const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
 
@@ -492,12 +499,12 @@ export default function MessageSection(props: MessageSectionProps) {
     setDeleteHover({ kind: "none" })
     setSelectedTimelineIds(new Set<string>())
     setLastSelectionAnchorId(null)
+    setIsDeleteMenuOpen(false)
   }
 
   createEffect(() => {
     const timelineIds = selectedTimelineIds()
     if (timelineIds.size === 0) {
-      setSelectedForDeletion(new Set<string>())
       return
     }
     const segments = timelineSegments()
@@ -1073,6 +1080,7 @@ export default function MessageSection(props: MessageSectionProps) {
               deleteHover={deleteHover}
               onDeleteHoverChange={setDeleteHover}
               selectedMessageIds={selectedForDeletion}
+              selectedToolPartKeys={deleteToolPartKeys}
               onToggleSelectedMessage={setMessageSelectedForDeletion}
               onRevert={props.onRevert}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
