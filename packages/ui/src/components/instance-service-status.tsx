@@ -1,9 +1,11 @@
-import { For, Show, createMemo, createSignal, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { useInstanceConfig } from "../stores/instance-config"
+import { activeSessionId } from "../stores/sessions"
 
 const log = getLogger("session")
 
@@ -14,6 +16,7 @@ interface InstanceServiceStatusProps {
   showSectionHeadings?: boolean
   class?: string
   initialInstance?: Instance
+  sessionId?: Accessor<string | null>
 }
 
 type ParsedMcpStatus = {
@@ -73,6 +76,15 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
   const isPluginsLoading = () => isLoading() || !hasPluginsMetadata()
 
+  const instanceId = createMemo(() => instance().id)
+
+  const currentSessionId = createMemo(() => {
+    const fromProps = props.sessionId?.()
+    if (fromProps !== undefined && fromProps !== null) return fromProps
+    return activeSessionId().get(instanceId()) || null
+  })
+
+  const [isUserToggling, setIsUserToggling] = createSignal(false)
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
 
@@ -87,10 +99,21 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
     const client = instance().client
-    if (!client?.mcp) return
+    if (!client?.mcp || !client?.config) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
     setPendingMcpAction(serverName, action)
+    setIsUserToggling(true)
+
     try {
+      await client.config.update({
+        directory: instance().folder,
+        config: {
+          mcp: {
+            [serverName]: { enabled: shouldEnable }
+          }
+        }
+      })
+
       if (shouldEnable) {
         await client.mcp.connect({ name: serverName })
       } else {
@@ -101,6 +124,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {
       setPendingMcpAction(serverName)
+      setTimeout(() => setIsUserToggling(false), 1000)
     }
   }
 
@@ -178,34 +202,34 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                 <div class="px-2 py-1.5 rounded border bg-surface-secondary border-base">
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-primary font-medium truncate">{server.name}</span>
-                      <div class="flex items-center gap-3 flex-shrink-0">
-                        <div class="flex items-center gap-1.5 text-xs text-secondary">
-                          <Show when={isPending()}>
-                            <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                              <path
-                                class="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              />
-                            </svg>
-                          </Show>
-                          <div class={statusDotClass()} style={statusDotStyle()} />
-                        </div>
-                        <div class="flex items-center gap-1.5">
-                          <Switch
-                            checked={isRunning()}
-                            disabled={switchDisabled()}
-                            color="success"
-                            size="small"
-                            inputProps={{ "aria-label": t("instanceServiceStatus.mcp.toggleAriaLabel", { name: server.name }) }}
-                            onChange={(_, checked) => {
-                              if (switchDisabled()) return
-                              void toggleMcpServer(server.name, Boolean(checked))
-                            }}
-                          />
-                        </div>
+                    <div class="flex items-center gap-3 flex-shrink-0">
+                      <div class="flex items-center gap-1.5 text-xs text-secondary">
+                        <Show when={isPending()}>
+                          <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                            <path
+                              class="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
+                          </svg>
+                        </Show>
+                        <div class={statusDotClass()} style={statusDotStyle()} />
                       </div>
+                      <div class="flex items-center gap-1.5">
+                        <Switch
+                          checked={isRunning()}
+                          disabled={switchDisabled()}
+                          color="success"
+                          size="small"
+                          inputProps={{ "aria-label": t("instanceServiceStatus.mcp.toggleAriaLabel", { name: server.name }) }}
+                          onChange={(_, checked) => {
+                            if (switchDisabled()) return
+                            void toggleMcpServer(server.name, Boolean(checked))
+                          }}
+                        />
+                      </div>
+                    </div>
 
                   </div>
                   <Show when={server.error}>

@@ -229,10 +229,16 @@ export class ServerStorage {
     const source = data ?? DEFAULT_INSTANCE_DATA
     const messageHistory = Array.isArray(source.messageHistory) ? [...source.messageHistory] : []
     const agentModelSelections = { ...(source.agentModelSelections ?? {}) }
+    const mcpDefaults = source.mcpDefaults ?? {}
+    const sessionMcpSettings = source.sessionMcpSettings ?? {}
+    const sessionMcpModes = { ...(source.sessionMcpModes ?? {}) }
     return {
       ...source,
       messageHistory,
       agentModelSelections,
+      mcpDefaults,
+      sessionMcpSettings,
+      sessionMcpModes,
     }
   }
 

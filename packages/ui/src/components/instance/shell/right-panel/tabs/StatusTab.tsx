@@ -232,6 +232,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           sections={["mcp"]}
           showSectionHeadings={false}
           class="space-y-2"
+          sessionId={props.activeSessionId}
         />
       ),
     },
@@ -300,6 +301,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                     </Tooltip>
                     <span class="section-label">{props.t(section.labelKey)}</span>
                   </span>
+                  {section.headerAction?.()}
                   <ChevronDown
                     class={`right-panel-accordion-chevron ${isSectionExpanded(section.id) ? "right-panel-accordion-chevron-expanded" : ""}`}
                   />

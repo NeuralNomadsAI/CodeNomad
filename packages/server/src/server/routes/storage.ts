@@ -12,10 +12,12 @@ interface RouteDeps {
   workspaceManager: WorkspaceManager
 }
 
-const InstanceDataSchema = z.object({
-  messageHistory: z.array(z.string()).default([]),
-  agentModelSelections: z.record(z.string(), ModelPreferenceSchema).default({}),
-})
+const InstanceDataSchema = z
+  .object({
+    messageHistory: z.array(z.string()).default([]),
+    agentModelSelections: z.record(z.string(), ModelPreferenceSchema).default({}),
+  })
+  .passthrough()
 
 const EMPTY_INSTANCE_DATA: InstanceData = {
   messageHistory: [],
@@ -25,7 +27,18 @@ const EMPTY_INSTANCE_DATA: InstanceData = {
 export function registerStorageRoutes(app: FastifyInstance, deps: RouteDeps) {
   const resolveStorageKey = (instanceId: string): string => {
     const workspace = deps.workspaceManager.get(instanceId)
-    return workspace?.path ?? instanceId
+    if (!workspace?.path) {
+      return instanceId
+    }
+    let normalizedPath = workspace.path
+    if (normalizedPath.includes("\\")) {
+      normalizedPath = normalizedPath.replace(/\\/g, "/")
+    }
+    normalizedPath = normalizedPath.replace(/\/+$/, "")
+    if (!normalizedPath) {
+      return instanceId
+    }
+    return normalizedPath
   }
 
   app.get<{ Params: { id: string } }>("/api/storage/instances/:id", async (request, reply) => {
