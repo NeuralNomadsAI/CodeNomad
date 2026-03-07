@@ -111,7 +111,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const [selectedTimelineIds, setSelectedTimelineIds] = createSignal<Set<string>>(new Set())
   const [lastSelectionAnchorId, setLastSelectionAnchorId] = createSignal<string | null>(null)
-  const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
+  const [expandedMessageIds] = createSignal<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = createSignal<"all" | "tools">("all")
   const [isDeleteMenuOpen, setIsDeleteMenuOpen] = createSignal(false)
   let deleteMenuRef: HTMLDivElement | undefined
@@ -150,6 +150,37 @@ export default function MessageSection(props: MessageSectionProps) {
     const segmentIndex = segments.findIndex((s) => s.id === id)
     if (segmentIndex === -1) return
     const segment = segments[segmentIndex]
+
+    if (segment.type === "compaction") {
+      setLastSelectionAnchorId(id)
+      let startIndex = 0
+      for (let idx = segmentIndex - 1; idx >= 0; idx -= 1) {
+        if (segments[idx].type === "compaction") {
+          startIndex = idx + 1
+          break
+        }
+      }
+      const group = segments.slice(startIndex, segmentIndex + 1)
+      const groupSegments = selectionMode() === "tools"
+        ? group.filter((s) => s.type === "tool")
+        : group
+      if (groupSegments.length === 0) {
+        return
+      }
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        const hasAnySelected = groupSegments.some((s) => next.has(s.id))
+        for (const item of groupSegments) {
+          if (hasAnySelected) {
+            next.delete(item.id)
+          } else {
+            next.add(item.id)
+          }
+        }
+        return next
+      })
+      return
+    }
 
     setLastSelectionAnchorId(id)
 
@@ -428,8 +459,6 @@ export default function MessageSection(props: MessageSectionProps) {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
     return String(tokens)
   }
-
-  const isMessageSelectedForDeletion = (messageId: string) => selectedForDeletion().has(messageId)
 
   const setMessageSelectedForDeletion = (messageId: string, selected: boolean) => {
     if (!messageId) return
