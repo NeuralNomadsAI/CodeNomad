@@ -4,6 +4,8 @@ const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
 const MIN_PLACEHOLDER_HEIGHT = 400
 const VISIBILITY_BUFFER_PX = 0
+const SETTLED_HEIGHT_EPSILON_PX = 1
+const SETTLED_HEIGHT_FRAMES = 2
 
 type ObserverRoot = Element | Document | null
 
@@ -160,6 +162,8 @@ interface VirtualItemProps {
   scrollContainer?: Accessor<HTMLElement | undefined | null>
   threshold?: number
   minPlaceholderHeight?: number
+  measureElement?: Accessor<HTMLElement | undefined | null>
+  contentRenderVersion?: Accessor<number>
   class?: string
   contentClass?: string
   placeholderClass?: string
@@ -167,8 +171,15 @@ interface VirtualItemProps {
   forceVisible?: Accessor<boolean>
   suspendMeasurements?: Accessor<boolean>
   onMeasured?: () => void
-  onHeightChange?: (nextHeight: number, previousHeight: number) => void
+  onHeightChange?: (nextHeight: number, previousHeight: number, meta: VirtualItemHeightChangeMeta) => void
   id?: string
+}
+
+export interface VirtualItemHeightChangeMeta {
+  source: "initial-visible-measure" | "resize"
+  previousCachedHeight: number | null
+  isStaleCacheCorrection: boolean
+  wasHidden: boolean
 }
 
 export default function VirtualItem(props: VirtualItemProps) {
@@ -183,10 +194,12 @@ export default function VirtualItem(props: VirtualItemProps) {
   // When content first mounts, onHeightChange deltas should reflect the DOM's
   // placeholder height (not 0), otherwise scroll compensation can overshoot.
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
-  const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
+  const [isSettlingVisible, setIsSettlingVisible] = createSignal(false)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
   let visibilityFrame: number | null = null
+  let awaitingVisibleMeasurement = true
+  let lastMeasurementWhileHidden = true
   const flushVisibility = () => {
     if (visibilityFrame !== null) {
       cancelAnimationFrame(visibilityFrame)
@@ -198,6 +211,11 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
   const queueVisibility = (nextValue: boolean) => {
+    if (nextValue && !isIntersecting()) {
+      setIsSettlingVisible(true)
+    } else if (!nextValue) {
+      setIsSettlingVisible(false)
+    }
     pendingVisibility = nextValue
     if (visibilityFrame !== null) return
     visibilityFrame = requestAnimationFrame(() => {
@@ -215,19 +233,119 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
- 
-   let wrapperRef: HTMLDivElement | undefined
- 
+  const shouldHideMountedContent = createMemo(() => shouldHideContent() || isSettlingVisible())
+  let wrapperRef: HTMLDivElement | undefined
   let contentRef: HTMLDivElement | undefined
 
   let resizeObserver: ResizeObserver | undefined
   let intersectionCleanup: (() => void) | undefined
+  let delayedMeasureFrame: number | null = null
+  let delayedMeasureFrame2: number | null = null
+  let settlingMeasureFrame: number | null = null
+  let settlingStableFrames = 0
+  let settlingLastHeight: number | null = null
 
   function cleanupResizeObserver() {
     if (resizeObserver) {
       resizeObserver.disconnect()
       resizeObserver = undefined
     }
+  }
+
+  function clearDelayedMeasureFrames() {
+    if (delayedMeasureFrame !== null) {
+      cancelAnimationFrame(delayedMeasureFrame)
+      delayedMeasureFrame = null
+    }
+    if (delayedMeasureFrame2 !== null) {
+      cancelAnimationFrame(delayedMeasureFrame2)
+      delayedMeasureFrame2 = null
+    }
+  }
+
+  function clearSettlingMeasurementFrame() {
+    if (settlingMeasureFrame !== null) {
+      cancelAnimationFrame(settlingMeasureFrame)
+      settlingMeasureFrame = null
+    }
+    settlingStableFrames = 0
+    settlingLastHeight = null
+  }
+
+  function scheduleDelayedVisibleMeasurements() {
+    clearDelayedMeasureFrames()
+    delayedMeasureFrame = requestAnimationFrame(() => {
+      delayedMeasureFrame = null
+      if (shouldHideContent() || measurementsSuspended()) return
+      if (!contentRef) return
+      updateMeasuredHeight()
+      delayedMeasureFrame2 = requestAnimationFrame(() => {
+        delayedMeasureFrame2 = null
+        if (shouldHideContent() || measurementsSuspended()) return
+        if (!contentRef) return
+        updateMeasuredHeight()
+      })
+    })
+  }
+
+  function commitSettledMeasurement(next: number) {
+    const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
+    const wasHidden = lastMeasurementWhileHidden
+    awaitingVisibleMeasurement = false
+    lastMeasurementWhileHidden = false
+    setIsSettlingVisible(false)
+    persistMeasurement(next, { source: measurementSource, wasHidden })
+  }
+
+  function scheduleSettledVisibleMeasurement() {
+    if (shouldHideContent() || measurementsSuspended()) return
+    if (!contentRef) return
+    setIsSettlingVisible(true)
+    clearSettlingMeasurementFrame()
+
+    const tick = () => {
+      settlingMeasureFrame = requestAnimationFrame(() => {
+        settlingMeasureFrame = null
+        if (shouldHideContent() || measurementsSuspended()) {
+          setIsSettlingVisible(false)
+          clearSettlingMeasurementFrame()
+          return
+        }
+        const measurement = getMeasuredContentRect()
+        if (!measurement) {
+          tick()
+          return
+        }
+        const sampledHeight = Math.max(0, Math.round(measurement.rect.height * 2) / 2)
+        const previousSample = settlingLastHeight
+        settlingLastHeight = sampledHeight
+        if (previousSample !== null && Math.abs(sampledHeight - previousSample) <= SETTLED_HEIGHT_EPSILON_PX) {
+          settlingStableFrames += 1
+        } else {
+          settlingStableFrames = 0
+        }
+        if (settlingStableFrames >= SETTLED_HEIGHT_FRAMES) {
+          clearSettlingMeasurementFrame()
+          commitSettledMeasurement(sampledHeight)
+          return
+        }
+        tick()
+      })
+    }
+
+    tick()
+  }
+
+  function scheduleContentRenderedMeasurements() {
+    if (shouldHideContent() || measurementsSuspended()) return
+    if (!contentRef) return
+    queueMicrotask(() => {
+      if (shouldHideContent() || measurementsSuspended()) return
+      if (!contentRef) return
+      setupResizeObserver()
+      scheduleSettledVisibleMeasurement()
+    })
+    scheduleDelayedVisibleMeasurements()
   }
 
   function cleanupIntersectionObserver() {
@@ -237,13 +355,87 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
 
-  function persistMeasurement(nextHeight: number) {
+  function getMeasuredContentRect(): { rect: DOMRect } | null {
+    const explicitMeasureElement = props.measureElement?.()
+    if (explicitMeasureElement) {
+      return {
+        rect: explicitMeasureElement.getBoundingClientRect(),
+      }
+    }
+
+    if (!contentRef) return null
+
+    const childElements = Array.from(contentRef.children).filter((node): node is HTMLElement => node instanceof HTMLElement)
+    if (childElements.length === 0) {
+      return {
+        rect: contentRef.getBoundingClientRect(),
+      }
+    }
+
+    let top = Number.POSITIVE_INFINITY
+    let bottom = Number.NEGATIVE_INFINITY
+    let left = Number.POSITIVE_INFINITY
+    let right = Number.NEGATIVE_INFINITY
+    let sawNonZero = false
+
+    for (const child of childElements) {
+      const rect = child.getBoundingClientRect()
+      if (rect.width <= 0 && rect.height <= 0) continue
+      sawNonZero = true
+      if (rect.top < top) top = rect.top
+      if (rect.bottom > bottom) bottom = rect.bottom
+      if (rect.left < left) left = rect.left
+      if (rect.right > right) right = rect.right
+    }
+
+    if (!sawNonZero) {
+      return {
+        rect: contentRef.getBoundingClientRect(),
+      }
+    }
+
+    return {
+      rect: {
+        x: left,
+        y: top,
+        top,
+        bottom,
+        left,
+        right,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+        toJSON: () => ({
+          x: left,
+          y: top,
+          top,
+          bottom,
+          left,
+          right,
+          width: Math.max(0, right - left),
+          height: Math.max(0, bottom - top),
+        }),
+      } as DOMRect,
+    }
+  }
+
+  function persistMeasurement(nextHeight: number, meta?: { source: "initial-visible-measure" | "resize"; wasHidden: boolean }) {
     if (!Number.isFinite(nextHeight) || nextHeight < 0) {
       return
     }
     const before = measuredHeight()
     const normalized = nextHeight
-    const previous = sizeCache.get(props.cacheKey) ?? measuredHeight()
+    const previousCachedHeight = sizeCache.get(props.cacheKey) ?? null
+    const previous = previousCachedHeight ?? measuredHeight()
+    const measurementMeta: VirtualItemHeightChangeMeta = {
+      source: meta?.source ?? "resize",
+      previousCachedHeight,
+      isStaleCacheCorrection:
+        (meta?.source ?? "resize") === "initial-visible-measure" &&
+        previousCachedHeight !== null &&
+        normalized > 0 &&
+        Math.abs(normalized - previousCachedHeight) > 1,
+      wasHidden: meta?.wasHidden ?? shouldHideContent(),
+    }
     // Only keep the previous measurement when the element reports 0 height.
     // Allow shrinkage so placeholder height matches real content height;
     // keeping the max height can cause mount/unmount jitter near the
@@ -254,34 +446,45 @@ export default function VirtualItem(props: VirtualItemProps) {
         hasReportedMeasurement = true
         props.onMeasured?.()
       }
-      setHasMeasured(true)
       sizeCache.set(props.cacheKey, previous)
       setMeasuredHeight(previous)
-      if (previous !== before) props.onHeightChange?.(previous, before)
+      if (previous !== before) props.onHeightChange?.(previous, before, measurementMeta)
       return
     }
     if (normalized > 0) {
       sizeCache.set(props.cacheKey, normalized)
-      setHasMeasured(true)
       if (!hasReportedMeasurement) {
         hasReportedMeasurement = true
         props.onMeasured?.()
       }
     }
     setMeasuredHeight(normalized)
-    if (normalized !== before) props.onHeightChange?.(normalized, before)
+    if (measurementMeta.isStaleCacheCorrection) {
+      requestAnimationFrame(() => {
+        recheckVisibilityAfterMeasurement()
+      })
+    }
+    if (normalized !== before) props.onHeightChange?.(normalized, before, measurementMeta)
   }
 
   function updateMeasuredHeight() {
-    if (!contentRef || measurementsSuspended()) return
+    if (!contentRef) return
+    if (measurementsSuspended()) return
     // Prefer subpixel-accurate height for scroll compensation.
     // offsetHeight rounds to integers which can accumulate error.
-    const rect = contentRef.getBoundingClientRect()
+    const measurement = getMeasuredContentRect()
+    if (!measurement) return
+    const { rect } = measurement
     const next = Math.max(0, Math.round(rect.height * 2) / 2)
-    if (next === measuredHeight()) return
-    persistMeasurement(next)
+    const currentMeasured = measuredHeight()
+    if (next === currentMeasured) return
+    const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
+    const wasHidden = lastMeasurementWhileHidden
+    awaitingVisibleMeasurement = false
+    lastMeasurementWhileHidden = false
+    persistMeasurement(next, { source: measurementSource, wasHidden })
   }
- 
+
   function setupResizeObserver() {
     if (!contentRef || measurementsSuspended()) return
     cleanupResizeObserver()
@@ -291,6 +494,7 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
     resizeObserver = new ResizeObserver(() => {
       if (measurementsSuspended()) return
+      if (isSettlingVisible()) return
       updateMeasuredHeight()
     })
     resizeObserver.observe(contentRef)
@@ -342,11 +546,17 @@ export default function VirtualItem(props: VirtualItemProps) {
         }
         try {
           const rootRect = (targetRoot as Element).getBoundingClientRect()
+          const wrapperRect = wrapperEl.getBoundingClientRect()
           const visible = shouldRenderByRects({
-            wrapperRect: wrapperEl.getBoundingClientRect(),
+            wrapperRect,
             rootRect: { top: rootRect.top, bottom: rootRect.bottom },
             margin,
           })
+          const collapsedWhileVisible = isIntersecting() && !visible && Math.round(wrapperRect.height) <= 0 && measuredHeight() > 0
+          if (collapsedWhileVisible) {
+            queueVisibility(true)
+            return
+          }
           queueVisibility(visible)
           return
         } catch {
@@ -357,6 +567,37 @@ export default function VirtualItem(props: VirtualItemProps) {
       const nextVisible = shouldRenderEntry(entry)
       queueVisibility(nextVisible)
     })
+  }
+
+  function recheckVisibilityAfterMeasurement() {
+    if (!wrapperRef) return
+
+    const margin = props.threshold ?? DEFAULT_MARGIN_PX
+    const wrapperRect = wrapperRef.getBoundingClientRect()
+    const targetRoot = props.scrollContainer ? props.scrollContainer() : null
+
+    if (targetRoot && !(targetRoot instanceof Document)) {
+      const rootRect = targetRoot.getBoundingClientRect()
+      const visible = shouldRenderByRects({
+        wrapperRect,
+        rootRect: { top: rootRect.top, bottom: rootRect.bottom },
+        margin,
+      })
+      if (!visible) {
+        queueVisibility(false)
+      }
+      return
+    }
+
+    const viewportRect = getViewportRect()
+    const visible = shouldRenderByRects({
+      wrapperRect,
+      rootRect: viewportRect,
+      margin,
+    })
+    if (!visible) {
+      queueVisibility(false)
+    }
   }
 
   function setWrapperRef(element: HTMLDivElement | null) {
@@ -377,30 +618,44 @@ export default function VirtualItem(props: VirtualItemProps) {
       cleanupResizeObserver()
     }
   }
- 
-  
   createEffect(() => {
-    if (shouldHideContent() || measurementsSuspended()) {
+    const hidden = shouldHideContent()
+    if (hidden) {
+      awaitingVisibleMeasurement = true
+      lastMeasurementWhileHidden = true
+      clearDelayedMeasureFrames()
+      clearSettlingMeasurementFrame()
+      setIsSettlingVisible(false)
+    }
+    if (hidden || measurementsSuspended()) {
       cleanupResizeObserver()
-    } else if (contentRef) {
+    } else {
+      setIsSettlingVisible(true)
+    }
+    if (!hidden && !measurementsSuspended() && contentRef) {
       queueMicrotask(() => {
-        updateMeasuredHeight()
         setupResizeObserver()
+        scheduleSettledVisibleMeasurement()
       })
+      scheduleDelayedVisibleMeasurements()
     }
   })
+  createEffect(() => {
+    const version = props.contentRenderVersion?.()
+    if (version === undefined) return
+    if (version <= 0) return
+    scheduleContentRenderedMeasurements()
+  })
 
- 
+  
   createEffect(() => {
     const key = props.cacheKey
 
     const cached = sizeCache.get(key)
     if (cached !== undefined) {
       setMeasuredHeight(cached)
-      setHasMeasured(true)
     } else {
       setMeasuredHeight(fallbackPlaceholderHeight())
-      setHasMeasured(false)
     }
   })
 
@@ -418,17 +673,19 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
     return props.minPlaceholderHeight ?? MIN_PLACEHOLDER_HEIGHT
   })
- 
+
   onCleanup(() => {
     cleanupResizeObserver()
     cleanupIntersectionObserver()
+    clearDelayedMeasureFrames()
+    clearSettlingMeasurementFrame()
     flushVisibility()
   })
  
   const wrapperClass = () => ["virtual-item-wrapper", props.class].filter(Boolean).join(" ")
   const contentClass = () => {
     const classes = ["virtual-item-content", props.contentClass]
-    if (shouldHideContent()) {
+    if (shouldHideMountedContent()) {
       classes.push("virtual-item-content-hidden")
     }
     return classes.filter(Boolean).join(" ")
@@ -445,7 +702,7 @@ export default function VirtualItem(props: VirtualItemProps) {
         class={placeholderClass()}
         style={{
           width: "100%",
-          height: shouldHideContent() ? `${placeholderHeight()}px` : undefined,
+          height: shouldHideContent() || isSettlingVisible() ? `${placeholderHeight()}px` : undefined,
         }}
       >
         <div ref={setContentRef} class={contentClass()}>

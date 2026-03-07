@@ -571,6 +571,7 @@ interface MessageBlockProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  onMeasureElementChange?: (element: HTMLElement | null) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -578,7 +579,6 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
-
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
 
@@ -787,10 +787,23 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
+  onCleanup(() => {
+    props.onMeasureElementChange?.(null)
+  })
+
+  const visibleBlock = createMemo(() => {
+    const resolved = block()
+    if (!resolved || resolved.items.length === 0) return null
+    return resolved
+  })
+
   return (
-    <Show when={block()}>
+    <Show when={visibleBlock()}>
       {(resolvedBlock) => (
         <div
+          ref={(el) => {
+            props.onMeasureElementChange?.(el)
+          }}
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
           data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}

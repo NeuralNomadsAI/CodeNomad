@@ -1,5 +1,5 @@
 import { Index, Show, createEffect, createMemo, createSignal, onCleanup, type Accessor, type JSX } from "solid-js"
-import VirtualItem from "./virtual-item"
+import VirtualItem, { type VirtualItemHeightChangeMeta } from "./virtual-item"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -30,7 +30,14 @@ export interface VirtualFollowListState {
 export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
-  renderItem: (item: T, index: number) => JSX.Element
+  renderItem: (
+    item: T,
+    index: number,
+    options: {
+      registerMeasureElement: (element: HTMLElement | null) => void
+      notifyItemRendered: () => void
+    },
+  ) => JSX.Element
 
   /**
    * Optional stable DOM id for the item wrapper.
@@ -470,9 +477,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const bottomAfter = rect.bottom
     const bottomBefore = bottomAfter - delta
     const wasAboveViewport = bottomBefore < containerRect.top
-    if (!wasAboveViewport) {
-      return
-    }
+    if (!wasAboveViewport) return
 
     const next = (pendingScrollCompensations.get(key) ?? 0) + delta
     pendingScrollCompensations.set(key, next)
@@ -883,16 +888,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const anchorId = () => getAnchorId(key())
             const overscanPx = props.overscanPx ?? 800
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
+            const [measureElement, setMeasureElement] = createSignal<HTMLElement | undefined>()
+            const [contentRenderVersion, setContentRenderVersion] = createSignal(0)
             return (
               <VirtualItem
                 id={anchorId()}
                 cacheKey={key()}
                 scrollContainer={scrollElement}
                 threshold={overscanPx}
+                measureElement={measureElement}
+                contentRenderVersion={contentRenderVersion}
                 placeholderClass="message-stream-placeholder"
                 virtualizationEnabled={virtualizationEnabled}
                 suspendMeasurements={suspendMeasurements}
-                onHeightChange={(nextHeight, previousHeight) => {
+                onHeightChange={(nextHeight, previousHeight, meta: VirtualItemHeightChangeMeta) => {
                   const delta = nextHeight - previousHeight
 
                   // Follow mode: keep the viewport pinned to the bottom as
@@ -913,11 +922,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                   // while scrolling upward, compensate scrollTop so visible
                   // content stays stable.
                   if (delta) {
+                    if (meta.isStaleCacheCorrection) return
                     scheduleScrollCompensation(key(), delta)
                   }
                 }}
               >
-                {() => props.renderItem(item(), index)}
+                {() =>
+                  props.renderItem(item(), index, {
+                    registerMeasureElement: (element) => setMeasureElement(element ?? undefined),
+                    notifyItemRendered: () => setContentRenderVersion((prev) => prev + 1),
+                  })}
               </VirtualItem>
             )
           }}
