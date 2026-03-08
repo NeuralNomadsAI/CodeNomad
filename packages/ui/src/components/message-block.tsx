@@ -787,7 +787,10 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
+  let measuredBlockElement: HTMLDivElement | undefined
+
   onCleanup(() => {
+    measuredBlockElement = undefined
     props.onMeasureElementChange?.(null)
   })
 
@@ -797,11 +800,19 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resolved
   })
 
+  createEffect(() => {
+    if (visibleBlock()) return
+    if (!measuredBlockElement) return
+    measuredBlockElement = undefined
+    props.onMeasureElementChange?.(null)
+  })
+
   return (
     <Show when={visibleBlock()}>
       {(resolvedBlock) => (
         <div
           ref={(el) => {
+            measuredBlockElement = el
             props.onMeasureElementChange?.(el)
           }}
           class="message-stream-block"

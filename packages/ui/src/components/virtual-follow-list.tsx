@@ -890,6 +890,23 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
             const [measureElement, setMeasureElement] = createSignal<HTMLElement | undefined>()
             const [contentRenderVersion, setContentRenderVersion] = createSignal(0)
+            let pendingContentRenderFrame: number | null = null
+
+            const notifyItemRendered = () => {
+              if (pendingContentRenderFrame !== null) return
+              pendingContentRenderFrame = requestAnimationFrame(() => {
+                pendingContentRenderFrame = null
+                setContentRenderVersion((prev) => prev + 1)
+              })
+            }
+
+            onCleanup(() => {
+              if (pendingContentRenderFrame !== null) {
+                cancelAnimationFrame(pendingContentRenderFrame)
+                pendingContentRenderFrame = null
+              }
+            })
+
             return (
               <VirtualItem
                 id={anchorId()}
@@ -930,7 +947,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 {() =>
                   props.renderItem(item(), index, {
                     registerMeasureElement: (element) => setMeasureElement(element ?? undefined),
-                    notifyItemRendered: () => setContentRenderVersion((prev) => prev + 1),
+                    notifyItemRendered,
                   })}
               </VirtualItem>
             )

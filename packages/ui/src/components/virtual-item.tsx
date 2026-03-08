@@ -182,6 +182,8 @@ export interface VirtualItemHeightChangeMeta {
   wasHidden: boolean
 }
 
+type VisibleSettlingMode = "hidden-to-visible" | "visible-rerender"
+
 export default function VirtualItem(props: VirtualItemProps) {
   const resolveContent = () => (typeof props.children === "function" ? (props.children as () => JSX.Element)() : props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
@@ -194,7 +196,8 @@ export default function VirtualItem(props: VirtualItemProps) {
   // When content first mounts, onHeightChange deltas should reflect the DOM's
   // placeholder height (not 0), otherwise scroll compensation can overshoot.
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
-  const [isSettlingVisible, setIsSettlingVisible] = createSignal(false)
+  const [settlingMode, setSettlingMode] = createSignal<VisibleSettlingMode | null>(null)
+  const isSettlingVisible = createMemo(() => settlingMode() !== null)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
   let visibilityFrame: number | null = null
@@ -212,9 +215,9 @@ export default function VirtualItem(props: VirtualItemProps) {
   }
   const queueVisibility = (nextValue: boolean) => {
     if (nextValue && !isIntersecting()) {
-      setIsSettlingVisible(true)
+      setSettlingMode("hidden-to-visible")
     } else if (!nextValue) {
-      setIsSettlingVisible(false)
+      setSettlingMode(null)
     }
     pendingVisibility = nextValue
     if (visibilityFrame !== null) return
@@ -233,7 +236,7 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
-  const shouldHideMountedContent = createMemo(() => shouldHideContent() || isSettlingVisible())
+  const shouldHideMountedContent = createMemo(() => shouldHideContent() || settlingMode() === "hidden-to-visible")
   let wrapperRef: HTMLDivElement | undefined
   let contentRef: HTMLDivElement | undefined
 
@@ -272,6 +275,10 @@ export default function VirtualItem(props: VirtualItemProps) {
     settlingLastHeight = null
   }
 
+  function getVisibleSettlingMode(): VisibleSettlingMode {
+    return awaitingVisibleMeasurement ? "hidden-to-visible" : "visible-rerender"
+  }
+
   function scheduleDelayedVisibleMeasurements() {
     clearDelayedMeasureFrames()
     delayedMeasureFrame = requestAnimationFrame(() => {
@@ -293,21 +300,21 @@ export default function VirtualItem(props: VirtualItemProps) {
     const wasHidden = lastMeasurementWhileHidden
     awaitingVisibleMeasurement = false
     lastMeasurementWhileHidden = false
-    setIsSettlingVisible(false)
+    setSettlingMode(null)
     persistMeasurement(next, { source: measurementSource, wasHidden })
   }
 
-  function scheduleSettledVisibleMeasurement() {
+  function scheduleSettledVisibleMeasurement(mode = getVisibleSettlingMode()) {
     if (shouldHideContent() || measurementsSuspended()) return
     if (!contentRef) return
-    setIsSettlingVisible(true)
+    setSettlingMode(mode)
     clearSettlingMeasurementFrame()
 
     const tick = () => {
       settlingMeasureFrame = requestAnimationFrame(() => {
         settlingMeasureFrame = null
         if (shouldHideContent() || measurementsSuspended()) {
-          setIsSettlingVisible(false)
+          setSettlingMode(null)
           clearSettlingMeasurementFrame()
           return
         }
@@ -343,7 +350,7 @@ export default function VirtualItem(props: VirtualItemProps) {
       if (shouldHideContent() || measurementsSuspended()) return
       if (!contentRef) return
       setupResizeObserver()
-      scheduleSettledVisibleMeasurement()
+      scheduleSettledVisibleMeasurement(getVisibleSettlingMode())
     })
     scheduleDelayedVisibleMeasurements()
   }
@@ -357,7 +364,7 @@ export default function VirtualItem(props: VirtualItemProps) {
 
   function getMeasuredContentRect(): { rect: DOMRect } | null {
     const explicitMeasureElement = props.measureElement?.()
-    if (explicitMeasureElement) {
+    if (explicitMeasureElement?.isConnected) {
       return {
         rect: explicitMeasureElement.getBoundingClientRect(),
       }
@@ -480,8 +487,6 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (next === currentMeasured) return
     const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
     const wasHidden = lastMeasurementWhileHidden
-    awaitingVisibleMeasurement = false
-    lastMeasurementWhileHidden = false
     persistMeasurement(next, { source: measurementSource, wasHidden })
   }
 
@@ -625,17 +630,15 @@ export default function VirtualItem(props: VirtualItemProps) {
       lastMeasurementWhileHidden = true
       clearDelayedMeasureFrames()
       clearSettlingMeasurementFrame()
-      setIsSettlingVisible(false)
+      setSettlingMode(null)
     }
     if (hidden || measurementsSuspended()) {
       cleanupResizeObserver()
-    } else {
-      setIsSettlingVisible(true)
     }
     if (!hidden && !measurementsSuspended() && contentRef) {
       queueMicrotask(() => {
         setupResizeObserver()
-        scheduleSettledVisibleMeasurement()
+        scheduleSettledVisibleMeasurement(getVisibleSettlingMode())
       })
       scheduleDelayedVisibleMeasurements()
     }
@@ -702,7 +705,7 @@ export default function VirtualItem(props: VirtualItemProps) {
         class={placeholderClass()}
         style={{
           width: "100%",
-          height: shouldHideContent() || isSettlingVisible() ? `${placeholderHeight()}px` : undefined,
+          height: shouldHideMountedContent() ? `${placeholderHeight()}px` : undefined,
         }}
       >
         <div ref={setContentRef} class={contentClass()}>
