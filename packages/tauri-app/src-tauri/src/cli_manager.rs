@@ -900,6 +900,11 @@ fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            candidates.push(Some(dir.join("resources/server/dist/bin.js")));
+            candidates.push(Some(dir.join("resources/server/dist/index.js")));
+            candidates.push(Some(dir.join("resources/server/dist/server/bin.js")));
+            candidates.push(Some(dir.join("resources/server/dist/server/index.js")));
+
             let resources = dir.join("../Resources");
             candidates.push(Some(resources.join("server/dist/bin.js")));
             candidates.push(Some(resources.join("server/dist/index.js")));
@@ -995,9 +1000,18 @@ fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
 }
 
 fn normalize_path(path: PathBuf) -> String {
-    if let Ok(clean) = path.canonicalize() {
-        clean.to_string_lossy().to_string()
+    let resolved = if let Ok(clean) = path.canonicalize() {
+        clean
     } else {
-        path.to_string_lossy().to_string()
+        path
+    };
+
+    let rendered = resolved.to_string_lossy().to_string();
+    if let Some(stripped) = rendered.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", stripped)
+    } else if let Some(stripped) = rendered.strip_prefix("\\\\?\\") {
+        stripped.to_string()
+    } else {
+        rendered
     }
 }
