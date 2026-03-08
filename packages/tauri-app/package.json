@@ -13,6 +13,7 @@
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.4"
+    "@tauri-apps/cli": "^2.9.4",
+    "@tauri-apps/cli-win32-x64-msvc": "^2.9.4"
   }
 }
