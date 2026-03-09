@@ -23,7 +23,7 @@ const uiDevInstallCommand =
 
 const envWithRootBin = {
   ...process.env,
-  PATH: `${path.join(workspaceRoot, "node_modules/.bin")}:${process.env.PATH}`,
+  PATH: `${path.join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH}`,
 }
 
 const braceExpansionPath = path.join(
@@ -65,7 +65,7 @@ function ensureServerBuild() {
     stdio: "inherit",
     env: {
       ...process.env,
-      PATH: `${path.join(workspaceRoot, "node_modules/.bin")}:${process.env.PATH}`,
+      PATH: `${path.join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH}`,
     },
   })
 
@@ -238,7 +238,7 @@ function copyUiLoadingAssets() {
   console.log(`[prebuild] prepared UI loading assets from ${uiDist}`)
 }
 
-;(async () => {
+; (async () => {
   ensureServerDevDependencies()
   ensureUiDevDependencies()
   await ensureMonacoAssets()
@@ -247,7 +247,7 @@ function copyUiLoadingAssets() {
   ensureServerBuild()
   ensureUiBuild()
   copyServerArtifacts()
-  stripNodeModuleBins()
+  // stripNodeModuleBins()
   copyUiLoadingAssets()
 })().catch((err) => {
   console.error("[prebuild] failed:", err)

@@ -4,6 +4,7 @@
   "private": true,
   "license": "MIT",
   "dependencies": {
-    "@opencode-ai/plugin": "1.2.14"
+    "@codenomad/opencode-config": "file:",
+    "@opencode-ai/plugin": "1.2.21"
   }
 }

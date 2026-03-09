@@ -1,6 +1,9 @@
 import type { ClientPart } from "../../types/message"
 import type { PermissionRequestLike } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
+import type { WorkspaceDescriptor } from "../../../server/src/api-types"
+
+export type WorkspaceRecord = WorkspaceDescriptor
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
 export type MessageRole = "user" | "assistant"

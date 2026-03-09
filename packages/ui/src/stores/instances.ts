@@ -349,14 +349,31 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
   return promise
 }
 
-  void (async function initializeWorkspaces() {
+void (async function initializeWorkspaces() {
+  const { messageDb } = await import("./message-v2/worker/client")
+
+  // 1. Instantly Hydrate from IndexedDB
+  try {
+    const localWorkspaces = await messageDb.getWorkspaces()
+    if (localWorkspaces && localWorkspaces.length > 0) {
+      localWorkspaces.forEach((workspace) => upsertWorkspace(workspace))
+      ensureActiveInstanceSelected()
+    }
+  } catch (err) {
+    log.warn("Failed to load local workspaces from IndexedDB", { err })
+  }
+
+  // 2. Sync from API
   try {
     const workspaces = await serverApi.fetchWorkspaces()
     workspaces.forEach((workspace) => upsertWorkspace(workspace))
     // After a UI refresh, we may have instances but no active selection.
     ensureActiveInstanceSelected()
+
+    // Sync back to IDB
+    await messageDb.upsertWorkspaces(workspaces)
   } catch (error) {
-    log.error("Failed to load workspaces", error)
+    log.error("Failed to load workspaces from API", error)
   }
 })()
 

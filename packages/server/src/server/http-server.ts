@@ -79,7 +79,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   }
 
   app.addHook("onRequest", (request, _reply, done) => {
-    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
+    ; (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
       start: process.hrtime.bigint(),
     }
     done()
@@ -102,6 +102,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
+  const allowedTauriOrigins = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"])
   const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
   const getSelfOrigins = (): Set<string> => {
@@ -138,16 +139,16 @@ export function createHttpServer(deps: HttpServerDeps) {
         return
       }
 
-       if (allowedDevOrigins.has(origin)) {
-         cb(null, true)
-         return
-       }
+      if (allowedDevOrigins.has(origin) || allowedTauriOrigins.has(origin)) {
+        cb(null, true)
+        return
+      }
 
-       // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
-         cb(null, true)
-         return
-       }
+      // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
+      if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
+        cb(null, true)
+        return
+      }
 
 
       cb(null, false)
@@ -529,8 +530,8 @@ async function proxyWorkspaceRequest(args: {
       const isNonASCII = /[^\x00-\x7F]/.test(directory)
       const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
 
-      // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
-      ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
+        // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
+        ; (headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
 
       if (logger.isLevelEnabled("trace")) {
         const outgoing: Record<string, unknown> = {}

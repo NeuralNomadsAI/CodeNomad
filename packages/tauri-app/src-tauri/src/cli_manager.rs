@@ -620,7 +620,7 @@ impl CliProcessManager {
     ) {
         let mut buffer = String::new();
         let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)").ok();
-        let http_regex = Regex::new(r":(\d{2,5})(?!.*:\d)").ok();
+        let http_regex = Regex::new(r"[:=]\s*(\d{2,5})(?:\s|$)").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
@@ -900,7 +900,7 @@ fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let resources = dir.join("../Resources");
+            let resources = dir.join("../Resources"); // macOS
             candidates.push(Some(resources.join("server/dist/bin.js")));
             candidates.push(Some(resources.join("server/dist/index.js")));
             candidates.push(Some(resources.join("server/dist/server/bin.js")));
@@ -911,6 +911,17 @@ fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
             candidates.push(Some(
                 resources.join("resources/server/dist/server/index.js"),
             ));
+
+            // Windows-specific candidate (standard Tauri resource location)
+            let win_resources = dir.join("resources");
+            candidates.push(Some(win_resources.join("server/dist/bin.js")));
+            candidates.push(Some(win_resources.join("server/dist/index.js")));
+            candidates.push(Some(win_resources.join("server/dist/server/bin.js")));
+            candidates.push(Some(win_resources.join("server/dist/server/index.js")));
+            candidates.push(Some(win_resources.join("resources/server/dist/bin.js")));
+            candidates.push(Some(win_resources.join("resources/server/dist/index.js")));
+            candidates.push(Some(win_resources.join("resources/server/dist/server/bin.js")));
+            candidates.push(Some(win_resources.join("resources/server/dist/server/index.js")));
 
             let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
             for root in linux_resource_roots {
@@ -953,6 +964,8 @@ fn default_shell() -> String {
     }
     if cfg!(target_os = "macos") {
         "/bin/zsh".to_string()
+    } else if cfg!(target_os = "windows") {
+        "powershell.exe".to_string()
     } else {
         "/bin/bash".to_string()
     }
@@ -981,6 +994,10 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
 
     if shell_name.contains("zsh") {
         vec!["-l".into(), "-i".into(), "-c".into(), command.into()]
+    } else if shell_name.contains("powershell") || shell_name.contains("pwsh") {
+        vec!["-NoProfile".into(), "-Command".into(), command.into()]
+    } else if shell_name.contains("cmd") {
+        vec!["/d".into(), "/s".into(), "/c".into(), command.into()]
     } else {
         vec!["-l".into(), "-c".into(), command.into()]
     }
