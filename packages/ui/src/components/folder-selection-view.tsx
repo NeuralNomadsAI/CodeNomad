@@ -7,11 +7,13 @@ import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
 import { ThemeModeToggle } from "./theme-mode-toggle"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
 import { githubStars } from "../stores/github-stars"
 import { formatCompactCount } from "../lib/formatters"
 import { useI18n, type Locale } from "../lib/i18n"
+import { showAlertDialog } from "../stores/alerts"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -193,6 +195,31 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     })
   })
 
+  function dropTargetBlocked() {
+    return isLoading() || isFolderBrowserOpen() || Boolean(props.advancedSettingsOpen)
+  }
+
+  function showInvalidFolderDropAlert() {
+    showAlertDialog(t("folderSelection.drop.invalidMessage"), {
+      title: t("folderSelection.drop.invalidTitle"),
+      variant: "warning",
+    })
+  }
+
+
+  const folderDrop = useFolderDrop({
+    enabled: () => !dropTargetBlocked(),
+    onInvalidDrop: showInvalidFolderDropAlert,
+    onDrop: async (paths) => {
+      const firstPath = paths[0]
+      if (!firstPath) {
+        showInvalidFolderDropAlert()
+        return
+      }
+      handleFolderSelect(firstPath)
+    },
+  })
+
   function formatRelativeTime(timestamp: number): string {
     const seconds = Math.floor((Date.now() - timestamp) / 1000)
     const minutes = Math.floor(seconds / 60)
@@ -317,6 +344,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       <div
         class="flex h-screen w-full items-start justify-center overflow-hidden py-6 px-4 sm:px-6 relative"
         style="background-color: var(--surface-secondary)"
+        onDragEnter={folderDrop.bind.onDragEnter}
+        onDragOver={folderDrop.bind.onDragOver}
+        onDragLeave={folderDrop.bind.onDragLeave}
+        onDrop={folderDrop.bind.onDrop}
       >
         <div
           class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
@@ -616,6 +647,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="spinner" />
               <p class="folder-loading-text">{t("folderSelection.loading.title")}</p>
               <p class="folder-loading-subtext">{t("folderSelection.loading.subtitle")}</p>
+            </div>
+          </div>
+        </Show>
+        <Show when={folderDrop.isSupported && folderDrop.isActive() && !dropTargetBlocked()}>
+          <div class="folder-drop-overlay" aria-hidden="true">
+            <div class="folder-drop-card">
+              <FolderPlus class="w-8 h-8 icon-muted" />
+              <p class="folder-drop-title">{t("folderSelection.drop.title")}</p>
+              <p class="folder-drop-subtext">{t("folderSelection.drop.subtitle")}</p>
             </div>
           </div>
         </Show>
