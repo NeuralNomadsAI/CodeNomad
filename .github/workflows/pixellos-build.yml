@@ -1,0 +1,20 @@
+name: Build Pixellos Dev
+
+on:
+  push:
+    branches:
+      - pixellos-dev
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/reusable-release.yml
+    with:
+      dist_tag: dev
+      npm_package_name: "@neuralnomads/codenomad-dev"
+      prerelease: true
+    secrets: inherit
