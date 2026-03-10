@@ -42,6 +42,7 @@ env:
 
 jobs:
   build-macos:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: macos-15-intel
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -245,6 +246,7 @@ jobs:
           }
 
   build-linux:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -287,6 +289,7 @@ jobs:
           done
 
   build-tauri-macos:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: macos-15-intel
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -362,6 +365,7 @@ jobs:
           done
 
   build-tauri-macos-arm64:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: macos-26
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -517,6 +521,7 @@ jobs:
           }
 
   build-tauri-linux:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -720,6 +725,7 @@ jobs:
 
 
   build-linux-rpm:
+    if: ${{ !startsWith(github.ref, 'refs/heads/pixellos') }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
