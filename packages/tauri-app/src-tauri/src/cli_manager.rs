@@ -828,14 +828,31 @@ impl CliEntry {
 
         if dev {
             // Dev: plain HTTP + Vite dev server proxy.
+            let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("ELECTRON_RENDERER_URL")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .unwrap_or_else(|| "http://localhost:3000".to_string());
+            let log_level = std::env::var("CLI_LOG_LEVEL")
+                .ok()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "info".to_string());
+
             args.push("--https".to_string());
             args.push("false".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
+            args.push("--http-port".to_string());
+            args.push("0".to_string());
             args.push("--ui-dev-server".to_string());
-            args.push("http://localhost:3000".to_string());
+            args.push(ui_dev_server);
             args.push("--log-level".to_string());
-            args.push("debug".to_string());
+            args.push(log_level);
         } else {
             // Prod desktop: always keep loopback HTTP enabled.
             args.push("--https".to_string());
