@@ -2,6 +2,15 @@
   @apply flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5;
   background-color: var(--surface-base);
   color: inherit;
+
+  /* Scrolling optimizations */
+  overscroll-behavior-y: contain;
+  /* Prevents scroll chaining to parent elements */
+  will-change: scroll-position;
+  /* GPU acceleration hint for smoother scrolling */
+  -webkit-overflow-scrolling: touch;
+  /* Momentum scrolling on iOS */
+
   /* Prevent browser scroll anchoring fighting our virtualization compensation. */
   overflow-anchor: none;
 }
