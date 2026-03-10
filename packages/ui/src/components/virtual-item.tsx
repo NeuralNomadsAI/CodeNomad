@@ -4,8 +4,6 @@ const sizeCache = new Map<string, number>()
 const DEFAULT_MARGIN_PX = 600
 const MIN_PLACEHOLDER_HEIGHT = 400
 const VISIBILITY_BUFFER_PX = 0
-const SETTLED_HEIGHT_EPSILON_PX = 1
-const SETTLED_HEIGHT_FRAMES = 2
 
 type ObserverRoot = Element | Document | null
 
@@ -162,8 +160,6 @@ interface VirtualItemProps {
   scrollContainer?: Accessor<HTMLElement | undefined | null>
   threshold?: number
   minPlaceholderHeight?: number
-  measureElement?: Accessor<HTMLElement | undefined | null>
-  contentRenderVersion?: Accessor<number>
   class?: string
   contentClass?: string
   placeholderClass?: string
@@ -182,8 +178,6 @@ export interface VirtualItemHeightChangeMeta {
   wasHidden: boolean
 }
 
-type VisibleSettlingMode = "hidden-to-visible" | "visible-rerender"
-
 export default function VirtualItem(props: VirtualItemProps) {
   const resolveContent = () => (typeof props.children === "function" ? (props.children as () => JSX.Element)() : props.children)
   const cachedHeight = sizeCache.get(props.cacheKey)
@@ -196,8 +190,6 @@ export default function VirtualItem(props: VirtualItemProps) {
   // When content first mounts, onHeightChange deltas should reflect the DOM's
   // placeholder height (not 0), otherwise scroll compensation can overshoot.
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
-  const [settlingMode, setSettlingMode] = createSignal<VisibleSettlingMode | null>(null)
-  const isSettlingVisible = createMemo(() => settlingMode() !== null)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
   let visibilityFrame: number | null = null
@@ -214,11 +206,6 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
   const queueVisibility = (nextValue: boolean) => {
-    if (nextValue && !isIntersecting()) {
-      setSettlingMode("hidden-to-visible")
-    } else if (!nextValue) {
-      setSettlingMode(null)
-    }
     pendingVisibility = nextValue
     if (visibilityFrame !== null) return
     visibilityFrame = requestAnimationFrame(() => {
@@ -231,22 +218,18 @@ export default function VirtualItem(props: VirtualItemProps) {
   }
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
   const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
+  const forceVisible = () => Boolean(props.forceVisible?.())
   const shouldHideContent = createMemo(() => {
-    if (props.forceVisible?.()) return false
+    if (forceVisible()) return false
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
-  const shouldHideMountedContent = createMemo(() => shouldHideContent() || settlingMode() === "hidden-to-visible")
+
   let wrapperRef: HTMLDivElement | undefined
   let contentRef: HTMLDivElement | undefined
 
   let resizeObserver: ResizeObserver | undefined
   let intersectionCleanup: (() => void) | undefined
-  let delayedMeasureFrame: number | null = null
-  let delayedMeasureFrame2: number | null = null
-  let settlingMeasureFrame: number | null = null
-  let settlingStableFrames = 0
-  let settlingLastHeight: number | null = null
 
   function cleanupResizeObserver() {
     if (resizeObserver) {
@@ -255,173 +238,21 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
 
-  function clearDelayedMeasureFrames() {
-    if (delayedMeasureFrame !== null) {
-      cancelAnimationFrame(delayedMeasureFrame)
-      delayedMeasureFrame = null
-    }
-    if (delayedMeasureFrame2 !== null) {
-      cancelAnimationFrame(delayedMeasureFrame2)
-      delayedMeasureFrame2 = null
-    }
-  }
-
-  function clearSettlingMeasurementFrame() {
-    if (settlingMeasureFrame !== null) {
-      cancelAnimationFrame(settlingMeasureFrame)
-      settlingMeasureFrame = null
-    }
-    settlingStableFrames = 0
-    settlingLastHeight = null
-  }
-
-  function getVisibleSettlingMode(): VisibleSettlingMode {
-    return awaitingVisibleMeasurement ? "hidden-to-visible" : "visible-rerender"
-  }
-
-  function scheduleDelayedVisibleMeasurements() {
-    clearDelayedMeasureFrames()
-    delayedMeasureFrame = requestAnimationFrame(() => {
-      delayedMeasureFrame = null
-      if (shouldHideContent() || measurementsSuspended()) return
-      if (!contentRef) return
-      updateMeasuredHeight()
-      delayedMeasureFrame2 = requestAnimationFrame(() => {
-        delayedMeasureFrame2 = null
-        if (shouldHideContent() || measurementsSuspended()) return
-        if (!contentRef) return
-        updateMeasuredHeight()
-      })
-    })
-  }
-
-  function commitSettledMeasurement(next: number) {
-    const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
-    const wasHidden = lastMeasurementWhileHidden
-    awaitingVisibleMeasurement = false
-    lastMeasurementWhileHidden = false
-    setSettlingMode(null)
-    persistMeasurement(next, { source: measurementSource, wasHidden })
-  }
-
-  function scheduleSettledVisibleMeasurement(mode = getVisibleSettlingMode()) {
-    if (shouldHideContent() || measurementsSuspended()) return
-    if (!contentRef) return
-    setSettlingMode(mode)
-    clearSettlingMeasurementFrame()
-
-    const tick = () => {
-      settlingMeasureFrame = requestAnimationFrame(() => {
-        settlingMeasureFrame = null
-        if (shouldHideContent() || measurementsSuspended()) {
-          setSettlingMode(null)
-          clearSettlingMeasurementFrame()
-          return
-        }
-        const measurement = getMeasuredContentRect()
-        if (!measurement) {
-          tick()
-          return
-        }
-        const sampledHeight = Math.max(0, Math.round(measurement.rect.height * 2) / 2)
-        const previousSample = settlingLastHeight
-        settlingLastHeight = sampledHeight
-        if (previousSample !== null && Math.abs(sampledHeight - previousSample) <= SETTLED_HEIGHT_EPSILON_PX) {
-          settlingStableFrames += 1
-        } else {
-          settlingStableFrames = 0
-        }
-        if (settlingStableFrames >= SETTLED_HEIGHT_FRAMES) {
-          clearSettlingMeasurementFrame()
-          commitSettledMeasurement(sampledHeight)
-          return
-        }
-        tick()
-      })
-    }
-
-    tick()
-  }
-
-  function scheduleContentRenderedMeasurements() {
+  function scheduleVisibleMeasurements() {
     if (shouldHideContent() || measurementsSuspended()) return
     if (!contentRef) return
     queueMicrotask(() => {
       if (shouldHideContent() || measurementsSuspended()) return
       if (!contentRef) return
+      updateMeasuredHeight()
       setupResizeObserver()
-      scheduleSettledVisibleMeasurement(getVisibleSettlingMode())
     })
-    scheduleDelayedVisibleMeasurements()
   }
 
   function cleanupIntersectionObserver() {
     if (intersectionCleanup) {
       intersectionCleanup()
       intersectionCleanup = undefined
-    }
-  }
-
-  function getMeasuredContentRect(): { rect: DOMRect } | null {
-    const explicitMeasureElement = props.measureElement?.()
-    if (explicitMeasureElement?.isConnected) {
-      return {
-        rect: explicitMeasureElement.getBoundingClientRect(),
-      }
-    }
-
-    if (!contentRef) return null
-
-    const childElements = Array.from(contentRef.children).filter((node): node is HTMLElement => node instanceof HTMLElement)
-    if (childElements.length === 0) {
-      return {
-        rect: contentRef.getBoundingClientRect(),
-      }
-    }
-
-    let top = Number.POSITIVE_INFINITY
-    let bottom = Number.NEGATIVE_INFINITY
-    let left = Number.POSITIVE_INFINITY
-    let right = Number.NEGATIVE_INFINITY
-    let sawNonZero = false
-
-    for (const child of childElements) {
-      const rect = child.getBoundingClientRect()
-      if (rect.width <= 0 && rect.height <= 0) continue
-      sawNonZero = true
-      if (rect.top < top) top = rect.top
-      if (rect.bottom > bottom) bottom = rect.bottom
-      if (rect.left < left) left = rect.left
-      if (rect.right > right) right = rect.right
-    }
-
-    if (!sawNonZero) {
-      return {
-        rect: contentRef.getBoundingClientRect(),
-      }
-    }
-
-    return {
-      rect: {
-        x: left,
-        y: top,
-        top,
-        bottom,
-        left,
-        right,
-        width: Math.max(0, right - left),
-        height: Math.max(0, bottom - top),
-        toJSON: () => ({
-          x: left,
-          y: top,
-          top,
-          bottom,
-          left,
-          right,
-          width: Math.max(0, right - left),
-          height: Math.max(0, bottom - top),
-        }),
-      } as DOMRect,
     }
   }
 
@@ -466,11 +297,6 @@ export default function VirtualItem(props: VirtualItemProps) {
       }
     }
     setMeasuredHeight(normalized)
-    if (measurementMeta.isStaleCacheCorrection) {
-      requestAnimationFrame(() => {
-        recheckVisibilityAfterMeasurement()
-      })
-    }
     if (normalized !== before) props.onHeightChange?.(normalized, before, measurementMeta)
   }
 
@@ -479,14 +305,16 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (measurementsSuspended()) return
     // Prefer subpixel-accurate height for scroll compensation.
     // offsetHeight rounds to integers which can accumulate error.
-    const measurement = getMeasuredContentRect()
-    if (!measurement) return
-    const { rect } = measurement
+    const rect = contentRef.getBoundingClientRect()
     const next = Math.max(0, Math.round(rect.height * 2) / 2)
     const currentMeasured = measuredHeight()
-    if (next === currentMeasured) return
     const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
     const wasHidden = lastMeasurementWhileHidden
+    if (measurementSource === "initial-visible-measure") {
+      awaitingVisibleMeasurement = false
+      lastMeasurementWhileHidden = false
+    }
+    if (next === currentMeasured) return
     persistMeasurement(next, { source: measurementSource, wasHidden })
   }
 
@@ -499,7 +327,6 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
     resizeObserver = new ResizeObserver(() => {
       if (measurementsSuspended()) return
-      if (isSettlingVisible()) return
       updateMeasuredHeight()
     })
     resizeObserver.observe(contentRef)
@@ -551,17 +378,11 @@ export default function VirtualItem(props: VirtualItemProps) {
         }
         try {
           const rootRect = (targetRoot as Element).getBoundingClientRect()
-          const wrapperRect = wrapperEl.getBoundingClientRect()
           const visible = shouldRenderByRects({
-            wrapperRect,
+            wrapperRect: wrapperEl.getBoundingClientRect(),
             rootRect: { top: rootRect.top, bottom: rootRect.bottom },
             margin,
           })
-          const collapsedWhileVisible = isIntersecting() && !visible && Math.round(wrapperRect.height) <= 0 && measuredHeight() > 0
-          if (collapsedWhileVisible) {
-            queueVisibility(true)
-            return
-          }
           queueVisibility(visible)
           return
         } catch {
@@ -572,37 +393,6 @@ export default function VirtualItem(props: VirtualItemProps) {
       const nextVisible = shouldRenderEntry(entry)
       queueVisibility(nextVisible)
     })
-  }
-
-  function recheckVisibilityAfterMeasurement() {
-    if (!wrapperRef) return
-
-    const margin = props.threshold ?? DEFAULT_MARGIN_PX
-    const wrapperRect = wrapperRef.getBoundingClientRect()
-    const targetRoot = props.scrollContainer ? props.scrollContainer() : null
-
-    if (targetRoot && !(targetRoot instanceof Document)) {
-      const rootRect = targetRoot.getBoundingClientRect()
-      const visible = shouldRenderByRects({
-        wrapperRect,
-        rootRect: { top: rootRect.top, bottom: rootRect.bottom },
-        margin,
-      })
-      if (!visible) {
-        queueVisibility(false)
-      }
-      return
-    }
-
-    const viewportRect = getViewportRect()
-    const visible = shouldRenderByRects({
-      wrapperRect,
-      rootRect: viewportRect,
-      margin,
-    })
-    if (!visible) {
-      queueVisibility(false)
-    }
   }
 
   function setWrapperRef(element: HTMLDivElement | null) {
@@ -628,26 +418,13 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (hidden) {
       awaitingVisibleMeasurement = true
       lastMeasurementWhileHidden = true
-      clearDelayedMeasureFrames()
-      clearSettlingMeasurementFrame()
-      setSettlingMode(null)
     }
     if (hidden || measurementsSuspended()) {
       cleanupResizeObserver()
     }
     if (!hidden && !measurementsSuspended() && contentRef) {
-      queueMicrotask(() => {
-        setupResizeObserver()
-        scheduleSettledVisibleMeasurement(getVisibleSettlingMode())
-      })
-      scheduleDelayedVisibleMeasurements()
+      scheduleVisibleMeasurements()
     }
-  })
-  createEffect(() => {
-    const version = props.contentRenderVersion?.()
-    if (version === undefined) return
-    if (version <= 0) return
-    scheduleContentRenderedMeasurements()
   })
 
   
@@ -680,15 +457,13 @@ export default function VirtualItem(props: VirtualItemProps) {
   onCleanup(() => {
     cleanupResizeObserver()
     cleanupIntersectionObserver()
-    clearDelayedMeasureFrames()
-    clearSettlingMeasurementFrame()
     flushVisibility()
   })
  
   const wrapperClass = () => ["virtual-item-wrapper", props.class].filter(Boolean).join(" ")
   const contentClass = () => {
     const classes = ["virtual-item-content", props.contentClass]
-    if (shouldHideMountedContent()) {
+    if (shouldHideContent()) {
       classes.push("virtual-item-content-hidden")
     }
     return classes.filter(Boolean).join(" ")
@@ -705,7 +480,7 @@ export default function VirtualItem(props: VirtualItemProps) {
         class={placeholderClass()}
         style={{
           width: "100%",
-          height: shouldHideMountedContent() ? `${placeholderHeight()}px` : undefined,
+          height: shouldHideContent() ? `${placeholderHeight()}px` : undefined,
         }}
       >
         <div ref={setContentRef} class={contentClass()}>

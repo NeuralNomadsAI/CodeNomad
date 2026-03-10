@@ -571,7 +571,6 @@ interface MessageBlockProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
-  onMeasureElementChange?: (element: HTMLElement | null) => void
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -787,34 +786,10 @@ export default function MessageBlock(props: MessageBlockProps) {
     return resultBlock
   })
 
-  let measuredBlockElement: HTMLDivElement | undefined
-
-  onCleanup(() => {
-    measuredBlockElement = undefined
-    props.onMeasureElementChange?.(null)
-  })
-
-  const visibleBlock = createMemo(() => {
-    const resolved = block()
-    if (!resolved || resolved.items.length === 0) return null
-    return resolved
-  })
-
-  createEffect(() => {
-    if (visibleBlock()) return
-    if (!measuredBlockElement) return
-    measuredBlockElement = undefined
-    props.onMeasureElementChange?.(null)
-  })
-
   return (
-    <Show when={visibleBlock()}>
+    <Show when={block()}>
       {(resolvedBlock) => (
         <div
-          ref={(el) => {
-            measuredBlockElement = el
-            props.onMeasureElementChange?.(el)
-          }}
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
           data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
@@ -1314,12 +1289,6 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
 
-  let headerEl: HTMLDivElement | undefined
-  let actionsEl: HTMLDivElement | undefined
-  let primaryEl: HTMLSpanElement | undefined
-  let metaMeasureEl: HTMLSpanElement | undefined
-  const [showMetaInline, setShowMetaInline] = createSignal(true)
-
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
   })
@@ -1346,33 +1315,6 @@ function ReasoningCard(props: ReasoningCardProps) {
   }
 
   const hasMeta = () => Boolean(props.showAgentMeta && (agentIdentifier() || modelIdentifier()))
-
-  const updateMetaLayout = () => {
-    if (!hasMeta()) return
-    if (!headerEl || !actionsEl || !primaryEl || !metaMeasureEl) return
-
-    const headerWidth = headerEl.getBoundingClientRect().width
-    const actionsWidth = actionsEl.getBoundingClientRect().width
-    const primaryWidth = primaryEl.getBoundingClientRect().width
-    const metaWidth = metaMeasureEl.getBoundingClientRect().width
-
-    const availableLeft = Math.max(0, headerWidth - actionsWidth - 12)
-    setShowMetaInline(primaryWidth + metaWidth + 8 <= availableLeft)
-  }
-
-  createEffect(() => {
-    if (!hasMeta() || typeof ResizeObserver === "undefined") {
-      setShowMetaInline(true)
-      return
-    }
-
-    updateMetaLayout()
-    const observer = new ResizeObserver(() => updateMetaLayout())
-    if (headerEl) observer.observe(headerEl)
-    if (actionsEl) observer.observe(actionsEl)
-    if (primaryEl) observer.observe(primaryEl)
-    onCleanup(() => observer.disconnect())
-  })
 
   const reasoningText = () => {
     const part = props.part as any
@@ -1452,7 +1394,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   return (
     <div class="delete-hover-scope message-reasoning-card">
-      <div class="message-reasoning-header" ref={(el) => (headerEl = el)}>
+      <div class="message-reasoning-header">
         <button
           type="button"
           class="message-reasoning-toggle"
@@ -1461,7 +1403,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
           <span class="message-reasoning-label">
-            <span class="message-reasoning-label-primary" ref={(el) => (primaryEl = el)}>
+            <span class="message-reasoning-label-primary">
               <Show when={props.showDeleteMessage}>
                 <input
                   class="message-select-checkbox"
@@ -1482,43 +1424,10 @@ function ReasoningCard(props: ReasoningCardProps) {
 
               <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
             </span>
-
-            <Show when={hasMeta() && showMetaInline()}>
-              <span class="message-step-meta-inline">
-                <Show when={agentIdentifier()}>
-                  {(value) => (
-                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
-                  )}
-                </Show>
-                <Show when={modelIdentifier()}>
-                  {(value) => (
-                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
-                  )}
-                </Show>
-              </span>
-            </Show>
-
-            <Show when={hasMeta()}>
-              <span
-                ref={(el) => (metaMeasureEl = el)}
-                class="message-step-meta-inline message-step-meta-inline--measure"
-              >
-                <Show when={agentIdentifier()}>
-                  {(value) => (
-                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.agentLabel", { agent: value() })}</span>
-                  )}
-                </Show>
-                <Show when={modelIdentifier()}>
-                  {(value) => (
-                    <span class="font-medium text-[var(--message-assistant-border)]">{t("messageBlock.step.modelLabel", { model: value() })}</span>
-                  )}
-                </Show>
-              </span>
-            </Show>
           </span>
         </button>
 
-        <div class="message-reasoning-actions" ref={(el) => (actionsEl = el)}>
+        <div class="message-reasoning-actions">
           <button
             type="button"
             class="message-action-button"
@@ -1567,7 +1476,7 @@ function ReasoningCard(props: ReasoningCardProps) {
         </div>
       </div>
 
-      <Show when={hasMeta() && !showMetaInline()}>
+      <Show when={hasMeta()}>
         <div class="message-reasoning-meta-row">
           <span class="message-step-meta-inline">
             <Show when={agentIdentifier()}>

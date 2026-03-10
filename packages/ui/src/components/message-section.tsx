@@ -1066,7 +1066,7 @@ export default function MessageSection(props: MessageSectionProps) {
               </Show>
             </>
           )}
-          renderItem={(messageId, index, options) => (
+          renderItem={(messageId, index) => (
             <MessageBlock
               messageId={messageId}
               instanceId={props.instanceId}
@@ -1085,11 +1085,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onRevert={props.onRevert}
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
-              onContentRendered={() => {
-                options.notifyItemRendered()
-                handleContentRendered()
-              }}
-              onMeasureElementChange={options.registerMeasureElement}
+              onContentRendered={handleContentRendered}
             />
           )}
           renderOverlay={() => (

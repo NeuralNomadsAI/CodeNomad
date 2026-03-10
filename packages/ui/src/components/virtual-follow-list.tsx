@@ -30,14 +30,7 @@ export interface VirtualFollowListState {
 export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
-  renderItem: (
-    item: T,
-    index: number,
-    options: {
-      registerMeasureElement: (element: HTMLElement | null) => void
-      notifyItemRendered: () => void
-    },
-  ) => JSX.Element
+  renderItem: (item: T, index: number) => JSX.Element
 
   /**
    * Optional stable DOM id for the item wrapper.
@@ -381,7 +374,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleContentRendered() {
-    scheduleAnchorScroll()
+    if (autoScroll() && !anchorLock()) {
+      scheduleAutoPinToBottom()
+      return
+    }
+    if (anchorLock() && !autoScroll()) {
+      scheduleAnchorCorrection()
+      return
+    }
   }
 
   function handleScroll() {
@@ -521,25 +521,51 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   let pendingAutoPin = false
+  let pendingAutoPinFrame: number | null = null
+
+  function clearPendingAutoPinFrame() {
+    if (pendingAutoPinFrame !== null) {
+      cancelAnimationFrame(pendingAutoPinFrame)
+      pendingAutoPinFrame = null
+    }
+  }
+
+  function applyAutoPinToBottom() {
+    if (!containerRef) return false
+    if (!autoScroll()) return false
+    if (anchorLock()) return false
+
+    const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
+    if (containerRef.scrollTop !== maxScrollTop) {
+      containerRef.scrollTop = maxScrollTop
+      lastKnownScrollTop = maxScrollTop
+    }
+    return true
+  }
+
   function scheduleAutoPinToBottom() {
     if (!containerRef) return
     if (pendingAutoPin) return
     pendingAutoPin = true
+    clearPendingAutoPinFrame()
     const gen = scrollCompensationGen
 
-    // Flush in a microtask so adjustments land before the next paint.
+    // Flush in a microtask so adjustments land before the next paint,
+    // then re-apply on the next two frames to catch deferred layout.
     queueMicrotask(() => {
       if (gen !== scrollCompensationGen) return
       pendingAutoPin = false
-      if (!containerRef) return
-      if (!autoScroll()) return
-      if (anchorLock()) return
-
-      const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
-      if (containerRef.scrollTop !== maxScrollTop) {
-        containerRef.scrollTop = maxScrollTop
-        lastKnownScrollTop = maxScrollTop
-      }
+      if (!applyAutoPinToBottom()) return
+      pendingAutoPinFrame = requestAnimationFrame(() => {
+        pendingAutoPinFrame = null
+        if (gen !== scrollCompensationGen) return
+        if (!applyAutoPinToBottom()) return
+        pendingAutoPinFrame = requestAnimationFrame(() => {
+          pendingAutoPinFrame = null
+          if (gen !== scrollCompensationGen) return
+          applyAutoPinToBottom()
+        })
+      })
     })
   }
 
@@ -628,6 +654,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingScrollCompensationScheduled = false
     pendingScrollCompensations = new Map()
     pendingAutoPin = false
+    clearPendingAutoPinFrame()
 
     suppressAutoScrollOnce = false
     pendingActiveScroll = false
@@ -718,7 +745,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       suppressAutoScrollOnce = false
       return
     }
-    if (autoScroll()) scheduleAnchorScroll(true)
+    if (autoScroll()) {
+      scheduleAutoPinToBottom()
+      return
+    }
+    if (anchorLock() && !autoScroll()) {
+      scheduleAnchorCorrection()
+    }
   })
 
   // Drop anchor lock if the anchored key is removed.
@@ -825,6 +858,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     scrollCompensationGen += 1
     pendingScrollCompensationScheduled = false
     pendingScrollCompensations = new Map()
+    clearPendingAutoPinFrame()
     clearScrollToBottomFrames()
     if (detachScrollIntentListeners) {
       detachScrollIntentListeners()
@@ -888,35 +922,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const anchorId = () => getAnchorId(key())
             const overscanPx = props.overscanPx ?? 800
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
-            const [measureElement, setMeasureElement] = createSignal<HTMLElement | undefined>()
-            const [contentRenderVersion, setContentRenderVersion] = createSignal(0)
-            let pendingContentRenderFrame: number | null = null
-
-            const notifyItemRendered = () => {
-              if (pendingContentRenderFrame !== null) return
-              pendingContentRenderFrame = requestAnimationFrame(() => {
-                pendingContentRenderFrame = null
-                setContentRenderVersion((prev) => prev + 1)
-              })
-            }
-
-            onCleanup(() => {
-              if (pendingContentRenderFrame !== null) {
-                cancelAnimationFrame(pendingContentRenderFrame)
-                pendingContentRenderFrame = null
-              }
-            })
-
+            const itemVirtualizationEnabled = () => virtualizationEnabled() && !autoScroll()
             return (
               <VirtualItem
                 id={anchorId()}
                 cacheKey={key()}
                 scrollContainer={scrollElement}
                 threshold={overscanPx}
-                measureElement={measureElement}
-                contentRenderVersion={contentRenderVersion}
                 placeholderClass="message-stream-placeholder"
-                virtualizationEnabled={virtualizationEnabled}
+                virtualizationEnabled={itemVirtualizationEnabled}
                 suspendMeasurements={suspendMeasurements}
                 onHeightChange={(nextHeight, previousHeight, meta: VirtualItemHeightChangeMeta) => {
                   const delta = nextHeight - previousHeight
@@ -943,13 +957,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                     scheduleScrollCompensation(key(), delta)
                   }
                 }}
-              >
-                {() =>
-                  props.renderItem(item(), index, {
-                    registerMeasureElement: (element) => setMeasureElement(element ?? undefined),
-                    notifyItemRendered,
-                  })}
-              </VirtualItem>
+              >{() => props.renderItem(item(), index)}</VirtualItem>
             )
           }}
         </Index>
