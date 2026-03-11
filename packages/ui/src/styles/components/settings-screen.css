@@ -187,7 +187,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 1.5rem;
+  padding: 1rem;
 }
 
 .settings-section-stack,
@@ -519,7 +519,7 @@
 
   .settings-screen-content-header,
   .settings-screen-scroll {
-    padding: 1rem;
+    padding: 0.75rem;
   }
 
   .settings-card-header,
