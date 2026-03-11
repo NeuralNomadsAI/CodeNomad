@@ -11,7 +11,29 @@
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border-base);
+  border-radius: 0;
   box-shadow: 0 32px 96px color-mix(in oklab, var(--overlay-scrim) 55%, transparent);
+}
+
+/* Settings UI uses square corners (no radius). */
+.modal-surface.settings-screen-shell .selector-trigger,
+.modal-surface.settings-screen-shell .selector-popover,
+.modal-surface.settings-screen-shell .selector-option,
+.modal-surface.settings-screen-shell .selector-button,
+.modal-surface.settings-screen-shell .selector-input,
+.modal-surface.settings-screen-shell .selector-search-input,
+.modal-surface.settings-screen-shell .remote-close,
+.modal-surface.settings-screen-shell .remote-section,
+.modal-surface.settings-screen-shell .remote-refresh,
+.modal-surface.settings-screen-shell .remote-toggle,
+.modal-surface.settings-screen-shell .remote-toggle-switch,
+.modal-surface.settings-screen-shell .remote-toggle-thumb,
+.modal-surface.settings-screen-shell .remote-address,
+.modal-surface.settings-screen-shell .remote-pill,
+.modal-surface.settings-screen-shell .remote-qr,
+.modal-surface.settings-screen-shell .remote-card,
+.modal-surface.settings-screen-shell .remote-error {
+  border-radius: 0;
 }
 
 .settings-screen-nav {
@@ -41,7 +63,7 @@
   justify-content: center;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 0.875rem;
+  border-radius: 0;
   background: color-mix(in oklab, var(--accent-primary) 16%, var(--surface-base));
   color: var(--accent-primary);
 }
@@ -75,7 +97,7 @@
   gap: 0.75rem;
   width: 100%;
   padding: 0.75rem 0.875rem;
-  border-radius: 0.875rem;
+  border-radius: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
@@ -179,7 +201,7 @@
 .settings-card {
   padding: 1.25rem;
   border: 1px solid var(--border-base);
-  border-radius: 1rem;
+  border-radius: 0;
   background: color-mix(in oklab, var(--surface-base) 86%, var(--surface-secondary) 14%);
 }
 
@@ -235,7 +257,7 @@
 .settings-card-message {
   padding: 1rem;
   border: 1px dashed var(--border-base);
-  border-radius: 0.625rem;
+  border-radius: 0;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -243,7 +265,7 @@
 .settings-card-content {
   padding: 1rem;
   border: 1px solid var(--border-base);
-  border-radius: 0.625rem;
+  border-radius: 0;
   background: var(--surface-base);
 }
 
@@ -276,7 +298,7 @@
   align-items: center;
   gap: 0.375rem;
   padding: 0.5rem 0.875rem;
-  border-radius: 999px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background: var(--surface-secondary);
   color: var(--text-primary);
@@ -300,7 +322,7 @@
   padding: 0.75rem;
   border: 1px solid var(--border-critical, #e65c5c);
   background: color-mix(in srgb, var(--border-critical, #e65c5c) 10%, transparent);
-  border-radius: 0.625rem;
+  border-radius: 0;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
 }
@@ -309,7 +331,7 @@
   display: inline-flex;
   align-items: center;
   padding: 0.375rem 0.6rem;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in oklab, var(--surface-secondary) 75%, var(--surface-base));
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
@@ -334,7 +356,7 @@
   gap: 0.875rem;
   width: 100%;
   padding: 0.95rem;
-  border-radius: 1rem;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background: var(--surface-base);
   color: var(--text-primary);
@@ -367,7 +389,7 @@
   justify-content: center;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 0.9rem;
+  border-radius: 0;
   background: color-mix(in oklab, var(--surface-secondary) 76%, var(--surface-base));
   color: var(--accent-primary);
   flex-shrink: 0;
