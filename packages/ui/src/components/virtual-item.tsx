@@ -167,8 +167,15 @@ interface VirtualItemProps {
   forceVisible?: Accessor<boolean>
   suspendMeasurements?: Accessor<boolean>
   onMeasured?: () => void
-  onHeightChange?: (nextHeight: number, previousHeight: number) => void
+  onHeightChange?: (nextHeight: number, previousHeight: number, meta: VirtualItemHeightChangeMeta) => void
   id?: string
+}
+
+export interface VirtualItemHeightChangeMeta {
+  source: "initial-visible-measure" | "resize"
+  previousCachedHeight: number | null
+  isStaleCacheCorrection: boolean
+  wasHidden: boolean
 }
 
 export default function VirtualItem(props: VirtualItemProps) {
@@ -183,10 +190,11 @@ export default function VirtualItem(props: VirtualItemProps) {
   // When content first mounts, onHeightChange deltas should reflect the DOM's
   // placeholder height (not 0), otherwise scroll compensation can overshoot.
   const [measuredHeight, setMeasuredHeight] = createSignal(cachedHeight ?? fallbackPlaceholderHeight())
-  const [hasMeasured, setHasMeasured] = createSignal(cachedHeight !== undefined)
   let hasReportedMeasurement = Boolean(cachedHeight && cachedHeight > 0)
   let pendingVisibility: boolean | null = null
   let visibilityFrame: number | null = null
+  let awaitingVisibleMeasurement = true
+  let lastMeasurementWhileHidden = true
   const flushVisibility = () => {
     if (visibilityFrame !== null) {
       cancelAnimationFrame(visibilityFrame)
@@ -210,14 +218,14 @@ export default function VirtualItem(props: VirtualItemProps) {
   }
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
   const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
+  const forceVisible = () => Boolean(props.forceVisible?.())
   const shouldHideContent = createMemo(() => {
-    if (props.forceVisible?.()) return false
+    if (forceVisible()) return false
     if (!virtualizationEnabled()) return false
     return !isIntersecting()
   })
- 
-   let wrapperRef: HTMLDivElement | undefined
- 
+
+  let wrapperRef: HTMLDivElement | undefined
   let contentRef: HTMLDivElement | undefined
 
   let resizeObserver: ResizeObserver | undefined
@@ -230,6 +238,17 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
 
+  function scheduleVisibleMeasurements() {
+    if (shouldHideContent() || measurementsSuspended()) return
+    if (!contentRef) return
+    queueMicrotask(() => {
+      if (shouldHideContent() || measurementsSuspended()) return
+      if (!contentRef) return
+      updateMeasuredHeight()
+      setupResizeObserver()
+    })
+  }
+
   function cleanupIntersectionObserver() {
     if (intersectionCleanup) {
       intersectionCleanup()
@@ -237,13 +256,24 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
   }
 
-  function persistMeasurement(nextHeight: number) {
+  function persistMeasurement(nextHeight: number, meta?: { source: "initial-visible-measure" | "resize"; wasHidden: boolean }) {
     if (!Number.isFinite(nextHeight) || nextHeight < 0) {
       return
     }
     const before = measuredHeight()
     const normalized = nextHeight
-    const previous = sizeCache.get(props.cacheKey) ?? measuredHeight()
+    const previousCachedHeight = sizeCache.get(props.cacheKey) ?? null
+    const previous = previousCachedHeight ?? measuredHeight()
+    const measurementMeta: VirtualItemHeightChangeMeta = {
+      source: meta?.source ?? "resize",
+      previousCachedHeight,
+      isStaleCacheCorrection:
+        (meta?.source ?? "resize") === "initial-visible-measure" &&
+        previousCachedHeight !== null &&
+        normalized > 0 &&
+        Math.abs(normalized - previousCachedHeight) > 1,
+      wasHidden: meta?.wasHidden ?? shouldHideContent(),
+    }
     // Only keep the previous measurement when the element reports 0 height.
     // Allow shrinkage so placeholder height matches real content height;
     // keeping the max height can cause mount/unmount jitter near the
@@ -254,34 +284,40 @@ export default function VirtualItem(props: VirtualItemProps) {
         hasReportedMeasurement = true
         props.onMeasured?.()
       }
-      setHasMeasured(true)
       sizeCache.set(props.cacheKey, previous)
       setMeasuredHeight(previous)
-      if (previous !== before) props.onHeightChange?.(previous, before)
+      if (previous !== before) props.onHeightChange?.(previous, before, measurementMeta)
       return
     }
     if (normalized > 0) {
       sizeCache.set(props.cacheKey, normalized)
-      setHasMeasured(true)
       if (!hasReportedMeasurement) {
         hasReportedMeasurement = true
         props.onMeasured?.()
       }
     }
     setMeasuredHeight(normalized)
-    if (normalized !== before) props.onHeightChange?.(normalized, before)
+    if (normalized !== before) props.onHeightChange?.(normalized, before, measurementMeta)
   }
 
   function updateMeasuredHeight() {
-    if (!contentRef || measurementsSuspended()) return
+    if (!contentRef) return
+    if (measurementsSuspended()) return
     // Prefer subpixel-accurate height for scroll compensation.
     // offsetHeight rounds to integers which can accumulate error.
     const rect = contentRef.getBoundingClientRect()
     const next = Math.max(0, Math.round(rect.height * 2) / 2)
-    if (next === measuredHeight()) return
-    persistMeasurement(next)
+    const currentMeasured = measuredHeight()
+    const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
+    const wasHidden = lastMeasurementWhileHidden
+    if (measurementSource === "initial-visible-measure") {
+      awaitingVisibleMeasurement = false
+      lastMeasurementWhileHidden = false
+    }
+    if (next === currentMeasured) return
+    persistMeasurement(next, { source: measurementSource, wasHidden })
   }
- 
+
   function setupResizeObserver() {
     if (!contentRef || measurementsSuspended()) return
     cleanupResizeObserver()
@@ -377,30 +413,29 @@ export default function VirtualItem(props: VirtualItemProps) {
       cleanupResizeObserver()
     }
   }
- 
-  
   createEffect(() => {
-    if (shouldHideContent() || measurementsSuspended()) {
+    const hidden = shouldHideContent()
+    if (hidden) {
+      awaitingVisibleMeasurement = true
+      lastMeasurementWhileHidden = true
+    }
+    if (hidden || measurementsSuspended()) {
       cleanupResizeObserver()
-    } else if (contentRef) {
-      queueMicrotask(() => {
-        updateMeasuredHeight()
-        setupResizeObserver()
-      })
+    }
+    if (!hidden && !measurementsSuspended() && contentRef) {
+      scheduleVisibleMeasurements()
     }
   })
 
- 
+  
   createEffect(() => {
     const key = props.cacheKey
 
     const cached = sizeCache.get(key)
     if (cached !== undefined) {
       setMeasuredHeight(cached)
-      setHasMeasured(true)
     } else {
       setMeasuredHeight(fallbackPlaceholderHeight())
-      setHasMeasured(false)
     }
   })
 
@@ -418,7 +453,7 @@ export default function VirtualItem(props: VirtualItemProps) {
     }
     return props.minPlaceholderHeight ?? MIN_PLACEHOLDER_HEIGHT
   })
- 
+
   onCleanup(() => {
     cleanupResizeObserver()
     cleanupIntersectionObserver()

@@ -31,6 +31,11 @@ export const folderSelectionMessages = {
   "folderSelection.loading.title": "Iniciando instancia...",
   "folderSelection.loading.subtitle": "Espera un momento mientras preparamos tu workspace.",
 
+  "folderSelection.drop.title": "Suelta una carpeta para abrirla",
+  "folderSelection.drop.subtitle": "Inicia una nueva instancia en la carpeta soltada.",
+  "folderSelection.drop.invalidTitle": "No se pudo abrir el elemento soltado",
+  "folderSelection.drop.invalidMessage": "Suelta una carpeta para iniciar una nueva instancia.",
+
   "folderSelection.dialog.title": "Seleccionar workspace",
   "folderSelection.dialog.description": "Selecciona un workspace para empezar a programar.",
 } as const

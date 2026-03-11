@@ -31,6 +31,11 @@ export const folderSelectionMessages = {
   "folderSelection.loading.title": "Starting instance...",
   "folderSelection.loading.subtitle": "Hang tight while we prepare your workspace.",
 
+  "folderSelection.drop.title": "Drop a folder to open it",
+  "folderSelection.drop.subtitle": "Start a new instance in the dropped folder.",
+  "folderSelection.drop.invalidTitle": "Couldn't open dropped item",
+  "folderSelection.drop.invalidMessage": "Drop a folder to start a new instance.",
+
   "folderSelection.dialog.title": "Select Workspace",
   "folderSelection.dialog.description": "Select workspace to start coding.",
 } as const

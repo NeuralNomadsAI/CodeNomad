@@ -35,7 +35,6 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
     Ok(state.manager.status())
 }
 
-
 fn is_dev_mode() -> bool {
     cfg!(debug_assertions) || std::env::var("TAURI_DEV").is_ok()
 }
@@ -46,7 +45,10 @@ fn should_allow_internal(url: &Url) -> bool {
         // On Windows/WebView2, Tauri serves the app assets from `tauri.localhost`.
         // This must be treated as an internal origin or the navigation guard will
         // redirect it to the system browser and the app will appear blank.
-        "http" | "https" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "tauri.localhost")),
+        "http" | "https" => matches!(
+            url.host_str(),
+            Some("127.0.0.1" | "localhost" | "tauri.localhost")
+        ),
         _ => false,
     }
 }
@@ -64,6 +66,39 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         eprintln!("[tauri] failed to open external link {}: {}", url, err);
     }
     false
+}
+
+fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|path| match std::fs::metadata(path) {
+            Ok(metadata) if metadata.is_dir() => Some(path.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn emit_window_event(app_handle: &AppHandle, window_label: &str, event_name: &str) {
+    if let Some(window) = app_handle.get_webview_window(window_label) {
+        let _ = window.emit(event_name, ());
+    }
+}
+
+fn emit_folder_drop_event(
+    app_handle: &AppHandle,
+    window_label: &str,
+    event_name: &str,
+    paths: &[std::path::PathBuf],
+) {
+    let directories = collect_directory_paths(paths);
+
+    if directories.is_empty() {
+        return;
+    }
+
+    if let Some(window) = app_handle.get_webview_window(window_label) {
+        let _ = window.emit(event_name, json!({ "paths": directories }));
+    }
 }
 
 fn main() {
@@ -188,6 +223,27 @@ fn main() {
                 });
             }
             tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),
+                ..
+            } => {
+                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drag-enter", &paths);
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }),
+                ..
+            } => {
+                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drop", &paths);
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave),
+                ..
+            } => {
+                emit_window_event(&app_handle, &label, "desktop:folder-drag-leave");
+            }
+            tauri::RunEvent::WindowEvent {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
@@ -234,13 +290,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         "new_instance",
         "New Instance",
         true,
-        Some("CmdOrCtrl+N")
+        Some("CmdOrCtrl+N"),
     )?;
-    
+
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&new_instance_item)
         .separator()
-        .text(if is_mac { "close" } else { "quit" }, if is_mac { "Close" } else { "Quit" })
+        .text(
+            if is_mac { "close" } else { "quit" },
+            if is_mac { "Close" } else { "Quit" },
+        )
         .build()?;
     submenus.push(file_menu);
 
@@ -263,7 +322,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         .text("force_reload", "Force Reload")
         .text("toggle_devtools", "Toggle Developer Tools")
         .separator()
-
         .separator()
         .text("toggle_fullscreen", "Toggle Full Screen")
         .build()?;
@@ -277,9 +335,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     submenus.push(window_menu);
 
     // Build the main menu with all submenus
-    let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus.iter().map(|s| s as &dyn tauri::menu::IsMenuItem<_>).collect();
+    let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus
+        .iter()
+        .map(|s| s as &dyn tauri::menu::IsMenuItem<_>)
+        .collect();
     let menu = MenuBuilder::new(app).items(&submenu_refs).build()?;
-    
+
     app.set_menu(menu)?;
     Ok(())
 }

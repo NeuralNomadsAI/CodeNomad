@@ -27,9 +27,24 @@ declare global {
     getCliStatus?: () => Promise<unknown>
     restartCli?: () => Promise<unknown>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
+    getDirectoryPaths?: (paths: string[]) => Promise<string[]>
+    getPathForFile?: (file: File) => string | null
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+  }
+
+  interface File {
+    path?: string
+  }
+
+  interface FileSystemEntry {
+    isDirectory: boolean
+    isFile: boolean
+  }
+
+  interface DataTransferItem {
+    webkitGetAsEntry?: () => FileSystemEntry | null
   }
 
   interface TauriDialogModule {
@@ -40,6 +55,9 @@ declare global {
   interface TauriBridge {
     invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
     dialog?: TauriDialogModule
+    event?: {
+      listen: (event: string, handler: (payload: { payload: unknown }) => void) => Promise<() => void>
+    }
   }
 
   interface Window {
