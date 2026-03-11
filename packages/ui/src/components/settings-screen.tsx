@@ -45,7 +45,6 @@ export const SettingsScreen: Component = () => {
         <div class="settings-screen-frame">
           <Dialog.Content class="modal-surface settings-screen-shell">
             <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
-            <Dialog.Description class="sr-only">{t("settings.description")}</Dialog.Description>
 
             <aside class="settings-screen-nav">
               <div class="settings-screen-nav-header">
@@ -55,7 +54,6 @@ export const SettingsScreen: Component = () => {
                   </span>
                   <div>
                     <h2 class="settings-screen-title">{t("settings.title")}</h2>
-                    <p class="settings-screen-subtitle">{t("settings.description")}</p>
                   </div>
                 </div>
               </div>
