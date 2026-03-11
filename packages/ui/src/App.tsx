@@ -9,7 +9,7 @@ import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
-import { RemoteAccessOverlay } from "./components/remote-access-overlay"
+import { SettingsScreen } from "./components/settings-screen"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { initMarkdown } from "./lib/markdown"
 import { initGithubStars } from "./stores/github-stars"
@@ -54,6 +54,7 @@ import {
 } from "./stores/sessions"
 
 import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
+import { openSettings } from "./stores/settings-screen"
 
 const log = getLogger("actions")
 
@@ -77,8 +78,6 @@ const App: Component = () => {
     setToolInputsVisibility,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
-  const [isAdvancedSettingsOpen, setIsAdvancedSettingsOpen] = createSignal(false)
-  const [remoteAccessOpen, setRemoteAccessOpen] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
 
   const phoneQuery = useMediaQuery("(max-width: 767px)")
@@ -252,7 +251,6 @@ const App: Component = () => {
       clearLaunchError()
       const instanceId = await createInstance(folderPath, selectedBinary)
       setShowFolderSelection(false)
-      setIsAdvancedSettingsOpen(false)
 
       log.info("Created instance", {
         instanceId,
@@ -274,7 +272,7 @@ const App: Component = () => {
 
   function handleLaunchErrorAdvanced() {
     clearLaunchError()
-    setIsAdvancedSettingsOpen(true)
+    openSettings("opencode")
   }
 
   function handleNewInstanceRequest() {
@@ -487,7 +485,6 @@ const App: Component = () => {
                   onSelect={setActiveInstanceId}
                   onClose={handleCloseInstance}
                   onNew={handleNewInstanceRequest}
-                  onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
                 />
               </Show>
  
@@ -533,10 +530,6 @@ const App: Component = () => {
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             isLoading={isSelectingFolder()}
-            advancedSettingsOpen={isAdvancedSettingsOpen()}
-            onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
-            onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
-            onOpenRemoteAccess={() => setRemoteAccessOpen(true)}
           />
         </Show>
 
@@ -546,12 +539,8 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
-                advancedSettingsOpen={isAdvancedSettingsOpen()}
-                onAdvancedSettingsOpen={() => setIsAdvancedSettingsOpen(true)}
-                onAdvancedSettingsClose={() => setIsAdvancedSettingsOpen(false)}
                 onClose={() => {
                   setShowFolderSelection(false)
-                  setIsAdvancedSettingsOpen(false)
                   clearLaunchError()
                 }}
               />
@@ -559,7 +548,7 @@ const App: Component = () => {
           </div>
         </Show>
  
-        <RemoteAccessOverlay open={remoteAccessOpen()} onClose={() => setRemoteAccessOpen(false)} />
+        <SettingsScreen />
  
         <AlertDialog />
 

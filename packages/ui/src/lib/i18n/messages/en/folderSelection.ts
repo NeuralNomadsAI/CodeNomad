@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "Opening...",
 
   "folderSelection.advancedSettings": "Advanced Settings",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "Navigate",
   "folderSelection.hints.select": "Select",

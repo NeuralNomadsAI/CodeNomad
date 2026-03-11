@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "正在打开...",
 
   "folderSelection.advancedSettings": "高级设置",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "导航",
   "folderSelection.hints.select": "选择",
