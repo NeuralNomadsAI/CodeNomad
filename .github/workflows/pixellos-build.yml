@@ -34,4 +34,5 @@ jobs:
       npm_package_name: "@neuralnomads/codenomad-dev"
       prerelease: true
       release_ui: false
+      publish_npm: false
     secrets: inherit
