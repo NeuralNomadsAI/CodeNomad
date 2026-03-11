@@ -1,15 +1,14 @@
-import { Component, For, Show, createMemo, createSignal } from "solid-js"
+import { Component, For, Show, createMemo } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import type { Instance } from "../types/instance"
 import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
-import { Plus, MonitorUp, Bell, BellOff } from "lucide-solid"
+import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
-import { ThemeModeToggle } from "./theme-mode-toggle"
-import NotificationsSettingsModal from "./notifications-settings-modal"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { useConfig } from "../stores/preferences"
+import { openSettings } from "../stores/settings-screen"
 
 interface InstanceTabsProps {
   instances: Map<string, Instance>
@@ -17,13 +16,11 @@ interface InstanceTabsProps {
   onSelect: (instanceId: string) => void
   onClose: (instanceId: string) => void
   onNew: () => void
-  onOpenRemoteAccess?: () => void
 }
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
-  const [notificationsOpen, setNotificationsOpen] = createSignal(false)
 
   const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
   const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
@@ -33,8 +30,10 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   })
 
   const notificationTitle = createMemo(() => {
-    if (!notificationsSupported()) return "Notifications unsupported"
-    return notificationsEnabled() ? "Notifications enabled" : "Notifications disabled"
+    if (!notificationsSupported()) return t("settings.notifications.status.unsupported")
+    return notificationsEnabled()
+      ? t("settings.notifications.status.enabled")
+      : t("settings.notifications.status.disabled")
   })
 
   return (
@@ -72,32 +71,35 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 />
               </div>
             </Show>
-            <ThemeModeToggle class="new-tab-button" />
+             <button
+               class="new-tab-button"
+               onClick={() => openSettings("appearance")}
+               title={t("settings.open.title")}
+               aria-label={t("settings.open.ariaLabel")}
+             >
+               <Settings class="w-4 h-4" />
+             </button>
 
-            <button
-              class={`new-tab-button ${!notificationsSupported() ? "opacity-50" : ""}`}
-              onClick={() => setNotificationsOpen(true)}
-              title={notificationTitle()}
-              aria-label={notificationTitle()}
-            >
+             <button
+               class={`new-tab-button ${!notificationsSupported() ? "opacity-50" : ""}`}
+               onClick={() => openSettings("notifications")}
+               title={notificationTitle()}
+               aria-label={notificationTitle()}
+             >
               <Dynamic component={notificationIcon()} class="w-4 h-4" />
             </button>
 
-            <Show when={Boolean(props.onOpenRemoteAccess)}>
-              <button
-                class="new-tab-button tab-remote-button"
-                onClick={() => props.onOpenRemoteAccess?.()}
-                title={t("instanceTabs.remote.title")}
-                aria-label={t("instanceTabs.remote.ariaLabel")}
-              >
-                <MonitorUp class="w-4 h-4" />
-              </button>
-            </Show>
+             <button
+               class="new-tab-button tab-remote-button"
+               onClick={() => openSettings("remote")}
+               title={t("instanceTabs.remote.title")}
+               aria-label={t("instanceTabs.remote.ariaLabel")}
+             >
+               <MonitorUp class="w-4 h-4" />
+             </button>
           </div>
         </div>
       </div>
-
-      <NotificationsSettingsModal open={notificationsOpen()} onClose={() => setNotificationsOpen(false)} />
     </div>
 
   )

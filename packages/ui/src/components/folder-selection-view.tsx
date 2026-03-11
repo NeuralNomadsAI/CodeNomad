@@ -2,10 +2,8 @@ import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
-import AdvancedSettingsModal from "./advanced-settings-modal"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
-import { ThemeModeToggle } from "./theme-mode-toggle"
 import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -14,6 +12,7 @@ import { githubStars } from "../stores/github-stars"
 import { formatCompactCount } from "../lib/formatters"
 import { useI18n, type Locale } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
+import { openSettings, settingsOpen } from "../stores/settings-screen"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
@@ -21,15 +20,11 @@ const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).h
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string, binaryPath?: string) => void
   isLoading?: boolean
-  advancedSettingsOpen?: boolean
-  onAdvancedSettingsOpen?: () => void
-  onAdvancedSettingsClose?: () => void
-  onOpenRemoteAccess?: () => void
   onClose?: () => void
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const { recentFolders, removeRecentFolder, preferences, updatePreferences, serverSettings, updateLastUsedBinary } = useConfig()
+  const { recentFolders, removeRecentFolder, preferences, updatePreferences, serverSettings } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
@@ -196,7 +191,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   })
 
   function dropTargetBlocked() {
-    return isLoading() || isFolderBrowserOpen() || Boolean(props.advancedSettingsOpen)
+    return isLoading() || isFolderBrowserOpen() || settingsOpen()
   }
 
   function showInvalidFolderDropAlert() {
@@ -264,11 +259,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     handleFolderSelect(path)
   }
  
-  function handleBinaryChange(binary: string) {
-
-    setSelectedBinary(binary)
-  }
-
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
@@ -398,16 +388,24 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             </Select>
           </div>
           <div class="absolute top-4 right-6 flex items-center gap-2">
-            <ThemeModeToggle class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center" />
-            <Show when={props.onOpenRemoteAccess}>
-              <button
-                type="button"
-                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                onClick={() => props.onOpenRemoteAccess?.()}
-              >
-                  <MonitorUp class="w-4 h-4" />
-                </button>
-            </Show>
+            <button
+              type="button"
+              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+              onClick={() => openSettings("appearance")}
+              aria-label={t("settings.open.title")}
+              title={t("settings.open.title")}
+            >
+              <Settings class="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+              onClick={() => openSettings("remote")}
+              aria-label={t("instanceTabs.remote.ariaLabel")}
+              title={t("instanceTabs.remote.title")}
+            >
+              <MonitorUp class="w-4 h-4" />
+            </button>
             <Show when={props.onClose}>
               <button
                 type="button"
@@ -595,12 +593,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   </button>
                 </div>
 
-                {/* Advanced settings section */}
+                {/* OpenCode settings section */}
                 <div class="panel-section w-full">
-                  <button onClick={() => props.onAdvancedSettingsOpen?.()} class="panel-section-header w-full justify-between">
+                  <button onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
                     <div class="flex items-center gap-2">
                       <Settings class="w-4 h-4 icon-muted" />
-                      <span class="text-sm font-medium text-secondary">{t("folderSelection.advancedSettings")}</span>
+                      <span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span>
                     </div>
                     <ChevronRight class="w-4 h-4 icon-muted" />
                   </button>
@@ -660,14 +658,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
         </Show>
       </div>
-
-      <AdvancedSettingsModal
-        open={Boolean(props.advancedSettingsOpen)}
-        onClose={() => props.onAdvancedSettingsClose?.()}
-        selectedBinary={selectedBinary()}
-        onBinaryChange={handleBinaryChange}
-        isLoading={props.isLoading}
-      />
 
       <DirectoryBrowserDialog
         open={isFolderBrowserOpen()}
