@@ -140,4 +140,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "发送消息",
   "promptInput.send.errorFallback": "发送消息失败",
   "promptInput.send.errorTitle": "发送失败",
+  "promptInput.voiceInput.start.title": "Start voice input",
+  "promptInput.voiceInput.stop.title": "Stop recording and transcribe",
+  "promptInput.voiceInput.transcribing.title": "Transcribing audio",
+  "promptInput.voiceInput.error.title": "Voice input failed",
+  "promptInput.voiceInput.error.permission": "Microphone access is required to record voice input.",
+  "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
+  "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
 } as const

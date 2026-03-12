@@ -1,5 +1,5 @@
 import { createSignal, Show, onMount, onCleanup, createEffect, on } from "solid-js"
-import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Square } from "lucide-solid"
 import UnifiedPicker from "./unified-picker"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
@@ -17,6 +17,7 @@ import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
+import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 const log = getLogger("actions")
 
 export default function PromptInput(props: PromptInputProps) {
@@ -411,6 +412,16 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
+  const voiceInput = usePromptVoiceInput({
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    enabled: () => preferences().showPromptVoiceInput,
+    disabled: () => Boolean(props.disabled),
+  })
+  const showVoiceInput = () =>
+    preferences().showPromptVoiceInput &&
+    (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
 
   const instance = () => getActiveInstance()
 
@@ -555,6 +566,30 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
 
         <div class="prompt-input-actions">
+          <Show when={showVoiceInput()}>
+            <button
+              type="button"
+              class={`prompt-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
+              onClick={() => void voiceInput.toggleRecording()}
+              disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
+              aria-label={voiceInput.buttonTitle()}
+              title={voiceInput.buttonTitle()}
+            >
+              <Show
+                when={voiceInput.isTranscribing()}
+                fallback={
+                  <Show when={voiceInput.isRecording()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                    <Square class="h-4 w-4" aria-hidden="true" />
+                  </Show>
+                }
+              >
+                <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+              </Show>
+            </button>
+            <Show when={voiceInput.isRecording()}>
+              <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
+            </Show>
+          </Show>
           <button
             type="button"
             class="stop-button"
@@ -588,4 +623,11 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
     </div>
   )
+}
+
+function formatVoiceTimer(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }

@@ -170,6 +170,37 @@
   color: var(--button-danger-text, var(--text-inverted, #ffffff));
 }
 
+.prompt-voice-button {
+  @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
+  background-color: color-mix(in oklab, var(--surface-secondary) 82%, var(--surface-base));
+  color: var(--text-secondary);
+}
+
+.prompt-voice-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-secondary));
+  @apply scale-105;
+}
+
+.prompt-voice-button:active:not(:disabled) {
+  @apply scale-95;
+}
+
+.prompt-voice-button.is-recording {
+  background-color: color-mix(in oklab, var(--button-danger-bg, rgba(239, 68, 68, 0.85)) 88%, white 12%);
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
+}
+
+.prompt-voice-button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.prompt-voice-timer {
+  font-size: 0.68rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
 .stop-button:hover:not(:disabled) {
   background-color: var(--button-danger-hover-bg, rgba(239, 68, 68, 0.9));
   @apply opacity-95 scale-105;

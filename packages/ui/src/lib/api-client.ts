@@ -7,6 +7,9 @@ import type {
   FileSystemCreateFolderResponse,
   FileSystemListResponse,
   InstanceData,
+  SpeechCapabilitiesResponse,
+  SpeechSynthesisResponse,
+  SpeechTranscriptionResponse,
   ServerMeta,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
@@ -233,6 +236,27 @@ export const serverApi = {
     return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
+    })
+  },
+  fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
+    return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+  },
+  transcribeAudio(payload: {
+    audioBase64: string
+    mimeType: string
+    filename?: string
+    language?: string
+    prompt?: string
+  }): Promise<SpeechTranscriptionResponse> {
+    return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" }): Promise<SpeechSynthesisResponse> {
+    return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
   listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {
