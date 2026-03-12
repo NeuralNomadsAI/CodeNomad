@@ -21,12 +21,14 @@ import { registerStorageRoutes } from "./routes/storage"
 import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
+import { registerSpeechRoutes } from "./routes/speech"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
+import type { SpeechService } from "../speech/service"
 
 interface HttpServerDeps {
   bindHost: string
@@ -41,6 +43,7 @@ interface HttpServerDeps {
   eventBus: EventBus
   serverMeta: ServerMeta
   instanceStore: InstanceStore
+  speechService: SpeechService
   authManager: AuthManager
   uiStaticDir: string
   uiDevServerUrl?: string
@@ -252,6 +255,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
+  registerSpeechRoutes(app, { speechService: deps.speechService })
   registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })

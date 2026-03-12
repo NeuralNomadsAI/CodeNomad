@@ -23,6 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } fro
 import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
+import { SpeechService } from "./speech/service"
 
 const require = createRequire(import.meta.url)
 
@@ -304,6 +305,7 @@ async function main() {
   })
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
+  const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -388,6 +390,7 @@ async function main() {
         eventBus,
         serverMeta,
         instanceStore,
+        speechService,
         authManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
@@ -408,6 +411,7 @@ async function main() {
         eventBus,
         serverMeta,
         instanceStore,
+        speechService,
         authManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,

@@ -42,6 +42,7 @@ export type BehaviorRegistryActions = {
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
   togglePromptSubmitOnEnter: () => void
+  toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: ExpansionPreference) => void
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
@@ -244,6 +245,24 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         setBooleanByToggle(
           () => Boolean(prefs().autoCleanupBlankSessions),
           actions.toggleAutoCleanupBlankSessions,
+          next,
+        )
+      },
+    },
+    {
+      kind: "toggle",
+      id: "behavior.promptVoiceInput",
+      titleKey: "settings.behavior.promptVoiceInput.title",
+      subtitleKey: "settings.behavior.promptVoiceInput.subtitle",
+      get: (p) => Boolean(p.showPromptVoiceInput ?? true),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ showPromptVoiceInput: next })
+          return
+        }
+        setBooleanByToggle(
+          () => Boolean(prefs().showPromptVoiceInput ?? true),
+          actions.toggleShowPromptVoiceInput,
           next,
         )
       },
