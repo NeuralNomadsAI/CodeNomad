@@ -34,19 +34,16 @@ export const SpeechSettingsCard: Component = () => {
   const { serverSettings, updateSpeechSettings } = useConfig()
   const initialDrafts = createDraftFields(serverSettings().speech)
   const [isSaving, setIsSaving] = createSignal(false)
-  const [saveStatus, setSaveStatus] = createSignal<"idle" | "saved" | "error">("idle")
+  const [saveStatus, setSaveStatus] = createSignal<"idle" | "saved" | "error">("saved")
   const [drafts, setDrafts] = createSignal<DraftFields>(initialDrafts)
 
   createEffect(() => {
     const speech = serverSettings().speech
     const nextDrafts = createDraftFields(speech)
-    if (!isDirty() || isSaving()) {
+    if (!isSaving() && !isDirty()) {
       if (!isDraftEqual(drafts(), nextDrafts)) {
         setDrafts(nextDrafts)
       }
-    }
-    if (!isSaving() && !isDirty()) {
-      setSaveStatus("saved")
     }
   })
 
@@ -86,9 +83,9 @@ export const SpeechSettingsCard: Component = () => {
 
   async function handleSave() {
     if (!isDirty() || isSaving()) return
+    const current = drafts()
     setIsSaving(true)
     setSaveStatus("idle")
-    const current = drafts()
     try {
       await updateSpeechSettings({
         apiKey: current.apiKey.trim() || undefined,
