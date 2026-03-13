@@ -94,7 +94,7 @@ async function sendMessage(
   }
 
   const messageId = createId("msg")
-  const textPartId = createId("part")
+  const textPartId = createId("prt")
 
   const resolvedPrompt = resolvePastedPlaceholders(prompt, attachments)
 
@@ -110,7 +110,6 @@ async function sendMessage(
 
   const requestParts: any[] = [
     {
-      id: textPartId,
       type: "text" as const,
       text: resolvedPrompt,
     },
@@ -120,9 +119,8 @@ async function sendMessage(
     for (const att of attachments) {
       const source = att.source
       if (source.type === "file") {
-        const partId = createId("part")
+        const partId = createId("prt")
         requestParts.push({
-          id: partId,
           type: "file" as const,
           url: att.url,
           mime: source.mime,
@@ -148,9 +146,8 @@ async function sendMessage(
           continue
         }
 
-        const partId = createId("part")
+        const partId = createId("prt")
         requestParts.push({
-          id: partId,
           type: "text" as const,
           text: value,
         })
@@ -184,7 +181,6 @@ async function sendMessage(
   })
 
   const requestBody = {
-    messageID: messageId,
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
     ...(session.model.providerId &&

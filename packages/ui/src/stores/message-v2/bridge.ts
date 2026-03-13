@@ -5,7 +5,7 @@ import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
-import type { MessageStatus, SessionRevertState } from "./types"
+import type { MessageStatus, ReplaceMessageIdOptions, SessionRevertState } from "./types"
 
 interface SessionMetadata {
   id: string
@@ -121,10 +121,10 @@ export function applyPartDeltaV2(
   })
 }
 
-export function replaceMessageIdV2(instanceId: string, oldId: string, newId: string): void {
+export function replaceMessageIdV2(instanceId: string, oldId: string, newId: string, options?: Omit<ReplaceMessageIdOptions, "oldId" | "newId">): void {
   if (!oldId || !newId || oldId === newId) return
   const store = messageStoreBus.getOrCreate(instanceId)
-  store.replaceMessageId({ oldId, newId })
+  store.replaceMessageId({ oldId, newId, ...(options ?? {}) })
 }
 
 function extractPermissionMessageId(permission: PermissionRequestLike): string | undefined {

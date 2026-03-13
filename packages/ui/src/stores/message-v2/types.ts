@@ -152,6 +152,7 @@ export interface PartUpdateInput {
 export interface ReplaceMessageIdOptions {
   oldId: string
   newId: string
+  clearParts?: boolean
 }
 
 export interface ScrollCacheKey {
