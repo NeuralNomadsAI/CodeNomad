@@ -1,5 +1,5 @@
 import { Index, Show, createEffect, createMemo, createSignal, onCleanup, type Accessor, type JSX } from "solid-js"
-import VirtualItem from "./virtual-item"
+import VirtualItem, { type VirtualItemHeightChangeMeta } from "./virtual-item"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -374,7 +374,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleContentRendered() {
-    scheduleAnchorScroll()
+    if (autoScroll() && !anchorLock()) {
+      scheduleAutoPinToBottom()
+      return
+    }
+    if (anchorLock() && !autoScroll()) {
+      scheduleAnchorCorrection()
+      return
+    }
   }
 
   function handleScroll() {
@@ -470,9 +477,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const bottomAfter = rect.bottom
     const bottomBefore = bottomAfter - delta
     const wasAboveViewport = bottomBefore < containerRect.top
-    if (!wasAboveViewport) {
-      return
-    }
+    if (!wasAboveViewport) return
 
     const next = (pendingScrollCompensations.get(key) ?? 0) + delta
     pendingScrollCompensations.set(key, next)
@@ -516,25 +521,51 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   let pendingAutoPin = false
+  let pendingAutoPinFrame: number | null = null
+
+  function clearPendingAutoPinFrame() {
+    if (pendingAutoPinFrame !== null) {
+      cancelAnimationFrame(pendingAutoPinFrame)
+      pendingAutoPinFrame = null
+    }
+  }
+
+  function applyAutoPinToBottom() {
+    if (!containerRef) return false
+    if (!autoScroll()) return false
+    if (anchorLock()) return false
+
+    const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
+    if (containerRef.scrollTop !== maxScrollTop) {
+      containerRef.scrollTop = maxScrollTop
+      lastKnownScrollTop = maxScrollTop
+    }
+    return true
+  }
+
   function scheduleAutoPinToBottom() {
     if (!containerRef) return
     if (pendingAutoPin) return
     pendingAutoPin = true
+    clearPendingAutoPinFrame()
     const gen = scrollCompensationGen
 
-    // Flush in a microtask so adjustments land before the next paint.
+    // Flush in a microtask so adjustments land before the next paint,
+    // then re-apply on the next two frames to catch deferred layout.
     queueMicrotask(() => {
       if (gen !== scrollCompensationGen) return
       pendingAutoPin = false
-      if (!containerRef) return
-      if (!autoScroll()) return
-      if (anchorLock()) return
-
-      const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
-      if (containerRef.scrollTop !== maxScrollTop) {
-        containerRef.scrollTop = maxScrollTop
-        lastKnownScrollTop = maxScrollTop
-      }
+      if (!applyAutoPinToBottom()) return
+      pendingAutoPinFrame = requestAnimationFrame(() => {
+        pendingAutoPinFrame = null
+        if (gen !== scrollCompensationGen) return
+        if (!applyAutoPinToBottom()) return
+        pendingAutoPinFrame = requestAnimationFrame(() => {
+          pendingAutoPinFrame = null
+          if (gen !== scrollCompensationGen) return
+          applyAutoPinToBottom()
+        })
+      })
     })
   }
 
@@ -623,6 +654,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingScrollCompensationScheduled = false
     pendingScrollCompensations = new Map()
     pendingAutoPin = false
+    clearPendingAutoPinFrame()
 
     suppressAutoScrollOnce = false
     pendingActiveScroll = false
@@ -713,7 +745,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       suppressAutoScrollOnce = false
       return
     }
-    if (autoScroll()) scheduleAnchorScroll(true)
+    if (autoScroll()) {
+      scheduleAutoPinToBottom()
+      return
+    }
+    if (anchorLock() && !autoScroll()) {
+      scheduleAnchorCorrection()
+    }
   })
 
   // Drop anchor lock if the anchored key is removed.
@@ -820,6 +858,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     scrollCompensationGen += 1
     pendingScrollCompensationScheduled = false
     pendingScrollCompensations = new Map()
+    clearPendingAutoPinFrame()
     clearScrollToBottomFrames()
     if (detachScrollIntentListeners) {
       detachScrollIntentListeners()
@@ -883,6 +922,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const anchorId = () => getAnchorId(key())
             const overscanPx = props.overscanPx ?? 800
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
+            const itemVirtualizationEnabled = () => virtualizationEnabled() && !autoScroll()
             return (
               <VirtualItem
                 id={anchorId()}
@@ -890,9 +930,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 scrollContainer={scrollElement}
                 threshold={overscanPx}
                 placeholderClass="message-stream-placeholder"
-                virtualizationEnabled={virtualizationEnabled}
+                virtualizationEnabled={itemVirtualizationEnabled}
                 suspendMeasurements={suspendMeasurements}
-                onHeightChange={(nextHeight, previousHeight) => {
+                onHeightChange={(nextHeight, previousHeight, meta: VirtualItemHeightChangeMeta) => {
                   const delta = nextHeight - previousHeight
 
                   // Follow mode: keep the viewport pinned to the bottom as
@@ -913,12 +953,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                   // while scrolling upward, compensate scrollTop so visible
                   // content stays stable.
                   if (delta) {
+                    if (meta.isStaleCacheCorrection) return
                     scheduleScrollCompensation(key(), delta)
                   }
                 }}
-              >
-                {() => props.renderItem(item(), index)}
-              </VirtualItem>
+              >{() => props.renderItem(item(), index)}</VirtualItem>
             )
           }}
         </Index>

@@ -240,19 +240,22 @@ function resolveMessageRole(info?: MessageInfo | null): MessageRole {
   return info?.role === "user" ? "user" : "assistant"
 }
 
-function findPendingMessageId(
+function findPendingSyntheticMessageId(
   store: InstanceMessageStore,
   sessionId: string,
   role: MessageRole,
 ): string | undefined {
   const messageIds = store.getSessionMessageIds(sessionId)
-  const lastId = messageIds[messageIds.length - 1]
-  if (!lastId) return undefined
-  const record = store.getMessage(lastId)
-  if (!record) return undefined
-  if (record.sessionId !== sessionId) return undefined
-  if (record.role !== role) return undefined
-  return record.status === "sending" ? record.id : undefined
+  for (const messageId of messageIds) {
+    const record = store.getMessage(messageId)
+    if (!record) continue
+    if (record.sessionId !== sessionId) continue
+    if (record.role !== role) continue
+    if (record.status !== "sending") continue
+    if (!record.isEphemeral) continue
+    return record.id
+  }
+  return undefined
 }
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
@@ -282,9 +285,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     let record = store.getMessage(messageId)
     if (!record) {
-      const pendingId = findPendingMessageId(store, sessionId, role)
+      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
       if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId)
+        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
         record = store.getMessage(messageId)
       }
     }
@@ -345,9 +348,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     let record = store.getMessage(messageId)
     if (!record) {
-      const pendingId = findPendingMessageId(store, sessionId, role)
+      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
       if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId)
+        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
         record = store.getMessage(messageId)
       }
     }

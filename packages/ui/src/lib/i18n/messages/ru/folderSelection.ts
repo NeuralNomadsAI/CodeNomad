@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "Открытие…",
 
   "folderSelection.advancedSettings": "Расширенные настройки",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "Навигация",
   "folderSelection.hints.select": "Выбрать",
@@ -30,6 +31,11 @@ export const folderSelectionMessages = {
 
   "folderSelection.loading.title": "Запуск экземпляра…",
   "folderSelection.loading.subtitle": "Подождите, пока мы подготовим рабочее пространство.",
+
+  "folderSelection.drop.title": "Перетащите папку, чтобы открыть ее",
+  "folderSelection.drop.subtitle": "Запустите новый экземпляр в перетащенной папке.",
+  "folderSelection.drop.invalidTitle": "Не удалось открыть перетащенный элемент",
+  "folderSelection.drop.invalidMessage": "Перетащите папку, чтобы запустить новый экземпляр.",
 
   "folderSelection.dialog.title": "Выберите рабочее пространство",
   "folderSelection.dialog.description": "Выберите рабочее пространство, чтобы начать писать код.",

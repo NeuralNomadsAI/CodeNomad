@@ -828,14 +828,31 @@ impl CliEntry {
 
         if dev {
             // Dev: plain HTTP + Vite dev server proxy.
+            let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("ELECTRON_RENDERER_URL")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .unwrap_or_else(|| "http://localhost:3000".to_string());
+            let log_level = std::env::var("CLI_LOG_LEVEL")
+                .ok()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "info".to_string());
+
             args.push("--https".to_string());
             args.push("false".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
+            args.push("--http-port".to_string());
+            args.push("0".to_string());
             args.push("--ui-dev-server".to_string());
-            args.push("http://localhost:3000".to_string());
+            args.push(ui_dev_server);
             args.push("--log-level".to_string());
-            args.push("debug".to_string());
+            args.push(log_level);
         } else {
             // Prod desktop: always keep loopback HTTP enabled.
             args.push("--https".to_string());
@@ -900,6 +917,11 @@ fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            candidates.push(Some(dir.join("resources/server/dist/bin.js")));
+            candidates.push(Some(dir.join("resources/server/dist/index.js")));
+            candidates.push(Some(dir.join("resources/server/dist/server/bin.js")));
+            candidates.push(Some(dir.join("resources/server/dist/server/index.js")));
+
             let resources = dir.join("../Resources");
             candidates.push(Some(resources.join("server/dist/bin.js")));
             candidates.push(Some(resources.join("server/dist/index.js")));
@@ -995,9 +1017,18 @@ fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
 }
 
 fn normalize_path(path: PathBuf) -> String {
-    if let Ok(clean) = path.canonicalize() {
-        clean.to_string_lossy().to_string()
+    let resolved = if let Ok(clean) = path.canonicalize() {
+        clean
     } else {
-        path.to_string_lossy().to_string()
+        path
+    };
+
+    let rendered = resolved.to_string_lossy().to_string();
+    if let Some(stripped) = rendered.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", stripped)
+    } else if let Some(stripped) = rendered.strip_prefix("\\\\?\\") {
+        stripped.to_string()
+    } else {
+        rendered
     }
 }

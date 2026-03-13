@@ -1,4 +1,5 @@
 import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
+import fs from "fs"
 import type { CliProcessManager, CliStatus } from "./process-manager"
 
 let wakeLockId: number | null = null
@@ -63,6 +64,24 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       : await dialog.showOpenDialog(dialogOptions)
 
     return { canceled: result.canceled, paths: result.filePaths }
+  })
+
+  ipcMain.handle("filesystem:getDirectoryPaths", async (_event, paths: unknown): Promise<string[]> => {
+    if (!Array.isArray(paths)) {
+      return []
+    }
+
+    const directories = paths.filter((value): value is string => {
+      if (typeof value !== "string" || value.trim().length === 0) {
+        return false
+      }
+      try {
+        return fs.statSync(value).isDirectory()
+      } catch {
+        return false
+      }
+    })
+    return directories
   })
 
   ipcMain.handle("power:setWakeLock", async (_event, enabled: boolean): Promise<{ enabled: boolean }> => {

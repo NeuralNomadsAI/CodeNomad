@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "Ouverture...",
 
   "folderSelection.advancedSettings": "Paramètres avancés",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "Naviguer",
   "folderSelection.hints.select": "Sélectionner",
@@ -30,6 +31,11 @@ export const folderSelectionMessages = {
 
   "folderSelection.loading.title": "Démarrage de l'instance...",
   "folderSelection.loading.subtitle": "Patientez pendant que nous préparons votre espace de travail.",
+
+  "folderSelection.drop.title": "Déposez un dossier pour l'ouvrir",
+  "folderSelection.drop.subtitle": "Démarrez une nouvelle instance dans le dossier déposé.",
+  "folderSelection.drop.invalidTitle": "Impossible d'ouvrir l'élément déposé",
+  "folderSelection.drop.invalidMessage": "Déposez un dossier pour démarrer une nouvelle instance.",
 
   "folderSelection.dialog.title": "Sélectionner l'espace de travail",
   "folderSelection.dialog.description": "Sélectionnez un espace de travail pour commencer à coder.",

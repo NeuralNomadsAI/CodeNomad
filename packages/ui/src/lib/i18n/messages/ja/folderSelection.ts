@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "開いています...",
 
   "folderSelection.advancedSettings": "詳細設定",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "移動",
   "folderSelection.hints.select": "選択",
@@ -30,6 +31,11 @@ export const folderSelectionMessages = {
 
   "folderSelection.loading.title": "インスタンスを起動中...",
   "folderSelection.loading.subtitle": "ワークスペースを準備しています。しばらくお待ちください。",
+
+  "folderSelection.drop.title": "フォルダをドロップして開く",
+  "folderSelection.drop.subtitle": "ドロップしたフォルダで新しいインスタンスを開始します。",
+  "folderSelection.drop.invalidTitle": "ドロップした項目を開けませんでした",
+  "folderSelection.drop.invalidMessage": "新しいインスタンスを開始するにはフォルダをドロップしてください。",
 
   "folderSelection.dialog.title": "ワークスペースを選択",
   "folderSelection.dialog.description": "コーディングを開始するワークスペースを選択してください。",

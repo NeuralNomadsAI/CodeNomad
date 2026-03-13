@@ -14,7 +14,7 @@ import { getLogger } from "../logger"
 import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
-import { runtimeEnv } from "../runtime-env"
+import { registerBehaviorCommands } from "../settings/behavior-registry"
 
 const log = getLogger("actions")
 
@@ -427,178 +427,19 @@ export function useCommands(options: UseCommandsOptions) {
       },
     })
 
-    commandRegistry.register({
-      id: "prompt-submit-shortcut",
-      label: () =>
-        options.preferences().promptSubmitOnEnter
-          ? tGlobal("commands.promptSubmitShortcut.label.swapped")
-          : tGlobal("commands.promptSubmitShortcut.label.default"),
-      description: () => tGlobal("commands.promptSubmitShortcut.description"),
-      category: "Input & Focus",
-      keywords: () => splitKeywords("commands.promptSubmitShortcut.keywords"),
-      action: options.togglePromptSubmitOnEnter,
-    })
-
-    commandRegistry.register({
-      id: "thinking",
-      label: () => tGlobal(options.preferences().showThinkingBlocks ? "commands.thinkingBlocks.label.hide" : "commands.thinkingBlocks.label.show"),
-      description: () => tGlobal("commands.thinkingBlocks.description"),
-      category: "System",
-      keywords: () => ["/thinking", ...splitKeywords("commands.thinkingBlocks.keywords")],
-      action: options.toggleShowThinkingBlocks,
-    })
-
-    commandRegistry.register({
-      id: "timeline-tools",
-      label: () => tGlobal(options.preferences().showTimelineTools ? "commands.timelineToolCalls.label.hide" : "commands.timelineToolCalls.label.show"),
-      description: () => tGlobal("commands.timelineToolCalls.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.timelineToolCalls.keywords"),
-      action: options.toggleShowTimelineTools,
-    })
-
-    commandRegistry.register({
-      id: "keyboard-shortcut-hints",
-      label: () =>
-        tGlobal(
-          options.preferences().showKeyboardShortcutHints
-            ? "commands.keyboardShortcutHints.label.hide"
-            : "commands.keyboardShortcutHints.label.show",
-        ),
-      description: () =>
-        tGlobal(
-          runtimeEnv.host === "web"
-            ? "commands.keyboardShortcutHints.description.disabledWeb"
-            : "commands.keyboardShortcutHints.description",
-        ),
-      category: "System",
-      keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
-      disabled: () => runtimeEnv.host === "web",
-      action: options.toggleKeyboardShortcutHints,
-    })
-
-    commandRegistry.register({
-      id: "thinking-default-visibility",
-      label: () => {
-        const mode = options.preferences().thinkingBlocksExpansion ?? "expanded"
-        const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
-        return tGlobal("commands.thinkingBlocksDefault.label", { state })
-      },
-      description: () => tGlobal("commands.thinkingBlocksDefault.description"),
-      category: "System",
-      keywords: () => ["/thinking", ...splitKeywords("commands.thinkingBlocksDefault.keywords")],
-      action: () => {
-        const mode = options.preferences().thinkingBlocksExpansion ?? "expanded"
-        const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
-        options.setThinkingBlocksExpansion(next)
-      },
-    })
-
-    commandRegistry.register({
-      id: "diff-view-split",
-      label: () => {
-        const prefix = (options.preferences().diffViewMode || "split") === "split" ? "✓ " : ""
-        return `${prefix}${tGlobal("commands.diffViewSplit.label")}`
-      },
-      description: () => tGlobal("commands.diffViewSplit.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.diffViewSplit.keywords"),
-      action: () => options.setDiffViewMode("split"),
-    })
-
-    commandRegistry.register({
-      id: "diff-view-unified",
-      label: () => {
-        const prefix = (options.preferences().diffViewMode || "split") === "unified" ? "✓ " : ""
-        return `${prefix}${tGlobal("commands.diffViewUnified.label")}`
-      },
-      description: () => tGlobal("commands.diffViewUnified.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.diffViewUnified.keywords"),
-      action: () => options.setDiffViewMode("unified"),
-    })
-
-    commandRegistry.register({
-      id: "tool-output-default-visibility",
-      label: () => {
-        const mode = options.preferences().toolOutputExpansion || "expanded"
-        const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
-        return tGlobal("commands.toolOutputsDefault.label", { state })
-      },
-      description: () => tGlobal("commands.toolOutputsDefault.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.toolOutputsDefault.keywords"),
-      action: () => {
-        const mode = options.preferences().toolOutputExpansion || "expanded"
-        const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
-        options.setToolOutputExpansion(next)
-      },
-    })
-
-    commandRegistry.register({
-      id: "diagnostics-default-visibility",
-      label: () => {
-        const mode = options.preferences().diagnosticsExpansion || "expanded"
-        const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
-        return tGlobal("commands.diagnosticsDefault.label", { state })
-      },
-      description: () => tGlobal("commands.diagnosticsDefault.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.diagnosticsDefault.keywords"),
-      action: () => {
-        const mode = options.preferences().diagnosticsExpansion || "expanded"
-        const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
-        options.setDiagnosticsExpansion(next)
-      },
-    })
-
-    commandRegistry.register({
-      id: "tool-inputs-visibility",
-      label: () => {
-        const mode = options.preferences().toolInputsVisibility || "hidden"
-        const state =
-          mode === "expanded"
-            ? tGlobal("commands.common.expanded")
-            : mode === "collapsed"
-              ? tGlobal("commands.common.collapsed")
-              : tGlobal("commands.common.hidden")
-        return tGlobal("commands.toolInputsVisibility.label", { state })
-      },
-      description: () => tGlobal("commands.toolInputsVisibility.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.toolInputsVisibility.keywords"),
-      action: () => {
-        const mode = options.preferences().toolInputsVisibility || "hidden"
-        const next: ToolInputsVisibilityPreference =
-          mode === "hidden" ? "collapsed" : mode === "collapsed" ? "expanded" : "hidden"
-        options.setToolInputsVisibility(next)
-      },
-    })
-
-    commandRegistry.register({
-      id: "token-usage-visibility",
-      label: () => {
-        const visible = options.preferences().showUsageMetrics ?? true
-        const state = visible ? tGlobal("commands.common.visible") : tGlobal("commands.common.hidden")
-        return tGlobal("commands.tokenUsageDisplay.label", { state })
-      },
-      description: () => tGlobal("commands.tokenUsageDisplay.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.tokenUsageDisplay.keywords"),
-      action: options.toggleUsageMetrics,
-    })
-
-    commandRegistry.register({
-      id: "auto-cleanup-blank-sessions",
-      label: () => {
-        const enabled = options.preferences().autoCleanupBlankSessions
-        const state = enabled ? tGlobal("commands.common.enabled") : tGlobal("commands.common.disabled")
-        return tGlobal("commands.autoCleanupBlankSessions.label", { state })
-      },
-      description: () => tGlobal("commands.autoCleanupBlankSessions.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.autoCleanupBlankSessions.keywords"),
-      action: options.toggleAutoCleanupBlankSessions,
+    registerBehaviorCommands((command) => commandRegistry.register(command), {
+      preferences: options.preferences,
+      toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
+      toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
+      toggleShowTimelineTools: options.toggleShowTimelineTools,
+      toggleUsageMetrics: options.toggleUsageMetrics,
+      toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,
+      togglePromptSubmitOnEnter: options.togglePromptSubmitOnEnter,
+      setDiffViewMode: options.setDiffViewMode,
+      setToolOutputExpansion: options.setToolOutputExpansion,
+      setDiagnosticsExpansion: options.setDiagnosticsExpansion,
+      setThinkingBlocksExpansion: options.setThinkingBlocksExpansion,
+      setToolInputsVisibility: options.setToolInputsVisibility,
     })
  
     commandRegistry.register({

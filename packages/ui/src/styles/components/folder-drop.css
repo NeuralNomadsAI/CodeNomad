@@ -1,0 +1,39 @@
+.folder-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: color-mix(in srgb, var(--folder-overlay-bg) 88%, var(--accent-primary) 12%);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.folder-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  width: min(560px, 100%);
+  padding: 2rem;
+  border: 2px dashed var(--accent-primary);
+  border-radius: var(--radius-xl);
+  background-color: color-mix(in srgb, var(--surface-base) 92%, var(--accent-primary) 8%);
+  box-shadow: var(--folder-card-shadow);
+  text-align: center;
+}
+
+.folder-drop-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.folder-drop-subtext {
+  max-width: 32rem;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-relaxed);
+  color: var(--text-secondary);
+}

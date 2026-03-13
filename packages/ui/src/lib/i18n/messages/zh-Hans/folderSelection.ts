@@ -22,6 +22,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.buttonOpening": "正在打开...",
 
   "folderSelection.advancedSettings": "高级设置",
+  "folderSelection.opencode": "OpenCode",
 
   "folderSelection.hints.navigate": "导航",
   "folderSelection.hints.select": "选择",
@@ -30,6 +31,11 @@ export const folderSelectionMessages = {
 
   "folderSelection.loading.title": "正在启动实例...",
   "folderSelection.loading.subtitle": "正在准备你的工作区，请稍候。",
+
+  "folderSelection.drop.title": "拖放文件夹以打开",
+  "folderSelection.drop.subtitle": "在拖放的文件夹中启动一个新实例。",
+  "folderSelection.drop.invalidTitle": "无法打开拖放的项目",
+  "folderSelection.drop.invalidMessage": "请拖放一个文件夹来启动新实例。",
 
   "folderSelection.dialog.title": "选择工作区",
   "folderSelection.dialog.description": "选择工作区以开始编码。",

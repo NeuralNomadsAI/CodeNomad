@@ -15,6 +15,9 @@
   ring-color: var(--accent-primary);
 }
 
+.selector-trigger:disabled,
+.selector-trigger[aria-disabled="true"],
+.selector-trigger[data-disabled],
 .selector-trigger-disabled {
   @apply opacity-50 cursor-not-allowed;
 }

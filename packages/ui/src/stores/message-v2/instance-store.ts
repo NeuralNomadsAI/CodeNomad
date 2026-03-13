@@ -586,10 +586,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
       return
     }
-  
+
     const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
     const cloned = clonePart(input.part)
-  
+
     setState(
       "messages",
       input.messageId,
@@ -792,6 +792,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       id: options.newId,
       isEphemeral: false,
       updatedAt: Date.now(),
+      partIds: options.clearParts ? [] : existing.partIds,
+      parts: options.clearParts ? {} : existing.parts,
     }
 
     setState("messages", options.newId, cloned)
