@@ -1,7 +1,7 @@
 import type { Accessor, JSXElement } from "solid-js"
 import type { RenderCache } from "../../types/message"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../lib/ansi"
-import { escapeHtml } from "../../lib/markdown"
+import { escapeHtml } from "../../lib/text-render-utils"
 import type { AnsiRenderOptions, ToolScrollHelpers } from "./types"
 
 type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
