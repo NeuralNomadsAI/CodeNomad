@@ -2,11 +2,6 @@ import { createContext, createEffect, createMemo, createSignal, onCleanup, onMou
 import type { ParentComponent } from "solid-js"
 import { useConfig } from "../../stores/preferences"
 import { enMessages } from "./messages/en"
-import { esMessages } from "./messages/es"
-import { frMessages } from "./messages/fr"
-import { ruMessages } from "./messages/ru"
-import { jaMessages } from "./messages/ja"
-import { zhHansMessages } from "./messages/zh-Hans"
 
 type Messages = Record<string, string>
 
@@ -16,13 +11,16 @@ export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans"
 
 const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans"] as const
 
-const messagesByLocale: Record<Locale, Messages> = {
-  en: enMessages,
-  es: esMessages,
-  fr: frMessages,
-  ru: ruMessages,
-  ja: jaMessages,
-  "zh-Hans": zhHansMessages,
+const localeMessagesCache = new Map<Locale, Messages>([["en", enMessages]])
+const localeMessagesPromises = new Map<Locale, Promise<Messages>>()
+
+const localeLoaders: Record<Locale, () => Promise<Messages>> = {
+  en: async () => enMessages,
+  es: async () => (await import("./messages/es")).esMessages,
+  fr: async () => (await import("./messages/fr")).frMessages,
+  ru: async () => (await import("./messages/ru")).ruMessages,
+  ja: async () => (await import("./messages/ja")).jaMessages,
+  "zh-Hans": async () => (await import("./messages/zh-Hans")).zhHansMessages,
 }
 
 function normalizeLocaleTag(value: string): string {
@@ -84,8 +82,45 @@ function translateFrom(messages: Messages, key: string, params?: TranslateParams
 }
 
 const [globalRevision, setGlobalRevision] = createSignal(0)
-const initialGlobalLocale: Locale = detectNavigatorLocale() ?? "en"
-let globalMessages: Messages = messagesByLocale[initialGlobalLocale]
+let globalMessages: Messages = enMessages
+
+function getMessagesForLocale(locale: Locale): Messages {
+  return localeMessagesCache.get(locale) ?? enMessages
+}
+
+async function loadLocaleMessages(locale: Locale): Promise<Messages> {
+  const cached = localeMessagesCache.get(locale)
+  if (cached) {
+    return cached
+  }
+
+  const pending = localeMessagesPromises.get(locale)
+  if (pending) {
+    return pending
+  }
+
+  const loader = localeLoaders[locale]
+  const promise = loader()
+    .then((messages) => {
+      localeMessagesCache.set(locale, messages)
+      localeMessagesPromises.delete(locale)
+      return messages
+    })
+    .catch((error) => {
+      localeMessagesPromises.delete(locale)
+      throw error
+    })
+
+  localeMessagesPromises.set(locale, promise)
+  return promise
+}
+
+export async function preloadLocaleMessages(preferredLocale?: string | null): Promise<Locale> {
+  const resolvedLocale = matchSupportedLocale(preferredLocale ?? undefined) ?? detectNavigatorLocale() ?? "en"
+  globalMessages = await loadLocaleMessages(resolvedLocale)
+  setGlobalRevision((value) => value + 1)
+  return resolvedLocale
+}
 
 export function tGlobal(key: string, params?: TranslateParams): string {
   globalRevision()
@@ -102,8 +137,7 @@ const I18nContext = createContext<I18nContextValue>()
 export const I18nProvider: ParentComponent = (props) => {
   const { preferences } = useConfig()
   const [detectedLocale, setDetectedLocale] = createSignal<Locale>("en")
-
-  const previousMessages = globalMessages
+  const [resolvedLocale, setResolvedLocale] = createSignal<Locale>("en")
 
   onMount(() => {
     const detected = detectNavigatorLocale()
@@ -115,19 +149,42 @@ export const I18nProvider: ParentComponent = (props) => {
     return configured ?? detectedLocale() ?? "en"
   })
 
-  const messages = createMemo<Messages>(() => messagesByLocale[locale()])
+  const messages = createMemo<Messages>(() => getMessagesForLocale(resolvedLocale()))
 
   function t(key: string, params?: TranslateParams): string {
     return translateFrom(messages(), key, params)
   }
 
   createEffect(() => {
-    globalMessages = messages()
-    setGlobalRevision((value) => value + 1)
+    const nextLocale = locale()
+    let cancelled = false
+
+    void loadLocaleMessages(nextLocale)
+      .then((loadedMessages) => {
+        if (cancelled) {
+          return
+        }
+        localeMessagesCache.set(nextLocale, loadedMessages)
+        setResolvedLocale(nextLocale)
+        globalMessages = loadedMessages
+        setGlobalRevision((value) => value + 1)
+      })
+      .catch(() => {
+        if (cancelled) {
+          return
+        }
+        setResolvedLocale("en")
+        globalMessages = enMessages
+        setGlobalRevision((value) => value + 1)
+      })
+
+    onCleanup(() => {
+      cancelled = true
+    })
   })
 
   onCleanup(() => {
-    globalMessages = previousMessages
+    globalMessages = enMessages
     setGlobalRevision((value) => value + 1)
   })
 

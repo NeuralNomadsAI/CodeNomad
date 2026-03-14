@@ -1,15 +1,12 @@
-import { Component, For, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js"
+import { Component, For, Show, Suspense, createMemo, createEffect, createSignal, lazy, onMount, onCleanup } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
-import FolderSelectionView from "./components/folder-selection-view"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
-import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
-import { SettingsScreen } from "./components/settings-screen"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { initMarkdown } from "./lib/markdown"
 import { initGithubStars } from "./stores/github-stars"
@@ -54,9 +51,15 @@ import {
 } from "./stores/sessions"
 
 import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
-import { openSettings } from "./stores/settings-screen"
+import { openSettings, settingsOpen } from "./stores/settings-screen"
 
 const log = getLogger("actions")
+
+const LazyFolderSelectionView = lazy(() => import("./components/folder-selection-view"))
+const LazyInstanceDisconnectedModal = lazy(() => import("./components/instance-disconnected-modal"))
+const LazySettingsScreen = lazy(() =>
+  import("./components/settings-screen").then((module) => ({ default: module.SettingsScreen })),
+)
 
 const App: Component = () => {
   const { isDark } = useTheme()
@@ -409,12 +412,16 @@ const App: Component = () => {
 
   return (
     <>
-      <InstanceDisconnectedModal
-        open={Boolean(disconnectedInstance())}
-        folder={disconnectedInstance()?.folder}
-        reason={disconnectedInstance()?.reason}
-        onClose={handleDisconnectedInstanceClose}
-      />
+      <Show when={Boolean(disconnectedInstance())}>
+        <Suspense fallback={null}>
+          <LazyInstanceDisconnectedModal
+            open={Boolean(disconnectedInstance())}
+            folder={disconnectedInstance()?.folder}
+            reason={disconnectedInstance()?.reason}
+            onClose={handleDisconnectedInstanceClose}
+          />
+        </Suspense>
+      </Show>
 
       <Dialog open={Boolean(launchError())} modal>
         <Dialog.Portal>
@@ -527,29 +534,37 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            isLoading={isSelectingFolder()}
-          />
+          <Suspense fallback={<div class="flex-1 min-h-0" />}>
+            <LazyFolderSelectionView
+              onSelectFolder={handleSelectFolder}
+              isLoading={isSelectingFolder()}
+            />
+          </Suspense>
         </Show>
 
         <Show when={showFolderSelection()}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
-              <FolderSelectionView
-                onSelectFolder={handleSelectFolder}
-                isLoading={isSelectingFolder()}
-                onClose={() => {
-                  setShowFolderSelection(false)
-                  clearLaunchError()
-                }}
-              />
+              <Suspense fallback={<div class="w-full h-full" />}>
+                <LazyFolderSelectionView
+                  onSelectFolder={handleSelectFolder}
+                  isLoading={isSelectingFolder()}
+                  onClose={() => {
+                    setShowFolderSelection(false)
+                    clearLaunchError()
+                  }}
+                />
+              </Suspense>
             </div>
           </div>
         </Show>
- 
-        <SettingsScreen />
- 
+
+        <Show when={settingsOpen()}>
+          <Suspense fallback={null}>
+            <LazySettingsScreen />
+          </Suspense>
+        </Show>
+
         <AlertDialog />
 
         <Toaster

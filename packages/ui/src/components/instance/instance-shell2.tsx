@@ -1,9 +1,11 @@
 import {
   For,
   Show,
+  Suspense,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   onCleanup,
   onMount,
   type Accessor,
@@ -22,11 +24,7 @@ import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-regi
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
 import Kbd from "../kbd"
-import InstanceWelcomeView from "../instance-welcome-view"
-import InfoView from "../info-view"
-import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
-import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
@@ -34,7 +32,6 @@ import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
-import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
 import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -59,6 +56,14 @@ import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 
 const log = getLogger("session")
+
+const LazyInstanceWelcomeView = lazy(() => import("../instance-welcome-view"))
+const LazyInfoView = lazy(() => import("../info-view"))
+const LazyCommandPalette = lazy(() => import("../command-palette"))
+const LazyBackgroundProcessOutputDialog = lazy(() =>
+  import("../background-process-output-dialog").then((module) => ({ default: module.BackgroundProcessOutputDialog })),
+)
+const LazyPermissionApprovalModal = lazy(() => import("../permission-approval-modal"))
 
 interface InstanceShellProps {
   instance: Instance
@@ -834,7 +839,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView instanceId={props.instance.id} />
+              <Suspense fallback={<div class="flex-1 min-h-0" />}>
+                <LazyInfoView instanceId={props.instance.id} />
+              </Suspense>
             </div>
           </Show>
         </Box>
@@ -850,30 +857,49 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         class="instance-shell2 flex flex-col flex-1 min-h-0"
         data-instance-id={props.instance.id}
       >
-        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+        <Show
+          when={hasSessions()}
+          fallback={
+            <Suspense fallback={<div class="flex-1 min-h-0" />}>
+              <LazyInstanceWelcomeView instance={props.instance} />
+            </Suspense>
+          }
+        >
           {sessionLayout}
         </Show>
       </div>
 
-      <CommandPalette
-        open={paletteOpen()}
-        onClose={() => hideCommandPalette(props.instance.id)}
-        commands={instancePaletteCommands()}
-        onExecute={props.onExecuteCommand}
-      />
+      <Show when={paletteOpen()}>
+        <Suspense fallback={null}>
+          <LazyCommandPalette
+            open={paletteOpen()}
+            onClose={() => hideCommandPalette(props.instance.id)}
+            commands={instancePaletteCommands()}
+            onExecute={props.onExecuteCommand}
+          />
+        </Suspense>
+      </Show>
 
-      <BackgroundProcessOutputDialog
-        open={showBackgroundOutput()}
-        instanceId={props.instance.id}
-        process={selectedBackgroundProcess()}
-        onClose={closeBackgroundOutput}
-      />
+      <Show when={showBackgroundOutput()}>
+        <Suspense fallback={null}>
+          <LazyBackgroundProcessOutputDialog
+            open={showBackgroundOutput()}
+            instanceId={props.instance.id}
+            process={selectedBackgroundProcess()}
+            onClose={closeBackgroundOutput}
+          />
+        </Suspense>
+      </Show>
 
-      <PermissionApprovalModal
-        instanceId={props.instance.id}
-        isOpen={permissionModalOpen()}
-        onClose={() => setPermissionModalOpen(false)}
-      />
+      <Show when={permissionModalOpen()}>
+        <Suspense fallback={null}>
+          <LazyPermissionApprovalModal
+            instanceId={props.instance.id}
+            isOpen={permissionModalOpen()}
+            onClose={() => setPermissionModalOpen(false)}
+          />
+        </Suspense>
+      </Show>
     </>
   )
 }
