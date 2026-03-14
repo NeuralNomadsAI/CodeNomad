@@ -1,5 +1,5 @@
 import { isRenderableDiffText } from "../../lib/diff-utils"
-import { getLanguageFromPath } from "../../lib/markdown"
+import { getLanguageFromPath } from "../../lib/text-render-utils"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
