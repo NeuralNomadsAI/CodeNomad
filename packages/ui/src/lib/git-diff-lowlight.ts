@@ -171,7 +171,7 @@ export const highlighter = {
     ignoreSyntaxHighlightList.push(...values)
   },
   getAST(raw: string, fileName?: string, lang?: string) {
-    const language = String(lang || "plaintext")
+    const language = typeof lang === "string" ? lang.trim() : ""
     if (
       fileName &&
       ignoreSyntaxHighlightList.some((item) => (item instanceof RegExp ? item.test(fileName) : fileName === item))
@@ -179,7 +179,7 @@ export const highlighter = {
       return undefined
     }
 
-    if (lowlight.registered(language)) {
+    if (language && lowlight.registered(language)) {
       return lowlight.highlight(language, raw)
     }
 
