@@ -36,7 +36,6 @@ import { useI18n } from "../../lib/i18n"
 import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
-import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
@@ -64,6 +63,11 @@ const LazyBackgroundProcessOutputDialog = lazy(() =>
   import("../background-process-output-dialog").then((module) => ({ default: module.BackgroundProcessOutputDialog })),
 )
 const LazyPermissionApprovalModal = lazy(() => import("../permission-approval-modal"))
+const LazyRightPanel = lazy(() => import("./shell/right-panel/RightPanel"))
+
+function RightPanelFallback() {
+  return <div class="flex-1 min-h-0" />
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -499,28 +503,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             role="presentation"
             aria-hidden="true"
           />
-          <RightPanel
-            t={t}
-            instanceId={props.instance.id}
-            instance={props.instance}
-            activeSessionId={activeSessionIdForInstance}
-            activeSession={activeSessionForInstance}
-            activeSessionDiffs={activeSessionDiffs}
-            latestTodoState={latestTodoState}
-            backgroundProcessList={backgroundProcessList}
-            onOpenBackgroundOutput={openBackgroundOutput}
-            onStopBackgroundProcess={stopBackgroundProcess}
-            onTerminateBackgroundProcess={terminateBackgroundProcess}
-            isPhoneLayout={isPhoneLayout}
-            rightDrawerWidth={rightDrawerWidth}
-            rightDrawerWidthInitialized={rightDrawerWidthInitialized}
-            rightDrawerState={rightDrawerState}
-            rightPinned={rightPinned}
-            onCloseRightDrawer={closeRightDrawer}
-            onPinRightDrawer={pinRightDrawer}
-            onUnpinRightDrawer={unpinRightDrawer}
-            setContentEl={setRightDrawerContentEl}
-          />
+          <Suspense fallback={<RightPanelFallback />}>
+            <LazyRightPanel
+              t={t}
+              instanceId={props.instance.id}
+              instance={props.instance}
+              activeSessionId={activeSessionIdForInstance}
+              activeSession={activeSessionForInstance}
+              activeSessionDiffs={activeSessionDiffs}
+              latestTodoState={latestTodoState}
+              backgroundProcessList={backgroundProcessList}
+              onOpenBackgroundOutput={openBackgroundOutput}
+              onStopBackgroundProcess={stopBackgroundProcess}
+              onTerminateBackgroundProcess={terminateBackgroundProcess}
+              isPhoneLayout={isPhoneLayout}
+              rightDrawerWidth={rightDrawerWidth}
+              rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+              rightDrawerState={rightDrawerState}
+              rightPinned={rightPinned}
+              onCloseRightDrawer={closeRightDrawer}
+              onPinRightDrawer={pinRightDrawer}
+              onUnpinRightDrawer={unpinRightDrawer}
+              setContentEl={setRightDrawerContentEl}
+            />
+          </Suspense>
         </Box>
       )
     }
@@ -560,28 +566,32 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
         </Show>
-        <RightPanel
-          t={t}
-          instanceId={props.instance.id}
-          instance={props.instance}
-          activeSessionId={activeSessionIdForInstance}
-          activeSession={activeSessionForInstance}
-          activeSessionDiffs={activeSessionDiffs}
-          latestTodoState={latestTodoState}
-          backgroundProcessList={backgroundProcessList}
-          onOpenBackgroundOutput={openBackgroundOutput}
-          onStopBackgroundProcess={stopBackgroundProcess}
-          onTerminateBackgroundProcess={terminateBackgroundProcess}
-          isPhoneLayout={isPhoneLayout}
-          rightDrawerWidth={rightDrawerWidth}
-          rightDrawerWidthInitialized={rightDrawerWidthInitialized}
-          rightDrawerState={rightDrawerState}
-          rightPinned={rightPinned}
-          onCloseRightDrawer={closeRightDrawer}
-          onPinRightDrawer={pinRightDrawer}
-          onUnpinRightDrawer={unpinRightDrawer}
-          setContentEl={setRightDrawerContentEl}
-        />
+        <Show when={rightOpen() || rightPinned()} fallback={<RightPanelFallback />}>
+          <Suspense fallback={<RightPanelFallback />}>
+            <LazyRightPanel
+              t={t}
+              instanceId={props.instance.id}
+              instance={props.instance}
+              activeSessionId={activeSessionIdForInstance}
+              activeSession={activeSessionForInstance}
+              activeSessionDiffs={activeSessionDiffs}
+              latestTodoState={latestTodoState}
+              backgroundProcessList={backgroundProcessList}
+              onOpenBackgroundOutput={openBackgroundOutput}
+              onStopBackgroundProcess={stopBackgroundProcess}
+              onTerminateBackgroundProcess={terminateBackgroundProcess}
+              isPhoneLayout={isPhoneLayout}
+              rightDrawerWidth={rightDrawerWidth}
+              rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+              rightDrawerState={rightDrawerState}
+              rightPinned={rightPinned}
+              onCloseRightDrawer={closeRightDrawer}
+              onPinRightDrawer={pinRightDrawer}
+              onUnpinRightDrawer={unpinRightDrawer}
+              setContentEl={setRightDrawerContentEl}
+            />
+          </Suspense>
+        </Show>
       </Drawer>
 
     )
