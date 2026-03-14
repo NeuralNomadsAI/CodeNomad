@@ -755,7 +755,13 @@ export default function MessageSection(props: MessageSectionProps) {
     const loading = Boolean(props.loading)
     const ids = messageIds()
 
-    if (!active || loading) {
+    if (!active) {
+      clearPendingTimelinePartUpdateFrame()
+      pendingTimelineMessagePartUpdates.clear()
+      return
+    }
+
+    if (loading) {
       handleClearTimelineSelection()
       previousTimelineIds = []
       setTimelineSegments([])
