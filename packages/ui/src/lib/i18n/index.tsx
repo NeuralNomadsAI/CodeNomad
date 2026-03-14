@@ -117,9 +117,15 @@ async function loadLocaleMessages(locale: Locale): Promise<Messages> {
 
 export async function preloadLocaleMessages(preferredLocale?: string | null): Promise<Locale> {
   const resolvedLocale = matchSupportedLocale(preferredLocale ?? undefined) ?? detectNavigatorLocale() ?? "en"
-  globalMessages = await loadLocaleMessages(resolvedLocale)
-  setGlobalRevision((value) => value + 1)
-  return resolvedLocale
+  try {
+    globalMessages = await loadLocaleMessages(resolvedLocale)
+    setGlobalRevision((value) => value + 1)
+    return resolvedLocale
+  } catch {
+    globalMessages = enMessages
+    setGlobalRevision((value) => value + 1)
+    return "en"
+  }
 }
 
 export function tGlobal(key: string, params?: TranslateParams): string {

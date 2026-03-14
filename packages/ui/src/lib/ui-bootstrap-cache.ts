@@ -1,8 +1,8 @@
 export type UiBootstrapTheme = "light" | "dark" | "system"
 
 export interface UiBootstrapCacheSnapshot {
-  theme?: UiBootstrapTheme
-  locale?: string
+  theme?: UiBootstrapTheme | null
+  locale?: string | null
 }
 
 const UI_BOOTSTRAP_CACHE_KEY = "codenomad:ui-bootstrap"
@@ -41,7 +41,18 @@ export function writeUiBootstrapCache(snapshot: UiBootstrapCacheSnapshot) {
   }
 
   try {
-    window.localStorage.setItem(UI_BOOTSTRAP_CACHE_KEY, JSON.stringify(snapshot))
+    const previous = readUiBootstrapCache()
+    const next: UiBootstrapCacheSnapshot = {
+      theme: snapshot.theme === undefined ? previous.theme : snapshot.theme ?? undefined,
+      locale: snapshot.locale === undefined ? previous.locale : snapshot.locale ?? undefined,
+    }
+
+    if (!next.theme && !next.locale) {
+      window.localStorage.removeItem(UI_BOOTSTRAP_CACHE_KEY)
+      return
+    }
+
+    window.localStorage.setItem(UI_BOOTSTRAP_CACHE_KEY, JSON.stringify(next))
   } catch {
     /* noop */
   }

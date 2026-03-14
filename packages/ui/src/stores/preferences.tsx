@@ -600,10 +600,17 @@ const configContextValue: ConfigContextValue = {
 
 export const ConfigProvider: ParentComponent = (props) => {
   createEffect(() => {
+    if (!isLoaded()) {
+      return
+    }
+
     const bucket = uiConfigBucket()
+    const theme = bucket.theme
+    const locale = bucket.settings?.locale
+
     writeUiBootstrapCache({
-      theme: bucket.theme,
-      locale: bucket.settings?.locale,
+      theme: theme ?? null,
+      locale: locale ?? null,
     })
   })
 
