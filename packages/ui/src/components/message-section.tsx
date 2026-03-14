@@ -751,10 +751,11 @@ export default function MessageSection(props: MessageSectionProps) {
   let previousTimelineIds: string[] = []
 
   createEffect(() => {
+    const active = isActive()
     const loading = Boolean(props.loading)
     const ids = messageIds()
 
-    if (loading) {
+    if (!active || loading) {
       handleClearTimelineSelection()
       previousTimelineIds = []
       setTimelineSegments([])
@@ -904,6 +905,12 @@ export default function MessageSection(props: MessageSectionProps) {
   // Part deletion does not remove message ids from the session, so we must
   // explicitly replace segments for messages whose part count changed.
   createEffect(() => {
+    if (!isActive()) {
+      clearPendingTimelinePartUpdateFrame()
+      pendingTimelineMessagePartUpdates.clear()
+      return
+    }
+
     if (props.loading) return
     const ids = messageIds()
     const resolvedStore = store()
@@ -946,6 +953,10 @@ export default function MessageSection(props: MessageSectionProps) {
 
 
   createEffect(() => {
+    if (!isActive()) {
+      return
+    }
+
     if (typeof document === "undefined") return
     const handleSelectionChange = () => updateQuoteSelectionFromSelection()
     const handlePointerDown = (event: PointerEvent) => {
@@ -964,12 +975,21 @@ export default function MessageSection(props: MessageSectionProps) {
   })
  
   createEffect(() => {
+    if (!isActive()) {
+      clearQuoteSelection()
+      return
+    }
+
     if (props.loading) {
       clearQuoteSelection()
     }
   })
 
   createEffect(() => {
+    if (!isActive()) {
+      return
+    }
+
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && (selectedTimelineIds().size > 0 || selectedForDeletion().size > 0)) {
