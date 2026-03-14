@@ -20,6 +20,11 @@
   @apply flex gap-3 py-0.5 px-2 -mx-2 rounded transition-colors;
 }
 
+.log-entry-placeholder {
+  display: block;
+  width: 100%;
+}
+
 .log-entry:hover {
   background-color: var(--surface-hover);
 }

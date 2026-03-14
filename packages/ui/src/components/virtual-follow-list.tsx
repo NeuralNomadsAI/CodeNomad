@@ -31,6 +31,7 @@ export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
   renderItem: (item: T, index: number) => JSX.Element
+  forceVisible?: (item: T, index: number) => boolean
 
   /**
    * Optional stable DOM id for the item wrapper.
@@ -47,6 +48,7 @@ export interface VirtualFollowListProps<T> {
   overscanPx?: number
   scrollSentinelMarginPx?: number
   virtualizationEnabled?: Accessor<boolean>
+  virtualizeWhileAutoScroll?: Accessor<boolean>
   suspendMeasurements?: Accessor<boolean>
   loading?: Accessor<boolean>
   isActive?: Accessor<boolean>
@@ -137,6 +139,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
   const isLoading = () => Boolean(props.loading?.())
   const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
+  const virtualizeWhileAutoScroll = () => (props.virtualizeWhileAutoScroll ? props.virtualizeWhileAutoScroll() : false)
   const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
 
   const [autoScroll, setAutoScroll] = createSignal(Boolean(initialAutoScroll()))
@@ -922,7 +925,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const anchorId = () => getAnchorId(key())
             const overscanPx = props.overscanPx ?? 800
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
-            const itemVirtualizationEnabled = () => virtualizationEnabled() && !autoScroll()
+            const itemVirtualizationEnabled = () => virtualizationEnabled() && (virtualizeWhileAutoScroll() || !autoScroll())
             return (
               <VirtualItem
                 id={anchorId()}
@@ -931,6 +934,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                 threshold={overscanPx}
                 placeholderClass="message-stream-placeholder"
                 virtualizationEnabled={itemVirtualizationEnabled}
+                forceVisible={() => Boolean(props.forceVisible?.(item(), index))}
                 suspendMeasurements={suspendMeasurements}
                 onHeightChange={(nextHeight, previousHeight, meta: VirtualItemHeightChangeMeta) => {
                   const delta = nextHeight - previousHeight

@@ -85,9 +85,67 @@ interface DisconnectedInstanceInfo {
 const [disconnectedInstance, setDisconnectedInstance] = createSignal<DisconnectedInstanceInfo | null>(null)
 
 const MAX_LOG_ENTRIES = 1000
+const pendingLogEntries = new Map<string, LogEntry[]>()
+let pendingLogFlushFrame: number | null = null
 
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
+
+function flushPendingLogs() {
+  pendingLogFlushFrame = null
+  if (pendingLogEntries.size === 0) {
+    return
+  }
+
+  setInstanceLogs((prev) => {
+    let next: Map<string, LogEntry[]> | null = null
+
+    for (const [instanceId, queuedEntries] of pendingLogEntries.entries()) {
+      if (queuedEntries.length === 0 || !isInstanceLogStreaming(instanceId)) {
+        continue
+      }
+
+      const target = next ?? prev
+      const existing = target.get(instanceId) ?? []
+      const updated = existing.length === 0
+        ? queuedEntries.slice(-MAX_LOG_ENTRIES)
+        : [...existing, ...queuedEntries].slice(-MAX_LOG_ENTRIES)
+
+      if (updated === existing) {
+        continue
+      }
+
+      if (!next) {
+        next = new Map(prev)
+      }
+      next.set(instanceId, updated)
+    }
+
+    pendingLogEntries.clear()
+    return next ?? prev
+  })
+}
+
+function schedulePendingLogFlush() {
+  if (pendingLogFlushFrame !== null) {
+    return
+  }
+
+  if (typeof requestAnimationFrame === "function") {
+    pendingLogFlushFrame = requestAnimationFrame(() => flushPendingLogs())
+    return
+  }
+
+  queueMicrotask(flushPendingLogs)
+}
+
+function discardPendingLogs(id: string) {
+  pendingLogEntries.delete(id)
+  if (pendingLogEntries.size === 0 && pendingLogFlushFrame !== null) {
+    cancelAnimationFrame(pendingLogFlushFrame)
+    pendingLogFlushFrame = null
+  }
+}
 
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instance {
   const existing = instances().get(descriptor.id)
@@ -419,6 +477,7 @@ function ensureLogStreamingState(id: string) {
 }
 
 function removeLogContainer(id: string) {
+  discardPendingLogs(id)
   setInstanceLogs((prev) => {
     if (!prev.has(id)) {
       return prev
@@ -453,6 +512,7 @@ function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
     return next
   })
   if (!enabled) {
+    discardPendingLogs(instanceId)
     clearLogs(instanceId)
   }
 }
@@ -579,16 +639,18 @@ function addLog(id: string, entry: LogEntry) {
     return
   }
 
-  setInstanceLogs((prev) => {
-    const next = new Map(prev)
-    const existing = next.get(id) ?? []
-    const updated = existing.length >= MAX_LOG_ENTRIES ? [...existing.slice(1), entry] : [...existing, entry]
-    next.set(id, updated)
-    return next
-  })
+  const queued = pendingLogEntries.get(id)
+  if (queued) {
+    queued.push(entry)
+  } else {
+    pendingLogEntries.set(id, [entry])
+  }
+
+  schedulePendingLogFlush()
 }
 
 function clearLogs(id: string) {
+  discardPendingLogs(id)
   setInstanceLogs((prev) => {
     if (!prev.has(id)) {
       return prev

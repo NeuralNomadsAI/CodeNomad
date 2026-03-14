@@ -15,6 +15,7 @@ import { showToastNotification } from "../lib/notifications"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
+import type { MessageRecord } from "../stores/message-v2/types"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
@@ -22,6 +23,8 @@ import { getPartCharCount } from "../lib/token-utils"
 const SCROLL_SENTINEL_MARGIN_PX = 48
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
+const FOLLOW_MODE_VIRTUALIZATION_THRESHOLD = 40
+const FOLLOW_MODE_VISIBLE_TAIL_COUNT = 24
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
 export interface MessageSectionProps {
@@ -41,7 +44,7 @@ export interface MessageSectionProps {
 
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences } = useConfig()
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -332,11 +335,28 @@ export default function MessageSection(props: MessageSectionProps) {
   const seenTimelineMessageIds = new Set<string>()
   const seenTimelineSegmentKeys = new Set<string>()
   const timelinePartCountsByMessageId = new Map<string, number>()
+  const timelineSegmentsCache = new Map<string, { revision: number; locale: string; segments: TimelineSegment[] }>()
   let pendingTimelineMessagePartUpdates = new Set<string>()
   let pendingTimelinePartUpdateFrame: number | null = null
 
   function makeTimelineKey(segment: TimelineSegment) {
     return `${segment.messageId}:${segment.id}:${segment.type}`
+  }
+
+  function getTimelineSegmentsForMessage(record: MessageRecord) {
+    const localeKey = locale()
+    const cached = timelineSegmentsCache.get(record.id)
+    if (cached && cached.revision === record.revision && cached.locale === localeKey) {
+      return cached.segments
+    }
+
+    const built = buildTimelineSegments(props.instanceId, record, t)
+    timelineSegmentsCache.set(record.id, {
+      revision: record.revision,
+      locale: localeKey,
+      segments: built,
+    })
+    return built
   }
 
   function seedTimeline() {
@@ -351,7 +371,7 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!record) return
       seenTimelineMessageIds.add(messageId)
       timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-      const built = buildTimelineSegments(props.instanceId, record, t)
+      const built = getTimelineSegmentsForMessage(record)
       built.forEach((segment) => {
         const key = makeTimelineKey(segment)
         if (seenTimelineSegmentKeys.has(key)) return
@@ -366,7 +386,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const record = untrack(() => store().getMessage(messageId))
     if (!record) return
     timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-    const built = buildTimelineSegments(props.instanceId, record, t)
+    const built = getTimelineSegmentsForMessage(record)
     if (built.length === 0) return
     const newSegments: TimelineSegment[] = []
     built.forEach((segment) => {
@@ -844,7 +864,7 @@ export default function MessageSection(props: MessageSectionProps) {
           next = next.filter((segment) => segment.messageId !== changedId)
 
           const record = resolvedStore.getMessage(changedId)
-          const rebuilt = record ? buildTimelineSegments(props.instanceId, record, t) : []
+          const rebuilt = record ? getTimelineSegmentsForMessage(record) : []
 
           // Insert rebuilt segments in the correct place based on session message order.
           if (rebuilt.length > 0) {
@@ -995,6 +1015,8 @@ export default function MessageSection(props: MessageSectionProps) {
           getKeyFromAnchorId={getMessageIdFromAnchorId}
           overscanPx={800}
           scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
+          virtualizeWhileAutoScroll={() => messageIds().length >= FOLLOW_MODE_VIRTUALIZATION_THRESHOLD}
+          forceVisible={(_messageId, index) => index >= Math.max(0, messageIds().length - FOLLOW_MODE_VISIBLE_TAIL_COUNT)}
           suspendMeasurements={() => !isActive()}
           loading={() => Boolean(props.loading)}
           isActive={isActive}

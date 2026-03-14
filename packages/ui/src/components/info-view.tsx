@@ -1,20 +1,15 @@
-import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
+import { Component, Show, createMemo } from "solid-js"
 import { getInstanceLogs, instances, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
-import { ChevronDown } from "lucide-solid"
 import InstanceInfo from "./instance-info"
 import { useI18n } from "../lib/i18n"
+import LogStreamList from "./log-stream-list"
 
 interface InfoViewProps {
   instanceId: string
 }
 
-const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean }>()
-
 const InfoView: Component<InfoViewProps> = (props) => {
   const { t } = useI18n()
-  let scrollRef: HTMLDivElement | undefined
-  const savedState = logsScrollState.get(props.instanceId)
-  const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? false)
 
   const instance = () => instances().get(props.instanceId)
   const logs = createMemo(() => getInstanceLogs(props.instanceId))
@@ -22,66 +17,6 @@ const InfoView: Component<InfoViewProps> = (props) => {
 
   const handleEnableLogs = () => setInstanceLogStreaming(props.instanceId, true)
   const handleDisableLogs = () => setInstanceLogStreaming(props.instanceId, false)
- 
-  onMount(() => {
-
-    if (scrollRef && savedState) {
-      scrollRef.scrollTop = savedState.scrollTop
-    }
-  })
-
-  onCleanup(() => {
-    if (scrollRef) {
-      logsScrollState.set(props.instanceId, {
-        scrollTop: scrollRef.scrollTop,
-        autoScroll: autoScroll(),
-      })
-    }
-  })
-
-  createEffect(() => {
-    if (autoScroll() && scrollRef && logs().length > 0) {
-      scrollRef.scrollTop = scrollRef.scrollHeight
-    }
-  })
-
-  const handleScroll = () => {
-    if (!scrollRef) return
-
-    const isAtBottom = scrollRef.scrollHeight - scrollRef.scrollTop <= scrollRef.clientHeight + 50
-
-    setAutoScroll(isAtBottom)
-  }
-
-  const scrollToBottom = () => {
-    if (scrollRef) {
-      scrollRef.scrollTop = scrollRef.scrollHeight
-      setAutoScroll(true)
-    }
-  }
-
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp)
-    return date.toLocaleTimeString("en-US", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    })
-  }
-
-  const getLevelColor = (level: string) => {
-    switch (level) {
-      case "error":
-        return "log-level-error"
-      case "warn":
-        return "log-level-warn"
-      case "debug":
-        return "log-level-debug"
-      default:
-        return "log-level-default"
-    }
-  }
 
   return (
     <div class="log-container">
@@ -108,56 +43,22 @@ const InfoView: Component<InfoViewProps> = (props) => {
               </Show>
             </div>
           </div>
- 
-          <div
-            ref={scrollRef}
-            onScroll={handleScroll}
-            class="log-content"
-          >
-            <Show
-              when={streamingEnabled()}
-              fallback={
-                <div class="log-paused-state">
-                  <p class="log-paused-title">{t("infoView.logs.paused.title")}</p>
-                  <p class="log-paused-description">{t("infoView.logs.paused.description")}</p>
-                  <button type="button" class="button-primary" onClick={handleEnableLogs}>
-                    {t("infoView.logs.actions.show")}
-                  </button>
-                </div>
-              }
-            >
-              <Show
-                when={logs().length > 0}
-                fallback={<div class="log-empty-state">{t("infoView.logs.empty.waiting")}</div>}
-              >
-                <For each={logs()}>
-                  {(entry) => (
-                    <div class="log-entry">
-                      <span class="log-timestamp">
-                        {formatTime(entry.timestamp)}
-                      </span>
-                      <span class={`log-message ${getLevelColor(entry.level)}`}>{entry.message}</span>
-                    </div>
-                  )}
-                </For>
-              </Show>
-            </Show>
-          </div>
- 
-          <Show when={!autoScroll() && streamingEnabled()}>
-            <button
-              onClick={scrollToBottom}
-              class="scroll-to-bottom"
-            >
-              <ChevronDown class="w-4 h-4" />
-              {t("infoView.logs.scrollToBottom")}
-            </button>
-          </Show>
+
+          <LogStreamList
+            scrollStateKey={`info-view:${props.instanceId}`}
+            logs={logs}
+            streamingEnabled={streamingEnabled}
+            onEnableLogs={handleEnableLogs}
+            emptyLabel={t("infoView.logs.empty.waiting")}
+            pausedTitle={t("infoView.logs.paused.title")}
+            pausedDescription={t("infoView.logs.paused.description")}
+            showLogsLabel={t("infoView.logs.actions.show")}
+            scrollToBottomLabel={t("infoView.logs.scrollToBottom")}
+          />
         </div>
       </div>
     </div>
   )
 }
-
 
 export default InfoView
