@@ -116,6 +116,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "./src"),
+      "@git-diff-view/lowlight": resolve(__dirname, "./src/lib/git-diff-lowlight.ts"),
     },
   },
   optimizeDeps: {
