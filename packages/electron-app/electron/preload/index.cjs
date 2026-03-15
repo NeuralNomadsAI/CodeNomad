@@ -22,6 +22,8 @@ const electronAPI = {
   },
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  getMemorySnapshot: () => ipcRenderer.invoke("diag:memorySnapshot"),
+  forceGC: () => ipcRenderer.invoke("diag:forceGC"),
 }
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI)

@@ -30,6 +30,8 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
     let eventSource: EventSource | null = null
     let active = true
 
+    const MAX_OUTPUT_CHARS = 500_000
+
     let rawOutput = ""
 
     const setRawOutput = (next: string) => {
@@ -38,7 +40,12 @@ export function BackgroundProcessOutputDialog(props: BackgroundProcessOutputDial
     }
 
     const appendRawOutput = (chunk: string) => {
-      rawOutput += chunk
+      if (rawOutput.length + chunk.length > MAX_OUTPUT_CHARS) {
+        // Preserve the most-recent output by keeping a tail
+        rawOutput = rawOutput.slice(-(MAX_OUTPUT_CHARS - chunk.length)) + chunk
+      } else {
+        rawOutput += chunk
+      }
       setOutput(rawOutput)
     }
 

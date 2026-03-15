@@ -129,4 +129,17 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       }
     },
   )
+
+  // Diagnostic IPC handlers — only active when CODENOMAD_DIAG=1
+  if (process.env.CODENOMAD_DIAG === "1") {
+    ipcMain.handle("diag:memorySnapshot", async () => {
+      return { mainMemory: process.memoryUsage() }
+    })
+
+    ipcMain.handle("diag:forceGC", async () => {
+      if (!mainWindow.isDestroyed()) {
+        await mainWindow.webContents.executeJavaScript('if (typeof gc === "function") gc(); "ok"')
+      }
+    })
+  }
 }

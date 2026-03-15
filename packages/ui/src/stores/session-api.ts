@@ -594,6 +594,25 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     })
   }
 
+  // Evict inactive sessions on every session navigation to bound memory growth.
+  // Evicted sessions are removed from messagesLoaded so they re-fetch from the server on next visit.
+  const instanceStore = messageStoreBus.getInstance(instanceId)
+  if (instanceStore) {
+    const evicted = instanceStore.evictInactiveSessions(sessionId)
+    if (evicted.length > 0) {
+      setMessagesLoaded((prev) => {
+        const next = new Map(prev)
+        const loaded = next.get(instanceId)
+        if (loaded) {
+          const updated = new Set(loaded)
+          evicted.forEach((id) => updated.delete(id))
+          next.set(instanceId, updated)
+        }
+        return next
+      })
+    }
+  }
+
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
   if (alreadyLoaded && !force) {
     return

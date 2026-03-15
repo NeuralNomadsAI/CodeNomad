@@ -3,7 +3,7 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
+import { clearRecordDisplayCacheForMessages, clearRecordDisplayCacheForInstance } from "./record-display-cache"
 import type {
   InstanceMessageState,
   LatestTodoSnapshot,
@@ -225,6 +225,8 @@ export interface InstanceMessageStore {
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
   clearSession: (sessionId: string) => void
   clearInstance: () => void
+  unloadSession: (sessionId: string) => void
+  evictInactiveSessions: (activeSessionId: string) => string[]
 }
 
 export function createInstanceMessageStore(instanceId: string, hooks?: MessageStoreHooks): InstanceMessageStore {
@@ -233,6 +235,32 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+  const MESSAGE_INFO_CACHE_MAX = 500
+
+  function setMessageInfoCached(messageId: string, info: MessageInfo) {
+    if (messageInfoCache.has(messageId)) {
+      // Re-insert to refresh LRU position
+      messageInfoCache.delete(messageId)
+    } else if (messageInfoCache.size >= MESSAGE_INFO_CACHE_MAX) {
+      const oldest = messageInfoCache.keys().next().value
+      if (oldest !== undefined) messageInfoCache.delete(oldest)
+    }
+    messageInfoCache.set(messageId, info)
+  }
+
+  // O(1) Set side-index for message-ID deduplication in sessions (avoids O(n) ids.includes)
+  const sessionMessageIdSets = new Map<string, Set<string>>()
+
+  function getOrCreateSessionIdSet(sessionId: string): Set<string> {
+    let set = sessionMessageIdSets.get(sessionId)
+    if (!set) {
+      // Initialise from existing reactive state so the Set stays in sync on startup
+      const existing = state.sessions[sessionId]?.messageIds ?? []
+      set = new Set(existing)
+      sessionMessageIdSets.set(sessionId, set)
+    }
+    return set
+  }
 
   function getLastCompactionMessageIndex(sessionId: string): number {
     if (!sessionId) return -1
@@ -424,7 +452,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
-        messageInfoCache.set(messageId, info)
+        setMessageInfoCached(messageId, info)
         const currentVersion = nextMessageInfoVersion[messageId] ?? 0
         nextMessageInfoVersion[messageId] = currentVersion + 1
       }
@@ -456,12 +484,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function insertMessageIntoSession(sessionId: string, messageId: string) {
     ensureSessionEntry(sessionId)
-    setState("sessions", sessionId, "messageIds", (ids = []) => {
-      if (ids.includes(messageId)) {
-        return ids
-      }
-      return [...ids, messageId]
-    })
+    const idSet = getOrCreateSessionIdSet(sessionId)
+    if (idSet.has(messageId)) return
+    idSet.add(messageId)
+    setState("sessions", sessionId, "messageIds", (ids = []) => [...ids, messageId])
   }
 
   function normalizeParts(messageId: string, parts: ClientPart[] | undefined) {
@@ -820,7 +846,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const infoEntry = messageInfoCache.get(options.oldId)
     if (infoEntry) {
-      messageInfoCache.set(options.newId, infoEntry)
+      setMessageInfoCached(options.newId, infoEntry)
       messageInfoCache.delete(options.oldId)
       const version = state.messageInfoVersion[options.oldId] ?? 0
       setState("messageInfoVersion", options.newId, version)
@@ -865,7 +891,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setMessageInfo(messageId: string, info: MessageInfo) {
     if (!messageId) return
-    messageInfoCache.set(messageId, info)
+    setMessageInfoCached(messageId, info)
     const nextVersion = (state.messageInfoVersion[messageId] ?? 0) + 1
     setState("messageInfoVersion", messageId, nextVersion)
     updateUsageWithInfo(info)
@@ -1153,14 +1179,82 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("sessionOrder", (ids) => ids.filter((id) => id !== sessionId))
     })
 
+    sessionMessageIdSets.delete(sessionId)
     clearLatestTodoSnapshot(sessionId)
- 
+
     hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
- 
+  const MRU_SESSION_LIMIT = 3
+
+  function unloadSession(sessionId: string) {
+    const session = state.sessions[sessionId]
+    if (!session) return
+
+    const messageIds = session.messageIds
+
+    clearRecordDisplayCacheForMessages(instanceId, messageIds)
+    messageIds.forEach((id) => messageInfoCache.delete(id))
+    sessionMessageIdSets.delete(sessionId)
+
+    batch(() => {
+      setState("messages", (prev) => {
+        const next = { ...prev }
+        messageIds.forEach((id) => delete next[id])
+        return next
+      })
+
+      setState("messageInfoVersion", (prev) => {
+        const next = { ...prev }
+        messageIds.forEach((id) => delete next[id])
+        return next
+      })
+
+      setState("pendingParts", (prev) => {
+        const next = { ...prev }
+        messageIds.forEach((id) => {
+          if (next[id]) delete next[id]
+        })
+        return next
+      })
+
+      // Preserve lightweight session metadata but drop message list.
+      // Mark as unloaded so session-api's loadMessages() will re-fetch on next visit.
+      setState("sessions", sessionId, "messageIds", [])
+      setState("sessions", sessionId, "unloaded" as any, true)
+
+      setState("usage", sessionId, createEmptyUsageState())
+    })
+  }
+
+  function evictInactiveSessions(activeSessionId: string): string[] {
+    const order = state.sessionOrder
+    const toKeep = new Set<string>()
+    toKeep.add(activeSessionId)
+
+    let kept = 0
+    for (let i = order.length - 1; i >= 0 && kept < MRU_SESSION_LIMIT - 1; i--) {
+      const id = order[i]
+      if (id && id !== activeSessionId) {
+        toKeep.add(id)
+        kept++
+      }
+    }
+
+    const evicted: string[] = []
+    for (const sessionId of order) {
+      if (!toKeep.has(sessionId)) {
+        unloadSession(sessionId)
+        evicted.push(sessionId)
+      }
+    }
+    return evicted
+  }
+
    function clearInstance() {
      messageInfoCache.clear()
+     sessionMessageIdSets.clear()
+     clearRecordDisplayCacheForInstance(instanceId)
       setState(reconcile(createInitialState(instanceId)))
     }
  
@@ -1201,5 +1295,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
        getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
        clearSession,
        clearInstance,
+       unloadSession,
+       evictInactiveSessions,
     }
   }

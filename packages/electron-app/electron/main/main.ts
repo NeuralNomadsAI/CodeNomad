@@ -25,6 +25,24 @@ if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
 }
 
+// P0 memory diagnostics: reduce heap limit to surface leaks faster under diagnostic mode
+if (process.env.CODENOMAD_DIAG === "1") {
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512")
+}
+
+// Optional: disable GPU acceleration for A/B testing of GPU memory contribution
+if (process.env.CODENOMAD_NO_GPU === "1") {
+  app.disableHardwareAcceleration()
+}
+
+// Always-on crash/gone handlers for production diagnostics
+app.on("render-process-gone", (_event, _webContents, details) => {
+  console.error("[crash] render-process-gone", details.reason, details.exitCode)
+})
+app.on("child-process-gone", (_event, details) => {
+  console.error("[crash] child-process-gone", details.type, details.reason)
+})
+
 function getIconPath() {
   if (app.isPackaged) {
     return join(process.resourcesPath, "icon.png")
@@ -216,9 +234,13 @@ function createWindow() {
   currentCliUrl = null
   loadLoadingScreen(mainWindow)
 
-  if (process.env.NODE_ENV === "development") {
+  if (process.env.NODE_ENV === "development" || process.env.CODENOMAD_DIAG === "1") {
     mainWindow.webContents.openDevTools({ mode: "detach" })
   }
+
+  mainWindow.webContents.on("unresponsive", () => {
+    console.warn("[diag] main window unresponsive")
+  })
 
   createApplicationMenu(mainWindow)
   setupCliIPC(mainWindow, cliManager)
@@ -502,6 +524,16 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+
+  // Periodic process metrics logging under CODENOMAD_DIAG=1
+  if (process.env.CODENOMAD_DIAG === "1") {
+    setInterval(() => {
+      const metrics = app.getAppMetrics()
+      for (const m of metrics) {
+        console.info(`[diag] pid=${m.pid} type=${m.type} cpu=${JSON.stringify(m.cpu)} memory=${JSON.stringify(m.memory)}`)
+      }
+    }, 10_000)
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

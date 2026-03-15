@@ -32,6 +32,10 @@ declare global {
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+
+    // Diagnostic APIs — available when CODENOMAD_DIAG=1
+    getMemorySnapshot?: () => Promise<{ mainMemory: NodeJS.MemoryUsage }>
+    forceGC?: () => Promise<void>
   }
 
   interface File {

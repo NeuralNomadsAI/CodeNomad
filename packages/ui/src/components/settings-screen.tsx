@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Settings, Bell, MonitorUp, Paintbrush, Terminal, X } from "lucide-solid"
+import { Settings, Bell, MonitorUp, Paintbrush, Terminal, Activity, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -13,16 +13,25 @@ import { AppearanceSettingsSection } from "./settings/appearance-settings-sectio
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
+import { DevSettingsSection } from "./settings/dev-settings-section"
+
+const IS_DEV = import.meta.env.DEV
 
 export const SettingsScreen: Component = () => {
   const { t } = useI18n()
 
-  const sections = createMemo(() => [
-    { id: "appearance" as SettingsSectionId, icon: Paintbrush, label: t("settings.nav.appearance") },
-    { id: "notifications" as SettingsSectionId, icon: Bell, label: t("settings.nav.notifications") },
-    { id: "remote" as SettingsSectionId, icon: MonitorUp, label: t("settings.nav.remote") },
-    { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
-  ])
+  const sections = createMemo(() => {
+    const base: { id: SettingsSectionId; icon: any; label: string }[] = [
+      { id: "appearance", icon: Paintbrush, label: t("settings.nav.appearance") },
+      { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
+      { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") },
+      { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
+    ]
+    if (IS_DEV) {
+      base.push({ id: "dev", icon: Activity, label: "Diagnostics" })
+    }
+    return base
+  })
 
   const renderSection = () => {
     switch (activeSettingsSection()) {
@@ -32,6 +41,8 @@ export const SettingsScreen: Component = () => {
         return <RemoteAccessSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
+      case "dev":
+        return <DevSettingsSection />
       case "appearance":
       default:
         return <AppearanceSettingsSection />
