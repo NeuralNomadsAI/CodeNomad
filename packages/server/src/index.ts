@@ -19,7 +19,7 @@ import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
-import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_USERNAME } from "./auth/manager"
+import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
@@ -54,6 +54,7 @@ interface CliOptions {
   launch: boolean
   authUsername: string
   authPassword?: string
+  authCookieName: string
   generateToken: boolean
   dangerouslySkipAuth: boolean
 }
@@ -100,6 +101,11 @@ function parseCliOptions(argv: string[]): CliOptions {
     )
     .addOption(new Option("--password <password>", "Password for server authentication").env("CODENOMAD_SERVER_PASSWORD"))
     .addOption(
+      new Option("--auth-cookie-name <name>", "Cookie name for server authentication")
+        .env("CODENOMAD_AUTH_COOKIE_NAME")
+        .default(DEFAULT_AUTH_COOKIE_NAME),
+    )
+    .addOption(
       new Option("--generate-token", "Emit a one-time bootstrap token for desktop")
         .env("CODENOMAD_GENERATE_TOKEN")
         .default(false),
@@ -138,6 +144,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     launch?: boolean
     username: string
     password?: string
+    authCookieName: string
     generateToken?: boolean
     dangerouslySkipAuth?: boolean
   }>()
@@ -184,6 +191,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     launch: Boolean(parsed.launch),
     authUsername: parsed.username,
     authPassword: parsed.password,
+    authCookieName: parsed.authCookieName,
     generateToken: Boolean(parsed.generateToken),
     dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
   }
@@ -265,6 +273,7 @@ async function main() {
       configPath: configLocation.configYamlPath,
       username: options.authUsername,
       password: options.authPassword,
+      cookieName: options.authCookieName,
       generateToken: options.generateToken,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },

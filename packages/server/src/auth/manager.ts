@@ -16,16 +16,18 @@ export interface AuthManagerInit {
   password?: string
   generateToken: boolean
   dangerouslySkipAuth?: boolean
+  cookieName?: string
 }
 
 export class AuthManager {
   private readonly authStore: AuthStore | null
   private readonly tokenManager: TokenManager | null
   private readonly sessionManager = new SessionManager()
-  private readonly cookieName = DEFAULT_AUTH_COOKIE_NAME
+  private readonly cookieName: string
   private readonly authEnabled: boolean
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
+    this.cookieName = sanitizeCookieName(init.cookieName)
     this.authEnabled = !Boolean(init.dangerouslySkipAuth)
 
     if (!this.authEnabled) {
@@ -137,6 +139,16 @@ export class AuthManager {
     }
     return this.authStore
   }
+}
+
+function sanitizeCookieName(value: string | undefined): string {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return DEFAULT_AUTH_COOKIE_NAME
+  }
+
+  const sanitized = trimmed.replace(/[^A-Za-z0-9_-]/g, "_")
+  return sanitized.length > 0 ? sanitized : DEFAULT_AUTH_COOKIE_NAME
 }
 
 function resolveAuthFilePath(configPath: string) {

@@ -327,7 +327,6 @@ function finalizeCliSwap(url: string) {
   mainWindow.loadURL(url).catch((error) => console.error("[cli] failed to load CLI view:", error))
 }
 
-const SESSION_COOKIE_NAME = "codenomad_session"
 let bootstrapExchangeInFlight = false
 
 function extractCookieValue(setCookieHeader: string | string[] | undefined, name: string): string | null {
@@ -350,6 +349,7 @@ function extractCookieValue(setCookieHeader: string | string[] | undefined, name
 }
 
 async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<boolean> {
+  const sessionCookieName = cliManager.getAuthCookieName()
   const target = new URL("/api/auth/token", baseUrl)
   const body = JSON.stringify({ token })
 
@@ -380,14 +380,14 @@ async function exchangeBootstrapToken(baseUrl: string, token: string): Promise<b
     return false
   }
 
-  const sessionId = extractCookieValue(result.setCookie, SESSION_COOKIE_NAME)
+  const sessionId = extractCookieValue(result.setCookie, sessionCookieName)
   if (!sessionId) {
     return false
   }
 
   await session.defaultSession.cookies.set({
     url: baseUrl,
-    name: SESSION_COOKIE_NAME,
+    name: sessionCookieName,
     value: sessionId,
     httpOnly: true,
     path: "/",
