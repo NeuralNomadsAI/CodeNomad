@@ -11,7 +11,7 @@ import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
-import { ensureInstanceConfigLoaded } from "./instance-config"
+import { ensureInstanceConfigLoaded, clearInstanceConfig } from "./instance-config"
 import {
   fetchSessions,
   fetchAgents,
@@ -518,6 +518,7 @@ function removeInstance(id: string) {
 
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
+  clearInstanceConfig(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   syncHasInstancesFlag()
