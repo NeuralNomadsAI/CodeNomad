@@ -432,11 +432,6 @@ impl CliProcessManager {
             resolution.runner, resolution.entry, host
         ));
         let auth_cookie_name = Arc::new(generate_auth_cookie_name());
-        emit_perf_startup(
-            &app,
-            "cli.auth.cookie.generated",
-            json!({ "cookieName": auth_cookie_name }),
-        );
         let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
