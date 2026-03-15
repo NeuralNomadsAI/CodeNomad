@@ -36,6 +36,12 @@ const SESSION_COOKIE_NAME: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
 
+#[cfg(windows)]
+fn kill_process_tree_windows(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
+}
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
         let mut display = url.to_string();
@@ -352,7 +358,7 @@ impl CliProcessManager {
             }
             #[cfg(windows)]
             {
-                let _ = child.kill();
+                kill_process_tree_windows(child.id());
             }
 
             let start = Instant::now();
@@ -372,7 +378,7 @@ impl CliProcessManager {
                             }
                             #[cfg(windows)]
                             {
-                                let _ = child.kill();
+                                kill_process_tree_windows(child.id());
                             }
                             break;
                         }
@@ -537,7 +543,12 @@ impl CliProcessManager {
             locked.error = Some("CLI did not start in time".to_string());
             log_line("timeout waiting for CLI readiness");
             if let Some(child) = child_holder_clone.lock().as_mut() {
-                let _ = child.kill();
+                #[cfg(windows)]
+                kill_process_tree_windows(child.id());
+                #[cfg(not(windows))]
+                {
+                    let _ = child.kill();
+                }
             }
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);
