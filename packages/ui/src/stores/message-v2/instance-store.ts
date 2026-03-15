@@ -403,6 +403,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (Array.isArray(input.messageIds) && !areMessageIdListsEqual(previousIds, nextMessageIds)) {
+      // Rebuild the O(1) Set side-index from the authoritative server-provided list
+      sessionMessageIdSets.set(input.id, new Set(nextMessageIds))
       bumpSessionRevision(input.id)
     }
   }
@@ -716,6 +718,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
 
+    // Sync O(1) Set side-index before mutating the reactive store
+    sessionIds.forEach((sessionId) => {
+      sessionMessageIdSets.get(sessionId)?.delete(messageId)
+    })
+
     batch(() => {
       sessionIds.forEach((sessionId) => {
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
@@ -839,6 +846,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         next[index] = options.newId
         return next
       })
+      // Sync O(1) Set side-index: swap old ID for new ID
+      const idSet = sessionMessageIdSets.get(session.id)
+      if (idSet) {
+        idSet.delete(options.oldId)
+        idSet.add(options.newId)
+      }
       affectedSessions.add(session.id)
     })
 
@@ -1020,6 +1033,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (removedIds.length === 0) return
 
     setState("sessions", sessionId, "messageIds", keptIds)
+
+    // Sync O(1) Set side-index: remove pruned IDs
+    const idSet = sessionMessageIdSets.get(sessionId)
+    if (idSet) {
+      removedIds.forEach((id) => idSet.delete(id))
+    }
 
     setState("messages", (prev) => {
       const next = { ...prev }

@@ -36,14 +36,6 @@ class ServerEvents {
     }
     logSse("Connecting to backend events stream")
     this.source = serverApi.connectEvents((event) => this.dispatch(event), () => this.scheduleReconnect())
-    this.source.onerror = () => {
-      // Close the broken source before scheduling reconnect to prevent duplicate sources
-      if (this.source) {
-        this.source.close()
-        this.source = null
-      }
-      this.scheduleReconnect()
-    }
     this.source.onopen = () => {
       logSse("Events stream connected")
       this.retryDelay = RETRY_BASE_DELAY
