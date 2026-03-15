@@ -1,6 +1,19 @@
 import { JSX, Accessor, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 
+// LRU size cache: bounded to prevent unbounded growth across many sessions/messages
+const SIZE_CACHE_MAX = 2000
 const sizeCache = new Map<string, number>()
+
+function sizeCacheSet(key: string, value: number) {
+  if (sizeCache.has(key)) {
+    sizeCache.delete(key)
+  } else if (sizeCache.size >= SIZE_CACHE_MAX) {
+    const oldest = sizeCache.keys().next().value
+    if (oldest !== undefined) sizeCache.delete(oldest)
+  }
+  sizeCache.set(key, value)
+}
+
 const DEFAULT_MARGIN_PX = 600
 const MIN_PLACEHOLDER_HEIGHT = 400
 const VISIBILITY_BUFFER_PX = 0
@@ -284,13 +297,13 @@ export default function VirtualItem(props: VirtualItemProps) {
         hasReportedMeasurement = true
         props.onMeasured?.()
       }
-      sizeCache.set(props.cacheKey, previous)
+      sizeCacheSet(props.cacheKey, previous)
       setMeasuredHeight(previous)
       if (previous !== before) props.onHeightChange?.(previous, before, measurementMeta)
       return
     }
     if (normalized > 0) {
-      sizeCache.set(props.cacheKey, normalized)
+      sizeCacheSet(props.cacheKey, normalized)
       if (!hasReportedMeasurement) {
         hasReportedMeasurement = true
         props.onMeasured?.()
