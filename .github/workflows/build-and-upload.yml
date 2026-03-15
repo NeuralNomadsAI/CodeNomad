@@ -499,14 +499,48 @@ jobs:
         if: ${{ inputs.upload }}
         shell: pwsh
         run: |
-          $bundleRoot = "packages/tauri-app/target/release/bundle"
           $artifactDir = "packages/tauri-app/release-tauri"
           if (Test-Path $artifactDir) { Remove-Item $artifactDir -Recurse -Force }
           New-Item -ItemType Directory -Path $artifactDir | Out-Null
-          $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
-          if ($null -ne $exe) {
-            $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.zip")
-            Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
+          
+          $bundleRoot = "packages/tauri-app/target/release/bundle"
+          
+          # 1. Package the NSIS installer if it exists
+          $installer = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Where-Object { $_.FullName -like "*nsis*" } | Select-Object -First 1
+          if ($null -ne $installer) {
+            Write-Host "Found installer: $($installer.FullName)"
+            Copy-Item $installer.FullName -Destination (Join-Path $artifactDir "CodeNomad-Tauri-$env:VERSION-windows-x64-Setup.exe")
+          }
+
+          # 2. Package the portable ZIP (binary + resources)
+          # We look for the main binary in the release folder.
+          $releaseDir = "packages/tauri-app/target/release"
+          $binary = Join-Path $releaseDir "CodeNomad.exe"
+          
+          if (Test-Path $binary) {
+            Write-Host "Packaging portable ZIP from $binary"
+            $portableTmp = Join-Path "packages/tauri-app" "portable-tmp"
+            if (Test-Path $portableTmp) { Remove-Item $portableTmp -Recurse -Force }
+            New-Item -ItemType Directory -Path $portableTmp | Out-Null
+            
+            Copy-Item $binary -Destination $portableTmp
+            
+            # Copy resources if they exist next to the binary
+            if (Test-Path (Join-Path $releaseDir "resources")) {
+              Copy-Item -Recurse (Join-Path $releaseDir "resources") -Destination $portableTmp
+            }
+            
+            $destZip = Join-Path $artifactDir "CodeNomad-Tauri-$env:VERSION-windows-x64-portable.zip"
+            Compress-Archive -Path "$portableTmp\*" -DestinationPath $destZip -Force
+            Remove-Item $portableTmp -Recurse -Force
+          } else {
+            Write-Warning "Main binary not found at $binary"
+            # Fallback: zip whatever is in the bundle directory if no binary found in release
+            $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
+            if ($null -ne $exe) {
+              $dest = Join-Path $artifactDir "CodeNomad-Tauri-$env:VERSION-windows-x64.zip"
+              Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
+            }
           }
 
       - name: Upload Tauri release assets (Windows)
