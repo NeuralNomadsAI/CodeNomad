@@ -264,13 +264,13 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   if (event.type === "message.part.updated") {
     const rawPart = event.properties?.part
     if (!rawPart) return
- 
+
     const part = normalizeMessagePart(rawPart)
     const messageInfo = (event as any)?.properties?.message as MessageInfo | undefined
- 
+
     const fallbackSessionId = typeof messageInfo?.sessionID === "string" ? messageInfo.sessionID : undefined
     const fallbackMessageId = typeof messageInfo?.id === "string" ? messageInfo.id : undefined
- 
+
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
@@ -307,7 +307,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     if (messageInfo) {
       upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
     }
- 
+
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
 
     if (part.type === "tool" && part.tool === "question") {
@@ -316,6 +316,16 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     }
 
     updateSessionInfo(instanceId, sessionId)
+
+    // Sync to IndexedDB
+    const finalRecord = store.getMessage(messageId)
+    if (finalRecord) {
+      import("./message-v2/worker/client").then(({ messageDb }) => {
+        messageDb.upsertMessages([finalRecord]).catch(err => {
+          log.warn("Failed to sync message part update to IndexedDB", { messageId, err })
+        })
+      })
+    }
   } else if (event.type === "message.updated") {
     const info = event.properties?.info
     if (!info) return
@@ -371,6 +381,16 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
 
     updateSessionInfo(instanceId, sessionId)
+
+    // Sync to IndexedDB
+    const finalRecord = store.getMessage(messageId)
+    if (finalRecord) {
+      import("./message-v2/worker/client").then(({ messageDb }) => {
+        messageDb.upsertMessages([finalRecord]).catch(err => {
+          log.warn("Failed to sync message update to IndexedDB", { messageId, err })
+        })
+      })
+    }
   }
 }
 
@@ -380,6 +400,19 @@ function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
   applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+
+  // Sync to IndexedDB
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const finalRecord = store.getMessage(messageID)
+  if (finalRecord) {
+    import("./message-v2/worker/client").then(({ messageDb }) => {
+      messageDb.upsertMessages([finalRecord]).catch(err => {
+        // Delta updates are high frequency, we might want to debounce this in a production environment,
+        // but for now we write through to ensure the cache is always warm.
+        log.info("Failed to sync message part delta to IndexedDB", { messageId: messageID, err })
+      })
+    })
+  }
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -407,9 +440,9 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       time: info.time
         ? { ...info.time }
         : {
-            created: Date.now(),
-            updated: Date.now(),
-          },
+          created: Date.now(),
+          updated: Date.now(),
+        },
     } as Session
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -439,11 +472,11 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       time: mergedTime,
       revert: info.revert
         ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
+          messageID: info.revert.messageID,
+          partID: info.revert.partID,
+          snapshot: info.revert.snapshot,
+          diff: info.revert.diff,
+        }
         : existingSession.revert,
     }
 
