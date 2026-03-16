@@ -2,6 +2,9 @@
 .message-item-base {
   @apply flex flex-col gap-2 p-3 w-full;
 
+  /* Provide an estimated height when content-visibility skips rendering */
+  contain-intrinsic-size: auto 150px;
+
   /* Markdown rendering uses these to theme emphasis + headings per message role. */
   --markdown-accent: var(--message-user-border);
   --markdown-heading-color: var(--message-user-border);

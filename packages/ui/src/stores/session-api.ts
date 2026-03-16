@@ -134,7 +134,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
     let statusById: Record<string, any> = {}
     try {
-        const statusResponse = await rootClient.session.status()
+      const statusResponse = await rootClient.session.status()
       if (statusResponse.data && typeof statusResponse.data === "object") {
         statusById = statusResponse.data as Record<string, any>
       }
@@ -171,11 +171,11 @@ async function fetchSessions(instanceId: string): Promise<void> {
         },
         revert: apiSession.revert
           ? {
-              messageID: apiSession.revert.messageID,
-              partID: apiSession.revert.partID,
-              snapshot: apiSession.revert.snapshot,
-              diff: apiSession.revert.diff,
-            }
+            messageID: apiSession.revert.messageID,
+            partID: apiSession.revert.partID,
+            snapshot: apiSession.revert.snapshot,
+            diff: apiSession.revert.diff,
+          }
           : undefined,
       })
     }
@@ -269,11 +269,11 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       },
       revert: response.data.revert
         ? {
-            messageID: response.data.revert.messageID,
-            partID: response.data.revert.partID,
-            snapshot: response.data.revert.snapshot,
-            diff: response.data.revert.diff,
-          }
+          messageID: response.data.revert.messageID,
+          partID: response.data.revert.partID,
+          snapshot: response.data.revert.snapshot,
+          diff: response.data.revert.diff,
+        }
         : undefined,
     }
 
@@ -377,11 +377,11 @@ async function forkSession(
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {
-          messageID: info.revert.messageID,
-          partID: info.revert.partID,
-          snapshot: info.revert.snapshot,
-          diff: info.revert.diff,
-        }
+        messageID: info.revert.messageID,
+        partID: info.revert.partID,
+        snapshot: info.revert.snapshot,
+        diff: info.revert.diff,
+      }
       : undefined,
   } as unknown as Session
 
@@ -496,6 +496,13 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     if (deletingSession?.parentId === null) {
       await removeParentSessionMapping(instanceId, sessionId).catch(() => undefined)
     }
+
+    try {
+      const { messageDb } = await import("./message-v2/worker/client")
+      await messageDb.deleteSession(sessionId)
+    } catch (err) {
+      log.warn("Failed to delete session from IndexedDB", { sessionId, err })
+    }
   } catch (error) {
     log.error("Failed to delete session:", error)
     throw error
@@ -529,9 +536,9 @@ async function fetchAgents(instanceId: string): Promise<void> {
       hidden: agent.hidden,
       model: agent.model?.modelID
         ? {
-            providerId: agent.model.providerID || "",
-            modelId: agent.model.modelID,
-          }
+          providerId: agent.model.providerID || "",
+          modelId: agent.model.modelID,
+        }
         : undefined,
     }))
 
@@ -623,6 +630,35 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     log.warn("Failed to load session diff", { instanceId, sessionId, error })
   })
 
+  const { messageDb } = await import("./message-v2/worker/client")
+
+  // 1. Instantly Hydrate from IndexedDB Callback
+  try {
+    const localMessages = await messageDb.getLatestMessages(sessionId, 50)
+    if (localMessages && localMessages.length > 0) {
+      setMessagesLoaded((prev) => {
+        const next = new Map(prev)
+        const loadedSet = next.get(instanceId) || new Set()
+        loadedSet.add(sessionId)
+        next.set(instanceId, loadedSet)
+        return next
+      })
+
+      const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
+        id: sessionId,
+        title: session?.title,
+        parentId: session?.parentId ?? null,
+        revert: session?.revert,
+      }
+
+      // Seed UI right away
+      seedSessionMessagesV2(instanceId, sessionForV2, localMessages as any, new Map())
+      updateSessionInfo(instanceId, sessionId)
+    }
+  } catch (err) {
+    log.warn("Failed to load local messages from IndexedDB", { sessionId, err })
+  }
+
   setLoading((prev) => {
     const next = { ...prev }
     const loadingSet = next.loadingMessages.get(instanceId) || new Set()
@@ -632,17 +668,61 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   })
 
   try {
-    log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId }),
-      "session.messages",
-    )
+    // 2. Immediate API Sync (Latest 10)
+    try {
+      log.info(`[HTTP] GET /session.messages (limit 10) for instance ${instanceId}`, { sessionId })
+      const apiMessages10 = await requestData<any[]>(
+        client.session.messages({ sessionID: sessionId, limit: 10 }),
+        "session.messages",
+      )
 
-    if (!Array.isArray(apiMessages)) {
-      return
+      if (Array.isArray(apiMessages10)) {
+        await processAndSeedMessages(instanceId, sessionId, apiMessages10)
+      }
+    } catch (err) {
+      log.warn("Failed fast sync (limit 10)", { sessionId, err })
     }
 
-    // Treat empty sessions as loaded to avoid re-fetch loops.
+    // 3. Background Full History Sync
+    // We don't await this so the UI stays responsive after the fast sync.
+    void (async () => {
+      try {
+        log.info(`[HTTP] GET /session.messages (full) in background for instance ${instanceId}`, { sessionId })
+        const allApiMessages = await requestData<any[]>(
+          client.session.messages({ sessionID: sessionId }),
+          "session.messages",
+        )
+
+        if (Array.isArray(allApiMessages)) {
+          await processAndSeedMessages(instanceId, sessionId, allApiMessages)
+        }
+      } catch (err) {
+        log.warn("Failed background history sync", { sessionId, err })
+      }
+    })()
+
+  } catch (error) {
+    log.error("Failed to load messages:", error)
+    throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      const loadingSet = next.loadingMessages.get(instanceId)
+      if (loadingSet) {
+        loadingSet.delete(sessionId)
+      }
+      return next
+    })
+  }
+
+  // Helper function to process backend messages and seed them into the store/IDB.
+  async function processAndSeedMessages(instanceId: string, sessionId: string, apiMessages: any[]) {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) return
+
+    const { messageDb } = await import("./message-v2/worker/client")
+
+    // Treat sessions as loaded to avoid re-fetch loops.
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
       const loadedSet = next.get(instanceId) || new Set()
@@ -677,6 +757,31 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
 
       return message
     })
+
+    // Sync newly fetched messages back to IndexedDB
+    try {
+      const v2Records = messages.map(msg => ({
+        id: msg.id,
+        sessionId: msg.sessionId,
+        role: msg.type,
+        status: msg.status,
+        createdAt: msg.timestamp,
+        updatedAt: msg.timestamp,
+        isEphemeral: false,
+        revision: msg.version,
+        partIds: msg.parts.map(p => typeof p.id === 'string' ? p.id : ''),
+        parts: msg.parts.reduce((acc, part) => {
+          const pid = typeof part.id === 'string' ? part.id : '';
+          if (pid) {
+            acc[pid] = { id: pid, data: part, revision: 0 }
+          }
+          return acc;
+        }, {} as any)
+      }))
+      await messageDb.upsertMessages(v2Records as any)
+    } catch (upsertErr) {
+      log.warn("Failed syncing API messages back to IndexedDB", { sessionId, upsertErr })
+    }
 
     let agentName = ""
     let providerID = ""
@@ -724,14 +829,6 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
       return next
     })
 
-    setMessagesLoaded((prev) => {
-      const next = new Map(prev)
-      const loadedSet = next.get(instanceId) || new Set()
-      loadedSet.add(sessionId)
-      next.set(instanceId, loadedSet)
-      return next
-    })
-
     const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
       id: sessionId,
       title: session?.title,
@@ -740,25 +837,8 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     }
     seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo)
 
-    // Permissions can be hydrated before messages/tool parts exist in the store.
-    // After message hydration, try to attach any pending permissions to tool-call part ids.
     reconcilePendingPermissionsV2(instanceId, sessionId)
     reconcilePendingQuestionsV2(instanceId, sessionId)
-  
-
-
-  } catch (error) {
-    log.error("Failed to load messages:", error)
-    throw error
-  } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      const loadingSet = next.loadingMessages.get(instanceId)
-      if (loadingSet) {
-        loadingSet.delete(sessionId)
-      }
-      return next
-    })
   }
 
   updateSessionInfo(instanceId, sessionId)
