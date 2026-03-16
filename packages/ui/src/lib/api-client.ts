@@ -22,8 +22,13 @@ import type {
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
 
+const isTauriBootstrap = typeof window !== "undefined" && (
+  window.location.hostname.includes("tauri") ||
+  window.location.protocol === "tauri:" ||
+  (window.location.hostname === "localhost" && !window.location.port)
+)
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
+const DEFAULT_BASE = typeof window !== "undefined" && !isTauriBootstrap ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -91,6 +96,10 @@ function logHttp(message: string, context?: Record<string, unknown>) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if (isTauriBootstrap) {
+    // Skip requests on the loading screen to avoid "asset not found" errors on tauri.localhost
+    return new Promise(() => { /* never resolves */ }) 
+  }
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined) {
@@ -307,6 +316,10 @@ export const serverApi = {
     )
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
+    if (isTauriBootstrap) {
+      sseLogger.info("Skipping events connection on Tauri bootstrap")
+      return null
+    }
     sseLogger.info(`Connecting to ${EVENTS_URL}`)
     const source = new EventSource(EVENTS_URL, { withCredentials: true } as any)
     source.onmessage = (event) => {

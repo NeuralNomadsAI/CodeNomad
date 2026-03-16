@@ -667,7 +667,7 @@ impl CliProcessManager {
                                     status,
                                     ready,
                                     bootstrap_token,
-                                    format!("http://localhost:{port}"),
+                                    format!("http://127.0.0.1:{port}"),
                                 );
                                 continue;
                             }
@@ -679,7 +679,7 @@ impl CliProcessManager {
                                         status,
                                         ready,
                                         bootstrap_token,
-                                        format!("http://localhost:{}", port),
+                                        format!("http://127.0.0.1:{}", port),
                                     );
                                     continue;
                                 }
