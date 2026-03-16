@@ -1,0 +1,38 @@
+name: Build Pixellos Dev
+
+on:
+  push:
+    branches:
+      - pixellos-dev
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  id-token: write
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      version_suffix: ${{ steps.gate.outputs.version_suffix }}
+    steps:
+      - name: Compute version suffix
+        id: gate
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          SHA8=$(echo ${GITHUB_SHA} | cut -c1-8)
+          VERSION_SUFFIX="-pixellos-${DATE}-${SHA8}"
+          echo "version_suffix=${VERSION_SUFFIX}" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: gate
+    uses: ./.github/workflows/reusable-release.yml
+    with:
+      version_suffix: ${{ needs.gate.outputs.version_suffix }}
+      dist_tag: dev
+      npm_package_name: "@neuralnomads/codenomad-dev"
+      prerelease: true
+      release_ui: false
+      publish_npm: false
+    secrets: inherit

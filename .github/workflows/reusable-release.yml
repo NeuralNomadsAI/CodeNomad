@@ -33,6 +33,11 @@ on:
         required: false
         default: true
         type: boolean
+      publish_npm:
+        description: "Publish server package to NPM"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -111,6 +116,7 @@ jobs:
     needs:
       - prepare-release
       - build-and-upload
+    if: ${{ inputs.publish_npm }}
     uses: ./.github/workflows/manual-npm-publish.yml
     with:
       ref: ${{ inputs.ref || github.ref }}
