@@ -17,8 +17,21 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
+}
+
+fn configure_spawn(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn workspace_root() -> Option<PathBuf> {
@@ -456,6 +469,7 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
@@ -468,6 +482,7 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
