@@ -45,6 +45,6 @@
       "resources/ui-loading"
     ],
     "icon": ["icon.icns", "icon.ico", "icon.png"],
-    "targets": ["app", "appimage", "deb", "rpm", "nsis"]
+    "targets": ["appimage", "deb", "rpm", "nsis"]
   }
 }
