@@ -34,6 +34,15 @@ function resolvePartVersion(part: TextPart, text: string): string {
   return `text-${hashText(text)}`
 }
 
+function resolvePartCacheId(part: TextPart, text: string): string {
+  const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : ""
+  if (partId) {
+    return partId
+  }
+
+  return `anonymous:${hashText(text)}`
+}
+
 function decodeHtmlEntitiesLocally(content: string): string {
   if (!content.includes("&") || typeof document === "undefined") {
     return content
@@ -91,13 +100,11 @@ export function Markdown(props: MarkdownProps) {
     const text = decodeHtmlEntitiesLocally(rawText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
-    const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : ""
-    if (!partId) {
-      throw new Error("Markdown rendering requires a part id")
-    }
+    const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
+    const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${partId}:${themeKey}:${highlightEnabled ? 1 : 0}:${version}`
-    return { part, text, themeKey, highlightEnabled, partId, version, requestKey }
+    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${version}`
+    return { part, text, themeKey, highlightEnabled, partId, cacheId, version, requestKey }
   })
 
   const cacheHandle = useGlobalCache({
@@ -105,8 +112,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { partId, themeKey, highlightEnabled } = resolved()
-      return `${partId}:${themeKey}:${highlightEnabled ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}`
     },
     version: () => resolved().version,
   })
