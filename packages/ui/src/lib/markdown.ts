@@ -61,7 +61,10 @@ async function getOrCreateHighlighter() {
       themes: ["github-light", "github-light-high-contrast", "github-dark"],
       langs: [],
     })
-  })()
+  })().catch((error) => {
+    highlighterPromise = null
+    throw error
+  })
 
   highlighter = await highlighterPromise
   highlighterPromise = null

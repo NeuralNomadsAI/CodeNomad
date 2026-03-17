@@ -13,7 +13,10 @@ let markdownModulePromise: Promise<MarkdownModule> | null = null
 
 function loadMarkdownModule(): Promise<MarkdownModule> {
   if (!markdownModulePromise) {
-    markdownModulePromise = import("../lib/markdown")
+    markdownModulePromise = import("../lib/markdown").catch((error) => {
+      markdownModulePromise = null
+      throw error
+    })
   }
   return markdownModulePromise
 }
