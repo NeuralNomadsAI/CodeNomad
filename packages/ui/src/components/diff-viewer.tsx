@@ -1,4 +1,4 @@
-import { createMemo, Show, createEffect, onCleanup } from "solid-js"
+import { createMemo, createSignal, Show, createEffect, onMount, onCleanup } from "solid-js"
 import { DiffView, DiffModeEnum } from "@git-diff-view/solid"
 import { disableCache } from "@git-diff-view/core"
 import type { DiffHighlighterLang } from "@git-diff-view/core"
@@ -38,6 +38,16 @@ type CaptureContext = {
 }
 
 export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
+  // Defer mounting the heavy DiffView component so it doesn't block the
+  // initial reactive cascade (e.g. during session switches).  When cached
+  // HTML is available the deferred path is skipped entirely.
+  const [deferredReady, setDeferredReady] = createSignal(Boolean(props.cachedHtml))
+  onMount(() => {
+    if (props.cachedHtml) return // already ready — cached HTML renders instantly
+    const id = requestIdleCallback(() => setDeferredReady(true), { timeout: 80 })
+    onCleanup(() => cancelIdleCallback(id))
+  })
+
   const diffData = createMemo<DiffData | null>(() => {
     const normalized = normalizeDiffText(props.diffText)
     if (!normalized) {
@@ -108,7 +118,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
         fallback={
           <div ref={diffContainerRef}>
             <Show
-              when={diffData()}
+              when={deferredReady() && diffData()}
               fallback={<pre class="tool-call-diff-fallback">{props.diffText}</pre>}
             >
               {(data) => (
