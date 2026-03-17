@@ -53,14 +53,24 @@ chmod 600 ~/.config/codenomad/env
 
 ## 3. הורדת ממשק ה-RTL+Hebrew
 
-### הורדה וחילוץ אוטומטי
+### הורדה וחילוץ
 
 ```bash
 mkdir -p ~/.config/codenomad/ui
 
 curl -L https://github.com/MusiCode1/CodeNomad/releases/download/v0.12.3-rtl-he/codenomad-ui-rtl-he.zip \
   -o /tmp/codenomad-ui-rtl-he.zip
+```
 
+**חילוץ עם `unzip` (מומלץ):**
+
+```bash
+unzip -o /tmp/codenomad-ui-rtl-he.zip -d ~/.config/codenomad/ui
+```
+
+**חילוץ עם `python3` (אם `unzip` אינו מותקן):**
+
+```bash
 python3 -c "
 import zipfile, os
 with zipfile.ZipFile('/tmp/codenomad-ui-rtl-he.zip') as z:
@@ -187,11 +197,8 @@ curl -L https://github.com/MusiCode1/CodeNomad/releases/latest/download/codenoma
 
 rm -rf ~/.config/codenomad/ui/*
 
-python3 -c "
-import zipfile, os
-with zipfile.ZipFile('/tmp/codenomad-ui-rtl-he.zip') as z:
-    z.extractall(os.path.expanduser('~/.config/codenomad/ui'))
-"
+unzip -o /tmp/codenomad-ui-rtl-he.zip -d ~/.config/codenomad/ui
+# או: python3 -c "import zipfile,os; zipfile.ZipFile('/tmp/codenomad-ui-rtl-he.zip').extractall(os.path.expanduser('~/.config/codenomad/ui'))"
 
 systemctl --user restart codenomad
 ```
