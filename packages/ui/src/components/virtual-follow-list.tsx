@@ -550,21 +550,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     clearPendingAutoPinFrame()
     const gen = scrollCompensationGen
 
-    // Flush in a microtask so adjustments land before the next paint,
-    // then re-apply on the next two frames to catch deferred layout.
-    queueMicrotask(() => {
+    // Coalesce all pin-to-bottom requests into a single RAF to avoid
+    // layout thrashing from multiple read/write cycles per streaming chunk.
+    // A follow-up RAF catches any deferred layout that the first missed.
+    pendingAutoPinFrame = requestAnimationFrame(() => {
+      pendingAutoPinFrame = null
       if (gen !== scrollCompensationGen) return
       pendingAutoPin = false
       if (!applyAutoPinToBottom()) return
       pendingAutoPinFrame = requestAnimationFrame(() => {
         pendingAutoPinFrame = null
         if (gen !== scrollCompensationGen) return
-        if (!applyAutoPinToBottom()) return
-        pendingAutoPinFrame = requestAnimationFrame(() => {
-          pendingAutoPinFrame = null
-          if (gen !== scrollCompensationGen) return
-          applyAutoPinToBottom()
-        })
+        applyAutoPinToBottom()
       })
     })
   }
