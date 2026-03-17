@@ -1,0 +1,176 @@
+export const commandMessages = {
+  "commandPalette.title": "לוח פקודות",
+  "commandPalette.description": "חיפוש והפעלה של פקודות",
+  "commandPalette.searchPlaceholder": "הקלד פקודה או חיפוש...",
+  "commandPalette.empty": "לא נמצאו פקודות עבור \"{query}\"",
+  "commandPalette.category.customCommands": "פקודות מותאמות אישית",
+  "commandPalette.category.instance": "מופע",
+  "commandPalette.category.session": "סשן",
+  "commandPalette.category.agentModel": "סוכן ומודל",
+  "commandPalette.category.inputFocus": "קלט ופוקוס",
+  "commandPalette.category.system": "מערכת",
+  "commandPalette.category.other": "אחר",
+
+  "commands.newInstance.label": "מופע חדש",
+  "commands.newInstance.description": "פתח בורר תיקיות ליצירת מופע חדש",
+  "commands.newInstance.keywords": "תיקייה, פרויקט, סביבת עבודה",
+
+  "commands.closeInstance.label": "סגור מופע",
+  "commands.closeInstance.description": "עצור את השרת של המופע הנוכחי",
+  "commands.closeInstance.keywords": "עצור, סגור",
+
+  "commands.nextInstance.label": "מופע הבא",
+  "commands.nextInstance.description": "עבור למופע הבא",
+  "commands.nextInstance.keywords": "החלף, נווט",
+
+  "commands.previousInstance.label": "מופע קודם",
+  "commands.previousInstance.description": "עבור למופע הקודם",
+  "commands.previousInstance.keywords": "החלף, נווט",
+
+  "commands.newSession.label": "סשן חדש",
+  "commands.newSession.description": "צור סשן הורה חדש",
+  "commands.newSession.keywords": "צור, התחל",
+
+  "commands.closeSession.label": "סגור סשן",
+  "commands.closeSession.description": "סגור את סשן ההורה הנוכחי",
+  "commands.closeSession.keywords": "סגור, עצור",
+
+  "commands.scrubSessions.label": "נקה סשנים",
+  "commands.scrubSessions.description": "הסר סשנים ריקים, סשני תת-סוכן שסיימו את משימתם הראשית, וסשני פיצול מיותרים.",
+  "commands.scrubSessions.keywords": "ניקוי, ריק, סשנים, הסר, מחק",
+
+  "commands.instanceInfo.label": "מידע על מופע",
+  "commands.instanceInfo.description": "פתח את סקירת המופע ללוגים וסטטוס",
+  "commands.instanceInfo.keywords": "מידע, לוגים, קונסולה, פלט",
+
+  "commands.nextSession.label": "סשן הבא",
+  "commands.nextSession.description": "עבור לסשן הבא",
+  "commands.nextSession.keywords": "החלף, נווט",
+
+  "commands.previousSession.label": "סשן קודם",
+  "commands.previousSession.description": "עבור לסשן הקודם",
+  "commands.previousSession.keywords": "החלף, נווט",
+
+  "commands.compactSession.label": "סכם סשן",
+  "commands.compactSession.description": "סכם ודחוס את הסשן הנוכחי",
+  "commands.compactSession.keywords": "סיכום, דחיסה",
+  "commands.compactSession.errorFallback": "סיכום הסשן נכשל",
+  "commands.compactSession.alert.title": "הסיכום נכשל",
+  "commands.compactSession.alert.message": "הסיכום נכשל: {message}",
+
+  "commands.undoLastMessage.label": "בטל הודעה אחרונה",
+  "commands.undoLastMessage.description": "בטל את ההודעה האחרונה",
+  "commands.undoLastMessage.keywords": "חזרה, ביטול",
+  "commands.undoLastMessage.none.title": "אין פעולות לביטול",
+  "commands.undoLastMessage.none.message": "אין מה לבטל",
+  "commands.undoLastMessage.failed.title": "הביטול נכשל",
+  "commands.undoLastMessage.failed.message": "ביטול ההודעה נכשל",
+
+  "commands.openModelSelector.label": "פתח בורר מודלים",
+  "commands.openModelSelector.description": "בחר מודל אחר",
+  "commands.openModelSelector.keywords": "מודל, llm, ai",
+
+  "commands.selectModelVariant.label": "בחר גרסת מודל",
+  "commands.selectModelVariant.description": "בחר רמת מאמץ חשיבה למודל הנוכחי",
+  "commands.selectModelVariant.keywords": "גרסה, חשיבה, מאמץ",
+
+  "commands.openAgentSelector.label": "פתח בורר סוכנים",
+  "commands.openAgentSelector.description": "בחר סוכן אחר",
+  "commands.openAgentSelector.keywords": "סוכן, מצב",
+
+  "commands.clearInput.label": "נקה קלט",
+  "commands.clearInput.description": "נקה את תיבת הטקסט של הפקודה",
+  "commands.clearInput.keywords": "נקה, אפס",
+
+  "commands.promptSubmitShortcut.label.default": "Enter: שורה חדשה, Cmd/Ctrl+Enter: שלח פקודה",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: שלח פקודה, Cmd/Ctrl+Enter: שורה חדשה",
+  "commands.promptSubmitShortcut.description": "החלף את התנהגות Enter ו-Cmd/Ctrl+Enter בקלט הפקודה",
+  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, שלח, שורה חדשה, קיצור",
+
+  "commands.thinkingBlocks.label.show": "הצג חשיבה",
+  "commands.thinkingBlocks.label.hide": "הסתר חשיבה",
+  "commands.thinkingBlocks.description": "הצג או הסתר קטעי חשיבה של ה-AI",
+  "commands.thinkingBlocks.keywords": "חשיבה, הצג, הסתר",
+
+  "commands.timelineToolCalls.label.show": "הצג קריאות כלי בציר הזמן",
+  "commands.timelineToolCalls.label.hide": "הסתר קריאות כלי בציר הזמן",
+  "commands.timelineToolCalls.description": "הצג/הסתר קריאות כלי בציר הודעות",
+  "commands.timelineToolCalls.keywords": "ציר זמן, כלי, הצג, הסתר",
+
+  "commands.keyboardShortcutHints.label.show": "הצג רמזי קיצורי מקלדת",
+  "commands.keyboardShortcutHints.label.hide": "הסתר רמזי קיצורי מקלדת",
+  "commands.keyboardShortcutHints.description": "הצג או הסתר רמזי קיצורי מקלדת בכל הממשק",
+  "commands.keyboardShortcutHints.description.disabledWeb": "מושבת בממשק Web (רמזי קיצורים תמיד מוסתרים)",
+  "commands.keyboardShortcutHints.keywords": "קיצור, מקלדת, רמזים",
+
+  "commands.common.expanded": "פרוס",
+  "commands.common.collapsed": "מכווץ",
+  "commands.common.visible": "גלוי",
+  "commands.common.hidden": "מוסתר",
+  "commands.common.enabled": "מופעל",
+  "commands.common.disabled": "מושבת",
+
+  "commands.thinkingBlocksDefault.label": "תצוגת חשיבה: {state}",
+  "commands.thinkingBlocksDefault.description": "כווץ / פרוס קטעי חשיבה של ה-AI",
+  "commands.thinkingBlocksDefault.keywords": "חשיבה, פרוס, כווץ, ברירת מחדל",
+
+  "commands.diffViewSplit.label": "השתמש בתצוגת diff מפוצלת",
+  "commands.diffViewSplit.description": "הצג diff של קריאות כלי זה לצד זה",
+  "commands.diffViewSplit.keywords": "diff, מפוצל, תצוגה",
+
+  "commands.diffViewUnified.label": "השתמש בתצוגת diff מאוחדת",
+  "commands.diffViewUnified.description": "הצג diff של קריאות כלי בשורה אחת",
+  "commands.diffViewUnified.keywords": "diff, מאוחד, תצוגה",
+
+  "commands.toolOutputsDefault.label": "ברירת מחדל לפלטי כלים · {state}",
+  "commands.toolOutputsDefault.description": "החלף ברירת מחדל לפריסת פלטי כלים",
+  "commands.toolOutputsDefault.keywords": "כלי, פלט, פרוס, כווץ",
+
+  "commands.diagnosticsDefault.label": "ברירת מחדל לאבחון · {state}",
+  "commands.diagnosticsDefault.description": "החלף ברירת מחדל לפריסת פלט אבחון",
+  "commands.diagnosticsDefault.keywords": "אבחון, פרוס, כווץ",
+
+  "commands.toolInputsVisibility.label": "נראות קלטי כלים · {state}",
+  "commands.toolInputsVisibility.description": "הגדר נראות ברירת מחדל לארגומנטים של קריאות כלי",
+  "commands.toolInputsVisibility.keywords": "כלי, קלטים, ארגומנטים, נראות, הסתר, הצג",
+
+  "commands.tokenUsageDisplay.label": "תצוגת שימוש בטוקנים · {state}",
+  "commands.tokenUsageDisplay.description": "הצג או הסתר נתוני טוקנים ועלות להודעות הסוכן",
+  "commands.tokenUsageDisplay.keywords": "טוקן, שימוש, עלות, נתונים",
+
+  "commands.autoCleanupBlankSessions.label": "ניקוי אוטומטי של סשנים ריקים · {state}",
+  "commands.autoCleanupBlankSessions.description": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים",
+  "commands.autoCleanupBlankSessions.keywords": "אוטומטי, ניקוי, ריק, סשנים",
+
+  "commands.showHelp.label": "הצג עזרה",
+  "commands.showHelp.description": "הצג קיצורי מקלדת ועזרה",
+  "commands.showHelp.keywords": "קיצורים, עזרה",
+
+  "commands.custom.argumentsPrompt.message": "ארגומנטים עבור /{name}",
+  "commands.custom.argumentsPrompt.title": "פקודה מותאמת אישית",
+  "commands.custom.argumentsPrompt.inputLabel": "ארגומנטים",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "למשל: foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "הפעל",
+  "commands.custom.argumentsPrompt.cancelLabel": "ביטול",
+  "commands.custom.argumentsPrompt.openFailed.message": "פתיחת תיבת ארגומנטים נכשלה.",
+  "commands.custom.argumentsPrompt.openFailed.title": "ארגומנטים לפקודה",
+  "commands.custom.entries.descriptionFallback": "פקודה מותאמת אישית",
+  "commands.custom.sessionRequired.message": "בחר סשן לפני הפעלת פקודה מותאמת אישית.",
+  "commands.custom.sessionRequired.title": "נדרש סשן",
+  "commands.custom.runFailed.message": "הפעלת הפקודה המותאמת אישית נכשלה. בדוק את הקונסולה לפרטים.",
+  "commands.custom.runFailed.title": "הפקודה נכשלה",
+
+  "unifiedPicker.loading.searching": "מחפש...",
+  "unifiedPicker.loading.loadingWorkspace": "טוען סביבת עבודה...",
+  "unifiedPicker.title.command": "בחר פקודה",
+  "unifiedPicker.title.mention": "בחר סוכן או קובץ",
+  "unifiedPicker.empty": "לא נמצאו תוצאות",
+  "unifiedPicker.sections.commands": "פקודות",
+  "unifiedPicker.sections.agents": "סוכנים",
+  "unifiedPicker.sections.files": "קבצים",
+  "unifiedPicker.sections.workspaceRoot": "שורש סביבת העבודה",
+  "unifiedPicker.badge.subagent": "תת-סוכן",
+  "unifiedPicker.footer.navigate": "ניווט",
+  "unifiedPicker.footer.select": "בחירה",
+  "unifiedPicker.footer.close": "סגירה",
+} as const

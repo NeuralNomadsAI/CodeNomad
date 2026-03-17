@@ -45,6 +45,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     { value: "ru", label: "Русский" },
     { value: "ja", label: "日本語" },
     { value: "zh-Hans", label: "简体中文" },
+    { value: "he", label: "עברית" },
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]

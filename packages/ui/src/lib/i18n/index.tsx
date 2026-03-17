@@ -7,10 +7,11 @@ type Messages = Record<string, string>
 
 export type TranslateParams = Record<string, unknown>
 
-export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans"
+export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he"
 
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans"] as const
+const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he"] as const
 const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
+const RTL_LOCALES = new Set<Locale>(["he"])
 
 const localeMessagesCache = new Map<Locale, Messages>([["en", enMessages]])
 const localeMessagesPromises = new Map<Locale, Promise<Messages>>()
@@ -22,6 +23,11 @@ const localeLoaders: Record<Locale, () => Promise<Messages>> = {
   ru: async () => (await import("./messages/ru")).ruMessages,
   ja: async () => (await import("./messages/ja")).jaMessages,
   "zh-Hans": async () => (await import("./messages/zh-Hans")).zhHansMessages,
+  he: async () => (await import("./messages/he")).heMessages,
+}
+
+function getLocaleDirection(locale: Locale): "ltr" | "rtl" {
+  return RTL_LOCALES.has(locale) ? "rtl" : "ltr"
 }
 
 function normalizeLocaleTag(value: string): string {
@@ -149,6 +155,8 @@ export const I18nProvider: ParentComponent = (props) => {
   const [resolvedLocale, setResolvedLocale] = createSignal<Locale>(globalLocale)
   const previousGlobalMessages = globalMessages
   const previousGlobalLocale = globalLocale
+  const previousDocumentLanguage = typeof document !== "undefined" ? document.documentElement.lang : ""
+  const previousDocumentDirection = typeof document !== "undefined" ? document.documentElement.dir : ""
 
   onMount(() => {
     const detected = detectNavigatorLocale()
@@ -195,10 +203,21 @@ export const I18nProvider: ParentComponent = (props) => {
     })
   })
 
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    const activeLocale = locale()
+    document.documentElement.dir = getLocaleDirection(activeLocale)
+    document.documentElement.lang = activeLocale
+  })
+
   onCleanup(() => {
     globalMessages = previousGlobalMessages
     globalLocale = previousGlobalLocale
     setGlobalRevision((value) => value + 1)
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = previousDocumentLanguage
+      document.documentElement.dir = previousDocumentDirection
+    }
   })
 
   const value: I18nContextValue = {

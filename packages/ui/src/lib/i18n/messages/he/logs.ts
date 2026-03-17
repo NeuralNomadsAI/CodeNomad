@@ -1,0 +1,27 @@
+export const logMessages = {
+  "logsView.title": "לוגי שרת",
+  "logsView.actions.show": "הצג לוגי שרת",
+  "logsView.actions.hide": "הסתר לוגי שרת",
+  "logsView.envVars.title": "משתני סביבה ({count})",
+  "logsView.paused.title": "לוגי השרת מושהים",
+  "logsView.paused.description": "הפעל זרימה לצפייה בפעילות שרת OpenCode שלך.",
+  "logsView.empty.waiting": "ממתין לפלט שרת...",
+  "logsView.scrollToBottom": "גלול למטה",
+
+  "infoView.logs.title": "לוגי שרת",
+  "infoView.logs.actions.show": "הצג לוגי שרת",
+  "infoView.logs.actions.hide": "הסתר לוגי שרת",
+  "infoView.logs.paused.title": "לוגי השרת מושהים",
+  "infoView.logs.paused.description": "הפעל זרימה לצפייה בפעילות שרת OpenCode שלך.",
+  "infoView.logs.empty.waiting": "ממתין לפלט שרת...",
+  "infoView.logs.scrollToBottom": "גלול למטה",
+
+  "infoView.dispose.actions.dispose": "בטל מופע",
+  "infoView.dispose.actions.disposing": "מבטל...",
+  "infoView.dispose.confirm.title": "לבטל את המופע?",
+  "infoView.dispose.confirm.message": "פעולה זו מנקה את המצב השמור לפי פרויקט עבור ספרייה זו ומטעינה מחדש את המופע.",
+  "infoView.dispose.confirm.confirmLabel": "בטל",
+  "infoView.dispose.confirm.cancelLabel": "ביטול",
+  "infoView.dispose.toast.success": "המופע בוטל. מטעין מחדש...",
+  "infoView.dispose.toast.error": "ביטול המופע נכשל.",
+} as const
