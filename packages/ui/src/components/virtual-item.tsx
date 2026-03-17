@@ -367,29 +367,17 @@ export default function VirtualItem(props: VirtualItemProps) {
 
     const wrapperEl = wrapperRef
     intersectionCleanup = subscribeToSharedObserver(wrapperEl, targetRoot, margin, (entry) => {
-      // IntersectionObserver can produce transient false-positives during pane
-      // activation/layout transitions (e.g. `isIntersecting: true` for items far
-      // outside the scroll root). For element roots, prefer explicit rect math.
-      if (targetRoot && !(targetRoot instanceof Document)) {
-        // When rootBounds is null we cannot trust the entry; treat as hidden.
-        if (entry.rootBounds === null) {
-          queueVisibility(false)
-          return
-        }
-        try {
-          const rootRect = (targetRoot as Element).getBoundingClientRect()
-          const visible = shouldRenderByRects({
-            wrapperRect: wrapperEl.getBoundingClientRect(),
-            rootRect: { top: rootRect.top, bottom: rootRect.bottom },
-            margin,
-          })
-          queueVisibility(visible)
-          return
-        } catch {
-          // Fall through to the entry-based heuristic.
-        }
+      // When rootBounds is null (e.g. hidden/0x0 root during pane transitions)
+      // we cannot trust the entry; treat as hidden.
+      if (targetRoot && !(targetRoot instanceof Document) && entry.rootBounds === null) {
+        queueVisibility(false)
+        return
       }
 
+      // Use the rects already provided by the IntersectionObserver entry
+      // instead of forcing synchronous layout via getBoundingClientRect().
+      // shouldRenderEntry applies the same distance-based visibility check
+      // using entry.boundingClientRect and entry.rootBounds.
       const nextVisible = shouldRenderEntry(entry)
       queueVisibility(nextVisible)
     })
