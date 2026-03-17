@@ -105,11 +105,15 @@ function flushPendingLogs() {
         continue
       }
 
+      const boundedQueuedEntries = queuedEntries.length > MAX_LOG_ENTRIES
+        ? queuedEntries.slice(-MAX_LOG_ENTRIES)
+        : queuedEntries
+
       const target = next ?? prev
       const existing = target.get(instanceId) ?? []
       const updated = existing.length === 0
-        ? queuedEntries.slice(-MAX_LOG_ENTRIES)
-        : [...existing, ...queuedEntries].slice(-MAX_LOG_ENTRIES)
+        ? boundedQueuedEntries
+        : [...existing, ...boundedQueuedEntries].slice(-MAX_LOG_ENTRIES)
 
       if (updated === existing) {
         continue
@@ -642,6 +646,9 @@ function addLog(id: string, entry: LogEntry) {
   const queued = pendingLogEntries.get(id)
   if (queued) {
     queued.push(entry)
+    if (queued.length > MAX_LOG_ENTRIES) {
+      queued.splice(0, queued.length - MAX_LOG_ENTRIES)
+    }
   } else {
     pendingLogEntries.set(id, [entry])
   }
