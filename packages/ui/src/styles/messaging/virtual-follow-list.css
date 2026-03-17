@@ -16,6 +16,9 @@
 
 .virtual-item-wrapper {
   width: 100%;
+  /* Limit layout recalculation scope — height changes inside a virtual item
+     should not force the browser to re-layout sibling items. */
+  contain: layout style;
 }
 
 .virtual-item-placeholder,
@@ -29,6 +32,7 @@
 .virtual-item-content {
   width: 100%;
   position: relative;
+  contain: layout style paint;
 }
 
 .virtual-item-content-hidden {
