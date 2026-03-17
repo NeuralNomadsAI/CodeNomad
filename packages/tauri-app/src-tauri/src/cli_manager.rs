@@ -51,9 +51,10 @@ const CLI_STOP_GRACE_SECS: u64 = 30;
 
 #[cfg(windows)]
 fn kill_process_tree_windows(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+    configure_spawn(&mut command);
+    let _ = command.status();
 }
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
