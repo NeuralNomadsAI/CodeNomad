@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession, sessions } from "../../stores/sessions"
 import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -25,7 +25,7 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 
 interface SessionViewProps {
   sessionId: string
-  activeSessions: Map<string, Session>
+  activeSessions?: Map<string, Session>  // @deprecated — no longer used, kept for back-compat during migration
   instanceId: string
   instanceFolder: string
   escapeInDebounce: boolean
@@ -39,17 +39,39 @@ interface SessionViewProps {
 
 export const SessionView: Component<SessionViewProps> = (props) => {
   const { t } = useI18n()
-  const session = () => props.activeSessions.get(props.sessionId)
-  const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
+  // Read session directly from the store signal instead of from an
+  // activeSessions Map prop.  This avoids the reactive fan-out where a new
+  // Map reference causes all 5 cached SessionViews to re-evaluate.
+  const rawSession = () => sessions().get(props.instanceId)?.get(props.sessionId)
+
+  // Track previous session reference so inactive views keep their last-known
+  // session object (for the <Show when={stableSession()}> gate) without
+  // subscribing to store changes while hidden.
+  let lastKnownSession: Session | undefined
+  const stableSession = (): Session | undefined => {
+    if (props.isActive) {
+      const s = rawSession()
+      lastKnownSession = s
+      return s
+    }
+    return lastKnownSession
+  }
+
+  const messagesLoading = createMemo(() => {
+    if (!props.isActive) return false
+    return isSessionMessagesLoading(props.instanceId, props.sessionId)
+  })
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const sessionBusy = createMemo(() => {
-    const currentSession = session()
+    if (!props.isActive) return false
+    const currentSession = rawSession()
     if (!currentSession) return false
     return getSessionBusyStatus(props.instanceId, currentSession.id)
   })
 
   const sessionNeedsInput = createMemo(() => {
-    const currentSession = session()
+    if (!props.isActive) return false
+    const currentSession = rawSession()
     if (!currentSession) return false
     return Boolean(currentSession.pendingPermission || (currentSession as any).pendingQuestion)
   })
@@ -66,7 +88,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let rootRef: HTMLDivElement | undefined
 
   function shouldScrollToBottomOnActivate() {
-    const current = session()
+    const current = rawSession()
     if (!current) return true
     const snapshot = messageStore().getScrollSnapshot(current.id, MESSAGE_SCROLL_CACHE_SCOPE)
     return !snapshot || snapshot.atBottom
@@ -130,7 +152,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   )
 
   createEffect(() => {
-    const currentSession = session()
+    if (!props.isActive) return
+    const currentSession = rawSession()
     if (currentSession) {
       loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
@@ -174,7 +197,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
  
   async function handleAbortSession() {
-    const currentSession = session()
+    const currentSession = rawSession()
     if (!currentSession) return
  
     try {
@@ -273,7 +296,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const restoredText = getUserMessageText(messageId)
-    const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
+    const parentTitle = (rawSession()?.title ?? "").trim() || t("sessionList.session.untitled")
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { messageId })
@@ -309,7 +332,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   return (
     <Show
-      when={session()}
+      when={stableSession()}
       fallback={
         <div class="flex items-center justify-center h-full">
           <div class="text-center text-gray-500">{t("sessionView.fallback.sessionNotFound")}</div>

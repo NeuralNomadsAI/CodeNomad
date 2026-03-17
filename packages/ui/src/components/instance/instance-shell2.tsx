@@ -815,7 +815,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       >
                         <SessionView
                           sessionId={sessionId}
-                          activeSessions={activeSessions()}
                           instanceId={props.instance.id}
                           instanceFolder={props.instance.folder}
                           escapeInDebounce={props.escapeInDebounce}
