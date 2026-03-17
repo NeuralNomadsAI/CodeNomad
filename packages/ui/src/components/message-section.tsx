@@ -822,6 +822,39 @@ export default function MessageSection(props: MessageSectionProps) {
             timelinePartCountsByMessageId.set(newId, existingPartCount)
           }
 
+          setSelectedTimelineIds((prev) => {
+            if (prev.size === 0) return prev
+            let changed = false
+            const next = new Set<string>()
+            for (const id of prev) {
+              if (id.includes(oldId)) {
+                next.add(id.replace(oldId, newId))
+                changed = true
+              } else {
+                next.add(id)
+              }
+            }
+            return changed ? next : prev
+          })
+
+          setLastSelectionAnchorId((prev) => {
+            if (!prev || !prev.includes(oldId)) return prev
+            return prev.replace(oldId, newId)
+          })
+
+          setActiveSegmentId((prev) => {
+            if (!prev || !prev.includes(oldId)) return prev
+            return prev.replace(oldId, newId)
+          })
+
+          setSelectedForDeletion((prev) => {
+            if (!prev.has(oldId)) return prev
+            const next = new Set(prev)
+            next.delete(oldId)
+            next.add(newId)
+            return next
+          })
+
           previousTimelineIds = ids.slice()
           return
         }
