@@ -10,6 +10,7 @@ export type TranslateParams = Record<string, unknown>
 export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans"
 
 const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans"] as const
+const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
 
 const localeMessagesCache = new Map<Locale, Messages>([["en", enMessages]])
 const localeMessagesPromises = new Map<Locale, Promise<Messages>>()
@@ -32,8 +33,7 @@ function matchSupportedLocale(value: string | undefined): Locale | null {
 
   const normalized = normalizeLocaleTag(value)
   const lower = normalized.toLowerCase()
-  const supportedLower = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
-  const exact = supportedLower.get(lower)
+  const exact = SUPPORTED_LOCALES_BY_LOWER.get(lower)
   if (exact) return exact
 
   const parts = lower.split("-")
@@ -41,11 +41,11 @@ function matchSupportedLocale(value: string | undefined): Locale | null {
   if (!base) return null
 
   if (base === "zh") {
-    const zhHans = supportedLower.get("zh-hans")
+    const zhHans = SUPPORTED_LOCALES_BY_LOWER.get("zh-hans")
     return zhHans ?? null
   }
 
-  const baseMatch = supportedLower.get(base)
+  const baseMatch = SUPPORTED_LOCALES_BY_LOWER.get(base)
   return baseMatch ?? null
 }
 
@@ -83,6 +83,7 @@ function translateFrom(messages: Messages, key: string, params?: TranslateParams
 
 const [globalRevision, setGlobalRevision] = createSignal(0)
 let globalMessages: Messages = enMessages
+let globalLocale: Locale = "en"
 
 function getMessagesForLocale(locale: Locale): Messages {
   return localeMessagesCache.get(locale) ?? enMessages
@@ -119,10 +120,12 @@ export async function preloadLocaleMessages(preferredLocale?: string | null): Pr
   const resolvedLocale = matchSupportedLocale(preferredLocale ?? undefined) ?? detectNavigatorLocale() ?? "en"
   try {
     globalMessages = await loadLocaleMessages(resolvedLocale)
+    globalLocale = resolvedLocale
     setGlobalRevision((value) => value + 1)
     return resolvedLocale
   } catch {
     globalMessages = enMessages
+    globalLocale = "en"
     setGlobalRevision((value) => value + 1)
     return "en"
   }
@@ -142,8 +145,8 @@ const I18nContext = createContext<I18nContextValue>()
 
 export const I18nProvider: ParentComponent = (props) => {
   const { preferences } = useConfig()
-  const [detectedLocale, setDetectedLocale] = createSignal<Locale>("en")
-  const [resolvedLocale, setResolvedLocale] = createSignal<Locale>("en")
+  const [detectedLocale, setDetectedLocale] = createSignal<Locale>(globalLocale)
+  const [resolvedLocale, setResolvedLocale] = createSignal<Locale>(globalLocale)
 
   onMount(() => {
     const detected = detectNavigatorLocale()
@@ -181,6 +184,7 @@ export const I18nProvider: ParentComponent = (props) => {
         }
         setResolvedLocale("en")
         globalMessages = enMessages
+        globalLocale = "en"
         setGlobalRevision((value) => value + 1)
       })
 
@@ -191,6 +195,7 @@ export const I18nProvider: ParentComponent = (props) => {
 
   onCleanup(() => {
     globalMessages = enMessages
+    globalLocale = "en"
     setGlobalRevision((value) => value + 1)
   })
 
