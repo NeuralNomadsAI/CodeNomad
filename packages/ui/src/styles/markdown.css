@@ -12,6 +12,9 @@
     /* Message containers may use `whitespace-pre-wrap` for plain text.
        Markdown should always match assistant rendering (normal whitespace). */
     white-space: normal;
+    /* Scope layout/paint so innerHTML swaps (e.g. Shiki highlighting)
+       don't trigger full-page layout recalculation. */
+    contain: layout style paint;
   }
 
   .markdown-body p,
@@ -189,6 +192,9 @@
     border-radius: 6px;
     background-color: var(--surface-muted);
     border: 1px solid var(--border-base);
+    /* Isolate each code block so highlighting one doesn't force
+       layout recalc on sibling blocks. */
+    contain: layout style paint;
   }
 
   .code-block-header {
