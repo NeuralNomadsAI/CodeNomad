@@ -444,7 +444,7 @@ const SessionList: Component<SessionListProps> = (props) => {
               </Show>
 
               {rowProps.isChild ? <Bot class="w-4 h-4 flex-shrink-0" /> : <User class="w-4 h-4 flex-shrink-0" />}
-              <span class="session-item-title session-item-title--clamp">{title()}</span>
+              <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             </div>
           </div>
           <div class="session-item-row session-item-meta">
