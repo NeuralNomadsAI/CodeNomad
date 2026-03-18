@@ -35,9 +35,7 @@
 }
 
 .prompt-input {
-  @apply w-full pt-2.5 border text-sm resize-none outline-none transition-colors;
-  padding-inline-start: 0.75rem;
-  padding-inline-end: 2.5rem;
+  @apply w-full pl-3 pr-10 pt-2.5 border text-sm resize-none outline-none transition-colors;
   font-family: inherit;
   background-color: var(--surface-base);
   color: var(--text-primary);
@@ -87,7 +85,7 @@
 .prompt-nav-buttons {
   position: absolute;
   top: 0.25rem;
-  inset-inline-end: 0.25rem;
+  right: 0.25rem;
   bottom: 0.25rem;
   display: flex;
   flex-direction: column;
