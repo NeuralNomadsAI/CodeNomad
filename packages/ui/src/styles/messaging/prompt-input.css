@@ -85,7 +85,7 @@
 .prompt-nav-buttons {
   position: absolute;
   top: 0.25rem;
-  right: 0.25rem;
+  inset-inline-end: 0.25rem;
   bottom: 0.25rem;
   display: flex;
   flex-direction: column;
@@ -158,6 +158,15 @@
 
 .prompt-input:disabled {
   @apply opacity-60 cursor-not-allowed;
+}
+
+/* In RTL: force scrollbar to the right (start), buttons stay at inset-inline-end (left/end) */
+[dir="rtl"] .prompt-input {
+  direction: ltr;
+  text-align: right;
+  unicode-bidi: plaintext;
+  padding-left: 2.5rem;
+  padding-right: 0.75rem;
 }
 
 .prompt-input::placeholder {
