@@ -27,12 +27,13 @@ fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
 
+#[cfg(windows)]
 fn configure_spawn(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    command.creation_flags(CREATE_NO_WINDOW);
 }
+
+#[cfg(not(windows))]
+fn configure_spawn(_command: &mut Command) {}
 
 fn workspace_root() -> Option<PathBuf> {
     std::env::current_dir().ok().and_then(|mut dir| {
