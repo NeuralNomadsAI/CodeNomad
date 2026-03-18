@@ -743,7 +743,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
 
-                <div class="ml-auto flex items-center gap-3">
+                <div class="ms-auto flex items-center gap-3">
                   <div class="connection-status-meta flex items-center gap-3">
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">
