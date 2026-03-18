@@ -549,6 +549,7 @@
   min-height: auto;
   max-height: none;
   overflow-y: visible;
+  direction: ltr;
 }
 
 /* Shiki injects inline background colors; force token surfaces. */
@@ -762,6 +763,7 @@
   overflow-x: auto;
   max-height: var(--tool-call-max-height-compact, calc(25 * 1.4em));
   overflow-y: scroll;
+  direction: ltr;
 }
 
 .tool-call-section code {

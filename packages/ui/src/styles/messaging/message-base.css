@@ -258,6 +258,7 @@
   padding: 8px;
   background-color: var(--surface-code);
   border-radius: 4px;
+  direction: ltr;
 }
 
 .message-error-part {

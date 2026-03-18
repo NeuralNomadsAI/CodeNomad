@@ -344,6 +344,7 @@
   .prompt-input {
     min-height: 0;
     padding: 0.5rem 0.75rem;
+    padding-inline-start: 2.5rem; /* preserve space for nav buttons */
     padding-bottom: 0.75rem;
   }
 
