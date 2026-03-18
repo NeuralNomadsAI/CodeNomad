@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import morphdom from "morphdom"
 import { renderMarkdown, onLanguagesLoaded, decodeHtmlEntities, setMarkdownTheme } from "../lib/markdown"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
@@ -195,6 +196,20 @@ export function Markdown(props: MarkdownProps) {
     })
   })
 
+  // Use morphdom to efficiently patch the DOM instead of replacing innerHTML.
+  // morphdom diffs the existing DOM against the new HTML and only mutates what
+  // changed, avoiding full subtree destruction that triggers expensive
+  // ResizeObserver / layout cascades.
+  createEffect(() => {
+    const content = html()
+    if (!containerRef) return
+    if (!content) {
+      containerRef.textContent = ""
+      return
+    }
+    morphdom(containerRef, `<div>${content}</div>`, { childrenOnly: true })
+  })
+
   const proseClass = () => "markdown-body"
 
   return (
@@ -205,7 +220,6 @@ export function Markdown(props: MarkdownProps) {
       data-part-id={resolved().partId}
       data-markdown-theme={resolved().themeKey}
       data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
-      innerHTML={html()}
     />
   )
 }
