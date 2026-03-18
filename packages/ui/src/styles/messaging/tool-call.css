@@ -5,7 +5,7 @@
 .tool-call-message {
   @apply flex flex-col gap-2 p-3 w-full;
   background-color: var(--message-tool-bg);
-  border-left: 4px solid var(--message-tool-border);
+  border-inline-start: 4px solid var(--message-tool-border);
   color: inherit;
 }
 
@@ -105,7 +105,7 @@
 .tool-call-header-toggle::before {
   content: "▶";
   font-size: 11px;
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
@@ -168,26 +168,26 @@
 }
 
 .tool-call-summary[data-tool-icon=""]::before {
-  margin-right: 0;
+  margin-inline-end: 0;
   content: "";
 }
 
 .tool-call-summary[data-tool-icon]:not([data-tool-icon=""])::before {
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
 .tool-call-status-completed,
 .tool-call-status-success {
-  border-left: 3px solid var(--status-success);
+  border-inline-start: 3px solid var(--status-success);
 }
 
 .tool-call-status-error {
-  border-left: 3px solid var(--status-error);
+  border-inline-start: 3px solid var(--status-error);
 }
 
 .tool-call-status-running {
-  border-left: 3px solid var(--status-warning);
+  border-inline-start: 3px solid var(--status-warning);
 }
 
 .tool-call-status-running .tool-call-status {
@@ -195,7 +195,7 @@
 }
 
 .tool-call-status-pending {
-  border-left: 3px solid var(--accent-primary);
+  border-inline-start: 3px solid var(--accent-primary);
 }
 
 .tool-call-status-pending .tool-call-summary {
@@ -267,7 +267,7 @@
 .tool-call-io-toggle::before {
   content: "▶";
   font-size: 11px;
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
@@ -393,7 +393,7 @@
 }
 
 .tool-call-awaiting-permission {
-  border-left-color: var(--status-warning);
+  border-inline-start-color: var(--status-warning);
 }
 
 .tool-call-permission {
@@ -484,7 +484,7 @@
 }
 
 .tool-call-permission-shortcuts .kbd {
-  margin-right: 0.25rem;
+  margin-inline-end: 0.25rem;
 }
 
 .tool-call-permission-queued-text {
@@ -693,8 +693,8 @@
   gap: var(--space-xs);
   max-height: calc(4 * var(--tool-call-line-unit, 1.4em));
   overflow-y: scroll;
-  padding-right: 0;
-  margin-right: 0;
+  padding-inline-end: 0;
+  margin-inline-end: 0;
   scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
 }
@@ -843,7 +843,7 @@
 
 .tool-call-error-content {
   background-color: var(--message-error-bg);
-  border-left: 3px solid var(--status-error);
+  border-inline-start: 3px solid var(--status-error);
   padding: 12px;
   margin: 8px 0;
   border-radius: 4px;

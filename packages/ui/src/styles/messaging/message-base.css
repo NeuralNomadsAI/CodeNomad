@@ -141,13 +141,13 @@
 
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin-top: 0;
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin: 0;
 }
 
@@ -172,7 +172,7 @@
   font-size: 9px;
   color: var(--text-muted);
   font-weight: var(--font-weight-medium);
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
 }
 
 .message-step-heading {
@@ -335,12 +335,12 @@
 
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .message-step-heading {
@@ -390,7 +390,7 @@
 .message-reasoning-card {
   --reasoning-border-color: var(--border-strong, var(--border-base));
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin-top: 0;
   margin-bottom: 0;
   padding: 0;

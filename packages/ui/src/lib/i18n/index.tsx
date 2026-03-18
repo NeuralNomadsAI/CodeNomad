@@ -210,6 +210,11 @@ export const I18nProvider: ParentComponent = (props) => {
     document.documentElement.lang = activeLocale
   })
 
+  const RTL_LOCALES = new Set<Locale>(["he"])
+  createEffect(() => {
+    document.documentElement.dir = RTL_LOCALES.has(locale()) ? "rtl" : "ltr"
+  })
+
   onCleanup(() => {
     globalMessages = previousGlobalMessages
     globalLocale = previousGlobalLocale

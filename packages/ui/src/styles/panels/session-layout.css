@@ -26,10 +26,10 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  inset-inline-start: 0;
   width: min(90vw, 360px);
   max-width: 360px;
-  border-right: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
   box-shadow: var(--folder-card-shadow);
   transform: translateX(0);
   transition: transform 0.25s ease, opacity 0.2s ease;
@@ -40,6 +40,9 @@
   transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
+}
+[dir="rtl"] .session-sidebar-collapsed {
+  transform: translateX(100%);
 }
 
 .session-sidebar-backdrop {
@@ -54,7 +57,7 @@
 .session-sidebar-menu-button--floating {
   position: absolute;
   top: 1rem;
-  left: 1rem;
+  inset-inline-start: 1rem;
   z-index: 20;
 }
 
@@ -128,7 +131,7 @@ session-sidebar-controls .selector-trigger-primary {
 .mobile-fullscreen-exit-wrapper {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
-  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  inset-inline-end: calc(env(safe-area-inset-right, 0px) + 12px);
   z-index: 1250;
   pointer-events: none;
 }
@@ -143,11 +146,11 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-resize-handle--left {
-  right: 0;
+  inset-inline-end: 0;
 }
 
 .session-resize-handle--right {
-  left: 0;
+  inset-inline-start: 0;
 }
 
 .session-resize-handle:hover {
@@ -160,13 +163,19 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-resize-handle--left::before {
-  right: 0;
+  inset-inline-end: 0;
   transform: translateX(50%);
+}
+[dir="rtl"] .session-resize-handle--left::before {
+  transform: translateX(-50%);
 }
 
 .session-resize-handle--right::before {
-  left: 0;
+  inset-inline-start: 0;
   transform: translateX(-50%);
+}
+[dir="rtl"] .session-resize-handle--right::before {
+  transform: translateX(50%);
 }
 
 .session-list-header {
@@ -197,7 +206,7 @@ session-sidebar-controls .selector-trigger-primary {
 
 
 .session-item-base.session-item-child {
-  padding-left: 2.25rem;
+  padding-inline-start: 2.25rem;
   position: relative;
 }
 
@@ -206,7 +215,7 @@ session-sidebar-controls .selector-trigger-primary {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 1.125rem;
+  inset-inline-start: 1.125rem;
   width: 1px;
   background-color: var(--text-secondary);
   opacity: 0.95;
@@ -221,7 +230,7 @@ session-sidebar-controls .selector-trigger-primary {
   content: "";
   position: absolute;
   top: 50%;
-  left: 1.125rem;
+  inset-inline-start: 1.125rem;
   width: 0.875rem;
   height: 1px;
   background-color: var(--text-secondary);
@@ -231,11 +240,11 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .session-item-base.session-item-border-user {
-  border-left: 4px solid var(--message-user-border);
+  border-inline-start: 4px solid var(--message-user-border);
 }
 
 .session-item-base.session-item-border-assistant {
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .session-item-expander {

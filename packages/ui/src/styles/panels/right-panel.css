@@ -11,8 +11,8 @@
   content: '';
   position: absolute;
   bottom: -1px;
-  left: 0;
-  right: 0;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
   height: 1px;
   background-color: var(--border-base);
   z-index: 0;
@@ -42,7 +42,7 @@
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 8px 8px 0 0;
-  margin-right: 2px;
+  margin-inline-end: 2px;
   z-index: 1;
 }
 
@@ -90,8 +90,8 @@
 .file-split-handle {
   cursor: col-resize;
   background-color: transparent;
-  border-left: 1px solid var(--border-base);
-  border-right: 1px solid var(--border-base);
+  border-inline-start: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
   user-select: none;
   touch-action: none;
 }
@@ -148,7 +148,7 @@
   display: flex;
   flex-direction: column;
   background-color: var(--surface-secondary);
-  border-left: 1px solid var(--border-base);
+  border-inline-start: 1px solid var(--border-base);
   /* Monaco uses layered positioned elements; keep overlay well above it. */
   z-index: 200;
 }
@@ -459,7 +459,7 @@
 }
 
 .section-label {
-  margin-left: 2px;
+  margin-inline-start: 2px;
 }
 
 .section-info-icon {
