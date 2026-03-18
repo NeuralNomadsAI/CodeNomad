@@ -17,9 +17,23 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
+
+#[cfg(windows)]
+fn configure_spawn(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_spawn(_command: &mut Command) {}
 
 fn workspace_root() -> Option<PathBuf> {
     std::env::current_dir().ok().and_then(|mut dir| {
@@ -36,6 +50,13 @@ const SESSION_COOKIE_NAME: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
 
+#[cfg(windows)]
+fn kill_process_tree_windows(pid: u32) {
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+    configure_spawn(&mut command);
+    let _ = command.status();
+}
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
         let mut display = url.to_string();
@@ -352,7 +373,7 @@ impl CliProcessManager {
             }
             #[cfg(windows)]
             {
-                let _ = child.kill();
+                kill_process_tree_windows(child.id());
             }
 
             let start = Instant::now();
@@ -372,7 +393,7 @@ impl CliProcessManager {
                             }
                             #[cfg(windows)]
                             {
-                                let _ = child.kill();
+                                kill_process_tree_windows(child.id());
                             }
                             break;
                         }
@@ -450,6 +471,7 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
@@ -462,6 +484,7 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
@@ -537,7 +560,12 @@ impl CliProcessManager {
             locked.error = Some("CLI did not start in time".to_string());
             log_line("timeout waiting for CLI readiness");
             if let Some(child) = child_holder_clone.lock().as_mut() {
-                let _ = child.kill();
+                #[cfg(windows)]
+                kill_process_tree_windows(child.id());
+                #[cfg(not(windows))]
+                {
+                    let _ = child.kill();
+                }
             }
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);

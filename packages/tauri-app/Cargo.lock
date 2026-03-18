@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "codenomad-tauri"
-version = "0.1.0"
+version = "0.12.3"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -646,6 +646,7 @@ dependencies = [
  "thiserror 1.0.69",
  "url",
  "which",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -12,7 +12,19 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::iter;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -101,6 +113,22 @@ fn emit_folder_drop_event(
     }
 }
 
+#[cfg(windows)]
+fn set_windows_app_user_model_id() {
+    let app_id: Vec<u16> = OsStr::new(WINDOWS_APP_USER_MODEL_ID)
+        .encode_wide()
+        .chain(iter::once(0))
+        .collect();
+
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr()) };
+    if result < 0 {
+        eprintln!("[tauri] failed to set AppUserModelID: {result}");
+    }
+}
+
+#[cfg(not(windows))]
+fn set_windows_app_user_model_id() {}
+
 fn main() {
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
@@ -116,6 +144,7 @@ fn main() {
             manager: CliProcessManager::new(),
         })
         .setup(|app| {
+            set_windows_app_user_model_id();
             build_menu(&app.handle())?;
             let dev_mode = is_dev_mode();
             let app_handle = app.handle().clone();
