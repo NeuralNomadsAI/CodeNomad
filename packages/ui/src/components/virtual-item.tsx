@@ -5,6 +5,73 @@ const DEFAULT_MARGIN_PX = 600
 const MIN_PLACEHOLDER_HEIGHT = 400
 const VISIBILITY_BUFFER_PX = 0
 
+// ── Batched ResizeObserver measurement coordinator ──
+// When multiple items resize simultaneously (session switch, streaming),
+// each would independently call getBoundingClientRect() forcing separate
+// layouts. Instead, we collect pending measurements and process them in
+// one RAF: all reads first, then all writes.
+type MeasurementCallback = (height: number) => void
+const pendingMeasurements = new Map<HTMLElement, MeasurementCallback>()
+let measureRAF: number | null = null
+
+function requestBatchedMeasurement(element: HTMLElement, callback: MeasurementCallback) {
+  pendingMeasurements.set(element, callback)
+  if (measureRAF !== null) return
+  measureRAF = requestAnimationFrame(flushBatchedMeasurements)
+}
+
+function flushBatchedMeasurements() {
+  measureRAF = null
+  if (pendingMeasurements.size === 0) return
+
+  // Phase 1: batch all layout reads
+  const readings = new Map<HTMLElement, number>()
+  for (const [element] of pendingMeasurements) {
+    const rect = element.getBoundingClientRect()
+    readings.set(element, Math.max(0, Math.round(rect.height * 2) / 2))
+  }
+
+  // Phase 2: batch all callbacks (state writes)
+  // Copy entries first since callbacks may re-register
+  const entries = Array.from(pendingMeasurements.entries())
+  pendingMeasurements.clear()
+  for (const [element, callback] of entries) {
+    const height = readings.get(element)
+    if (height !== undefined) {
+      callback(height)
+    }
+  }
+}
+
+// ── Deferred ResizeObserver.observe() coordinator ──
+// When N VirtualItems mount simultaneously (session switch), each calls
+// resizeObserver.observe(element) which forces the browser to compute the
+// element's initial size — triggering a synchronous layout per item.
+// By deferring all observe() calls to a single RAF, the browser can batch
+// the initial size computation into one layout pass.
+type DeferredObserve = { observer: ResizeObserver; element: HTMLElement; cancelled: boolean }
+const pendingObserves: DeferredObserve[] = []
+let observeRAF: number | null = null
+
+function requestDeferredObserve(observer: ResizeObserver, element: HTMLElement): DeferredObserve {
+  const entry: DeferredObserve = { observer, element, cancelled: false }
+  pendingObserves.push(entry)
+  if (observeRAF === null) {
+    observeRAF = requestAnimationFrame(flushDeferredObserves)
+  }
+  return entry
+}
+
+function flushDeferredObserves() {
+  observeRAF = null
+  const batch = pendingObserves.splice(0)
+  for (const entry of batch) {
+    if (!entry.cancelled) {
+      entry.observer.observe(entry.element)
+    }
+  }
+}
+
 type ObserverRoot = Element | Document | null
 
 type IntersectionCallback = (entry: IntersectionObserverEntry) => void
@@ -78,18 +145,38 @@ function getViewportRect(): { top: number; bottom: number } {
   return { top: 0, bottom: window.innerHeight }
 }
 
+// Cache isRenderableRoot results per-frame so that N VirtualItems mounting
+// in the same frame don't each force getComputedStyle + getBoundingClientRect
+// on the same root element.
+let renderableRootCache = new WeakMap<Element, boolean>()
+let renderableRootCacheFrame: number | null = null
+
 function isRenderableRoot(root: ObserverRoot): boolean {
   if (!root) return true
   if (root instanceof Document) return true
   if (typeof window === "undefined") return false
 
   const element = root as Element
-  const style = window.getComputedStyle(element as Element)
+
+  // Invalidate cache each frame
+  const now = typeof performance !== "undefined" ? performance.now() : 0
+  if (renderableRootCacheFrame === null || now - renderableRootCacheFrame > 16) {
+    renderableRootCache = new WeakMap<Element, boolean>()
+    renderableRootCacheFrame = now
+  }
+
+  const cached = renderableRootCache.get(element)
+  if (cached !== undefined) return cached
+
+  const style = window.getComputedStyle(element)
   if (style.display === "none" || style.visibility === "hidden") {
+    renderableRootCache.set(element, false)
     return false
   }
-  const rect = (element as Element).getBoundingClientRect()
-  return rect.width > 0 && rect.height > 0
+  const rect = element.getBoundingClientRect()
+  const result = rect.width > 0 && rect.height > 0
+  renderableRootCache.set(element, result)
+  return result
 }
 
 function shouldRenderByRects(params: {
@@ -229,9 +316,14 @@ export default function VirtualItem(props: VirtualItemProps) {
   let contentRef: HTMLDivElement | undefined
 
   let resizeObserver: ResizeObserver | undefined
+  let pendingDeferredObserve: DeferredObserve | undefined
   let intersectionCleanup: (() => void) | undefined
 
   function cleanupResizeObserver() {
+    if (pendingDeferredObserve) {
+      pendingDeferredObserve.cancelled = true
+      pendingDeferredObserve = undefined
+    }
     if (resizeObserver) {
       resizeObserver.disconnect()
       resizeObserver = undefined
@@ -241,7 +333,7 @@ export default function VirtualItem(props: VirtualItemProps) {
   function scheduleVisibleMeasurements() {
     if (shouldHideContent() || measurementsSuspended()) return
     if (!contentRef) return
-    queueMicrotask(() => {
+    requestAnimationFrame(() => {
       if (shouldHideContent() || measurementsSuspended()) return
       if (!contentRef) return
       updateMeasuredHeight()
@@ -300,13 +392,12 @@ export default function VirtualItem(props: VirtualItemProps) {
     if (normalized !== before) props.onHeightChange?.(normalized, before, measurementMeta)
   }
 
-  function updateMeasuredHeight() {
+  function updateMeasuredHeight(preReadHeight?: number) {
     if (!contentRef) return
     if (measurementsSuspended()) return
     // Prefer subpixel-accurate height for scroll compensation.
     // offsetHeight rounds to integers which can accumulate error.
-    const rect = contentRef.getBoundingClientRect()
-    const next = Math.max(0, Math.round(rect.height * 2) / 2)
+    const next = preReadHeight ?? Math.max(0, Math.round(contentRef.getBoundingClientRect().height * 2) / 2)
     const currentMeasured = measuredHeight()
     const measurementSource: "initial-visible-measure" | "resize" = awaitingVisibleMeasurement ? "initial-visible-measure" : "resize"
     const wasHidden = lastMeasurementWhileHidden
@@ -325,11 +416,17 @@ export default function VirtualItem(props: VirtualItemProps) {
       updateMeasuredHeight()
       return
     }
+    const ref = contentRef
     resizeObserver = new ResizeObserver(() => {
       if (measurementsSuspended()) return
-      updateMeasuredHeight()
+      // Batch layout reads across all VirtualItems to avoid per-item
+      // forced layout. The coordinator reads all rects in one pass,
+      // then delivers heights via callback.
+      requestBatchedMeasurement(ref, (height) => {
+        updateMeasuredHeight(height)
+      })
     })
-    resizeObserver.observe(contentRef)
+    pendingDeferredObserve = requestDeferredObserve(resizeObserver, contentRef)
   }
 
 
@@ -392,8 +489,13 @@ export default function VirtualItem(props: VirtualItemProps) {
   function setContentRef(element: HTMLDivElement | null) {
     contentRef = element ?? undefined
     if (contentRef) {
-      queueMicrotask(() => {
+      // Defer initial measurement + observer setup to RAF so that when
+      // N items mount simultaneously (session switch), we avoid N
+      // individual forced layouts from queueMicrotask (which runs
+      // synchronously within the same task).
+      requestAnimationFrame(() => {
         if (shouldHideContent() || measurementsSuspended()) return
+        if (!contentRef) return
         updateMeasuredHeight()
         setupResizeObserver()
       })
