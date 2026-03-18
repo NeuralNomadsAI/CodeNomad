@@ -35,7 +35,9 @@
 }
 
 .prompt-input {
-  @apply w-full pl-3 pr-10 pt-2.5 border text-sm resize-none outline-none transition-colors;
+  @apply w-full pt-2.5 border text-sm resize-none outline-none transition-colors;
+  padding-inline-start: 0.75rem;
+  padding-inline-end: 2.5rem;
   font-family: inherit;
   background-color: var(--surface-base);
   color: var(--text-primary);
