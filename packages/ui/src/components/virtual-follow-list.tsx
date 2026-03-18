@@ -919,7 +919,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             const anchorId = () => getAnchorId(key())
             const overscanPx = props.overscanPx ?? 800
             const suspendMeasurements = () => measurementsSuspended() || !isActive()
-            const itemVirtualizationEnabled = () => virtualizationEnabled() && !autoScroll()
+            // Re-enable virtualization during autoScroll/follow mode.
+            // Commit f77fb15 disabled this to avoid measurement flicker during
+            // streaming, but it causes massive layout cost on initial session
+            // selection (all items rendered + measured at once). Batched
+            // measurement and deferred observe() now mitigate the flicker risk.
+            const itemVirtualizationEnabled = () => virtualizationEnabled()
             return (
               <VirtualItem
                 id={anchorId()}
