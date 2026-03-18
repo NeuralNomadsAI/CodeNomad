@@ -38,14 +38,33 @@ type CaptureContext = {
 }
 
 export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
-  // Defer mounting the heavy DiffView component so it doesn't block the
-  // initial reactive cascade (e.g. during session switches).  When cached
-  // HTML is available the deferred path is skipped entirely.
+  // Defer mounting the heavy DiffView component until the container is
+  // scrolled into view.  When cached HTML is available, skip deferral.
+  // This avoids rendering expensive diff tables for off-screen messages
+  // during session switches (the old requestIdleCallback approach fired
+  // too early when the browser had spare time between tasks).
   const [deferredReady, setDeferredReady] = createSignal(Boolean(props.cachedHtml))
+  let sentinelRef: HTMLDivElement | undefined
   onMount(() => {
-    if (props.cachedHtml) return // already ready — cached HTML renders instantly
-    const id = requestIdleCallback(() => setDeferredReady(true), { timeout: 80 })
-    onCleanup(() => cancelIdleCallback(id))
+    if (props.cachedHtml) return
+    if (typeof IntersectionObserver === "undefined") {
+      setDeferredReady(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setDeferredReady(true)
+            observer.disconnect()
+            return
+          }
+        }
+      },
+      { rootMargin: "200px 0px" },
+    )
+    if (sentinelRef) observer.observe(sentinelRef)
+    onCleanup(() => observer.disconnect())
   })
 
   const diffData = createMemo<DiffData | null>(() => {
@@ -119,7 +138,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
           <div ref={diffContainerRef}>
             <Show
               when={deferredReady() && diffData()}
-              fallback={<pre class="tool-call-diff-fallback">{props.diffText}</pre>}
+              fallback={<div ref={sentinelRef}><pre class="tool-call-diff-fallback">{props.diffText}</pre></div>}
             >
               {(data) => (
                 <ErrorBoundary fallback={(error) => {
