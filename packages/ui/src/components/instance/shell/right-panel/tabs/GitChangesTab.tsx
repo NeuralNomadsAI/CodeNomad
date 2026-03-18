@@ -268,7 +268,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         onResizeMouseDown={props.onResizeMouseDown}
         onResizeTouchStart={props.onResizeTouchStart}
         isPhoneLayout={props.isPhoneLayout()}
-        overlayAriaLabel="Git Changes"
+        overlayAriaLabel={props.t("instanceShell.rightPanel.tabs.gitChanges")}
       />
     )
   }
