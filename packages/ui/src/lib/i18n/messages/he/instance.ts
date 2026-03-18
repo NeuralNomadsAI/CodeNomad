@@ -20,7 +20,7 @@ export const instanceMessages = {
   "instanceTab.status.permission": "ממתין לאישור",
   "instanceTab.status.compacting": "מסכם",
   "instanceTab.status.working": "עובד",
-  "instanceTab.status.idle": "בסרלה",
+  "instanceTab.status.idle": "מוכן",
   "instanceTab.status.ariaLabel": "סטטוס מופע: {status}",
   "instanceTab.actions.close.ariaLabel": "סגור מופע",
 
