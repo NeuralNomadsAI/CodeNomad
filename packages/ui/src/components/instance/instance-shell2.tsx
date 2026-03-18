@@ -784,7 +784,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
         <Box
           component="main"
-          sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
+          sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden", position: "relative" }}
           class="content-area"
         >
           <Show
@@ -807,7 +807,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     return (
                       <div
                         class="session-cache-pane flex flex-col flex-1 min-h-0"
-                        style={{ display: isActive() ? "flex" : "none" }}
+                        style={isActive() ? undefined : {
+                          visibility: "hidden",
+                          position: "absolute",
+                          top: "0",
+                          left: "0",
+                          width: "100%",
+                          height: "100%",
+                          "pointer-events": "none",
+                        }}
                         data-session-id={sessionId}
                         data-instance-id={props.instance.id}
                         data-session-active={isActive() ? "true" : "false"}
