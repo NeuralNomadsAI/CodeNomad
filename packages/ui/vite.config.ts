@@ -79,7 +79,7 @@ export default defineConfig({
       workbox: {
          // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
          // This is a build-time limit for the precache manifest, not a hard runtime cap.
-         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
           navigateFallback: null,
           // Only precache static assets (avoid caching HTML documents / routes).
