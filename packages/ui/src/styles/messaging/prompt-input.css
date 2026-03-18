@@ -256,7 +256,7 @@
   display: none;
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
+  inset-inline-start: 0;
   padding: 8px;
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);

@@ -257,7 +257,7 @@
   border: none;
   border-bottom: 1px solid var(--tool-call-border-color);
   width: 100%;
-  text-align: left;
+  text-align: start;
   font-size: 0.875rem;
   font-weight: normal;
   color: var(--text-primary);

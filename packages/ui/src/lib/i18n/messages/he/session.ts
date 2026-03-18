@@ -14,7 +14,7 @@ export const sessionMessages = {
   "sessionList.session.untitled": "ללא שם",
   "sessionList.status.working": "עובד",
   "sessionList.status.compacting": "מסכם",
-  "sessionList.status.idle": "בסרלה",
+  "sessionList.status.idle": "מוכן",
   "sessionList.status.needsPermission": "נדרש אישור",
   "sessionList.status.needsInput": "נדרש קלט",
   "sessionList.expand.collapseAriaLabel": "כווץ סשן",

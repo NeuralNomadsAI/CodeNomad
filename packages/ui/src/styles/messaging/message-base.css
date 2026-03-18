@@ -424,7 +424,7 @@
   padding: 0.25rem 0.6rem;
   font: inherit;
   color: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
