@@ -6,41 +6,44 @@
 
 ## דרישות מוקדמות
 
-- **Node.js 18+** — ההתקנה חייבת להתבצע דרך `npm` בלבד.
-  > ⚠️ **bun אינו נתמך.** השרת חייב לרוץ דרך `node`, לא `bun`.
-- **OpenCode CLI** — נדרש לפעולת הסוכן.
+*   **Node.js 18+** — ההתקנה חייבת להתבצע דרך `npm` בלבד.
+
+> ⚠️ **bun אינו נתמך.** השרת חייב לרוץ דרך `node`, לא `bun`.
+
+*   **OpenCode CLI** — נדרש לפעולת הסוכן.
 
 ### התקנת OpenCode
 
-```bash
+```
 curl -fsSL https://opencode.ai/install | bash
 ```
 
 ---
 
-## 1. התקנת CodeNomad גלובלית
+## 1\. התקנת CodeNomad גלובלית
 
-```bash
+```
 npm install -g @neuralnomads/codenomad@latest
 ```
 
 בדיקה:
 
-```bash
+```
 codenomad --version
 ```
 
 > אם `codenomad` אינו נמצא ב-PATH, בדוק היכן npm מתקין packages גלובליים:
-> ```bash
+> 
+> ```
 > npm prefix -g
 > # הוסף את <output>/bin ל-PATH
 > ```
 
 ---
 
-## 2. הגדרת אישורים
+## 2\. הגדרת אישורים
 
-```bash
+```
 mkdir -p ~/.config/codenomad
 cat > ~/.config/codenomad/env <<'EOF'
 CODENOMAD_SERVER_USERNAME=codenomad
@@ -51,26 +54,26 @@ chmod 600 ~/.config/codenomad/env
 
 ---
 
-## 3. הורדת ממשק ה-RTL+Hebrew
+## 3\. הורדת ממשק ה-RTL+Hebrew
 
 ### הורדה וחילוץ
 
-```bash
+```
 mkdir -p ~/.config/codenomad/ui
 
 curl -L https://github.com/MusiCode1/CodeNomad/releases/download/v0.12.3-rtl-he/codenomad-ui-rtl-he.zip \
   -o /tmp/codenomad-ui-rtl-he.zip
 ```
 
-**חילוץ עם `unzip` (מומלץ):**
+**חילוץ עם** `**unzip**` **(מומלץ):**
 
-```bash
+```
 unzip -o /tmp/codenomad-ui-rtl-he.zip -d ~/.config/codenomad/ui
 ```
 
-**חילוץ עם `python3` (אם `unzip` אינו מותקן):**
+**חילוץ עם** `**python3**` **(אם** `**unzip**` **אינו מותקן):**
 
-```bash
+```
 python3 -c "
 import zipfile, os
 with zipfile.ZipFile('/tmp/codenomad-ui-rtl-he.zip') as z:
@@ -79,18 +82,19 @@ print('Done.')
 "
 ```
 
-לאחר החילוץ, וודא שהתיקייה תקינה:
+לאחר החילוץ, וודא ש-`index.html` נמצא ישירות בתיקייה:
 
-```bash
-ls ~/.config/codenomad/ui/
-# אמור לכלול: index.html, assets/, sw.js, ...
 ```
+ls ~/.config/codenomad/ui/index.html
+```
+
+> אם הקובץ נמצא ב-`ui/dist/index.html` (zip ישן), השתמש ב-`--ui-dir ~/.config/codenomad/ui/dist` במקום.
 
 ---
 
-## 4. הפעלה ידנית (לבדיקה)
+## 4\. הפעלה ידנית (לבדיקה)
 
-```bash
+```
 codenomad \
   --host 0.0.0.0 \
   --ui-dir ~/.config/codenomad/ui \
@@ -105,7 +109,7 @@ codenomad \
 
 במקום `--ui-dir` אפשר להשתמש ב-`--ui-manifest-url` כדי שהשרת יוריד ויעדכן את ה-UI אוטומטית:
 
-```bash
+```
 codenomad \
   --host 0.0.0.0 \
   --ui-manifest-url https://raw.githubusercontent.com/MusiCode1/CodeNomad/i18n-hebrew/manifest.json
@@ -115,24 +119,24 @@ codenomad \
 
 ---
 
-## 5. שירות systemd (הפעלה אוטומטית עם המערכת)
+## 5\. שירות systemd (הפעלה אוטומטית עם המערכת)
 
 ### יצירת קובץ השירות
 
-```bash
+```
 mkdir -p ~/.config/systemd/user
 ```
 
 מצא את נתיב ה-node וה-codenomad שלך:
 
-```bash
+```
 which node        # למשל: /usr/bin/node
 which codenomad   # למשל: /usr/local/bin/codenomad
 ```
 
 צור את קובץ השירות:
 
-```bash
+```
 cat > ~/.config/systemd/user/codenomad.service <<'EOF'
 [Unit]
 Description=CodeNomad Server (RTL + Hebrew)
@@ -156,13 +160,13 @@ WantedBy=default.target
 EOF
 ```
 
-> **חשוב:** החלף את הנתיבים בנתיבים מהפקודות `which` שהרצת למעלה.
-> נתיב הבינארי של node: `$(which node)`
+> **חשוב:** החלף את הנתיבים בנתיבים מהפקודות `which` שהרצת למעלה.  
+> נתיב הבינארי של node: `$(which node)`  
 > נתיב bin.js: `$(npm prefix -g)/lib/node_modules/@neuralnomads/codenomad/dist/bin.js`
 
 ### הפעלת השירות
 
-```bash
+```
 systemctl --user daemon-reload
 systemctl --user enable --now codenomad
 systemctl --user status codenomad
@@ -170,15 +174,15 @@ systemctl --user status codenomad
 
 ### לוגים
 
-```bash
+```
 journalctl --user -u codenomad -f
 ```
 
 ---
 
-## 6. הפעלה לאחר logout (שרתים ללא מסך)
+## 6\. הפעלה לאחר logout (שרתים ללא מסך)
 
-```bash
+```
 loginctl enable-linger $USER
 ```
 
@@ -190,7 +194,7 @@ loginctl enable-linger $USER
 
 כשיוצאת גרסה חדשה:
 
-```bash
+```
 # הורד את ה-UI החדש
 curl -L https://github.com/MusiCode1/CodeNomad/releases/latest/download/codenomad-ui-rtl-he.zip \
   -o /tmp/codenomad-ui-rtl-he.zip
@@ -208,7 +212,7 @@ systemctl --user restart codenomad
 ## פתרון בעיות נפוצות
 
 | בעיה | פתרון |
-|------|--------|
+| --- | --- |
 | `codenomad: command not found` | הוסף `$(npm prefix -g)/bin` ל-`~/.bashrc` |
 | השירות לא עולה | בדוק נתיבים ב-`ExecStart` — חייב להיות `node`, לא `bun` |
 | הממשק לא נטען | וודא שהחלצה הצליחה: `ls ~/.config/codenomad/ui/index.html` |
