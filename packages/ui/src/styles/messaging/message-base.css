@@ -189,7 +189,7 @@
 }
 
 .message-error-block {
-  @apply text-sm p-3 rounded border-l-[3px] my-2;
+  @apply text-sm p-3 rounded border-s-[3px] my-2;
   color: var(--status-error);
   background-color: var(--message-error-bg);
   border-color: var(--status-error);
@@ -363,7 +363,7 @@
 }
 
 .message-step-time {
-  @apply text-[11px] text-[var(--text-muted)] font-normal ml-auto;
+  @apply text-[11px] text-[var(--text-muted)] font-normal ms-auto;
 }
 
 .message-step-meta-inline {

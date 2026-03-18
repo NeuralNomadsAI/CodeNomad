@@ -528,7 +528,7 @@
 }
 
 .right-panel-empty--left {
-  @apply items-start justify-start text-left w-full;
+  @apply items-start justify-start text-start w-full;
 }
 
 .right-panel-empty-text {

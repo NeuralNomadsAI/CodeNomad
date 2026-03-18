@@ -94,7 +94,7 @@
 }
 
 .tool-call-header-toggle {
-  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
@@ -159,7 +159,7 @@
 }
 
 .tool-call-summary {
-  @apply flex-1 text-left inline-flex items-center gap-2;
+  @apply flex-1 text-start inline-flex items-center gap-2;
   color: var(--text-primary);
 }
 
@@ -610,7 +610,7 @@
 }
 
 .tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: var(--text-primary);
@@ -634,7 +634,7 @@
 
 
 .tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: var(--text-primary);

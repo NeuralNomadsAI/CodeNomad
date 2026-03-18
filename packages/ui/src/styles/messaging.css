@@ -28,7 +28,7 @@
 
 /* Message error block */
 .message-error-block {
-  @apply text-sm p-3 rounded border-l-[3px] my-2;
+  @apply text-sm p-3 rounded border-s-[3px] my-2;
   color: var(--status-error);
   background-color: var(--message-error-bg);
   border-color: var(--status-error);
