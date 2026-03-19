@@ -20,7 +20,13 @@ export class OpenAICompatibleSpeechProvider {
       provider: settings.provider,
       supportsStt: true,
       supportsTts: true,
+      supportsRealtimeTranscription: true,
+      realtimeInputFormat: {
+        type: "audio/pcm" as const,
+        rate: 24000 as const,
+      },
       baseUrl: settings.baseUrl,
+      realtimeModel: settings.realtimeModel,
       sttModel: settings.sttModel,
       ttsModel: settings.ttsModel,
       ttsVoice: settings.ttsVoice,

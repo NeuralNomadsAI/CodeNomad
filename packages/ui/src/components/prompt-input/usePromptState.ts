@@ -22,7 +22,7 @@ type HistorySelectOptions = {
 
 type PromptState = {
   prompt: Accessor<string>
-  setPrompt: (value: string) => void
+  setPrompt: (value: string, options?: { persistDraft?: boolean }) => void
   clearPrompt: () => void
 
   draftLoadedNonce: Accessor<number>
@@ -48,11 +48,11 @@ export function usePromptState(options: PromptStateOptions): PromptState {
   const [historyDraft, setHistoryDraft] = createSignal<string | null>(null)
   const [draftLoadedNonce, setDraftLoadedNonce] = createSignal(0)
 
-  const setPrompt = (value: string) => {
+  const setPrompt = (value: string, setOptions?: { persistDraft?: boolean }) => {
     setPromptInternal(value)
     // Persist drafts only when the user is at the "fresh" position (not browsing history).
     // This keeps the bottom-of-history draft stable even if the user edits recalled history entries.
-    if (historyIndex() === -1) {
+    if (setOptions?.persistDraft !== false && historyIndex() === -1) {
       setSessionDraftPrompt(options.instanceId(), options.sessionId(), value)
     }
   }

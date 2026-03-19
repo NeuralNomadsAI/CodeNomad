@@ -8,6 +8,8 @@ import type {
   FileSystemListResponse,
   InstanceData,
   SpeechCapabilitiesResponse,
+  SpeechRealtimeEvent,
+  SpeechRealtimeSessionResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   ServerMeta,
@@ -37,6 +39,10 @@ export function buildBackgroundProcessStreamUrl(instanceId: string, processId: s
   const encodedInstanceId = encodeURIComponent(instanceId)
   const encodedProcessId = encodeURIComponent(processId)
   return buildAbsoluteUrl(`/workspaces/${encodedInstanceId}/plugin/background-processes/${encodedProcessId}/stream`)
+}
+
+export function buildRealtimeSpeechEventsUrl(sessionId: string): string {
+  return buildAbsoluteUrl(`/api/speech/realtime/sessions/${encodeURIComponent(sessionId)}/events`)
 }
 
 function buildEventsUrl(base: string | undefined, path: string): string {
@@ -241,6 +247,29 @@ export const serverApi = {
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
   },
+  createRealtimeSpeechSession(payload?: { language?: string; prompt?: string }): Promise<SpeechRealtimeSessionResponse> {
+    return request<SpeechRealtimeSessionResponse>("/api/speech/realtime/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    })
+  },
+  appendRealtimeSpeechAudio(sessionId: string, payload: { audioBase64: string }): Promise<void> {
+    return request(`/api/speech/realtime/sessions/${encodeURIComponent(sessionId)}/audio`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  finalizeRealtimeSpeechSession(sessionId: string): Promise<void> {
+    return request(`/api/speech/realtime/sessions/${encodeURIComponent(sessionId)}/finalize`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+  },
+  closeRealtimeSpeechSession(sessionId: string): Promise<void> {
+    return request(`/api/speech/realtime/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    })
+  },
   transcribeAudio(payload: {
     audioBase64: string
     mimeType: string
@@ -332,21 +361,34 @@ export const serverApi = {
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
     sseLogger.info(`Connecting to ${EVENTS_URL}`)
-    const source = new EventSource(EVENTS_URL, { withCredentials: true } as any)
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as WorkspaceEventPayload
-        onEvent(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse event", error)
-      }
-    }
-    source.onerror = () => {
-      sseLogger.warn("EventSource error, closing stream")
-      onError?.()
-    }
-    return source
+    return connectEventSource(EVENTS_URL, onEvent, onError)
+  },
+  connectRealtimeSpeechEvents(
+    sessionId: string,
+    onEvent: (event: SpeechRealtimeEvent) => void,
+    onError?: () => void,
+  ) {
+    const url = buildRealtimeSpeechEventsUrl(sessionId)
+    sseLogger.info(`Connecting to ${url}`)
+    return connectEventSource(url, onEvent, onError)
   },
 }
 
-export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType }
+function connectEventSource<T>(url: string, onEvent: (event: T) => void, onError?: () => void) {
+  const source = new EventSource(url, { withCredentials: true } as any)
+  source.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data) as T
+      onEvent(payload)
+    } catch (error) {
+      sseLogger.error("Failed to parse event", error)
+    }
+  }
+  source.onerror = () => {
+    sseLogger.warn("EventSource error, closing stream")
+    onError?.()
+  }
+  return source
+}
+
+export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SpeechRealtimeEvent }

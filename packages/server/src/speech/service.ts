@@ -10,6 +10,8 @@ const ServerSpeechSettingsSchema = z.object({
       provider: z.string().optional(),
       apiKey: z.string().optional(),
       baseUrl: z.string().optional(),
+      useRealtime: z.boolean().optional(),
+      realtimeModel: z.string().optional(),
       sttModel: z.string().optional(),
       ttsModel: z.string().optional(),
       ttsVoice: z.string().optional(),
@@ -40,12 +42,26 @@ export interface NormalizedSpeechSettings {
   provider: string
   apiKey?: string
   baseUrl?: string
+  realtimeModel: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
 }
 
+export interface RealtimeTranscriptionConfig {
+  provider: string
+  apiKey: string
+  baseUrl?: string
+  realtimeModel: string
+  sttModel: string
+  inputFormat: {
+    type: "audio/pcm"
+    rate: 24000
+  }
+}
+
 const DEFAULT_PROVIDER = "openai-compatible"
+const DEFAULT_REALTIME_MODEL = "gpt-realtime"
 const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
 const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 const DEFAULT_TTS_VOICE = "alloy"
@@ -67,6 +83,25 @@ export class SpeechService {
     return this.createProvider().synthesize(input)
   }
 
+  getRealtimeTranscriptionConfig(): RealtimeTranscriptionConfig {
+    const settings = this.resolveSettings()
+    if (!settings.apiKey) {
+      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+    }
+
+    return {
+      provider: settings.provider,
+      apiKey: settings.apiKey,
+      baseUrl: settings.baseUrl,
+      realtimeModel: settings.realtimeModel,
+      sttModel: settings.sttModel,
+      inputFormat: {
+        type: "audio/pcm",
+        rate: 24000,
+      },
+    }
+  }
+
   private createProvider(): SpeechProvider {
     const settings = this.resolveSettings()
     return new OpenAICompatibleSpeechProvider({
@@ -83,6 +118,7 @@ export class SpeechService {
       provider: speech.provider?.trim() || DEFAULT_PROVIDER,
       apiKey: speech.apiKey?.trim() || process.env.OPENAI_API_KEY,
       baseUrl: speech.baseUrl?.trim() || process.env.OPENAI_BASE_URL || undefined,
+      realtimeModel: speech.realtimeModel?.trim() || DEFAULT_REALTIME_MODEL,
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
