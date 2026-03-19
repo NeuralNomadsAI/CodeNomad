@@ -77,6 +77,29 @@ function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   return false
 }
 
+function isChildSession(instanceId: string, sessionId: string): boolean | null {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return null
+  return session.parentId !== null && session.parentId !== undefined
+}
+
+function shouldSendOsNotificationForSession(
+  kind: "needsInput" | "idle",
+  instanceId: string,
+  sessionId: string | undefined | null,
+): boolean {
+  if (!shouldSendOsNotification(kind)) return false
+  if (!sessionId) return true
+
+  const child = isChildSession(instanceId, sessionId)
+
+  // Avoid notification spam from spawned child/subagent sessions arriving before hydration.
+  if (child === null) return false
+  if (child) return false
+
+  return true
+}
+
 function getInstanceDisplayName(instanceId: string): string {
   const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
   return instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
@@ -492,7 +515,7 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
-  if (shouldSendOsNotification("idle")) {
+  if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
     const label = getSessionTitle(instanceId, sessionId)
     const body = label ? `Session "${label}" is idle` : "Session is idle"
@@ -607,9 +630,10 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   addPermissionToQueue(instanceId, permission)
   upsertPermissionV2(instanceId, permission)
 
-  if (shouldSendOsNotification("needsInput")) {
+  const sessionId = getPermissionSessionId(permission)
+
+  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
-    const sessionId = getPermissionSessionId(permission)
     const label = getSessionTitle(instanceId, sessionId)
     const body = label ? `Session "${label}" needs permission` : "Session needs permission"
     fireOsNotification({ title, body })
@@ -634,9 +658,10 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
   addQuestionToQueue(instanceId, request)
   upsertQuestionV2(instanceId, request)
 
-  if (shouldSendOsNotification("needsInput")) {
+  const sessionId = getQuestionSessionId(request)
+
+  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
-    const sessionId = getQuestionSessionId(request)
     const label = getSessionTitle(instanceId, sessionId)
     const body = label ? `Session "${label}" needs input` : "Session needs input"
     fireOsNotification({ title, body })
