@@ -20,6 +20,14 @@ export function createAnsiContentRenderer(params: {
   const runningAnsiRenderer = createAnsiStreamRenderer()
   let runningAnsiSource = ""
 
+  const registerTracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element)
+  }
+
+  const registerUntracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element, { disableTracking: true })
+  }
+
   const getMode = () => {
     const version = params.partVersion?.()
     return typeof version === "number" ? String(version) : undefined
@@ -36,6 +44,8 @@ export function createAnsiContentRenderer(params: {
     const cached = cacheHandle.get<AnsiRenderCache>()
     const mode = getMode()
     const isRunningVariant = options.variant === "running"
+    const disableScrollTracking = !isRunningVariant
+    const registerRef = disableScrollTracking ? registerUntracked : registerTracked
 
     let nextCache: AnsiRenderCache
 
@@ -87,9 +97,9 @@ export function createAnsiContentRenderer(params: {
     }
 
     return (
-      <div class={messageClass} ref={params.scrollHelpers.registerContainer} onScroll={params.scrollHelpers.handleScroll}>
+      <div class={messageClass} ref={registerRef} onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}>
         <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
-        {params.scrollHelpers.renderSentinel()}
+        {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )
   }

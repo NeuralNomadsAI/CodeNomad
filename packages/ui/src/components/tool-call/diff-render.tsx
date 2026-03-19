@@ -1,10 +1,26 @@
-import type { Accessor, JSXElement } from "solid-js"
+import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
-import { ToolCallDiffViewer } from "../diff-viewer"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
 import { getRelativePath } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
+
+const LazyToolCallDiffViewer = lazy(() =>
+  import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
+)
+
+function CachedDiffMarkup(props: { html: string; onRendered?: () => void }) {
+  onMount(() => {
+    props.onRendered?.()
+  })
+
+  return (
+    <div class="tool-call-diff-viewer">
+      <div innerHTML={props.html} />
+    </div>
+  )
+}
 
 type CacheHandle = {
   get<T>(): T | undefined
@@ -16,6 +32,7 @@ type DiffPrefs = {
 }
 
 export function createDiffContentRenderer(params: {
+  toolState: Accessor<ToolState | undefined>
   preferences: Accessor<DiffPrefs>
   setDiffViewMode: (mode: DiffViewMode) => void
   isDark: Accessor<boolean>
@@ -43,7 +60,10 @@ export function createDiffContentRenderer(params: {
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
     const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
     const themeKey = params.isDark() ? "dark" : "light"
-    const disableScrollTracking = Boolean(options?.disableScrollTracking)
+    const state = params.toolState()
+    const disableScrollTracking = Boolean(
+      options?.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending"),
+    )
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked
 
     const baseEntryParams = cacheHandle.params() as any
@@ -101,15 +121,20 @@ export function createDiffContentRenderer(params: {
             </button>
           </div>
         </div>
-        <ToolCallDiffViewer
-          diffText={payload.diffText}
-          filePath={payload.filePath}
-          theme={themeKey}
-          mode={diffMode()}
-          cachedHtml={cachedHtml}
-          cacheEntryParams={cacheEntryParams as any}
-          onRendered={handleDiffRendered}
-        />
+        {cachedHtml ? (
+          <CachedDiffMarkup html={cachedHtml} onRendered={handleDiffRendered} />
+        ) : (
+          <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
+            <LazyToolCallDiffViewer
+              diffText={payload.diffText}
+              filePath={payload.filePath}
+              theme={themeKey}
+              mode={diffMode()}
+              cacheEntryParams={cacheEntryParams as any}
+              onRendered={handleDiffRendered}
+            />
+          </Suspense>
+        )}
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )

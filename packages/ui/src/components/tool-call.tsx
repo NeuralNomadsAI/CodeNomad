@@ -514,6 +514,7 @@ function ToolCallDetails(props: {
   })
 
   const { renderDiffContent } = createDiffContentRenderer({
+    toolState: props.toolState,
     preferences: props.preferences,
     setDiffViewMode: props.setDiffViewMode,
     isDark: props.isDark,
