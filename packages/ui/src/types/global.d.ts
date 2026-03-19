@@ -30,7 +30,6 @@ declare global {
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
     getPathForFile?: (file: File) => string | null
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
-    openExternalUrl?: (url: string) => Promise<{ ok: boolean; reason?: string }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
   }

@@ -10,7 +10,6 @@ import { serverSettings, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { getLogger } from "../lib/logger"
 import { useI18n } from "../lib/i18n"
-import { openExternalUrl } from "../lib/external-url"
 const log = getLogger("actions")
 
 
@@ -126,10 +125,11 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
     void refreshMeta()
   }
 
-  const handleOpenUrl = async (url: string) => {
-    const opened = await openExternalUrl(url, "remote-access-overlay")
-    if (!opened) {
-      log.error("Failed to open URL", url)
+  const handleOpenUrl = (url: string) => {
+    try {
+      window.open(url, "_blank", "noopener,noreferrer")
+    } catch (err) {
+      log.error("Failed to open URL", err)
     }
   }
 

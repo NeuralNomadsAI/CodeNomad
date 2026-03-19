@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
 import fs from "fs"
 import type { CliProcessManager, CliStatus } from "./process-manager"
 
@@ -109,19 +109,6 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
       }
     }
     return { enabled: false }
-  })
-
-  ipcMain.handle("shell:openExternal", async (_event, url: unknown): Promise<{ ok: boolean; reason?: string }> => {
-    if (typeof url !== "string" || url.trim().length === 0) {
-      return { ok: false, reason: "invalid-url" }
-    }
-
-    try {
-      await shell.openExternal(url)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
-    }
   })
 
   ipcMain.handle(
