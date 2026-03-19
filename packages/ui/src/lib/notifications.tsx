@@ -1,5 +1,5 @@
 import toast from "solid-toast"
-import { isTauriHost } from "./runtime-env"
+import { openExternalUrl } from "./external-url"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
 
@@ -19,31 +19,6 @@ export type ToastPayload = {
   action?: {
     label: string
     href: string
-  }
-}
-
-async function openExternalUrl(url: string): Promise<void> {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  try {
-    if (isTauriHost()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener")
-      await openUrl(url)
-      return
-    }
-  } catch (error) {
-    // Fall through to browser handling.
-    // Note: on Linux, system opener failures can throw here.
-    console.warn("[notifications] unable to open via system opener", error)
-  }
-
-  try {
-    window.open(url, "_blank", "noopener,noreferrer")
-  } catch (error) {
-    console.warn("[notifications] unable to open external url", error)
-    toast.error("Unable to open link")
   }
 }
 
@@ -106,13 +81,18 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
             {payload.title && <p class={`font-semibold ${accent.headline}`}>{payload.title}</p>}
             <p class={`${accent.body} ${payload.title ? "mt-1" : ""}`}>{payload.message}</p>
             {payload.action && (
-              <button
-                type="button"
-                class="mt-3 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
-                onClick={() => void openExternalUrl(payload.action!.href)}
-              >
-                {payload.action.label}
-              </button>
+                <button
+                  type="button"
+                  class="mt-3 inline-flex items-center text-xs font-semibold uppercase tracking-wide text-sky-300 hover:text-sky-200"
+                  onClick={async () => {
+                    const opened = await openExternalUrl(payload.action!.href, "notifications")
+                    if (!opened) {
+                      toast.error("Unable to open link")
+                    }
+                  }}
+                >
+                  {payload.action.label}
+                </button>
             )}
           </div>
         </div>

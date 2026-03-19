@@ -21,6 +21,7 @@ const electronAPI = {
     }
   },
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
+  openExternalUrl: (url) => ipcRenderer.invoke("shell:openExternal", url),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
 }
 
