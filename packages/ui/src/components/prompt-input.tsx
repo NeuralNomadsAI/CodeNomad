@@ -4,6 +4,7 @@ import UnifiedPicker from "./unified-picker"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
@@ -13,11 +14,40 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
+import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 const log = getLogger("actions")
+
+function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
+  if (!text || attachments.length === 0) return []
+
+  const usedCounters = new Set<string>()
+  for (const match of text.matchAll(createPastedPlaceholderRegex())) {
+    const counter = match?.[1]
+    if (counter) usedCounters.add(counter)
+  }
+
+  if (usedCounters.size === 0) return []
+
+  const consumed = new Set<string>()
+
+  for (const attachment of attachments) {
+    if (!attachment?.id) continue
+    if (attachment?.source?.type !== "text") continue
+    const display = attachment.display
+    if (typeof display !== "string") continue
+    const match = display.match(pastedDisplayCounterRegex)
+    if (!match?.[1]) continue
+    if (usedCounters.has(match[1])) {
+      consumed.add(attachment.id)
+    }
+  }
+
+  return Array.from(consumed)
+}
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
@@ -246,7 +276,12 @@ export default function PromptInput(props: PromptInputProps) {
       commandName.length > 0 &&
       getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
 
-    const resolvedPrompt = isKnownSlashCommand ? text : resolvePastedPlaceholders(text, currentAttachments)
+    const resolvedCommandArgs = isKnownSlashCommand ? resolvePastedPlaceholders(commandArgs, currentAttachments) : ""
+    const resolvedPrompt = isKnownSlashCommand
+      ? resolvedCommandArgs
+        ? `${commandToken} ${resolvedCommandArgs}`
+        : commandToken
+      : resolvePastedPlaceholders(text, currentAttachments)
     const historyEntry = resolvedPrompt
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
@@ -262,6 +297,10 @@ export default function PromptInput(props: PromptInputProps) {
       syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     } else {
+      const consumedIds = getConsumedPastedTextAttachmentIds(commandArgs, currentAttachments)
+      for (const attachmentId of consumedIds) {
+        removeAttachment(props.instanceId, props.sessionId, attachmentId)
+      }
       syncAttachmentCounters("")
       setIgnoredAtPositions(new Set<number>())
     }
@@ -281,7 +320,7 @@ export default function PromptInput(props: PromptInputProps) {
           await props.onSend(resolvedPrompt, [])
         }
       } else if (isKnownSlashCommand) {
-        await executeCustomCommand(props.instanceId, props.sessionId, commandName, commandArgs)
+        await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
       } else {
         await props.onSend(resolvedPrompt, currentAttachments)
       }
