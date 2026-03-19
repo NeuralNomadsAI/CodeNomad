@@ -2,30 +2,10 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { clearSessionRenderCache } from "../../message-block"
 import { getLogger } from "../../../lib/logger"
-import { runtimeEnv } from "../../../lib/runtime-env"
 
 const log = getLogger("session")
 
-function getSessionCacheLimit() {
-  if (runtimeEnv.platform === "mobile") {
-    return 2
-  }
-
-  if (runtimeEnv.host === "tauri") {
-    return 3
-  }
-
-  if (typeof navigator !== "undefined") {
-    const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory
-    if (typeof deviceMemory === "number" && deviceMemory <= 4) {
-      return 3
-    }
-  }
-
-  return 5
-}
-
-const SESSION_CACHE_LIMIT = getSessionCacheLimit()
+const SESSION_CACHE_LIMIT = 5
 
 type SessionCacheOptions = {
   instanceId: Accessor<string>

@@ -1,11 +1,9 @@
 import {
   For,
   Show,
-  Suspense,
   createEffect,
   createMemo,
   createSignal,
-  lazy,
   onCleanup,
   onMount,
   type Accessor,
@@ -24,7 +22,11 @@ import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-regi
 
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
 import Kbd from "../kbd"
+import InstanceWelcomeView from "../instance-welcome-view"
+import InfoView from "../info-view"
+import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
+import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
@@ -32,10 +34,12 @@ import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
+import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
 import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
+import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
@@ -55,19 +59,6 @@ import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 
 const log = getLogger("session")
-
-const LazyInstanceWelcomeView = lazy(() => import("../instance-welcome-view"))
-const LazyInfoView = lazy(() => import("../info-view"))
-const LazyCommandPalette = lazy(() => import("../command-palette"))
-const LazyBackgroundProcessOutputDialog = lazy(() =>
-  import("../background-process-output-dialog").then((module) => ({ default: module.BackgroundProcessOutputDialog })),
-)
-const LazyPermissionApprovalModal = lazy(() => import("../permission-approval-modal"))
-const LazyRightPanel = lazy(() => import("./shell/right-panel/RightPanel"))
-
-function RightPanelFallback() {
-  return <div class="flex-1 min-h-0" />
-}
 
 interface InstanceShellProps {
   instance: Instance
@@ -503,30 +494,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             role="presentation"
             aria-hidden="true"
           />
-          <Suspense fallback={<RightPanelFallback />}>
-            <LazyRightPanel
-              t={t}
-              instanceId={props.instance.id}
-              instance={props.instance}
-              activeSessionId={activeSessionIdForInstance}
-              activeSession={activeSessionForInstance}
-              activeSessionDiffs={activeSessionDiffs}
-              latestTodoState={latestTodoState}
-              backgroundProcessList={backgroundProcessList}
-              onOpenBackgroundOutput={openBackgroundOutput}
-              onStopBackgroundProcess={stopBackgroundProcess}
-              onTerminateBackgroundProcess={terminateBackgroundProcess}
-              isPhoneLayout={isPhoneLayout}
-              rightDrawerWidth={rightDrawerWidth}
-              rightDrawerWidthInitialized={rightDrawerWidthInitialized}
-              rightDrawerState={rightDrawerState}
-              rightPinned={rightPinned}
-              onCloseRightDrawer={closeRightDrawer}
-              onPinRightDrawer={pinRightDrawer}
-              onUnpinRightDrawer={unpinRightDrawer}
-              setContentEl={setRightDrawerContentEl}
-            />
-          </Suspense>
+          <RightPanel
+            t={t}
+            instanceId={props.instance.id}
+            instance={props.instance}
+            activeSessionId={activeSessionIdForInstance}
+            activeSession={activeSessionForInstance}
+            activeSessionDiffs={activeSessionDiffs}
+            latestTodoState={latestTodoState}
+            backgroundProcessList={backgroundProcessList}
+            onOpenBackgroundOutput={openBackgroundOutput}
+            onStopBackgroundProcess={stopBackgroundProcess}
+            onTerminateBackgroundProcess={terminateBackgroundProcess}
+            isPhoneLayout={isPhoneLayout}
+            rightDrawerWidth={rightDrawerWidth}
+            rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+            rightDrawerState={rightDrawerState}
+            rightPinned={rightPinned}
+            onCloseRightDrawer={closeRightDrawer}
+            onPinRightDrawer={pinRightDrawer}
+            onUnpinRightDrawer={unpinRightDrawer}
+            setContentEl={setRightDrawerContentEl}
+          />
         </Box>
       )
     }
@@ -566,32 +555,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
         </Show>
-        <Show when={rightOpen() || rightPinned()} fallback={<RightPanelFallback />}>
-          <Suspense fallback={<RightPanelFallback />}>
-            <LazyRightPanel
-              t={t}
-              instanceId={props.instance.id}
-              instance={props.instance}
-              activeSessionId={activeSessionIdForInstance}
-              activeSession={activeSessionForInstance}
-              activeSessionDiffs={activeSessionDiffs}
-              latestTodoState={latestTodoState}
-              backgroundProcessList={backgroundProcessList}
-              onOpenBackgroundOutput={openBackgroundOutput}
-              onStopBackgroundProcess={stopBackgroundProcess}
-              onTerminateBackgroundProcess={terminateBackgroundProcess}
-              isPhoneLayout={isPhoneLayout}
-              rightDrawerWidth={rightDrawerWidth}
-              rightDrawerWidthInitialized={rightDrawerWidthInitialized}
-              rightDrawerState={rightDrawerState}
-              rightPinned={rightPinned}
-              onCloseRightDrawer={closeRightDrawer}
-              onPinRightDrawer={pinRightDrawer}
-              onUnpinRightDrawer={unpinRightDrawer}
-              setContentEl={setRightDrawerContentEl}
-            />
-          </Suspense>
-        </Show>
+        <RightPanel
+          t={t}
+          instanceId={props.instance.id}
+          instance={props.instance}
+          activeSessionId={activeSessionIdForInstance}
+          activeSession={activeSessionForInstance}
+          activeSessionDiffs={activeSessionDiffs}
+          latestTodoState={latestTodoState}
+          backgroundProcessList={backgroundProcessList}
+          onOpenBackgroundOutput={openBackgroundOutput}
+          onStopBackgroundProcess={stopBackgroundProcess}
+          onTerminateBackgroundProcess={terminateBackgroundProcess}
+          isPhoneLayout={isPhoneLayout}
+          rightDrawerWidth={rightDrawerWidth}
+          rightDrawerWidthInitialized={rightDrawerWidthInitialized}
+          rightDrawerState={rightDrawerState}
+          rightPinned={rightPinned}
+          onCloseRightDrawer={closeRightDrawer}
+          onPinRightDrawer={pinRightDrawer}
+          onUnpinRightDrawer={unpinRightDrawer}
+          setContentEl={setRightDrawerContentEl}
+        />
       </Drawer>
 
     )
@@ -849,9 +834,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <Suspense fallback={<div class="flex-1 min-h-0" />}>
-                <LazyInfoView instanceId={props.instance.id} />
-              </Suspense>
+              <InfoView instanceId={props.instance.id} />
             </div>
           </Show>
         </Box>
@@ -867,49 +850,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         class="instance-shell2 flex flex-col flex-1 min-h-0"
         data-instance-id={props.instance.id}
       >
-        <Show
-          when={hasSessions()}
-          fallback={
-            <Suspense fallback={<div class="flex-1 min-h-0" />}>
-              <LazyInstanceWelcomeView instance={props.instance} />
-            </Suspense>
-          }
-        >
+        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>
       </div>
 
-      <Show when={paletteOpen()}>
-        <Suspense fallback={null}>
-          <LazyCommandPalette
-            open={paletteOpen()}
-            onClose={() => hideCommandPalette(props.instance.id)}
-            commands={instancePaletteCommands()}
-            onExecute={props.onExecuteCommand}
-          />
-        </Suspense>
-      </Show>
+      <CommandPalette
+        open={paletteOpen()}
+        onClose={() => hideCommandPalette(props.instance.id)}
+        commands={instancePaletteCommands()}
+        onExecute={props.onExecuteCommand}
+      />
 
-      <Show when={showBackgroundOutput()}>
-        <Suspense fallback={null}>
-          <LazyBackgroundProcessOutputDialog
-            open={showBackgroundOutput()}
-            instanceId={props.instance.id}
-            process={selectedBackgroundProcess()}
-            onClose={closeBackgroundOutput}
-          />
-        </Suspense>
-      </Show>
+      <BackgroundProcessOutputDialog
+        open={showBackgroundOutput()}
+        instanceId={props.instance.id}
+        process={selectedBackgroundProcess()}
+        onClose={closeBackgroundOutput}
+      />
 
-      <Show when={permissionModalOpen()}>
-        <Suspense fallback={null}>
-          <LazyPermissionApprovalModal
-            instanceId={props.instance.id}
-            isOpen={permissionModalOpen()}
-            onClose={() => setPermissionModalOpen(false)}
-          />
-        </Suspense>
-      </Show>
+      <PermissionApprovalModal
+        instanceId={props.instance.id}
+        isOpen={permissionModalOpen()}
+        onClose={() => setPermissionModalOpen(false)}
+      />
     </>
   )
 }

@@ -131,15 +131,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(() => {
     const currentSession = session()
-    if (!currentSession) {
-      return
+    if (currentSession) {
+      loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
-
-    if (props.isActive === false) {
-      return
-    }
-
-    loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
   })
 
   function registerPromptInputApi(api: PromptInputApi) {
