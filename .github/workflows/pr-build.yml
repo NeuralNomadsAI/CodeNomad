@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
@@ -49,4 +50,7 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha }}
       upload: false
+      upload_actions_artifacts: true
+      actions_artifacts_retention_days: 7
+      actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false

@@ -1,0 +1,120 @@
+name: Comment PR Artifacts
+
+on:
+  workflow_run:
+    workflows:
+      - PR Build Validation
+    types:
+      - completed
+
+permissions:
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  comment:
+    # Only runs for PR Build Validation runs triggered by PRs.
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment with artifact download link
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const run = context.payload.workflow_run;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const prs = run.pull_requests || [];
+            let prNumber = prs[0]?.number;
+
+            // `workflow_run` payload does not reliably include pull request numbers.
+            // Resolve PR number(s) by asking GitHub for PRs associated with the head SHA.
+            if (!prNumber) {
+              const headSha = run.head_sha;
+              if (!headSha) {
+                core.info('No PR number and no head_sha found for this workflow_run; skipping.');
+                return;
+              }
+
+              const associated = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: headSha,
+              });
+
+              const open = (associated.data || []).find((p) => p.state === 'open');
+              prNumber = open?.number;
+              if (!prNumber) {
+                core.info(`No open PR found associated with commit ${headSha}; skipping.`);
+                return;
+              }
+            }
+
+            // Only comment when the PR build job actually ran (i.e. authorization passed).
+            // Unauthorized PRs targeting non-dev will skip the `build` job.
+            const jobs = await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              { owner, repo, run_id: run.id, per_page: 100 }
+            );
+            const buildJob = jobs.find((j) => j.name === 'build');
+            if (!buildJob) {
+              core.info('No `build` job found on this run; skipping.');
+              return;
+            }
+            if (buildJob.conclusion === 'skipped') {
+              core.info('`build` job was skipped; skipping comment.');
+              return;
+            }
+
+            // List artifacts from the run. If none exist (e.g. build failed before packaging),
+            // still comment with the run link so testers can see logs.
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              { owner, repo, run_id: run.id, per_page: 100 }
+            );
+            const active = artifacts.filter((a) => !a.expired);
+
+            const marker = '<!-- codenomad-pr-artifacts -->';
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${run.id}`;
+            const retentionDays = 7;
+
+            const artifactsBlock = active.length
+              ? ['Artifacts:', ...active.map((a) => `- ${a.name}`)].join('\n')
+              : 'Artifacts: (none found on this run)';
+
+            const body = [
+              marker,
+              'PR builds are available as GitHub Actions artifacts:',
+              '',
+              runUrl,
+              '',
+              `Artifacts expire in ${retentionDays} days.`,
+              artifactsBlock,
+            ].join('\n');
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: prNumber, per_page: 100 }
+            );
+            const existing = comments.find((c) => (c.body || '').includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing artifacts comment: ${existing.html_url}`);
+            } else {
+              const created = await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+              core.info(`Created artifacts comment: ${created.data.html_url}`);
+            }
