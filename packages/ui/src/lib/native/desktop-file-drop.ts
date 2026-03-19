@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
 import { runtimeEnv } from "../runtime-env"
 
@@ -107,13 +108,8 @@ export async function listenForNativeFolderDrops(onDrop: (paths: string[]) => vo
     return () => {}
   }
 
-  const eventApi = window.__TAURI__?.event
-  if (!eventApi?.listen) {
-    return () => {}
-  }
-
   try {
-    const unlisten = await eventApi.listen("desktop:folder-drop", (event) => {
+    const unlisten = await listen("desktop:folder-drop", (event) => {
       const payload = (event.payload ?? {}) as TauriFolderDropPayload
       const paths = normalizePathList(payload.paths)
       if (paths.length > 0) {
@@ -134,15 +130,10 @@ export async function listenForNativeFolderDropState(onState: (state: NativeFold
     return () => {}
   }
 
-  const eventApi = window.__TAURI__?.event
-  if (!eventApi?.listen) {
-    return () => {}
-  }
-
   try {
     const [unlistenEnter, unlistenLeave] = await Promise.all([
-      eventApi.listen("desktop:folder-drag-enter", () => onState("enter")),
-      eventApi.listen("desktop:folder-drag-leave", () => onState("leave")),
+      listen("desktop:folder-drag-enter", () => onState("enter")),
+      listen("desktop:folder-drag-leave", () => onState("leave")),
     ])
     return () => {
       unlistenEnter()
