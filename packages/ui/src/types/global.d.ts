@@ -53,7 +53,9 @@ declare global {
   }
 
   interface TauriBridge {
-    invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
+    core?: {
+      invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
+    }
     dialog?: TauriDialogModule
     event?: {
       listen: (event: string, handler: (payload: { payload: unknown }) => void) => Promise<() => void>

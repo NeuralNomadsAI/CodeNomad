@@ -3,8 +3,11 @@
 mod cli_manager;
 
 use cli_manager::{CliProcessManager, CliStatus};
+use keepawake::KeepAwake;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
@@ -26,9 +29,17 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
 
-#[derive(Clone)]
 pub struct AppState {
     pub manager: CliProcessManager,
+    pub wake_lock: Mutex<Option<KeepAwake>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct WakeLockConfig {
+    display: bool,
+    idle: bool,
+    sleep: bool,
 }
 
 #[tauri::command]
@@ -45,6 +56,39 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
         .start(app, dev_mode)
         .map_err(|e| e.to_string())?;
     Ok(state.manager.status())
+}
+
+#[tauri::command]
+fn wake_lock_start(
+    state: tauri::State<AppState>,
+    config: Option<WakeLockConfig>,
+) -> Result<(), String> {
+    let config = config.unwrap_or(WakeLockConfig {
+        display: true,
+        idle: false,
+        sleep: false,
+    });
+
+    let mut builder = keepawake::Builder::default();
+    builder
+        .display(config.display)
+        .idle(config.idle)
+        .sleep(config.sleep)
+        .reason("CodeNomad active session")
+        .app_name("CodeNomad")
+        .app_reverse_domain("ai.neuralnomads.codenomad.client");
+
+    let wake_lock = builder.create().map_err(|err| err.to_string())?;
+    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    *state_lock = Some(wake_lock);
+    Ok(())
+}
+
+#[tauri::command]
+fn wake_lock_stop(state: tauri::State<AppState>) -> Result<(), String> {
+    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    state_lock.take();
+    Ok(())
 }
 
 fn is_dev_mode() -> bool {
@@ -137,11 +181,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_keepawake::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),
+            wake_lock: Mutex::new(None),
         })
         .setup(|app| {
             set_windows_app_user_model_id();
@@ -156,7 +200,12 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli_get_status, cli_restart])
+        .invoke_handler(tauri::generate_handler![
+            cli_get_status,
+            cli_restart,
+            wake_lock_start,
+            wake_lock_stop
+        ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
                 // File menu

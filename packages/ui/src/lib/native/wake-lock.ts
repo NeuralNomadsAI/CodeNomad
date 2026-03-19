@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core"
 import { runtimeEnv } from "../runtime-env"
 import { getLogger } from "../logger"
 
@@ -60,8 +61,7 @@ function hasAnyWakeLockSupport(): boolean {
     if (api?.setWakeLock) return true
   }
   if (runtimeEnv.host === "tauri") {
-    // We'll attempt dynamic import; treat as potentially supported.
-    return true
+    return typeof window.__TAURI__?.core?.invoke === "function"
   }
   return Boolean((navigator as any)?.wakeLock?.request)
 }
@@ -84,21 +84,18 @@ async function setElectronWakeLock(enabled: boolean): Promise<boolean> {
 
 async function setTauriWakeLock(enabled: boolean): Promise<boolean> {
   try {
-    const mod = await import("tauri-plugin-keepawake-api")
-    const start = (mod as any).start as ((config?: any) => Promise<void>) | undefined
-    const stop = (mod as any).stop as (() => Promise<void>) | undefined
-    if (!start || !stop) {
+    if (!hasAnyWakeLockSupport()) {
       return false
     }
 
     if (enabled) {
-      // Plugin config supports toggling display/idle/sleep. Use a conservative
-      // default to keep both system + display awake.
-      await start({ display: true, idle: true, sleep: true })
+      // Match Electron's prevent-display-sleep behavior by keeping the display
+      // awake without blocking explicit system sleep requests.
+      await invoke("wake_lock_start", { config: { display: true, idle: false, sleep: false } })
       return true
     }
 
-    await stop()
+    await invoke("wake_lock_stop")
     return false
   } catch (error) {
     log.log("[wake-lock] tauri wake lock failed", error)
@@ -137,13 +134,12 @@ export function setWakeLockDesired(nextDesired: boolean): Promise<boolean> {
   inFlight = (async () => {
     try {
       const ok = await applyWakeLock(target)
-      // Treat disable attempts as applied even if the underlying API doesn't exist.
-      applied = target
+      applied = target ? ok : false
       return ok
     } finally {
       inFlight = null
       // If desired changed while in-flight, re-apply once.
-      if (desired !== applied) {
+      if (desired !== target) {
         void setWakeLockDesired(desired)
       }
 
