@@ -28,10 +28,29 @@ jobs:
             const repo = context.repo.repo;
 
             const prs = run.pull_requests || [];
-            const prNumber = prs[0]?.number;
+            let prNumber = prs[0]?.number;
+
+            // `workflow_run` payload does not reliably include pull request numbers.
+            // Resolve PR number(s) by asking GitHub for PRs associated with the head SHA.
             if (!prNumber) {
-              core.info('No PR number found for this workflow_run; skipping.');
-              return;
+              const headSha = run.head_sha;
+              if (!headSha) {
+                core.info('No PR number and no head_sha found for this workflow_run; skipping.');
+                return;
+              }
+
+              const associated = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: headSha,
+              });
+
+              const open = (associated.data || []).find((p) => p.state === 'open');
+              prNumber = open?.number;
+              if (!prNumber) {
+                core.info(`No open PR found associated with commit ${headSha}; skipping.`);
+                return;
+              }
             }
 
             // Only comment when the PR build job actually ran (i.e. authorization passed).
