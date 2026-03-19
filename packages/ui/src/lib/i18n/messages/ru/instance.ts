@@ -90,6 +90,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "Панель состояния",
   "instanceShell.rightPanel.tabs.changes": "Изменения",
+  "instanceShell.rightPanel.tabs.gitChanges": "Изменения Git",
   "instanceShell.rightPanel.tabs.files": "Файлы",
   "instanceShell.rightPanel.tabs.status": "Статус",
   "instanceShell.rightPanel.tabs.ariaLabel": "Вкладки правой панели",
@@ -111,6 +112,10 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "Пока нет изменений.",
   "instanceShell.sessionChanges.filesChanged": "Изменено файлов: {count}",
   "instanceShell.sessionChanges.actions.show": "Показать изменения",
+
+  "instanceShell.gitChanges.loading": "Загрузка изменений Git...",
+  "instanceShell.gitChanges.empty": "Изменений Git пока нет.",
+  "instanceShell.gitChanges.deleted": "Удалено",
 
   "instanceShell.filesShell.fileListTitle": "Список файлов",
   "instanceShell.filesShell.mobileSelectorLabel": "Выбрать файл",

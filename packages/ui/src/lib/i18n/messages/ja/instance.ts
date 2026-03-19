@@ -90,6 +90,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "ステータスパネル",
   "instanceShell.rightPanel.tabs.changes": "変更",
+  "instanceShell.rightPanel.tabs.gitChanges": "Git 変更",
   "instanceShell.rightPanel.tabs.files": "ファイル",
   "instanceShell.rightPanel.tabs.status": "ステータス",
   "instanceShell.rightPanel.tabs.ariaLabel": "右パネルのタブ",
@@ -111,6 +112,10 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "まだ変更はありません。",
   "instanceShell.sessionChanges.filesChanged": "{count} 個のファイルが変更されました",
   "instanceShell.sessionChanges.actions.show": "変更を表示",
+
+  "instanceShell.gitChanges.loading": "Git の変更を読み込み中...",
+  "instanceShell.gitChanges.empty": "Git の変更はまだありません。",
+  "instanceShell.gitChanges.deleted": "削除済み",
 
   "instanceShell.filesShell.fileListTitle": "ファイル一覧",
   "instanceShell.filesShell.mobileSelectorLabel": "ファイルを選択",

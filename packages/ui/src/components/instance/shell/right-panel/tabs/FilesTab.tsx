@@ -79,7 +79,13 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                     }
                   >
                     {(payload) => (
-                      <Suspense fallback={<div class="file-viewer-empty"><span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span></div>}>
+                      <Suspense
+                        fallback={
+                          <div class="file-viewer-empty">
+                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                          </div>
+                        }
+                      >
                         <LazyMonacoFileViewer scopeKey={props.scopeKey()} path={payload().path} content={payload().content} />
                       </Suspense>
                     )}

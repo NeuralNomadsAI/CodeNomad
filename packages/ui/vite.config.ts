@@ -116,7 +116,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "./src"),
-      "@git-diff-view/lowlight": resolve(__dirname, "./src/lib/git-diff-lowlight.ts"),
     },
   },
   optimizeDeps: {
@@ -134,6 +133,34 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "./src/renderer/index.html"),
         loading: resolve(__dirname, "./src/renderer/loading.html"),
+      },
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, "/")
+
+          if (normalizedId.includes("/node_modules/@git-diff-view/")) {
+            return "git-diff-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/highlight.js/") || normalizedId.includes("/node_modules/lowlight/")) {
+            return "highlight-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/fast-diff/")) {
+            return "fast-diff-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/monaco-editor/")) {
+            return "monaco-vendor"
+          }
+
+          if (
+            normalizedId.includes("/src/components/file-viewer/") ||
+            normalizedId.includes("/src/lib/monaco/")
+          ) {
+            return "monaco-viewer"
+          }
+        },
       },
     },
   },
