@@ -255,7 +255,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerSpeechRoutes(app, { speechService: deps.speechService })
+  registerSpeechRoutes(app, { speechService: deps.speechService, logger: apiLogger })
   registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
