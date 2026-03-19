@@ -6,6 +6,7 @@ import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider } from "./lib/i18n"
 import { storage } from "./lib/storage"
+import { beginPerfTrace, getPerfTrace, markPerf, measurePerf } from "./lib/perf"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -17,12 +18,21 @@ if (!root) {
 
 const mount = root
 
+markPerf("ui.main.entry")
+
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
 }
 
 async function bootstrap() {
+  const existingTrace = getPerfTrace()
+  if (existingTrace.some((entry) => entry.name === "loading.screen.mounted")) {
+    markPerf("ui.bootstrap.start")
+  } else {
+    beginPerfTrace("ui.bootstrap.start", { source: "direct-ui-entry" })
+  }
+
   if (typeof document !== "undefined") {
     // renderer/index.html currently seeds a dark theme to avoid a white flash.
     // Reset to CSS defaults immediately so the first render matches system
@@ -43,6 +53,8 @@ async function bootstrap() {
     }
   }
 
+  markPerf("ui.bootstrap.config.ready")
+
   render(
     () => (
       <ConfigProvider>
@@ -57,6 +69,21 @@ async function bootstrap() {
     ),
     mount,
   )
+
+  markPerf("ui.render.scheduled")
+  measurePerf("ui.bootstrap_to_render_schedule", "ui.bootstrap.start", "ui.render.scheduled")
+
+  queueMicrotask(() => {
+    markPerf("ui.app.mounted")
+    measurePerf("ui.bootstrap_to_app_mount", "ui.bootstrap.start", "ui.app.mounted")
+
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        markPerf("ui.app.first-frame")
+        measurePerf("ui.bootstrap_to_first_frame", "ui.bootstrap.start", "ui.app.first-frame")
+      })
+    }
+  })
 }
 
 void bootstrap()

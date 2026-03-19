@@ -4,6 +4,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import iconUrl from "../../images/CodeNomad-Icon.png"
 import { tGlobal } from "../../lib/i18n"
+import { beginPerfTrace, markPerf, measurePerf } from "../../lib/perf"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
 import "../../index.css"
 import "./loading.css"
@@ -29,6 +30,11 @@ interface CliStatus {
   error?: string | null
 }
 
+interface StartupPerfEvent {
+  stage?: string
+  detail?: Record<string, unknown>
+}
+
 function pickPhraseKey(previous?: PhraseKey) {
   const filtered = phraseKeys.filter((key) => key !== previous)
   const source = filtered.length > 0 ? filtered : phraseKeys
@@ -38,6 +44,8 @@ function pickPhraseKey(previous?: PhraseKey) {
 
 function navigateTo(url?: string | null) {
   if (!url) return
+  markPerf("loading.navigate", { url })
+  measurePerf("loading_to_navigation", "loading.screen.mounted", "loading.navigate")
   window.location.replace(url)
 }
 
@@ -58,20 +66,36 @@ function LoadingApp() {
 
   onMount(() => {
     annotateDocument()
+    beginPerfTrace("loading.screen.mounted", {
+      host: runtimeEnv.host,
+      platform: runtimeEnv.platform,
+    })
     setPhraseKey(pickPhraseKey())
     const unsubscribers: Array<() => void> = []
 
     async function bootstrapTauri() {
       try {
+        markPerf("loading.tauri.bootstrap.start")
+        const perfUnlisten = await listen("perf:startup", (event) => {
+          const payload = (event?.payload as StartupPerfEvent) || {}
+          if (!payload.stage) {
+            return
+          }
+
+          markPerf(`loading.tauri.${payload.stage}`, payload.detail)
+        })
         const readyUnlisten = await listen("cli:ready", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           setError(null)
           setStatusKey(null)
+          markPerf("loading.tauri.cli.ready", { url: payload.url ?? null })
+          measurePerf("loading_to_cli_ready", "loading.screen.mounted", "loading.tauri.cli.ready")
           navigateTo(payload.url)
         })
         const errorUnlisten = await listen("cli:error", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.error) {
+            markPerf("loading.tauri.cli.error", { error: payload.error })
             setError(payload.error)
             setStatusKey("loadingScreen.status.issue")
           }
@@ -79,25 +103,30 @@ function LoadingApp() {
         const statusUnlisten = await listen("cli:status", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.state === "error" && payload.error) {
+            markPerf("loading.tauri.cli.status.error", { error: payload.error })
             setError(payload.error)
             setStatusKey("loadingScreen.status.issue")
             return
           }
           if (payload.state && payload.state !== "ready") {
+            markPerf(`loading.tauri.cli.status.${payload.state}`)
             setError(null)
             setStatusKey(null)
           }
         })
-        unsubscribers.push(readyUnlisten, errorUnlisten, statusUnlisten)
+        unsubscribers.push(perfUnlisten, readyUnlisten, errorUnlisten, statusUnlisten)
 
         const result = await invoke<CliStatus>("cli_get_status")
         if (result?.state === "ready" && result.url) {
+          markPerf("loading.tauri.status.ready-on-load", { url: result.url })
           navigateTo(result.url)
         } else if (result?.state === "error" && result.error) {
+          markPerf("loading.tauri.status.error-on-load", { error: result.error })
           setError(result.error)
           setStatusKey("loadingScreen.status.issue")
         }
       } catch (err) {
+        markPerf("loading.tauri.bootstrap.error", { error: String(err) })
         setError(String(err))
         setStatusKey("loadingScreen.status.issue")
       }

@@ -190,6 +190,9 @@ fn main() {
         .setup(|app| {
             set_windows_app_user_model_id();
             build_menu(&app.handle())?;
+            let _ = app
+                .handle()
+                .emit("perf:startup", json!({"stage": "tauri.setup.complete"}));
             let dev_mode = is_dev_mode();
             let app_handle = app.handle().clone();
             let manager = app.state::<AppState>().manager.clone();

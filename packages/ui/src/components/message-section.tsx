@@ -18,6 +18,7 @@ import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
+import { markPerf, measurePerf } from "../lib/perf"
 
 const SCROLL_SENTINEL_MARGIN_PX = 48
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
@@ -46,6 +47,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+  let firstContentPerfRecorded = false
 
   const scrollCache = useScrollCache({
     instanceId: props.instanceId,
@@ -564,6 +566,43 @@ export default function MessageSection(props: MessageSectionProps) {
   }
  
   const isActive = createMemo(() => props.isActive !== false)
+  createEffect(on(() => props.sessionId, () => {
+    firstContentPerfRecorded = false
+  }))
+
+  createEffect(() => {
+    if (!isActive()) {
+      return
+    }
+
+    const count = messageIds().length
+    if (firstContentPerfRecorded || count === 0) {
+      return
+    }
+
+    firstContentPerfRecorded = true
+    queueMicrotask(() => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          markPerf("ui.session.first-content", {
+            instanceId: props.instanceId,
+            sessionId: props.sessionId,
+            messageCount: count,
+          })
+          measurePerf("ui.bootstrap_to_first_content", "ui.bootstrap.start", "ui.session.first-content")
+        })
+        return
+      }
+
+      markPerf("ui.session.first-content", {
+        instanceId: props.instanceId,
+        sessionId: props.sessionId,
+        messageCount: count,
+      })
+      measurePerf("ui.bootstrap_to_first_content", "ui.bootstrap.start", "ui.session.first-content")
+    })
+  })
+
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
   const scrollButtonsCount = createMemo(() => listState()?.scrollButtonsCount() ?? 0)

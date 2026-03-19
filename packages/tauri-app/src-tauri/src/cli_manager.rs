@@ -29,6 +29,16 @@ fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
 
+fn emit_perf_startup(app: &AppHandle, stage: &str, detail: serde_json::Value) {
+    let _ = app.emit(
+        "perf:startup",
+        json!({
+            "stage": stage,
+            "detail": detail,
+        }),
+    );
+}
+
 #[cfg(windows)]
 fn configure_spawn(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
@@ -358,6 +368,7 @@ impl CliProcessManager {
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         log_line(&format!("start requested (dev={dev})"));
+        emit_perf_startup(&app, "cli.start.requested", json!({ "dev": dev }));
         self.stop()?;
         self.ready.store(false, Ordering::SeqCst);
         *self.bootstrap_token.lock() = None;
@@ -390,6 +401,11 @@ impl CliProcessManager {
                 locked.error = Some(err.to_string());
                 let snapshot = locked.clone();
                 drop(locked);
+                emit_perf_startup(
+                    &app,
+                    "cli.start.error",
+                    json!({ "message": err.to_string() }),
+                );
                 let _ = app.emit("cli:error", json!({"message": err.to_string()}));
                 let _ = app.emit("cli:status", snapshot);
             }
@@ -478,6 +494,15 @@ impl CliProcessManager {
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
         let host = resolve_listening_host();
+        emit_perf_startup(
+            &app,
+            "cli.entry.resolved",
+            json!({
+                "dev": dev,
+                "runner": format!("{:?}", resolution.runner),
+                "host": host,
+            }),
+        );
         log_line(&format!(
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
@@ -547,6 +572,7 @@ impl CliProcessManager {
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
+        emit_perf_startup(&app, "cli.process.spawned", json!({ "pid": pid }));
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -632,6 +658,11 @@ impl CliProcessManager {
                     let _ = child.kill();
                 }
             }
+            emit_perf_startup(
+                &app_clone,
+                "cli.start.timeout",
+                json!({ "message": "CLI did not start in time" }),
+            );
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);
         });
@@ -836,6 +867,7 @@ impl CliProcessManager {
             navigate_main(app, &base_url);
         }
         let _ = app.emit("cli:ready", locked.clone());
+        emit_perf_startup(app, "cli.ready", json!({ "url": base_url }));
         Self::emit_status(app, &locked);
     }
 
