@@ -1,0 +1,23 @@
+name: PR Build Validation
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-and-upload.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      upload: false
+      set_versions: false
