@@ -84,8 +84,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const emptyViewerMessage = createMemo(() => {
     if (!hasSession()) return props.t("instanceShell.sessionChanges.noSessionSelected")
     const currentEntries = entries()
-    if (currentEntries === null) return props.t("instanceShell.sessionChanges.loading")
-    if (nonDeleted().length === 0) return props.t("instanceShell.sessionChanges.empty")
+    if (currentEntries === null) return props.t("instanceShell.gitChanges.loading")
+    if (nonDeleted().length === 0) return props.t("instanceShell.gitChanges.empty")
     return props.t("instanceShell.filesShell.viewerEmpty")
   })
 
@@ -124,7 +124,13 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     }
                   >
                     {(file) => (
-                      <Suspense fallback={<div class="file-viewer-empty"><span class="file-viewer-empty-text">{props.t("instanceShell.sessionChanges.loading")}</span></div>}>
+                      <Suspense
+                        fallback={
+                          <div class="file-viewer-empty">
+                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                          </div>
+                        }
+                      >
                         <LazyMonacoDiffViewer
                           scopeKey={props.scopeKey()}
                           path={String(file().path || "")}
@@ -173,7 +179,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">deleted</span>
+                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
@@ -204,7 +210,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">deleted</span>
+                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
