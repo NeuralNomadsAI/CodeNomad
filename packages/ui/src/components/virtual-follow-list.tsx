@@ -368,24 +368,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         <div class="virtual-follow-list-controls-container">{props.renderControls!(state, api)}</div>
       </Show>
 
-      <Show when={!props.renderControls && (showScrollTopButton() || showScrollBottomButton())}>
-        <div class="virtual-follow-list-controls">
+      <Show
+        when={
+          !props.renderControls &&
+          (showScrollTopButton() || showScrollBottomButton()) &&
+          props.scrollToTopAriaLabel &&
+          props.scrollToBottomAriaLabel
+        }
+      >
+        <div class="message-scroll-button-wrapper">
           <Show when={showScrollTopButton()}>
-            <button
-              class="virtual-follow-list-control-btn virtual-follow-list-control-btn--top"
-              onClick={() => scrollToTop()}
-              aria-label={props.scrollToTopAriaLabel?.()}
-            >
-              ↑
+            <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label={props.scrollToTopAriaLabel!()}>
+              <span class="message-scroll-icon" aria-hidden="true">
+                ↑
+              </span>
             </button>
           </Show>
           <Show when={showScrollBottomButton()}>
-            <button
-              class="virtual-follow-list-control-btn virtual-follow-list-control-btn--bottom"
-              onClick={() => scrollToBottom()}
-              aria-label={props.scrollToBottomAriaLabel?.()}
-            >
-              ↓
+            <button type="button" class="message-scroll-button" onClick={() => scrollToBottom()} aria-label={props.scrollToBottomAriaLabel!()}>
+              <span class="message-scroll-icon" aria-hidden="true">
+                ↓
+              </span>
             </button>
           </Show>
         </div>

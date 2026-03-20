@@ -50,50 +50,9 @@
   z-index: 20;
 }
 
-.virtual-follow-list-controls {
-  position: absolute;
-  bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
-  right: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  z-index: 20;
-  pointer-events: none;
-}
-
-.virtual-follow-list-controls > * {
-  pointer-events: auto;
-}
-
-.virtual-follow-list-control-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: var(--radius-full);
-  background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
-  color: var(--text-primary);
-  box-shadow: var(--scroll-elevation-shadow);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 1.25rem;
-}
-
-.virtual-follow-list-control-btn:hover {
-  background-color: var(--surface-hover);
-  transform: translateY(-1px);
-}
-
-.virtual-follow-list-control-btn:active {
-  transform: translateY(0);
-}
-
 .message-stream-placeholder {
   display: block;
   width: 100%;
   position: relative;
   background-color: transparent;
 }
-
