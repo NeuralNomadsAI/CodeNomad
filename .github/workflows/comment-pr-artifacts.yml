@@ -1,0 +1,132 @@
+name: Comment PR Artifacts
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    env:
+      ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
+      ACTOR: ${{ github.actor }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RETENTION_DAYS: 7
+    steps:
+      - name: Check PR authorization
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BASE_REF" = "dev" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          normalized=",${ALLOWED_ACTORS},"
+          if [[ "$normalized" == *",${ACTOR},"* ]]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for PR build and comment
+        if: ${{ steps.auth.outputs.allowed == 'true' }}
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const headSha = process.env.HEAD_SHA;
+            const retentionDays = Number(process.env.RETENTION_DAYS || '7');
+            const marker = '<!-- codenomad-pr-artifacts -->';
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            let matchedRun = null;
+            for (let attempt = 1; attempt <= 30; attempt += 1) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id: 'pr-build.yml',
+                event: 'pull_request',
+                per_page: 100,
+              });
+
+              matchedRun = runs.find((run) => run.head_sha === headSha);
+              if (matchedRun && matchedRun.status === 'completed') {
+                break;
+              }
+
+              core.info(`Waiting for PR Build Validation run for ${headSha} (attempt ${attempt}/30)`);
+              await sleep(10000);
+            }
+
+            if (!matchedRun) {
+              core.setFailed(`Could not find PR Build Validation run for ${headSha}.`);
+              return;
+            }
+
+            if (matchedRun.status !== 'completed') {
+              core.setFailed(`PR Build Validation run ${matchedRun.id} did not complete in time.`);
+              return;
+            }
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              { owner, repo, run_id: matchedRun.id, per_page: 100 }
+            );
+            const active = artifacts.filter((artifact) => !artifact.expired);
+
+            const runUrl = matchedRun.html_url;
+            const artifactsBlock = active.length
+              ? ['Artifacts:', ...active.map((artifact) => `- ${artifact.name}`)].join('\n')
+              : 'Artifacts: (none found on this run)';
+
+            const body = [
+              marker,
+              'PR builds are available as GitHub Actions artifacts:',
+              '',
+              runUrl,
+              '',
+              `Artifacts expire in ${retentionDays} days.`,
+              artifactsBlock,
+            ].join('\n');
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: prNumber, per_page: 100 }
+            );
+            const existing = comments.find((comment) => (comment.body || '').includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing artifacts comment: ${existing.html_url}`);
+              return;
+            }
+
+            const created = await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: prNumber,
+              body,
+            });
+            core.info(`Created artifacts comment: ${created.data.html_url}`);

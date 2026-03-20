@@ -10,8 +10,6 @@ on:
 permissions:
   contents: read
   actions: write
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
@@ -56,76 +54,3 @@ jobs:
       actions_artifacts_retention_days: 7
       actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false
-
-  comment-artifacts:
-    needs:
-      - authorize
-      - build
-    if: ${{ always() && needs.authorize.outputs.allowed == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get PR number
-        id: get-pr
-        uses: bcgov/action-get-pr@v0.1.1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Comment with artifact download link
-        uses: actions/github-script@v8
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const prNumber = Number('${{ steps.get-pr.outputs.pr }}');
-            if (!prNumber) {
-              core.setFailed('Failed to resolve PR number.');
-              return;
-            }
-
-            const artifacts = await github.paginate(
-              github.rest.actions.listWorkflowRunArtifacts,
-              { owner, repo, run_id: context.runId, per_page: 100 }
-            );
-            const active = artifacts.filter((a) => !a.expired);
-
-            const marker = '<!-- codenomad-pr-artifacts -->';
-            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
-            const retentionDays = 7;
-            const artifactsBlock = active.length
-              ? ['Artifacts:', ...active.map((a) => `- ${a.name}`)].join('\n')
-              : 'Artifacts: (none found on this run)';
-
-            const body = [
-              marker,
-              'PR builds are available as GitHub Actions artifacts:',
-              '',
-              runUrl,
-              '',
-              `Artifacts expire in ${retentionDays} days.`,
-              artifactsBlock,
-            ].join('\n');
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number: prNumber, per_page: 100 }
-            );
-            const existing = comments.find((c) => (c.body || '').includes(marker));
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated existing artifacts comment: ${existing.html_url}`);
-            } else {
-              const created = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body,
-              });
-              core.info(`Created artifacts comment: ${created.data.html_url}`);
-            }
