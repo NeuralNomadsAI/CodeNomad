@@ -414,7 +414,7 @@ impl CliProcessManager {
             }
             #[cfg(windows)]
             {
-                if !kill_process_tree_windows(child.id(), false) {
+                if !kill_process_tree_windows(child.id(), true) {
                     let _ = child.kill();
                 }
             }
