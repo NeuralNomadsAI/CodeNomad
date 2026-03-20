@@ -228,7 +228,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
-  function scrollToBottom(immediate = false, options?: { suppressAutoAnchor?: boolean }) {
+  function scrollToBottom(immediate = true, options?: { suppressAutoAnchor?: boolean }) {
     const handle = virtuaHandle()
     if (!handle) return
     if (options?.suppressAutoAnchor ?? !immediate) {
@@ -238,7 +238,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setAutoScroll(true)
   }
 
-  function scrollToTop(immediate = false) {
+  function scrollToTop(immediate = true) {
     const handle = virtuaHandle()
     if (!handle) return
     handle.scrollToIndex(0, { align: "start", smooth: !immediate })
@@ -271,8 +271,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   const api: VirtualFollowListApi = {
-    scrollToTop: (opts) => scrollToTop(Boolean(opts?.immediate)),
-    scrollToBottom: (opts) => scrollToBottom(Boolean(opts?.immediate), { suppressAutoAnchor: opts?.suppressAutoAnchor }),
+    scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
+    scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true, { suppressAutoAnchor: opts?.suppressAutoAnchor }),
     scrollToKey: (key, opts) => {
       const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
       if (index === -1) return
