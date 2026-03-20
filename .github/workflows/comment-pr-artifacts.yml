@@ -27,50 +27,22 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const prs = run.pull_requests || [];
-            let prNumber = prs[0]?.number;
+            let prNumber = run.pull_requests?.[0]?.number;
 
             // `workflow_run` payload does not reliably include pull request numbers.
-            // First try to resolve by head repo owner + head branch, then fall back to head SHA.
+            // Ask the Actions API for the triggering run itself and use that as source of truth.
             if (!prNumber) {
-              const headOwner = run.head_repository?.owner?.login;
-              const headBranch = run.head_branch;
-
-              if (headOwner && headBranch) {
-                const matches = await github.paginate(
-                  github.rest.pulls.list,
-                  {
-                    owner,
-                    repo,
-                    state: 'open',
-                    head: `${headOwner}:${headBranch}`,
-                    per_page: 100,
-                  }
-                );
-
-                prNumber = matches[0]?.number;
-              }
+              const runDetails = await github.rest.actions.getWorkflowRun({
+                owner,
+                repo,
+                run_id: run.id,
+              });
+              prNumber = runDetails.data.pull_requests?.[0]?.number;
             }
 
             if (!prNumber) {
-              const headSha = run.head_sha;
-              if (!headSha) {
-                core.info('No PR number, no matching head branch, and no head_sha found; skipping.');
-                return;
-              }
-
-              const associated = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                owner,
-                repo,
-                commit_sha: headSha,
-              });
-
-              const open = (associated.data || []).find((p) => p.state === 'open');
-              prNumber = open?.number;
-              if (!prNumber) {
-                core.info(`No open PR found for ${run.head_repository?.owner?.login || 'unknown-owner'}:${run.head_branch || 'unknown-branch'} or commit ${headSha}; skipping.`);
-                return;
-              }
+              core.info(`No PR number found on workflow run ${run.id}; skipping.`);
+              return;
             }
 
             // Only comment when the PR build job actually ran (i.e. authorization passed).
