@@ -31,11 +31,31 @@ jobs:
             let prNumber = prs[0]?.number;
 
             // `workflow_run` payload does not reliably include pull request numbers.
-            // Resolve PR number(s) by asking GitHub for PRs associated with the head SHA.
+            // First try to resolve by head repo owner + head branch, then fall back to head SHA.
+            if (!prNumber) {
+              const headOwner = run.head_repository?.owner?.login;
+              const headBranch = run.head_branch;
+
+              if (headOwner && headBranch) {
+                const matches = await github.paginate(
+                  github.rest.pulls.list,
+                  {
+                    owner,
+                    repo,
+                    state: 'open',
+                    head: `${headOwner}:${headBranch}`,
+                    per_page: 100,
+                  }
+                );
+
+                prNumber = matches[0]?.number;
+              }
+            }
+
             if (!prNumber) {
               const headSha = run.head_sha;
               if (!headSha) {
-                core.info('No PR number and no head_sha found for this workflow_run; skipping.');
+                core.info('No PR number, no matching head branch, and no head_sha found; skipping.');
                 return;
               }
 
@@ -48,7 +68,7 @@ jobs:
               const open = (associated.data || []).find((p) => p.state === 'open');
               prNumber = open?.number;
               if (!prNumber) {
-                core.info(`No open PR found associated with commit ${headSha}; skipping.`);
+                core.info(`No open PR found for ${run.head_repository?.owner?.login || 'unknown-owner'}:${run.head_branch || 'unknown-branch'} or commit ${headSha}; skipping.`);
                 return;
               }
             }
