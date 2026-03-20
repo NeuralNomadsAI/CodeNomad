@@ -29,6 +29,7 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.59.0",
     "baseline-browser-mapping": "^2.9.11"
   }
 }
