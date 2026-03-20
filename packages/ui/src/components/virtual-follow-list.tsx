@@ -1,5 +1,5 @@
-import { Index, Show, createEffect, createMemo, createSignal, onCleanup, type Accessor, type JSX } from "solid-js"
-import VirtualItem, { type VirtualItemHeightChangeMeta } from "./virtual-item"
+import { Show, createEffect, createMemo, createSignal, onCleanup, type Accessor, type JSX, on } from "solid-js"
+import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -122,55 +122,28 @@ export interface VirtualFollowListProps<T> {
 }
 
 export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
-  const getAnchorId = (key: string) => (props.getAnchorId ? props.getAnchorId(key) : key)
-  const getKeyFromAnchorId = (anchorId: string) => (props.getKeyFromAnchorId ? props.getKeyFromAnchorId(anchorId) : anchorId)
-
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [shellElement, setShellElement] = createSignal<HTMLDivElement | undefined>()
-  const [topSentinel, setTopSentinel] = createSignal<HTMLDivElement | null>(null)
-  const [bottomSentinelSignal, setBottomSentinelSignal] = createSignal<HTMLDivElement | null>(null)
-  const bottomSentinel = () => bottomSentinelSignal()
+  const [virtuaHandle, setVirtuaHandle] = createSignal<VirtualizerHandle | undefined>()
 
   const isActive = () => (props.isActive ? props.isActive() : true)
   const scrollToBottomOnActivate = () => (props.scrollToBottomOnActivate ? props.scrollToBottomOnActivate() : true)
   const initialScrollToBottom = () => (props.initialScrollToBottom ? props.initialScrollToBottom() : true)
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
-  const isLoading = () => Boolean(props.loading?.())
-  const virtualizationEnabled = () => (props.virtualizationEnabled ? props.virtualizationEnabled() : true)
-  const measurementsSuspended = () => Boolean(props.suspendMeasurements?.())
 
   const [autoScroll, setAutoScroll] = createSignal(Boolean(initialAutoScroll()))
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
-  const [topSentinelVisible, setTopSentinelVisible] = createSignal(true)
-  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-
-  const [anchorLock, setAnchorLock] = createSignal<{ key: string; block: ScrollLogicalPosition } | null>(null)
 
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
 
-  let containerRef: HTMLDivElement | undefined
-  let shellRef: HTMLDivElement | undefined
-  let pendingScrollFrame: number | null = null
-  let pendingAnchorScroll: number | null = null
-  let pendingAnchorCorrectionFrame: number | null = null
-  let pendingScrollCompensationScheduled = false
-  let pendingScrollCompensations = new Map<string, number>()
-  let scrollCompensationGen = 0
-  let pendingActiveScroll = false
+  let userScrollIntentUntil = 0
+  let lastUserScrollIntentDirection: "up" | "down" | null = null
+  let detachScrollIntentListeners: (() => void) | undefined
+  let lastResetKey: string | number | undefined
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
-  let scrollToBottomFrame: number | null = null
-  let scrollToBottomDelayedFrame: number | null = null
-
-  let lastKnownScrollTop = 0
-  let lastUserScrollIntentDirection: "up" | "down" | null = null
-
-  let userScrollIntentUntil = 0
-  let detachScrollIntentListeners: (() => void) | undefined
-
-  let lastResetKey: string | number | undefined
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -181,7 +154,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function markUserScrollIntent(direction?: "up" | "down" | null) {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
+    const now = performance.now()
     userScrollIntentUntil = now + USER_SCROLL_INTENT_WINDOW_MS
     if (direction) {
       lastUserScrollIntentDirection = direction
@@ -189,8 +162,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function hasUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    return now <= userScrollIntentUntil
+    return performance.now() <= userScrollIntentUntil
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement | undefined) {
@@ -231,742 +203,193 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
-  function updateScrollIndicatorsFromVisibility() {
-    const hasItems = props.items().length > 0
-    const bottomVisible = bottomSentinelVisible()
-    const topVisible = topSentinelVisible()
-    setShowScrollBottomButton(hasItems && !bottomVisible)
-    setShowScrollTopButton(hasItems && !topVisible)
-  }
+  function updateScrollButtons() {
+    const handle = virtuaHandle()
+    const element = scrollElement()
+    if (!handle || !element) return
 
-  function clearScrollToBottomFrames() {
-    if (scrollToBottomFrame !== null) {
-      cancelAnimationFrame(scrollToBottomFrame)
-      scrollToBottomFrame = null
-    }
-    if (scrollToBottomDelayedFrame !== null) {
-      cancelAnimationFrame(scrollToBottomDelayedFrame)
-      scrollToBottomDelayedFrame = null
+    const offset = handle.scrollOffset
+    const scrollHeight = handle.scrollSize
+    const clientHeight = element.clientHeight
+    const atBottom = scrollHeight - (offset + clientHeight) <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
+    const atTop = offset <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
+
+    const hasItems = props.items().length > 0
+    setShowScrollBottomButton(hasItems && !atBottom)
+    setShowScrollTopButton(hasItems && !atTop)
+
+    // Sync autoScroll state based on scroll position if it was a user scroll
+    if (hasUserScrollIntent()) {
+      if (atBottom && !autoScroll()) {
+        setAutoScroll(true)
+      } else if (!atBottom && autoScroll()) {
+        setAutoScroll(false)
+      }
     }
   }
 
   function scrollToBottom(immediate = false, options?: { suppressAutoAnchor?: boolean }) {
-    if (!containerRef) return
-    if (anchorLock()) {
-      clearAnchorLock()
-    }
-    const sentinel = bottomSentinel()
-    const behavior: ScrollBehavior = immediate ? "auto" : "smooth"
-    const suppressAutoAnchor = options?.suppressAutoAnchor ?? !immediate
-    if (suppressAutoAnchor) {
+    const handle = virtuaHandle()
+    if (!handle) return
+    if (options?.suppressAutoAnchor ?? !immediate) {
       suppressAutoScrollOnce = true
     }
-    sentinel?.scrollIntoView({ block: "end", inline: "nearest", behavior })
+    handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
     setAutoScroll(true)
   }
 
-  function requestScrollToBottom(immediate = true) {
-    if (!isActive()) {
-      pendingActiveScroll = true
-      return
-    }
-    if (!containerRef || !bottomSentinel()) {
-      pendingActiveScroll = true
-      return
-    }
-    pendingActiveScroll = false
-    clearScrollToBottomFrames()
-    scrollToBottomFrame = requestAnimationFrame(() => {
-      scrollToBottomFrame = null
-      scrollToBottomDelayedFrame = requestAnimationFrame(() => {
-        scrollToBottomDelayedFrame = null
-        scrollToBottom(immediate)
-      })
-    })
-  }
-
-  function resolvePendingActiveScroll() {
-    if (!pendingActiveScroll) return
-    if (!isActive()) return
-    requestScrollToBottom(true)
-  }
-
   function scrollToTop(immediate = false) {
-    if (!containerRef) return
-    const behavior: ScrollBehavior = immediate ? "auto" : "smooth"
-    if (anchorLock()) {
-      clearAnchorLock()
-    }
+    const handle = virtuaHandle()
+    if (!handle) return
+    handle.scrollToIndex(0, { align: "start", smooth: !immediate })
     setAutoScroll(false)
-    topSentinel()?.scrollIntoView({ block: "start", inline: "nearest", behavior })
-  }
-
-  function scheduleAnchorScroll(immediate = false) {
-    if (!autoScroll()) return
-    if (!isActive()) {
-      pendingActiveScroll = true
-      return
-    }
-    const sentinel = bottomSentinel()
-    if (!sentinel) {
-      pendingActiveScroll = true
-      return
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    pendingAnchorScroll = requestAnimationFrame(() => {
-      pendingAnchorScroll = null
-      sentinel.scrollIntoView({ block: "end", inline: "nearest", behavior: immediate ? "auto" : "smooth" })
-    })
-  }
-
-  function clearAnchorLock() {
-    setAnchorLock(null)
-    if (pendingAnchorCorrectionFrame !== null) {
-      cancelAnimationFrame(pendingAnchorCorrectionFrame)
-      pendingAnchorCorrectionFrame = null
-    }
-  }
-
-  function computeDesiredOffset(block: ScrollLogicalPosition, container: HTMLElement, anchorRect: DOMRect) {
-    if (block === "end") {
-      return Math.max(0, container.clientHeight - anchorRect.height)
-    }
-    if (block === "center") {
-      return Math.max(0, container.clientHeight / 2 - anchorRect.height / 2)
-    }
-    // Default to start.
-    return 0
-  }
-
-  function applyAnchorCorrection() {
-    const lock = anchorLock()
-    if (!lock) return
-    if (autoScroll()) return
-    if (!containerRef) return
-    if (typeof document === "undefined") return
-
-    const anchorId = getAnchorId(lock.key)
-    const anchor = document.getElementById(anchorId)
-    if (!anchor) return
-
-    const containerRect = containerRef.getBoundingClientRect()
-    const anchorRect = anchor.getBoundingClientRect()
-    const currentOffset = anchorRect.top - containerRect.top
-    const desiredOffset = computeDesiredOffset(lock.block, containerRef, anchorRect)
-    const delta = currentOffset - desiredOffset
-    if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) {
-      return
-    }
-    const nextTop = containerRef.scrollTop + delta
-    const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
-    containerRef.scrollTop = Math.min(maxScrollTop, Math.max(0, nextTop))
-  }
-
-  function scheduleAnchorCorrection() {
-    if (pendingAnchorCorrectionFrame !== null) return
-    pendingAnchorCorrectionFrame = requestAnimationFrame(() => {
-      pendingAnchorCorrectionFrame = null
-      applyAnchorCorrection()
-    })
-  }
-
-  function handleContentRendered() {
-    if (autoScroll() && !anchorLock()) {
-      scheduleAutoPinToBottom()
-      return
-    }
-    if (anchorLock() && !autoScroll()) {
-      scheduleAnchorCorrection()
-      return
-    }
   }
 
   function handleScroll() {
-    if (!containerRef) return
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-    }
     const isUserScroll = hasUserScrollIntent()
-    pendingScrollFrame = requestAnimationFrame(() => {
-      pendingScrollFrame = null
-      if (!containerRef) return
-      const previousScrollTop = lastKnownScrollTop
-      const currentScrollTop = containerRef.scrollTop
-      const deltaScrollTop = currentScrollTop - previousScrollTop
-      if (currentScrollTop !== lastKnownScrollTop) {
-        lastKnownScrollTop = currentScrollTop
+    if (isUserScroll) {
+      if (lastUserScrollIntentDirection === "up" && autoScroll()) {
+        setAutoScroll(false)
       }
-      const atBottom = bottomSentinelVisible()
+    }
+    updateScrollButtons()
+    props.onScroll?.()
 
-      const beforeAutoScroll = autoScroll()
-
-      const inferredDirection: "up" | "down" | null =
-        lastUserScrollIntentDirection ?? (deltaScrollTop < 0 ? "up" : deltaScrollTop > 0 ? "down" : null)
-
-      // If the user scrolls manually, exit key-anchored mode.
-      if (isUserScroll && anchorLock()) {
-        clearAnchorLock()
-      }
-
-      if (isUserScroll) {
-        // If the user is actively scrolling upward, exit follow-to-bottom mode
-        // immediately. The bottom sentinel can remain "visible" for a short
-        // distance due to its observer margin, which otherwise keeps autoScroll
-        // enabled and makes the list feel stuck.
-        if (inferredDirection === "up" && deltaScrollTop < -0.5 && autoScroll()) {
-          if (pendingAnchorScroll !== null) {
-            cancelAnimationFrame(pendingAnchorScroll)
-            pendingAnchorScroll = null
-          }
-          setAutoScroll(false)
-        }
-
-        // Do not re-enable follow mode while the user's current scroll intent
-        // is upward. This prevents transient anchor/pin scrolls from pulling
-        // the list back into autoScroll(true).
-        if (inferredDirection !== "up") {
-          if (atBottom) {
-            if (!autoScroll()) setAutoScroll(true)
-          } else if (autoScroll()) {
-            setAutoScroll(false)
-          }
-        } else if (!atBottom && autoScroll()) {
-          // If the user is scrolling up and we are no longer at the bottom,
-          // ensure follow mode is disabled.
-          setAutoScroll(false)
+    // Find active key (roughly the first visible item)
+    const handle = virtuaHandle()
+    if (handle) {
+      const start = handle.findItemIndex(handle.scrollOffset)
+      const items = props.items()
+      if (items[start]) {
+        const key = props.getKey(items[start], start)
+        if (key !== activeKey()) {
+          setActiveKey(key)
+          props.onActiveKeyChange?.(key)
         }
       }
-
-      props.onScroll?.()
-    })
-  }
-
-  function setContainerRef(element: HTMLDivElement | null) {
-    containerRef = element || undefined
-    setScrollElement(containerRef)
-    props.onScrollElementChange?.(containerRef)
-    attachScrollIntentListeners(containerRef)
-    lastKnownScrollTop = containerRef?.scrollTop ?? 0
-    lastUserScrollIntentDirection = null
-    if (!containerRef) {
-      return
     }
-    resolvePendingActiveScroll()
-  }
-
-  function scheduleScrollCompensation(key: string, delta: number) {
-    if (!containerRef) return
-    if (!delta || !Number.isFinite(delta)) return
-    if (typeof document === "undefined") return
-
-    // Only compensate while the user scrolls upward (testing default).
-    if (!hasUserScrollIntent() || lastUserScrollIntentDirection !== "up") return
-    if (autoScroll() || anchorLock()) return
-
-    const anchorId = getAnchorId(key)
-    const anchor = document.getElementById(anchorId)
-    if (!anchor) return
-    const containerRect = containerRef.getBoundingClientRect()
-    const rect = anchor.getBoundingClientRect()
-    // Determine whether the item was fully above the viewport *before* the
-    // height delta applied. Items can expand downward into the viewport; in that
-    // case we still need to compensate to keep existing visible content stable.
-    const bottomAfter = rect.bottom
-    const bottomBefore = bottomAfter - delta
-    const wasAboveViewport = bottomBefore < containerRect.top
-    if (!wasAboveViewport) return
-
-    const next = (pendingScrollCompensations.get(key) ?? 0) + delta
-    pendingScrollCompensations.set(key, next)
-
-    if (pendingScrollCompensationScheduled) return
-    pendingScrollCompensationScheduled = true
-    const gen = scrollCompensationGen
-
-    // Flush in a microtask so compensation lands before the next paint.
-    queueMicrotask(() => {
-      if (gen !== scrollCompensationGen) return
-      pendingScrollCompensationScheduled = false
-      if (!containerRef) return
-      if (!hasUserScrollIntent() || lastUserScrollIntentDirection !== "up") {
-        pendingScrollCompensations = new Map()
-        return
-      }
-      if (autoScroll() || anchorLock()) {
-        pendingScrollCompensations = new Map()
-        return
-      }
-
-      let applied = 0
-      let count = 0
-      for (const pendingDelta of pendingScrollCompensations.values()) {
-        if (!pendingDelta) continue
-        applied += pendingDelta
-        count += 1
-      }
-      pendingScrollCompensations = new Map()
-      if (!applied) return
-
-      const before = containerRef.scrollTop
-      const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
-      const nextTop = Math.min(maxScrollTop, Math.max(0, before + applied))
-      if (nextTop !== before) {
-        containerRef.scrollTop = nextTop
-        lastKnownScrollTop = nextTop
-      }
-    })
-  }
-
-  let pendingAutoPin = false
-  let pendingAutoPinFrame: number | null = null
-
-  function clearPendingAutoPinFrame() {
-    if (pendingAutoPinFrame !== null) {
-      cancelAnimationFrame(pendingAutoPinFrame)
-      pendingAutoPinFrame = null
-    }
-  }
-
-  function applyAutoPinToBottom() {
-    if (!containerRef) return false
-    if (!autoScroll()) return false
-    if (anchorLock()) return false
-
-    const maxScrollTop = Math.max(containerRef.scrollHeight - containerRef.clientHeight, 0)
-    if (containerRef.scrollTop !== maxScrollTop) {
-      containerRef.scrollTop = maxScrollTop
-      lastKnownScrollTop = maxScrollTop
-    }
-    return true
-  }
-
-  function scheduleAutoPinToBottom() {
-    if (!containerRef) return
-    if (pendingAutoPin) return
-    pendingAutoPin = true
-    clearPendingAutoPinFrame()
-    const gen = scrollCompensationGen
-
-    // Flush in a microtask so adjustments land before the next paint,
-    // then re-apply on the next two frames to catch deferred layout.
-    queueMicrotask(() => {
-      if (gen !== scrollCompensationGen) return
-      pendingAutoPin = false
-      if (!applyAutoPinToBottom()) return
-      pendingAutoPinFrame = requestAnimationFrame(() => {
-        pendingAutoPinFrame = null
-        if (gen !== scrollCompensationGen) return
-        if (!applyAutoPinToBottom()) return
-        pendingAutoPinFrame = requestAnimationFrame(() => {
-          pendingAutoPinFrame = null
-          if (gen !== scrollCompensationGen) return
-          applyAutoPinToBottom()
-        })
-      })
-    })
-  }
-
-  function setShellRef(element: HTMLDivElement | null) {
-    shellRef = element || undefined
-    setShellElement(shellRef)
-    props.onShellElementChange?.(shellRef)
-  }
-
-  function setBottomSentinel(element: HTMLDivElement | null) {
-    setBottomSentinelSignal(element)
-    resolvePendingActiveScroll()
   }
 
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(Boolean(opts?.immediate)),
     scrollToBottom: (opts) => scrollToBottom(Boolean(opts?.immediate), { suppressAutoAnchor: opts?.suppressAutoAnchor }),
     scrollToKey: (key, opts) => {
-      if (typeof document === "undefined") return
-      const anchorId = getAnchorId(key)
-      const behavior = opts?.behavior ?? "smooth"
-      const block = opts?.block ?? "start"
+      const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
+      if (index === -1) return
       const nextAutoScroll = opts?.setAutoScroll ?? false
       setAutoScroll(nextAutoScroll)
-      if (!nextAutoScroll) {
-        if (anchorLock()) {
-          clearAnchorLock()
-        }
-        setAnchorLock({ key, block })
-      } else {
-        if (anchorLock()) {
-          clearAnchorLock()
-        }
-      }
-      const first = document.getElementById(anchorId)
-      first?.scrollIntoView({ block, behavior })
-      // When using virtualization, the placeholder height can be stale until the
-      // item mounts/measures. Re-run scrollIntoView() on the next frame to
-      // stabilize the final position.
-      requestAnimationFrame(() => {
-        const second = document.getElementById(anchorId)
-        second?.scrollIntoView({ block, behavior })
-      })
+      virtuaHandle()?.scrollToIndex(index, { align: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
     },
-    notifyContentRendered: () => handleContentRendered(),
+    notifyContentRendered: () => {
+      if (autoScroll()) {
+        scrollToBottom(true)
+      }
+    },
     setAutoScroll: (enabled) => setAutoScroll(Boolean(enabled)),
     getAutoScroll: () => autoScroll(),
     getScrollElement: () => scrollElement(),
     getShellElement: () => shellElement(),
   }
 
-  createEffect(() => {
-    props.registerApi?.(api)
-  })
+  createEffect(() => props.registerApi?.(api))
+  createEffect(() => props.registerState?.(state))
 
-  createEffect(() => {
-    props.registerState?.(state)
-  })
-
-  createEffect(() => {
-    const nextKey = props.resetKey?.()
-    if (nextKey === undefined) return
-    if (lastResetKey === undefined) {
-      lastResetKey = nextKey
-      return
+  // Handle autoScroll (Follow) on items change
+  createEffect(on(() => props.items().length, (len, prevLen) => {
+    if (len > (prevLen ?? 0) && autoScroll() && !suppressAutoScrollOnce) {
+      requestAnimationFrame(() => scrollToBottom(true))
     }
+    suppressAutoScrollOnce = false
+  }, { defer: true }))
+
+  // Handle followToken change
+  createEffect(on(() => props.followToken?.(), () => {
+    if (autoScroll()) {
+      scrollToBottom(true)
+    }
+  }, { defer: true }))
+
+  // Reset state on resetKey change
+  createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
-
-    // Reset internal state when consumers swap datasets (e.g. session switch).
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-      pendingScrollFrame = null
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    if (pendingAnchorCorrectionFrame !== null) {
-      cancelAnimationFrame(pendingAnchorCorrectionFrame)
-      pendingAnchorCorrectionFrame = null
-    }
-    clearScrollToBottomFrames()
-
-    scrollCompensationGen += 1
-    pendingScrollCompensationScheduled = false
-    pendingScrollCompensations = new Map()
-    pendingAutoPin = false
-    clearPendingAutoPinFrame()
-
-    suppressAutoScrollOnce = false
-    pendingActiveScroll = false
+    setAutoScroll(initialAutoScroll())
     pendingInitialScroll = true
+  }))
 
-    setAnchorLock(null)
-    setActiveKey(null)
-    setShowScrollTopButton(false)
-    setShowScrollBottomButton(false)
-    setTopSentinelVisible(true)
-    setBottomSentinelVisible(true)
-    setAutoScroll(Boolean(initialAutoScroll()))
-
-    lastKnownScrollTop = containerRef?.scrollTop ?? 0
-    lastUserScrollIntentDirection = null
-  })
-
-  let lastActiveState = false
+  // Initial scroll and session activation
   createEffect(() => {
     const active = isActive()
-    if (active) {
-      resolvePendingActiveScroll()
-      if (!lastActiveState && autoScroll() && scrollToBottomOnActivate()) {
-        requestScrollToBottom(true)
-
-        // When switching back to a cached session pane, items can mount/measure
-        // after the initial scroll jump. Re-pin once layout settles so the
-        // viewport stays at the bottom.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            scheduleAutoPinToBottom()
-          })
-        })
+    if (!active) return
+    if (pendingInitialScroll && props.items().length > 0) {
+      pendingInitialScroll = false
+      if (initialScrollToBottom()) {
+        scrollToBottom(true)
       }
     } else if (autoScroll() && scrollToBottomOnActivate()) {
-      pendingActiveScroll = true
-    }
-    lastActiveState = active
-  })
-
-  createEffect(() => {
-    const loading = isLoading()
-    if (loading) {
-      // Keep the initial scroll pending while loading so we can
-      // anchor to the bottom as soon as items appear.
-      pendingInitialScroll = true
-    }
-
-    if (!pendingInitialScroll) return
-
-    const container = scrollElement()
-    const sentinel = bottomSentinel()
-    if (!container || !sentinel || props.items().length === 0) return
-
-    if (!initialScrollToBottom()) {
-      // An outer component is responsible for restoring scroll.
-      pendingInitialScroll = false
-      return
-    }
-
-    // Ensure we're in follow-to-bottom mode for the initial position.
-    if (anchorLock()) {
-      clearAnchorLock()
-    }
-    setAutoScroll(true)
-
-    pendingInitialScroll = false
-    // Scroll synchronously so the first paint prefers bottom content.
-    scrollToBottom(true)
-  })
-
-  let previousFollowToken: string | number | undefined
-  createEffect(() => {
-    const token = props.followToken?.()
-    if (token === undefined) {
-      previousFollowToken = token
-      return
-    }
-    if (previousFollowToken === undefined) {
-      previousFollowToken = token
-      return
-    }
-    if (token === previousFollowToken) {
-      return
-    }
-    previousFollowToken = token
-    if (suppressAutoScrollOnce) {
-      suppressAutoScrollOnce = false
-      return
-    }
-    if (autoScroll()) {
-      scheduleAutoPinToBottom()
-      return
-    }
-    if (anchorLock() && !autoScroll()) {
-      scheduleAnchorCorrection()
+      scrollToBottom(true)
     }
   })
 
-  // Drop anchor lock if the anchored key is removed.
-  createEffect(() => {
-    const lock = anchorLock()
-    if (!lock) return
-    const keys = props.items().map((item, idx) => props.getKey(item, idx))
-    if (!keys.includes(lock.key)) {
-      clearAnchorLock()
-    }
-  })
+  return (
+    <div class="virtual-follow-list-shell" ref={shellElement => {
+      setShellElement(shellElement)
+      props.onShellElementChange?.(shellElement)
+    }}>
+      <div
+        class="message-stream"
+        ref={el => {
+          setScrollElement(el)
+          props.onScrollElementChange?.(el)
+          attachScrollIntentListeners(el)
+        }}
+        onMouseUp={props.onMouseUp}
+        onClick={props.onClick}
+      >
+        <Show when={props.renderBeforeItems}>
+          {props.renderBeforeItems!()}
+        </Show>
+        <Virtualizer
+          ref={setVirtuaHandle}
+          scrollRef={scrollElement()}
+          data={props.items()}
+          bufferSize={props.overscanPx ?? 400}
+          onScroll={handleScroll}
+        >
+          {(item, index) => props.renderItem(item, index())}
+        </Virtualizer>
+      </div>
 
-  createEffect(() => {
-    if (props.items().length === 0) {
-      setShowScrollTopButton(false)
-      setShowScrollBottomButton(false)
-      setAutoScroll(true)
-      return
-    }
-    updateScrollIndicatorsFromVisibility()
-  })
+      <Show when={props.renderOverlay}>
+        <div class="virtual-follow-list-overlay">{props.renderOverlay!()}</div>
+      </Show>
 
-  createEffect(() => {
-    const container = scrollElement()
-    const topTarget = topSentinel()
-    const bottomTarget = bottomSentinel()
-    if (!container || !topTarget || !bottomTarget) return
-    if (typeof IntersectionObserver === "undefined") return
+      <Show when={props.renderControls}>
+        <div class="virtual-follow-list-controls-container">{props.renderControls!(state, api)}</div>
+      </Show>
 
-    const margin = props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        let visibilityChanged = false
-        for (const entry of entries) {
-          if (entry.target === topTarget) {
-            setTopSentinelVisible(entry.isIntersecting)
-            visibilityChanged = true
-          } else if (entry.target === bottomTarget) {
-            setBottomSentinelVisible(entry.isIntersecting)
-            visibilityChanged = true
-          }
-        }
-        if (visibilityChanged) {
-          updateScrollIndicatorsFromVisibility()
-        }
-      },
-      { root: container, threshold: 0, rootMargin: `${margin}px 0px ${margin}px 0px` },
-    )
-    observer.observe(topTarget)
-    observer.observe(bottomTarget)
-    onCleanup(() => observer.disconnect())
-  })
-
-  createEffect(() => {
-    const container = scrollElement()
-    const items = props.items()
-    if (!container || items.length === 0) return
-    if (typeof document === "undefined") return
-    if (typeof IntersectionObserver === "undefined") return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        let best: IntersectionObserverEntry | null = null
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue
-          if (!best || entry.boundingClientRect.top < best.boundingClientRect.top) {
-            best = entry
-          }
-        }
-        if (best) {
-          const anchorId = (best.target as HTMLElement).id
-          const key = getKeyFromAnchorId(anchorId)
-          setActiveKey((current) => (current === key ? current : key))
-        }
-      },
-      { root: container, rootMargin: "-10% 0px -80% 0px", threshold: 0 },
-    )
-
-    const anchorIds = items.map((item, idx) => getAnchorId(props.getKey(item, idx)))
-    anchorIds.forEach((anchorId) => {
-      const anchor = document.getElementById(anchorId)
-      if (anchor) observer.observe(anchor)
-    })
-
-    onCleanup(() => observer.disconnect())
-  })
-
-  createEffect(() => {
-    const key = activeKey()
-    props.onActiveKeyChange?.(key)
-  })
-
-  onCleanup(() => {
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-    }
-    if (pendingAnchorCorrectionFrame !== null) {
-      cancelAnimationFrame(pendingAnchorCorrectionFrame)
-    }
-    scrollCompensationGen += 1
-    pendingScrollCompensationScheduled = false
-    pendingScrollCompensations = new Map()
-    clearPendingAutoPinFrame()
-    clearScrollToBottomFrames()
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-    }
-  })
-
-  const controls = () => {
-    if (props.renderControls) {
-      return props.renderControls(state, api)
-    }
-
-    // Avoid hardcoded user-visible strings; require consumers to supply
-    // localized aria labels when using the default controls.
-    if (!props.scrollToTopAriaLabel || !props.scrollToBottomAriaLabel) {
-      return null
-    }
-
-    const labelTop = props.scrollToTopAriaLabel()
-    const labelBottom = props.scrollToBottomAriaLabel()
-    return (
-      <Show when={showScrollTopButton() || showScrollBottomButton()}>
-        <div class="message-scroll-button-wrapper">
+      <Show when={!props.renderControls && (showScrollTopButton() || showScrollBottomButton())}>
+        <div class="virtual-follow-list-controls">
           <Show when={showScrollTopButton()}>
-            <button type="button" class="message-scroll-button" onClick={() => scrollToTop()} aria-label={labelTop}>
-              <span class="message-scroll-icon" aria-hidden="true">
-                ↑
-              </span>
+            <button
+              class="virtual-follow-list-control-btn virtual-follow-list-control-btn--top"
+              onClick={() => scrollToTop()}
+              aria-label={props.scrollToTopAriaLabel?.()}
+            >
+              ↑
             </button>
           </Show>
           <Show when={showScrollBottomButton()}>
             <button
-              type="button"
-              class="message-scroll-button"
-              onClick={() => scrollToBottom(false, { suppressAutoAnchor: false })}
-              aria-label={labelBottom}
+              class="virtual-follow-list-control-btn virtual-follow-list-control-btn--bottom"
+              onClick={() => scrollToBottom()}
+              aria-label={props.scrollToBottomAriaLabel?.()}
             >
-              <span class="message-scroll-icon" aria-hidden="true">
-                ↓
-              </span>
+              ↓
             </button>
           </Show>
         </div>
       </Show>
-    )
-  }
-
-  return (
-    <div class="message-stream-shell" ref={setShellRef}>
-      <div
-        class="message-stream"
-        ref={setContainerRef}
-        onScroll={handleScroll}
-        onMouseUp={(event) => props.onMouseUp?.(event)}
-        onClick={(event) => props.onClick?.(event)}
-      >
-        <div ref={setTopSentinel} aria-hidden="true" style={{ height: "1px" }} />
-        {props.renderBeforeItems?.()}
-        <Index each={props.items()}>
-          {(item, index) => {
-            const key = () => props.getKey(item(), index)
-            const anchorId = () => getAnchorId(key())
-            const overscanPx = props.overscanPx ?? 800
-            const suspendMeasurements = () => measurementsSuspended() || !isActive()
-            const itemVirtualizationEnabled = () => virtualizationEnabled() && !autoScroll()
-            return (
-              <VirtualItem
-                id={anchorId()}
-                cacheKey={key()}
-                scrollContainer={scrollElement}
-                threshold={overscanPx}
-                placeholderClass="message-stream-placeholder"
-                virtualizationEnabled={itemVirtualizationEnabled}
-                suspendMeasurements={suspendMeasurements}
-                onHeightChange={(nextHeight, previousHeight, meta: VirtualItemHeightChangeMeta) => {
-                  const delta = nextHeight - previousHeight
-
-                  // Follow mode: keep the viewport pinned to the bottom as
-                  // items mount/measure and change height.
-                  if (delta && autoScroll() && !anchorLock()) {
-                    scheduleAutoPinToBottom()
-                    return
-                  }
-
-                  // Key-anchored mode: keep the target key in view when
-                  // items above it mount/measure and shift layout.
-                  if (anchorLock() && !autoScroll()) {
-                    scheduleAnchorCorrection()
-                    return
-                  }
-
-                  // Free-scroll mode: if items above the viewport change height
-                  // while scrolling upward, compensate scrollTop so visible
-                  // content stays stable.
-                  if (delta) {
-                    if (meta.isStaleCacheCorrection) return
-                    scheduleScrollCompensation(key(), delta)
-                  }
-                }}
-              >{() => props.renderItem(item(), index)}</VirtualItem>
-            )
-          }}
-        </Index>
-        <div ref={setBottomSentinel} aria-hidden="true" style={{ height: "1px" }} />
-      </div>
-
-      {controls()}
-
-      {props.renderOverlay?.()}
     </div>
   )
 }
