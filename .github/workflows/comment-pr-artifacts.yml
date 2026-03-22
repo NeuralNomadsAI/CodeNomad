@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions:
   actions: read
@@ -20,6 +21,7 @@ jobs:
       ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
       ACTOR: ${{ github.actor }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
+      IS_DRAFT: ${{ github.event.pull_request.draft }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       RETENTION_DAYS: 7
@@ -42,7 +44,7 @@ jobs:
           fi
 
       - name: Wait for PR build and comment
-        if: ${{ steps.auth.outputs.allowed == 'true' }}
+        if: ${{ steps.auth.outputs.allowed == 'true' && env.IS_DRAFT != 'true' }}
         uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
