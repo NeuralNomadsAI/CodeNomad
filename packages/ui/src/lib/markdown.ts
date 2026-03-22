@@ -1,7 +1,8 @@
 import { marked } from "marked"
-import { createHighlighter, type Highlighter, bundledLanguages } from "shiki/bundle/full"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
+import type { Highlighter } from "shiki/bundle/full"
+import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
 
 const log = getLogger("actions")
 
@@ -11,43 +12,8 @@ let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
 let rendererSetup = false
-
-const extensionToLanguage: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  py: "python",
-  sh: "bash",
-  bash: "bash",
-  json: "json",
-  html: "html",
-  css: "css",
-  md: "markdown",
-  yaml: "yaml",
-  yml: "yaml",
-  sql: "sql",
-  rs: "rust",
-  go: "go",
-  cpp: "cpp",
-  cc: "cpp",
-  cxx: "cpp",
-  hpp: "cpp",
-  h: "cpp",
-  c: "c",
-  java: "java",
-  cs: "csharp",
-  php: "php",
-  rb: "ruby",
-  swift: "swift",
-  kt: "kotlin",
-}
-
-export function getLanguageFromPath(path?: string | null): string | undefined {
-  if (!path) return undefined
-  const ext = path.split(".").pop()?.toLowerCase()
-  return ext ? extensionToLanguage[ext] : undefined
-}
+let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
+let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
 
 // Track loaded languages and queue for on-demand loading
 const loadedLanguages = new Set<string>()
@@ -89,15 +55,41 @@ async function getOrCreateHighlighter() {
     return highlighterPromise
   }
 
-  // Create highlighter with no preloaded languages
-  highlighterPromise = createHighlighter({
-    themes: ["github-light", "github-light-high-contrast", "github-dark"],
-    langs: [],
+  highlighterPromise = (async () => {
+    const shiki = await loadShikiModule()
+    return shiki.createHighlighter({
+      themes: ["github-light", "github-light-high-contrast", "github-dark"],
+      langs: [],
+    })
+  })().catch((error) => {
+    highlighterPromise = null
+    throw error
   })
 
   highlighter = await highlighterPromise
   highlighterPromise = null
   return highlighter
+}
+
+async function loadShikiModule() {
+  if (!shikiModulePromise) {
+    shikiModulePromise = import("shiki/bundle/full").then((module) => {
+      bundledLanguagesCache = module.bundledLanguages
+      return module
+    })
+  }
+
+  return shikiModulePromise
+}
+
+function queueHighlighterWarmup() {
+  if (highlighter || highlighterPromise) {
+    return
+  }
+
+  void getOrCreateHighlighter().catch((error) => {
+    log.warn("Failed to initialize markdown highlighter", error)
+  })
 }
 
 function normalizeLanguageToken(token: string): string {
@@ -106,6 +98,10 @@ function normalizeLanguageToken(token: string): string {
 
 function resolveLanguage(token: string): { canonical: string | null; raw: string } {
   const normalized = normalizeLanguageToken(token)
+  const bundledLanguages = bundledLanguagesCache
+  if (!bundledLanguages) {
+    return { canonical: null, raw: normalized }
+  }
 
   // Check if it's a direct key match
   if (normalized in bundledLanguages) {
@@ -148,32 +144,43 @@ async function ensureLanguages(content: string) {
 
   // Queue language loading tasks
   for (const token of foundLanguages) {
-    const { canonical, raw } = resolveLanguage(token)
-    const langKey = canonical || raw
+    const rawToken = normalizeLanguageToken(token)
+    if (!rawToken) {
+      continue
+    }
 
     // Skip "text" and aliases since Shiki handles plain text already
-    if (langKey === "text" || raw === "text") {
+    if (rawToken === "text") {
       continue
     }
 
     // Skip if already loaded or queued
-    if (loadedLanguages.has(langKey) || queuedLanguages.has(langKey)) {
+    if (loadedLanguages.has(rawToken) || queuedLanguages.has(rawToken)) {
       continue
     }
 
-    queuedLanguages.add(langKey)
+    queuedLanguages.add(rawToken)
 
     // Queue the language loading task
     languageLoadQueue.push(async () => {
       try {
+        await loadShikiModule()
+        const { canonical, raw } = resolveLanguage(token)
+        const langKey = canonical || raw
+
+        if (langKey === "text" || raw === "text") {
+          return
+        }
+
         const h = await getOrCreateHighlighter()
         await h.loadLanguage(langKey as never)
         loadedLanguages.add(langKey)
+        loadedLanguages.add(raw)
         triggerLanguageListeners()
       } catch {
         // Quietly ignore errors
       } finally {
-        queuedLanguages.delete(langKey)
+        queuedLanguages.delete(rawToken)
       }
     })
   }
@@ -182,52 +189,6 @@ async function ensureLanguages(content: string) {
   if (languageLoadQueue.length > 0 && !isQueueRunning) {
     runLanguageLoadQueue()
   }
-}
-
-export function decodeHtmlEntities(content: string): string {
-  if (!content.includes("&")) {
-    return content
-  }
-
-  const entityPattern = /&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);/g
-  const namedEntities: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  }
-
-  let result = content
-  let previous = ""
-
-  while (result.includes("&") && result !== previous) {
-    previous = result
-    result = result.replace(entityPattern, (match, entity) => {
-      if (!entity) {
-        return match
-      }
-
-      if (entity[0] === "#") {
-        const isHex = entity[1]?.toLowerCase() === "x"
-        const value = isHex ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10)
-        if (!Number.isNaN(value)) {
-          try {
-            return String.fromCodePoint(value)
-          } catch {
-            return match
-          }
-        }
-        return match
-      }
-
-      const decoded = namedEntities[entity.toLowerCase()]
-      return decoded !== undefined ? decoded : match
-    })
-  }
-
-  return result
 }
 
 async function runLanguageLoadQueue() {
@@ -249,7 +210,6 @@ async function runLanguageLoadQueue() {
 
 function setupRenderer(isDark: boolean) {
   currentTheme = isDark ? "dark" : "light"
-  if (!highlighter) return
   if (rendererSetup) return
 
   marked.setOptions({
@@ -330,8 +290,9 @@ function setupRenderer(isDark: boolean) {
 }
 
 export async function initMarkdown(isDark: boolean) {
-  await getOrCreateHighlighter()
   setupRenderer(isDark)
+  queueHighlighterWarmup()
+  await getOrCreateHighlighter()
   isInitialized = true
 }
 
@@ -350,15 +311,16 @@ export async function renderMarkdown(
   },
 ): Promise<string> {
   if (!isInitialized) {
-    await initMarkdown(currentTheme === "dark")
+    setupRenderer(currentTheme === "dark")
+    isInitialized = true
   }
 
   const suppressHighlight = options?.suppressHighlight ?? false
   const decoded = decodeHtmlEntities(content)
 
   if (!suppressHighlight) {
-    // Queue language loading but don't wait for it to complete
-    await ensureLanguages(decoded)
+    queueHighlighterWarmup()
+    void ensureLanguages(decoded)
   }
 
   const previousSuppressed = highlightSuppressed
@@ -374,14 +336,4 @@ export async function renderMarkdown(
 
 export async function getSharedHighlighter(): Promise<Highlighter> {
   return getOrCreateHighlighter()
-}
-
-export function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  }
-  return text.replace(/[&<"']/g, (m) => map[m])
 }
