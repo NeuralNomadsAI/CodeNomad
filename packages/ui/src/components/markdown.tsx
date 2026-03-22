@@ -244,6 +244,7 @@ export function Markdown(props: MarkdownProps) {
     <div
       ref={containerRef}
       class="markdown-body"
+      dir="auto"
       data-view="markdown"
       data-part-id={resolved().partId}
       data-markdown-theme={resolved().themeKey}

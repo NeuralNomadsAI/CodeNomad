@@ -133,11 +133,12 @@ export default function MessagePart(props: MessagePartProps) {
         <Show when={!shouldHideTextPart() && partHasRenderableText(props.part)}>
           <div
             class={canRenderMarkdown() ? markdownContainerClass() : textContainerClass()}
+            dir="auto"
             data-role={textContainerRole()}
             data-part-type="text"
             data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
           >
-            <Show when={canRenderMarkdown()} fallback={<span class="text-primary">{plainTextContent()}</span>}>
+            <Show when={canRenderMarkdown()} fallback={<span class="text-primary" dir="auto">{plainTextContent()}</span>}>
               <Markdown
                 part={createTextPartForMarkdown()}
                 instanceId={props.instanceId}

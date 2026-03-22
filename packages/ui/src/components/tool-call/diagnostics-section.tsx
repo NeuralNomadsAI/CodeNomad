@@ -42,7 +42,7 @@ export function renderDiagnosticsSection(
                     {entry.displayPath}
                     <span class="tool-call-diagnostic-coords">:L{entry.line || "-"}:C{entry.column || "-"}</span>
                   </span>
-                  <span class="tool-call-diagnostic-message">{entry.message}</span>
+                  <span class="tool-call-diagnostic-message" dir="auto">{entry.message}</span>
                 </div>
               )}
             </For>

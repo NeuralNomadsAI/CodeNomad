@@ -43,7 +43,7 @@ export function createMarkdownContentRenderer(params: {
           ref={registerRef}
           onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
         >
-          <pre class="whitespace-pre-wrap break-words text-sm font-mono">{options.content}</pre>
+          <pre class="whitespace-pre-wrap break-words text-sm font-mono" dir="auto">{options.content}</pre>
           {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
         </div>
       )
