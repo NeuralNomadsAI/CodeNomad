@@ -77,23 +77,23 @@ export default defineConfig({
         theme_color: "#1a1a1a",
       },
       workbox: {
-         // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
-         // This is a build-time limit for the precache manifest, not a hard runtime cap.
-         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
-          // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
-          navigateFallback: null,
-          // Only precache static assets (avoid caching HTML documents / routes).
-          globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
-         // Monaco assets can be large; cache them at runtime instead.
-         globIgnores: [
-           "**/*.html",
-           "**/assets/*worker-*.js",
-           "**/assets/editor.api-*.js",
-           "**/monaco/vs/**/*",
-         ],
-         // Only cache static UI assets; never cache API traffic.
-         runtimeCaching: [
-           {
+        // Workbox defaults to 2 MiB; our main bundle can slightly exceed that.
+        // This is a build-time limit for the precache manifest, not a hard runtime cap.
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
+        navigateFallback: null,
+        // Only precache static assets (avoid caching HTML documents / routes).
+        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+        // Monaco assets can be large; cache them at runtime instead.
+        globIgnores: [
+          "**/*.html",
+          "**/assets/*worker-*.js",
+          "**/assets/editor.api-*.js",
+          "**/monaco/vs/**/*",
+        ],
+        // Only cache static UI assets; never cache API traffic.
+        runtimeCaching: [
+          {
             urlPattern: ({ url, request }) => {
               if (url.pathname.startsWith("/api/")) return false
               if (request.destination === "document") return false
@@ -133,6 +133,34 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "./src/renderer/index.html"),
         loading: resolve(__dirname, "./src/renderer/loading.html"),
+      },
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, "/")
+
+          if (normalizedId.includes("/node_modules/@git-diff-view/")) {
+            return "git-diff-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/highlight.js/") || normalizedId.includes("/node_modules/lowlight/")) {
+            return "highlight-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/fast-diff/")) {
+            return "fast-diff-vendor"
+          }
+
+          if (normalizedId.includes("/node_modules/monaco-editor/")) {
+            return "monaco-vendor"
+          }
+
+          if (
+            normalizedId.includes("/src/components/file-viewer/") ||
+            normalizedId.includes("/src/lib/monaco/")
+          ) {
+            return "monaco-viewer"
+          }
+        },
       },
     },
   },

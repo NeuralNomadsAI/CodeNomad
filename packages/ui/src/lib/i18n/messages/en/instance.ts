@@ -114,6 +114,10 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.filesChanged": "{count} files changed",
   "instanceShell.sessionChanges.actions.show": "Show changes",
 
+  "instanceShell.gitChanges.loading": "Loading git changes...",
+  "instanceShell.gitChanges.empty": "No git changes yet.",
+  "instanceShell.gitChanges.deleted": "Deleted",
+
   "instanceShell.filesShell.fileListTitle": "File list",
   "instanceShell.filesShell.mobileSelectorLabel": "Select file",
   "instanceShell.filesShell.mobileSelectorEmpty": "Select a file",

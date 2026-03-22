@@ -1,11 +1,13 @@
-import { For, Show, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
 
-import { MonacoFileViewer } from "../../../../file-viewer/monaco-file-viewer"
-
 import SplitFilePanel from "../components/SplitFilePanel"
+
+const LazyMonacoFileViewer = lazy(() =>
+  import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
+)
 
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -51,8 +53,8 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     const headerDisplayedPath = () => props.browserSelectedPath() || props.browserPath()
 
     const emptyViewerMessage = () => {
-      if (props.browserLoading() && entriesValue === null) return "Loading files..."
-      return "Select a file to preview"
+      if (props.browserLoading() && entriesValue === null) return props.t("instanceInfo.loading")
+      return props.t("instanceShell.filesShell.viewerEmpty")
     }
 
     const renderViewer = () => (
@@ -77,7 +79,15 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                     }
                   >
                     {(payload) => (
-                      <MonacoFileViewer scopeKey={props.scopeKey()} path={payload().path} content={payload().content} />
+                      <Suspense
+                        fallback={
+                          <div class="file-viewer-empty">
+                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                          </div>
+                        }
+                      >
+                        <LazyMonacoFileViewer scopeKey={props.scopeKey()} path={payload().path} content={payload().content} />
+                      </Suspense>
                     )}
                   </Show>
                 }
@@ -91,7 +101,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             }
           >
             <div class="file-viewer-empty">
-              <span class="file-viewer-empty-text">Loading…</span>
+              <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
             </div>
           </Show>
         </div>
@@ -113,7 +123,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         </Show>
 
         <Show when={props.browserLoading() && entriesValue === null}>
-          <div class="p-3 text-xs text-secondary">Loading files...</div>
+          <div class="p-3 text-xs text-secondary">{props.t("instanceInfo.loading")}</div>
         </Show>
 
         <For each={sorted}>
@@ -154,7 +164,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 </span>
               </span>
               <Show when={props.browserLoading()}>
-                <span>Loading…</span>
+                <span>{props.t("instanceInfo.loading")}</span>
               </Show>
               <Show when={props.browserError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
@@ -180,7 +190,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         onResizeMouseDown={props.onResizeMouseDown}
         onResizeTouchStart={props.onResizeTouchStart}
         isPhoneLayout={props.isPhoneLayout()}
-        overlayAriaLabel="Files"
+        overlayAriaLabel={props.t("instanceShell.rightPanel.tabs.files")}
       />
     )
   }

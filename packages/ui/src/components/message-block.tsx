@@ -909,6 +909,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
               </Switch>
@@ -1287,6 +1288,7 @@ interface ReasoningCardProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  onContentRendered?: () => void
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
@@ -1295,6 +1297,25 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+  let pendingRenderNotificationFrame: number | null = null
+
+  const notifyContentRendered = () => {
+    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
+    if (pendingRenderNotificationFrame !== null) {
+      cancelAnimationFrame(pendingRenderNotificationFrame)
+    }
+    pendingRenderNotificationFrame = requestAnimationFrame(() => {
+      pendingRenderNotificationFrame = null
+      props.onContentRendered?.()
+    })
+  }
+
+  onCleanup(() => {
+    if (pendingRenderNotificationFrame !== null) {
+      cancelAnimationFrame(pendingRenderNotificationFrame)
+      pendingRenderNotificationFrame = null
+    }
+  })
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1362,6 +1383,12 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const viewHideLabel = () =>
     expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
+
+  createEffect(() => {
+    if (!expanded()) return
+    reasoningText()
+    notifyContentRendered()
+  })
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
