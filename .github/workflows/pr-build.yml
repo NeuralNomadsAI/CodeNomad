@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions:
   contents: read
@@ -45,7 +46,7 @@ jobs:
 
   build:
     needs: authorize
-    if: ${{ needs.authorize.outputs.allowed == 'true' }}
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
     with:
       ref: ${{ github.event.pull_request.head.sha }}
