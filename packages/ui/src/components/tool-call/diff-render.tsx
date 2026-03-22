@@ -1,10 +1,25 @@
-import type { Accessor, JSXElement } from "solid-js"
+import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
-import { ToolCallDiffViewer } from "../diff-viewer"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
 import { getRelativePath } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
+
+const LazyToolCallDiffViewer = lazy(() =>
+  import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
+)
+
+function CachedDiffMarkup(props: { html: string; onRendered?: () => void }) {
+  onMount(() => {
+    props.onRendered?.()
+  })
+
+  return (
+    <div class="tool-call-diff-viewer">
+      <div innerHTML={props.html} />
+    </div>
+  )
+}
 
 type CacheHandle = {
   get<T>(): T | undefined
@@ -101,15 +116,20 @@ export function createDiffContentRenderer(params: {
             </button>
           </div>
         </div>
-        <ToolCallDiffViewer
-          diffText={payload.diffText}
-          filePath={payload.filePath}
-          theme={themeKey}
-          mode={diffMode()}
-          cachedHtml={cachedHtml}
-          cacheEntryParams={cacheEntryParams as any}
-          onRendered={handleDiffRendered}
-        />
+        {cachedHtml ? (
+          <CachedDiffMarkup html={cachedHtml} onRendered={handleDiffRendered} />
+        ) : (
+          <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
+            <LazyToolCallDiffViewer
+              diffText={payload.diffText}
+              filePath={payload.filePath}
+              theme={themeKey}
+              mode={diffMode()}
+              cacheEntryParams={cacheEntryParams as any}
+              onRendered={handleDiffRendered}
+            />
+          </Suspense>
+        )}
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )

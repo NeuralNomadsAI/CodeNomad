@@ -90,6 +90,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "Panneau d'état",
   "instanceShell.rightPanel.tabs.changes": "Modifications",
+  "instanceShell.rightPanel.tabs.gitChanges": "Changements Git",
   "instanceShell.rightPanel.tabs.files": "Fichiers",
   "instanceShell.rightPanel.tabs.status": "Statut",
   "instanceShell.rightPanel.tabs.ariaLabel": "Onglets du panneau droit",
@@ -111,6 +112,10 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "Aucun changement pour l'instant.",
   "instanceShell.sessionChanges.filesChanged": "{count} fichiers modifiés",
   "instanceShell.sessionChanges.actions.show": "Afficher les changements",
+
+  "instanceShell.gitChanges.loading": "Chargement des changements Git...",
+  "instanceShell.gitChanges.empty": "Aucun changement Git pour l'instant.",
+  "instanceShell.gitChanges.deleted": "Supprimé",
 
   "instanceShell.filesShell.fileListTitle": "Liste des fichiers",
   "instanceShell.filesShell.mobileSelectorLabel": "Sélectionner un fichier",
