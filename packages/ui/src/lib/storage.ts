@@ -4,6 +4,7 @@ import { serverEvents } from "./server-events"
 import { getLogger } from "./logger"
 
 const log = getLogger("actions")
+const UI_CONFIG_CACHE_KEY = "codenomad:config-owner:ui"
 
 export type OwnerBucket = Record<string, any>
 
@@ -55,6 +56,23 @@ export class ServerStorage {
       if (event.type !== "instance.dataChanged") return
       this.setInstanceDataCache(event.instanceId, event.data)
     })
+  }
+
+  readCachedConfigOwner(owner: string): OwnerBucket | undefined {
+    if (owner !== "ui" || typeof window === "undefined" || !window.localStorage) {
+      return undefined
+    }
+
+    try {
+      const raw = window.localStorage.getItem(UI_CONFIG_CACHE_KEY)
+      if (!raw) {
+        return undefined
+      }
+      const parsed = JSON.parse(raw) as OwnerBucket
+      return parsed && typeof parsed === "object" ? parsed : undefined
+    } catch {
+      return undefined
+    }
   }
 
   async loadConfigOwner(owner: string): Promise<OwnerBucket> {
@@ -218,10 +236,25 @@ export class ServerStorage {
       return
     }
     cache.set(owner, value)
+    if (kind === "config" && owner === "ui") {
+      this.persistUiConfigCache(value)
+    }
     const bucket = listeners.get(owner)
     if (!bucket) return
     for (const listener of bucket) {
       listener(value)
+    }
+  }
+
+  private persistUiConfigCache(value: OwnerBucket) {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return
+    }
+
+    try {
+      window.localStorage.setItem(UI_CONFIG_CACHE_KEY, JSON.stringify(value))
+    } catch {
+      /* noop */
     }
   }
 

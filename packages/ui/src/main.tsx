@@ -5,8 +5,7 @@ import { ConfigProvider } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
-import { readUiBootstrapCache } from "./lib/ui-bootstrap-cache"
-import { UiBootstrapCacheSync } from "./lib/ui-bootstrap-cache-sync"
+import { storage } from "./lib/storage"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -30,8 +29,12 @@ async function bootstrap() {
     // (and then refine once persisted config loads).
     document.documentElement.removeAttribute("data-theme")
 
-    const bootstrapCache = readUiBootstrapCache()
-    const theme = bootstrapCache.theme ?? "system"
+    const cachedUiConfig = storage.readCachedConfigOwner("ui")
+    const theme =
+      cachedUiConfig?.theme === "light" || cachedUiConfig?.theme === "dark" || cachedUiConfig?.theme === "system"
+        ? cachedUiConfig.theme
+        : "system"
+    const locale = typeof cachedUiConfig?.settings?.locale === "string" ? cachedUiConfig.settings.locale : undefined
 
     if (theme === "system") {
       document.documentElement.removeAttribute("data-theme")
@@ -39,13 +42,12 @@ async function bootstrap() {
       document.documentElement.setAttribute("data-theme", theme)
     }
 
-    await preloadLocaleMessages(bootstrapCache.locale)
+    await preloadLocaleMessages(locale)
   }
 
   render(
     () => (
       <ConfigProvider>
-        <UiBootstrapCacheSync />
         <InstanceConfigProvider>
           <I18nProvider>
             <ThemeProvider>
