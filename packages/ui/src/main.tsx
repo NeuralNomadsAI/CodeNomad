@@ -6,6 +6,7 @@ import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { readUiBootstrapCache } from "./lib/ui-bootstrap-cache"
+import { UiBootstrapCacheSync } from "./lib/ui-bootstrap-cache-sync"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -44,6 +45,7 @@ async function bootstrap() {
   render(
     () => (
       <ConfigProvider>
+        <UiBootstrapCacheSync />
         <InstanceConfigProvider>
           <I18nProvider>
             <ThemeProvider>

@@ -1,7 +1,6 @@
-import { createContext, createEffect, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
-import { writeUiBootstrapCache } from "../lib/ui-bootstrap-cache"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -599,21 +598,6 @@ const configContextValue: ConfigContextValue = {
 }
 
 export const ConfigProvider: ParentComponent = (props) => {
-  createEffect(() => {
-    if (!isLoaded()) {
-      return
-    }
-
-    const bucket = uiConfigBucket()
-    const theme = bucket.theme
-    const locale = bucket.settings?.locale
-
-    writeUiBootstrapCache({
-      theme: theme ?? null,
-      locale: locale ?? null,
-    })
-  })
-
   onMount(() => {
     ensureLoaded().catch((error: unknown) => {
       log.error("Failed to initialize settings", error)
