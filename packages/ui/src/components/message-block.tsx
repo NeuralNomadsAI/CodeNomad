@@ -1,7 +1,6 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack } from "solid-js"
 import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
 import MessageItem from "./message-item"
-import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { partHasRenderableText } from "../types/message"
@@ -28,6 +27,12 @@ const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+
+const LazyToolCall = lazy(() => import("./tool-call"))
+
+function ToolCallFallback() {
+  return <div class="tool-call tool-call-loading" />
+}
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -500,16 +505,18 @@ function ToolCallItem(props: ToolCallItemProps) {
             </div>
           </div>
 
-          <ToolCall
-            toolCall={resolvedToolPart()}
-            toolCallId={props.partId}
-            messageId={props.messageId}
-            messageVersion={messageVersion()}
-            partVersion={partVersion()}
-            instanceId={props.instanceId}
-            sessionId={props.sessionId}
-            onContentRendered={props.onContentRendered}
-          />
+          <Suspense fallback={<ToolCallFallback />}>
+            <LazyToolCall
+              toolCall={resolvedToolPart()}
+              toolCallId={props.partId}
+              messageId={props.messageId}
+              messageVersion={messageVersion()}
+              partVersion={partVersion()}
+              instanceId={props.instanceId}
+              sessionId={props.sessionId}
+              onContentRendered={props.onContentRendered}
+            />
+          </Suspense>
         </div>
       )}
     </Show>

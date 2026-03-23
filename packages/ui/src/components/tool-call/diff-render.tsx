@@ -1,4 +1,5 @@
 import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
@@ -31,6 +32,7 @@ type DiffPrefs = {
 }
 
 export function createDiffContentRenderer(params: {
+  toolState: Accessor<ToolState | undefined>
   preferences: Accessor<DiffPrefs>
   setDiffViewMode: (mode: DiffViewMode) => void
   isDark: Accessor<boolean>
@@ -58,7 +60,10 @@ export function createDiffContentRenderer(params: {
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
     const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
     const themeKey = params.isDark() ? "dark" : "light"
-    const disableScrollTracking = Boolean(options?.disableScrollTracking)
+    const state = params.toolState()
+    const disableScrollTracking = Boolean(
+      options?.disableScrollTracking || (state?.status !== "running" && state?.status !== "pending"),
+    )
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked
 
     const baseEntryParams = cacheHandle.params() as any
