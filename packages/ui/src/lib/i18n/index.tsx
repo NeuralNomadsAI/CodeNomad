@@ -147,6 +147,8 @@ export const I18nProvider: ParentComponent = (props) => {
   const { preferences } = useConfig()
   const [detectedLocale, setDetectedLocale] = createSignal<Locale>(globalLocale)
   const [resolvedLocale, setResolvedLocale] = createSignal<Locale>(globalLocale)
+  const previousGlobalMessages = globalMessages
+  const previousGlobalLocale = globalLocale
 
   onMount(() => {
     const detected = detectNavigatorLocale()
@@ -173,8 +175,8 @@ export const I18nProvider: ParentComponent = (props) => {
         if (cancelled) {
           return
         }
-        localeMessagesCache.set(nextLocale, loadedMessages)
         setResolvedLocale(nextLocale)
+        globalLocale = nextLocale
         globalMessages = loadedMessages
         setGlobalRevision((value) => value + 1)
       })
@@ -194,8 +196,8 @@ export const I18nProvider: ParentComponent = (props) => {
   })
 
   onCleanup(() => {
-    globalMessages = enMessages
-    globalLocale = "en"
+    globalMessages = previousGlobalMessages
+    globalLocale = previousGlobalLocale
     setGlobalRevision((value) => value + 1)
   })
 
