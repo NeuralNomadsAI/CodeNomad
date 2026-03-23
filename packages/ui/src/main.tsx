@@ -6,6 +6,8 @@ import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
+import { readUiBootstrapConfig } from "./lib/ui-config-bootstrap"
+import { UiConfigBootstrapSync } from "./lib/ui-config-bootstrap-sync"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -29,14 +31,26 @@ async function bootstrap() {
     // (and then refine once persisted config loads).
     document.documentElement.removeAttribute("data-theme")
 
-    const cachedUiConfig = storage.readCachedConfigOwner("ui")
-    const theme =
-      cachedUiConfig?.theme === "light" || cachedUiConfig?.theme === "dark" || cachedUiConfig?.theme === "system"
-        ? cachedUiConfig.theme
-        : "system"
-    const locale = typeof cachedUiConfig?.settings?.locale === "string" ? cachedUiConfig.settings.locale : undefined
+    const cachedUiConfig = readUiBootstrapConfig()
+    let theme = cachedUiConfig.theme
+    let locale = cachedUiConfig.locale
 
-    if (theme === "system") {
+    if (theme === undefined || locale === undefined) {
+      try {
+        const uiConfig = await storage.loadConfigOwner("ui")
+        if (theme === undefined) {
+          const nextTheme = (uiConfig as any)?.theme
+          theme = nextTheme === "light" || nextTheme === "dark" || nextTheme === "system" ? nextTheme : undefined
+        }
+        if (locale === undefined) {
+          locale = typeof (uiConfig as any)?.settings?.locale === "string" ? (uiConfig as any).settings.locale : undefined
+        }
+      } catch {
+        // If config fails to load, fall back to CSS defaults.
+      }
+    }
+
+    if (!theme || theme === "system") {
       document.documentElement.removeAttribute("data-theme")
     } else {
       document.documentElement.setAttribute("data-theme", theme)
@@ -48,6 +62,7 @@ async function bootstrap() {
   render(
     () => (
       <ConfigProvider>
+        <UiConfigBootstrapSync />
         <InstanceConfigProvider>
           <I18nProvider>
             <ThemeProvider>
