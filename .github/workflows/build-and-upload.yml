@@ -28,6 +28,21 @@ on:
         required: false
         default: true
         type: boolean
+      upload_actions_artifacts:
+        description: "Upload built artifacts to GitHub Actions run artifacts"
+        required: false
+        default: false
+        type: boolean
+      actions_artifacts_retention_days:
+        description: "Retention (days) for GitHub Actions artifacts"
+        required: false
+        default: 7
+        type: number
+      actions_artifacts_name_prefix:
+        description: "Optional prefix for Actions artifact names"
+        required: false
+        default: ""
+        type: string
       set_versions:
         description: "Run npm version to set workspace versions"
         required: false
@@ -203,6 +218,15 @@ jobs:
             gh release upload "$TAG" "$file" --clobber
           done
 
+      - name: Upload Actions artifacts (Electron macOS)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}electron-macos
+          path: packages/electron-app/release/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: error
+
   build-windows:
     runs-on: windows-2025
     env:
@@ -243,6 +267,15 @@ jobs:
             Write-Host "Uploading $($_.FullName)"
             gh release upload $env:TAG $_.FullName --clobber
           }
+
+      - name: Upload Actions artifacts (Electron Windows)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}electron-windows
+          path: packages/electron-app/release/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: error
 
   build-linux:
     runs-on: ubuntu-24.04
@@ -285,6 +318,15 @@ jobs:
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
           done
+
+      - name: Upload Actions artifacts (Electron Linux)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux
+          path: packages/electron-app/release/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: error
 
   build-tauri-macos:
     runs-on: macos-15-intel
@@ -339,7 +381,7 @@ jobs:
         run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (macOS)
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
           set -euo pipefail
           BUNDLE_ROOT="packages/tauri-app/target/release/bundle"
@@ -349,6 +391,15 @@ jobs:
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.zip"
           fi
+
+      - name: Upload Actions artifacts (Tauri macOS)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos
+          path: packages/tauri-app/release-tauri/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: warn
 
       - name: Upload Tauri release assets (macOS)
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -414,7 +465,7 @@ jobs:
         run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (macOS arm64)
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
           set -euo pipefail
           BUNDLE_ROOT="packages/tauri-app/target/release/bundle"
@@ -424,6 +475,15 @@ jobs:
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-arm64.zip"
           fi
+
+      - name: Upload Actions artifacts (Tauri macOS arm64)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}tauri-macos-arm64
+          path: packages/tauri-app/release-tauri/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: warn
 
       - name: Upload Tauri release assets (macOS arm64)
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -492,7 +552,7 @@ jobs:
         run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (Windows)
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         shell: pwsh
         run: |
           $bundleRoot = "packages/tauri-app/target/release/bundle"
@@ -504,6 +564,15 @@ jobs:
             $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.zip")
             Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
           }
+
+      - name: Upload Actions artifacts (Tauri Windows)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}tauri-windows
+          path: packages/tauri-app/release-tauri/*.zip
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: warn
 
       - name: Upload Tauri release assets (Windows)
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -582,7 +651,7 @@ jobs:
         run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (Linux)
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
           set -euo pipefail
           SEARCH_ROOT="packages/tauri-app/target"
@@ -607,6 +676,15 @@ jobs:
           cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.AppImage"
           cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.deb"
           cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.rpm"
+
+      - name: Upload Actions artifacts (Tauri Linux)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
+          path: packages/tauri-app/release-tauri/*
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: warn
 
       - name: Upload Tauri release assets (Linux)
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -766,3 +844,12 @@ jobs:
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
           done
+
+      - name: Upload Actions artifacts (Electron Linux RPM)
+        if: ${{ inputs.upload_actions_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux-rpm
+          path: packages/electron-app/release/*.rpm
+          retention-days: ${{ inputs.actions_artifacts_retention_days }}
+          if-no-files-found: error

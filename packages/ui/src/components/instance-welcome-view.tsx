@@ -404,6 +404,7 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
                                 <div class="flex items-center gap-2">
                                   <span
                                     class="text-sm font-medium text-primary whitespace-normal break-words transition-colors"
+                                    dir="auto"
                                     classList={{
                                       "text-accent": isFocused(),
                                     }}

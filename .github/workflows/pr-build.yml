@@ -6,9 +6,11 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
@@ -44,9 +46,12 @@ jobs:
 
   build:
     needs: authorize
-    if: ${{ needs.authorize.outputs.allowed == 'true' }}
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
     with:
       ref: ${{ github.event.pull_request.head.sha }}
       upload: false
+      upload_actions_artifacts: true
+      actions_artifacts_retention_days: 7
+      actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false

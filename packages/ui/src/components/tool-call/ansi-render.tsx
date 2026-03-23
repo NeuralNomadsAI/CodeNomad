@@ -1,7 +1,7 @@
 import type { Accessor, JSXElement } from "solid-js"
 import type { RenderCache } from "../../types/message"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../lib/ansi"
-import { escapeHtml } from "../../lib/markdown"
+import { escapeHtml } from "../../lib/text-render-utils"
 import type { AnsiRenderOptions, ToolScrollHelpers } from "./types"
 
 type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
@@ -88,7 +88,7 @@ export function createAnsiContentRenderer(params: {
 
     return (
       <div class={messageClass} ref={params.scrollHelpers.registerContainer} onScroll={params.scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
+        <pre class="tool-call-content tool-call-ansi" dir="auto" innerHTML={nextCache.html} />
         {params.scrollHelpers.renderSentinel()}
       </div>
     )

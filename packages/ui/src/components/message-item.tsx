@@ -542,7 +542,7 @@ export default function MessageItem(props: MessageItemProps) {
 
       </header>
 
-      <div class="pt-1 whitespace-pre-wrap break-words leading-[1.1]">
+      <div class="pt-1 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
 
         <Show when={props.isQueued && isUser()}>
@@ -550,7 +550,7 @@ export default function MessageItem(props: MessageItemProps) {
         </Show>
 
         <Show when={errorMessage()}>
-          <div class="message-error-block">⚠️ {errorMessage()}</div>
+          <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
 
         <Show when={isGenerating()}>

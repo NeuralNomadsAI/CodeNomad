@@ -132,6 +132,13 @@
   margin-bottom: 0;
 }
 
+.message-stream-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
 .message-step-start {
   background-color: var(--message-assistant-bg);
   border-left: 4px solid var(--message-assistant-border);
