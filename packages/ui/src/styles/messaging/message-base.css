@@ -547,4 +547,5 @@
   color: var(--text-primary);
   white-space: pre-wrap;
   margin: 0;
+  unicode-bidi: plaintext;
 }

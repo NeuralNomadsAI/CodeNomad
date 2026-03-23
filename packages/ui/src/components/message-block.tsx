@@ -1531,7 +1531,7 @@ function ReasoningCard(props: ReasoningCardProps) {
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
             <div class="message-reasoning-output" role="region" aria-label={t("messageBlock.reasoning.detailsAriaLabel")}>
-              <pre class="message-reasoning-text">{reasoningText() || ""}</pre>
+              <pre class="message-reasoning-text" dir="auto">{reasoningText() || ""}</pre>
             </div>
           </div>
         </div>
