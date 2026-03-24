@@ -114,6 +114,7 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.filesChanged": "{count} files changed",
   "instanceShell.sessionChanges.actions.show": "Show changes",
 
+  "instanceShell.gitChanges.noSessionSelected": "Select a session to view git changes.",
   "instanceShell.gitChanges.loading": "Loading git changes...",
   "instanceShell.gitChanges.empty": "No git changes yet.",
   "instanceShell.gitChanges.deleted": "Deleted",
@@ -126,9 +127,6 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "No file selected.",
   "instanceShell.filesShell.hideFiles": "Hide files",
   "instanceShell.filesShell.showFiles": "Show files",
-  "instanceShell.gitChanges.noSessionSelected": "Select a session to view git changes.",
-  "instanceShell.gitChanges.loading": "Loading git changes…",
-  "instanceShell.gitChanges.empty": "No git changes yet.",
   "instanceShell.diff.hideUnchanged": "Hide unchanged regions",
   "instanceShell.diff.showFull": "Show full file",
   "instanceShell.diff.switchToSplit": "Switch to split view",

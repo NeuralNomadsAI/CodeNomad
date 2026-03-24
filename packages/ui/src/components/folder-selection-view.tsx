@@ -342,7 +342,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
           aria-busy={isLoading() ? "true" : "false"}
         >
-          <div class="absolute top-4 left-6">
+          <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
             <Select<LanguageOption>
               value={selectedLanguageOption()}
               onChange={(value) => {
@@ -386,7 +386,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </Select.Portal>
             </Select>
           </div>
-          <div class="absolute top-4 right-6 flex items-center gap-2">
+          <div class="absolute top-4 flex items-center gap-2" style="inset-inline-end: 1.5rem;">
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
