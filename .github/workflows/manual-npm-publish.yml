@@ -46,7 +46,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      NODE_VERSION: 22
+      NODE_VERSION: 24
     steps:
       - name: Checkout
         uses: actions/checkout@v4
