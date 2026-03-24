@@ -147,7 +147,7 @@ export interface I18nContextValue {
   t: (key: string, params?: TranslateParams) => string
 }
 
-const I18nContext = createContext<I18nContextValue>()
+export const I18nContext = createContext<I18nContextValue>()
 
 export const I18nProvider: ParentComponent = (props) => {
   const { preferences } = useConfig()
@@ -231,7 +231,7 @@ export const I18nProvider: ParentComponent = (props) => {
 export function useI18n(): I18nContextValue {
   const context = useContext(I18nContext)
   if (!context) {
-    throw new Error("useI18n must be used within I18nProvider")
+    return { locale: () => "en" as Locale, t: (key: string) => key }
   }
   return context
 }

@@ -3,3 +3,6 @@ dist/
 .vite/
 src/renderer/public/logo.png
 src/renderer/public/monaco/
+ct_results_*.json
+*.webp
+*.png

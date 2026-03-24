@@ -39,7 +39,13 @@ interface SessionViewProps {
 
 export const SessionView: Component<SessionViewProps> = (props) => {
   const { t } = useI18n()
-  const session = () => props.activeSessions.get(props.sessionId)
+  const session = () => {
+    const sessions = props.activeSessions as any
+    if (typeof sessions?.get === "function") {
+      return sessions.get(props.sessionId) as Session | undefined
+    }
+    return sessions?.[props.sessionId] as Session | undefined
+  }
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const sessionBusy = createMemo(() => {
@@ -337,17 +343,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                     }
                   }
                 }}
-
-
-
-
                showSidebarToggle={props.showSidebarToggle}
                onSidebarToggle={props.onSidebarToggle}
                forceCompactStatusLayout={props.forceCompactStatusLayout}
                onQuoteSelection={handleQuoteSelection}
              />
-
-
                 <Show when={attachments().length > 0}>
                   <PromptAttachmentsBar
                     attachments={attachments()}

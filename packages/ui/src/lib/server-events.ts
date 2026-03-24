@@ -20,7 +20,9 @@ class ServerEvents {
   private retryDelay = RETRY_BASE_DELAY
 
   constructor() {
-    this.connect()
+    if (typeof window !== "undefined") {
+      this.connect()
+    }
   }
 
   private connect() {
