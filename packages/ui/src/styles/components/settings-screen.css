@@ -43,7 +43,7 @@
   padding: 1.25rem;
   background:
     linear-gradient(180deg, color-mix(in oklab, var(--surface-secondary) 92%, var(--accent-primary) 8%), var(--surface-secondary));
-  border-right: 1px solid var(--border-base);
+  border-inline-end: 1px solid var(--border-base);
 }
 
 .settings-screen-nav-header {
@@ -120,6 +120,9 @@
   border-color: color-mix(in oklab, var(--accent-primary) 26%, var(--border-base));
   color: var(--text-primary);
   transform: translateX(2px);
+}
+[dir="rtl"] .settings-nav-button[data-selected="true"] {
+  transform: translateX(-2px);
 }
 
 .settings-nav-button-icon {
@@ -360,7 +363,7 @@
   border: 1px solid var(--border-base);
   background: var(--surface-base);
   color: var(--text-primary);
-  text-align: left;
+  text-align: start;
   transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
   outline: none;
   cursor: pointer;
@@ -418,7 +421,7 @@
 }
 
 .settings-choice-check {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--accent-primary);
   opacity: 0;
 }
@@ -488,7 +491,7 @@
   .settings-screen-nav {
     gap: 0.75rem;
     padding: 1rem;
-    border-right: none;
+    border-inline-end: none;
     border-bottom: 1px solid var(--border-base);
   }
 

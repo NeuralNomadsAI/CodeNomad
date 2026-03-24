@@ -35,7 +35,9 @@
 }
 
 .prompt-input {
-  @apply w-full pl-3 pr-10 pt-2.5 border text-sm resize-none outline-none transition-colors;
+  @apply w-full pt-2.5 border text-sm resize-none outline-none transition-colors;
+  padding-inline-start: 2.5rem;
+  padding-inline-end: 0.75rem;
   font-family: inherit;
   background-color: var(--surface-base);
   color: var(--text-primary);
@@ -65,8 +67,8 @@
 .prompt-input-overlay {
   position: absolute;
   bottom: 1rem;
-  left: 0.75rem;
-  right: 0.75rem;
+  inset-inline-start: 0.75rem;
+  inset-inline-end: 0.75rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -81,11 +83,13 @@
   color: var(--text-primary);
 }
 
-/* Navigation buttons container (expand, prev, next) */
+/* Navigation buttons container (expand, prev, next).
+   Intentionally at inline-start (left in LTR, right in RTL) so buttons never overlap
+   the scrollbar, which browsers always place at inline-end. */
 .prompt-nav-buttons {
   position: absolute;
   top: 0.25rem;
-  right: 0.25rem;
+  inset-inline-start: 0.25rem;
   bottom: 0.25rem;
   display: flex;
   flex-direction: column;
@@ -158,6 +162,11 @@
 
 .prompt-input:disabled {
   @apply opacity-60 cursor-not-allowed;
+}
+
+/* In RTL: override dir="auto" which defaults to LTR on empty textarea */
+[dir="rtl"] .prompt-input {
+  direction: rtl;
 }
 
 .prompt-input::placeholder {
@@ -256,7 +265,7 @@
   display: none;
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
+  inset-inline-start: 0;
   padding: 8px;
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
@@ -335,6 +344,7 @@
   .prompt-input {
     min-height: 0;
     padding: 0.5rem 0.75rem;
+    padding-inline-start: 2.5rem; /* preserve space for nav buttons */
     padding-bottom: 0.75rem;
   }
 

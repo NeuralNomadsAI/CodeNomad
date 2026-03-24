@@ -114,6 +114,7 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.filesChanged": "{count} files changed",
   "instanceShell.sessionChanges.actions.show": "Show changes",
 
+  "instanceShell.gitChanges.noSessionSelected": "Select a session to view git changes.",
   "instanceShell.gitChanges.loading": "Loading git changes...",
   "instanceShell.gitChanges.empty": "No git changes yet.",
   "instanceShell.gitChanges.deleted": "Deleted",
@@ -124,6 +125,15 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "Change viewer",
   "instanceShell.filesShell.viewerPlaceholder": "Detailed change rendering will be added in the next step.",
   "instanceShell.filesShell.viewerEmpty": "No file selected.",
+  "instanceShell.filesShell.hideFiles": "Hide files",
+  "instanceShell.filesShell.showFiles": "Show files",
+  "instanceShell.diff.hideUnchanged": "Hide unchanged regions",
+  "instanceShell.diff.showFull": "Show full file",
+  "instanceShell.diff.switchToSplit": "Switch to split view",
+  "instanceShell.diff.switchToUnified": "Switch to unified view",
+  "instanceShell.diff.enableWordWrap": "Enable word wrap",
+  "instanceShell.diff.disableWordWrap": "Disable word wrap",
+  "instanceShell.worktree.create": "+ Create worktree",
 
   "instanceShell.plan.noSessionSelected": "Select a session to view plan.",
   "instanceShell.plan.empty": "Nothing planned yet.",

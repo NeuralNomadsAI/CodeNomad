@@ -249,7 +249,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const mode = activeSplitResize()
     if (!mode) return
     event.preventDefault()
-    const delta = event.clientX - splitResizeStartX()
+    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
+    const delta = (event.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
     else if (mode === "git-changes") setGitChangesSplitWidth(next)
@@ -272,7 +273,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const touch = event.touches[0]
     if (!touch) return
     event.preventDefault()
-    const delta = touch.clientX - splitResizeStartX()
+    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
+    const delta = (touch.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
     else if (mode === "git-changes") setGitChangesSplitWidth(next)

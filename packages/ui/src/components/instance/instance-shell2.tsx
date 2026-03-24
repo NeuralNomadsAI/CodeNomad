@@ -81,7 +81,8 @@ interface InstanceShellProps {
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const isRTL = () => locale() === "he"
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
   const [rightDrawerWidth, setRightDrawerWidth] = createSignal(
@@ -371,7 +372,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{
             width: `${sessionSidebarWidth()}px`,
             flexShrink: 0,
-            borderRight: "1px solid var(--border-base)",
+            borderInlineEnd: "1px solid var(--border-base)",
             backgroundColor: "var(--surface-secondary)",
             height: "100%",
             minHeight: 0,
@@ -413,7 +414,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const modalProps = container ? { container: container as Element } : undefined
     return (
       <Drawer
-        anchor="left"
+        anchor={isRTL() ? "right" : "left"}
         variant="temporary"
         open={leftOpen()}
         onClose={closeLeftDrawer}
@@ -422,7 +423,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           "& .MuiDrawer-paper": {
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
-            borderRight: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
+            borderInlineEnd: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
             backgroundColor: "var(--surface-secondary)",
             backgroundImage: "none",
             color: "var(--text-primary)",
@@ -480,7 +481,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{
             width: `${rightDrawerWidth()}px`,
             flexShrink: 0,
-            borderLeft: "1px solid var(--border-base)",
+            borderInlineStart: "1px solid var(--border-base)",
             backgroundColor: "var(--surface-secondary)",
             height: "100%",
             minHeight: 0,
@@ -523,7 +524,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const modalProps = container ? { container: container as Element } : undefined
     return (
       <Drawer
-        anchor="right"
+        anchor={isRTL() ? "left" : "right"}
         variant="temporary"
         open={rightOpen()}
         onClose={closeRightDrawer}
@@ -532,7 +533,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           "& .MuiDrawer-paper": {
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
-            borderLeft: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
+            borderInlineStart: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
             backgroundColor: "var(--surface-secondary)",
             backgroundImage: "none",
             color: "var(--text-primary)",
@@ -742,7 +743,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   <Kbd shortcut="cmd+shift+p" />
                 </span>
 
-                <div class="ml-auto flex items-center gap-3">
+                <div class="ms-auto flex items-center gap-3">
                   <div class="connection-status-meta flex items-center gap-3">
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">

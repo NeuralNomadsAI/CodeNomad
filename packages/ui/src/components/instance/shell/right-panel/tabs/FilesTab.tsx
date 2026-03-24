@@ -175,7 +175,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               title={props.t("instanceShell.rightPanel.actions.refresh")}
               aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
               disabled={props.browserLoading()}
-              style={{ "margin-left": "auto" }}
+              style={{ "margin-inline-start": "auto" }}
               onClick={() => props.onRefresh()}
             >
               <RefreshCw class={`h-4 w-4${props.browserLoading() ? " animate-spin" : ""}`} />

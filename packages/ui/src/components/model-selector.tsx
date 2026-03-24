@@ -295,7 +295,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 {t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") })}
               </span>
           {currentModelValue() && (
-                <span class="selector-trigger-secondary">
+                <span class="selector-trigger-secondary" dir="ltr">
                   {currentModelValue()!.providerId}/{currentModelValue()!.id}
                 </span>
               )}
