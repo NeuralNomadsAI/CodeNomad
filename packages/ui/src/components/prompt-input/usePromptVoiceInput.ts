@@ -56,18 +56,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       return
     }
 
-    if (!canUseVoiceInput() || options.disabled() || state() === "transcribing") return
-
-    try {
-      await startRecording()
-    } catch (error) {
-      cleanupMedia(false)
-      showAlertDialog(t("promptInput.voiceInput.error.permission"), {
-        title: t("promptInput.voiceInput.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    }
+    await startRecording()
   }
 
   function stopRecording() {
@@ -86,6 +75,8 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
   }
 
   async function startRecording() {
+    if (!canUseVoiceInput() || options.disabled() || state() === "transcribing" || state() === "recording") return
+
     if (!isSupported()) {
       showAlertDialog(t("promptInput.voiceInput.error.unsupported"), {
         title: t("promptInput.voiceInput.error.title"),
@@ -94,26 +85,35 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       return
     }
 
-    recordedChunks = []
-    shouldTranscribe = true
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    mediaRecorder = createRecorder(mediaStream)
+    try {
+      recordedChunks = []
+      shouldTranscribe = true
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaRecorder = createRecorder(mediaStream)
 
-    mediaRecorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        recordedChunks.push(event.data)
-      }
-    })
+      mediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data)
+        }
+      })
 
-    mediaRecorder.addEventListener("stop", () => {
-      void finalizeRecording()
-    })
+      mediaRecorder.addEventListener("stop", () => {
+        void finalizeRecording()
+      })
 
-    recordingStartedAt = Date.now()
-    setElapsedMs(0)
-    setState("recording")
-    startTimer()
-    mediaRecorder.start()
+      recordingStartedAt = Date.now()
+      setElapsedMs(0)
+      setState("recording")
+      startTimer()
+      mediaRecorder.start()
+    } catch (error) {
+      cleanupMedia(false)
+      showAlertDialog(t("promptInput.voiceInput.error.permission"), {
+        title: t("promptInput.voiceInput.error.title"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    }
   }
 
   async function finalizeRecording() {
@@ -209,6 +209,8 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     state,
     elapsedMs,
     canUseVoiceInput,
+    startRecording,
+    stopRecording,
     toggleRecording,
     cancelRecording,
     isRecording: () => state() === "recording",
