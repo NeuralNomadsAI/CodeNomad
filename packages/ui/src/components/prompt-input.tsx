@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Square } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -464,6 +464,32 @@ export default function PromptInput(props: PromptInputProps) {
 
   const instance = () => getActiveInstance()
 
+  let voiceButtonPressed = false
+
+  const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
+    if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
+    voiceButtonPressed = true
+
+    if (event instanceof PointerEvent) {
+      const target = event.currentTarget
+      if (target instanceof HTMLElement) {
+        try {
+          target.setPointerCapture(event.pointerId)
+        } catch {
+          // no-op
+        }
+      }
+    }
+
+    void voiceInput.startRecording()
+  }
+
+  const endVoicePress = () => {
+    if (!voiceButtonPressed) return
+    voiceButtonPressed = false
+    voiceInput.stopRecording()
+  }
+
   return (
     <div class="prompt-input-container">
       <div
@@ -612,25 +638,43 @@ export default function PromptInput(props: PromptInputProps) {
             <button
               type="button"
               class={`prompt-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
-              onClick={() => void voiceInput.toggleRecording()}
+              onPointerDown={(event) => {
+                event.preventDefault()
+                beginVoicePress(event)
+              }}
+              onPointerUp={(event) => {
+                event.preventDefault()
+                endVoicePress()
+              }}
+              onPointerCancel={() => endVoicePress()}
+              onLostPointerCapture={() => endVoicePress()}
+              onKeyDown={(event) => {
+                if (event.repeat) return
+                if (event.key !== " " && event.key !== "Enter") return
+                event.preventDefault()
+                beginVoicePress(event)
+              }}
+              onKeyUp={(event) => {
+                if (event.key !== " " && event.key !== "Enter") return
+                event.preventDefault()
+                endVoicePress()
+              }}
+              onBlur={() => endVoicePress()}
               disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
               aria-label={voiceInput.buttonTitle()}
               title={voiceInput.buttonTitle()}
             >
               <Show
-                when={voiceInput.isTranscribing()}
+                when={voiceInput.isRecording()}
                 fallback={
-                  <Show when={voiceInput.isRecording()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
-                    <Square class="h-4 w-4" aria-hidden="true" />
+                  <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
                   </Show>
                 }
               >
-                <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
               </Show>
             </button>
-            <Show when={voiceInput.isRecording()}>
-              <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
-            </Show>
           </Show>
           <button
             type="button"

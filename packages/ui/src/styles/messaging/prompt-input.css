@@ -180,7 +180,8 @@
 }
 
 .prompt-voice-button {
-  @apply w-10 h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
+  @apply h-10 rounded-md border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
+  min-width: 2.5rem;
   background-color: color-mix(in oklab, var(--surface-secondary) 82%, var(--surface-base));
   color: var(--text-secondary);
 }
@@ -196,6 +197,7 @@
 }
 
 .prompt-voice-button.is-recording {
+  min-width: 3.5rem;
   background-color: color-mix(in oklab, var(--button-danger-bg, rgba(239, 68, 68, 0.85)) 88%, white 12%);
   color: var(--button-danger-text, var(--text-inverted, #ffffff));
 }
@@ -206,8 +208,10 @@
 
 .prompt-voice-timer {
   font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
   line-height: 1;
-  color: var(--text-muted);
+  color: currentColor;
 }
 
 .stop-button:hover:not(:disabled) {
