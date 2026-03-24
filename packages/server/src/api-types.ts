@@ -219,34 +219,11 @@ export interface SpeechCapabilitiesResponse {
   provider: string
   supportsStt: boolean
   supportsTts: boolean
-  supportsRealtimeTranscription?: boolean
-  realtimeInputFormat?: {
-    type: "audio/pcm"
-    rate: 24000
-  }
-  realtimeModel?: string
   baseUrl?: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
 }
-
-export interface SpeechRealtimeSessionResponse {
-  sessionId: string
-  inputFormat: {
-    type: "audio/pcm"
-    rate: 24000
-  }
-}
-
-export type SpeechRealtimeEvent =
-  | { type: "session.ready"; sessionId: string }
-  | { type: "session.error"; message: string }
-  | { type: "input.speech_started"; itemId?: string }
-  | { type: "input.speech_stopped"; itemId?: string }
-  | { type: "transcript.partial"; itemId: string; text: string }
-  | { type: "transcript.final"; itemId: string; previousItemId?: string; text: string }
-  | { type: "session.closed"; reason?: string }
 
 export interface SpeechTranscriptionResponse {
   text: string

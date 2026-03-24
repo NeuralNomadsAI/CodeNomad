@@ -34,8 +34,6 @@ export interface SpeechSettings {
   provider: SpeechProviderPreference
   apiKey?: string
   baseUrl?: string
-  useRealtime: boolean
-  realtimeModel: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
@@ -138,8 +136,6 @@ const defaultUiSettings: UiSettings = {
 
 const defaultSpeechSettings: SpeechSettings = {
   provider: "openai-compatible",
-  useRealtime: true,
-  realtimeModel: "gpt-realtime",
   sttModel: "gpt-4o-mini-transcribe",
   ttsModel: "gpt-4o-mini-tts",
   ttsVoice: "alloy",
@@ -188,11 +184,6 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
     provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
     apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
     baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
-    useRealtime: sanitized.useRealtime ?? defaultSpeechSettings.useRealtime,
-    realtimeModel:
-      typeof sanitized.realtimeModel === "string" && sanitized.realtimeModel.trim()
-        ? sanitized.realtimeModel.trim()
-        : defaultSpeechSettings.realtimeModel,
     sttModel:
       typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
         ? sanitized.sttModel.trim()

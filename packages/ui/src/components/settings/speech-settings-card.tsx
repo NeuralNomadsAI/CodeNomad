@@ -10,8 +10,6 @@ const log = getLogger("actions")
 type DraftFields = {
   apiKey: string
   baseUrl: string
-  useRealtime: boolean
-  realtimeModel: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
@@ -21,8 +19,6 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
   return {
     apiKey: speech.apiKey ?? "",
     baseUrl: speech.baseUrl ?? "",
-    useRealtime: speech.useRealtime,
-    realtimeModel: speech.realtimeModel,
     sttModel: speech.sttModel,
     ttsModel: speech.ttsModel,
     ttsVoice: speech.ttsVoice,
@@ -30,7 +26,7 @@ function createDraftFields(speech: SpeechSettings): DraftFields {
 }
 
 function isDraftEqual(a: DraftFields, b: DraftFields): boolean {
-  return a.apiKey === b.apiKey && a.baseUrl === b.baseUrl && a.useRealtime === b.useRealtime && a.realtimeModel === b.realtimeModel && a.sttModel === b.sttModel && a.ttsModel === b.ttsModel && a.ttsVoice === b.ttsVoice
+  return a.apiKey === b.apiKey && a.baseUrl === b.baseUrl && a.sttModel === b.sttModel && a.ttsModel === b.ttsModel && a.ttsVoice === b.ttsVoice
 }
 
 export const SpeechSettingsCard: Component = () => {
@@ -61,7 +57,7 @@ export const SpeechSettingsCard: Component = () => {
     return speechCapabilities()?.configured ? t("settings.speech.status.configured") : t("settings.speech.status.missing")
   }
 
-  const updateDraft = <K extends keyof DraftFields>(key: K, value: DraftFields[K]) => {
+  const updateDraft = (key: keyof DraftFields, value: string) => {
     setSaveStatus("idle")
     setDrafts((current) => ({ ...current, [key]: value }))
   }
@@ -69,14 +65,12 @@ export const SpeechSettingsCard: Component = () => {
   const isDirty = createMemo(() => {
     const speech = serverSettings().speech
     const current = drafts()
-      return (
-        (current.apiKey || "") !== (speech.apiKey || "") ||
-        (current.baseUrl || "") !== (speech.baseUrl || "") ||
-        current.useRealtime !== speech.useRealtime ||
-        current.realtimeModel !== speech.realtimeModel ||
-        current.sttModel !== speech.sttModel ||
-        current.ttsModel !== speech.ttsModel ||
-        current.ttsVoice !== speech.ttsVoice
+    return (
+      (current.apiKey || "") !== (speech.apiKey || "") ||
+      (current.baseUrl || "") !== (speech.baseUrl || "") ||
+      current.sttModel !== speech.sttModel ||
+      current.ttsModel !== speech.ttsModel ||
+      current.ttsVoice !== speech.ttsVoice
     )
   })
 
@@ -96,8 +90,6 @@ export const SpeechSettingsCard: Component = () => {
       await updateSpeechSettings({
         apiKey: current.apiKey.trim() || undefined,
         baseUrl: current.baseUrl.trim() || undefined,
-        useRealtime: current.useRealtime,
-        realtimeModel: current.realtimeModel.trim() || undefined,
         sttModel: current.sttModel.trim() || undefined,
         ttsModel: current.ttsModel.trim() || undefined,
         ttsVoice: current.ttsVoice.trim() || undefined,
@@ -106,8 +98,6 @@ export const SpeechSettingsCard: Component = () => {
       setDrafts({
         apiKey: current.apiKey.trim(),
         baseUrl: current.baseUrl.trim(),
-        useRealtime: current.useRealtime,
-        realtimeModel: current.realtimeModel.trim() || serverSettings().speech.realtimeModel,
         sttModel: current.sttModel.trim() || serverSettings().speech.sttModel,
         ttsModel: current.ttsModel.trim() || serverSettings().speech.ttsModel,
         ttsVoice: current.ttsVoice.trim() || serverSettings().speech.ttsVoice,
@@ -168,27 +158,6 @@ export const SpeechSettingsCard: Component = () => {
           value={drafts().baseUrl}
           onInput={(value) => updateDraft("baseUrl", value)}
           placeholder={t("settings.speech.baseUrl.placeholder")}
-        />
-        <div class="settings-toggle-row">
-          <div>
-            <div class="settings-toggle-title">{t("settings.speech.realtime.title")}</div>
-            <div class="settings-toggle-caption">{t("settings.speech.realtime.subtitle")}</div>
-          </div>
-          <label class="settings-checkbox-toggle">
-            <input
-              type="checkbox"
-              checked={drafts().useRealtime}
-              onChange={(event) => updateDraft("useRealtime", event.currentTarget.checked)}
-            />
-            <span>{t("settings.common.enabled")}</span>
-          </label>
-        </div>
-        <Field
-          label={t("settings.speech.realtimeModel.title")}
-          caption={t("settings.speech.realtimeModel.subtitle")}
-          value={drafts().realtimeModel}
-          onInput={(value) => updateDraft("realtimeModel", value)}
-          placeholder={t("settings.speech.realtimeModel.placeholder")}
         />
         <Field
           label={t("settings.speech.sttModel.title")}

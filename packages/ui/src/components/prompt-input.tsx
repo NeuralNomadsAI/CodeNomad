@@ -11,7 +11,7 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { preferences, useConfig } from "../stores/preferences"
+import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
@@ -22,7 +22,6 @@ const log = getLogger("actions")
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
-  const { serverSettings } = useConfig()
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
@@ -419,7 +418,6 @@ export default function PromptInput(props: PromptInputProps) {
     getTextarea: () => textareaRef ?? null,
     enabled: () => preferences().showPromptVoiceInput,
     disabled: () => Boolean(props.disabled),
-    useRealtime: () => serverSettings().speech.useRealtime,
   })
   const showVoiceInput = () =>
     preferences().showPromptVoiceInput &&
