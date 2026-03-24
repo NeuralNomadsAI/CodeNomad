@@ -23,7 +23,7 @@
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
     "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version",
-    "postinstall": "patch-package"
+    "postinstall": "npx patch-package"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
