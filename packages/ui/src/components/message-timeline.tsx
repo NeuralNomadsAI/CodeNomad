@@ -125,18 +125,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     props.expandedMessageIds?.()
   })
 
+  let virtualizer: any;
+  const findSegmentIndex = (id: string) => props.segments.findIndex(s => s.id === id);
+
   createEffect(on(() => props.activeSegmentId, (activeId) => {
     if (!activeId) return
     const element = buttonRefs.get(activeId)
-    if (!element) return
-    const timer = typeof window !== "undefined" ? window.setTimeout(() => {
-      element.scrollIntoView({ block: "nearest", behavior: "smooth" })
-    }, 120) : null
-    onCleanup(() => {
-      if (timer !== null && typeof window !== "undefined") {
-        window.clearTimeout(timer)
+    if (element) {
+      const timer = typeof window !== "undefined" ? window.setTimeout(() => {
+        element.scrollIntoView({ block: "nearest", behavior: "smooth" })
+      }, 120) : null
+      onCleanup(() => {
+        if (timer !== null && typeof window !== "undefined") {
+          window.clearTimeout(timer)
+        }
+      })
+    } else if (virtualizer) {
+      const index = findSegmentIndex(activeId);
+      if (index !== -1) {
+        virtualizer.scrollToIndex(index, { align: 'start', smooth: true });
       }
-    })
+    }
   }))
 
   createEffect(() => {
@@ -236,7 +245,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         role="navigation"
         aria-label={t("messageTimeline.ariaLabel")}
       >
-        <Virtualizer data={props.segments}>
+        <Virtualizer ref={virtualizer} data={props.segments}>
           {(segment) => {
             onCleanup(() => buttonRefs.delete(segment.id))
             const state = () => viewStates().get(segment.id)
