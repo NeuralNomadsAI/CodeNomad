@@ -28,6 +28,7 @@ interface CliStatus {
   state?: string
   url?: string | null
   error?: string | null
+  message?: string | null
   startupEvents?: StartupPerfEvent[]
 }
 
@@ -107,9 +108,10 @@ function LoadingApp() {
         })
         const errorUnlisten = await listen("cli:error", (event) => {
           const payload = (event?.payload as CliStatus) || {}
-          if (payload.error) {
-            markPerf("loading.tauri.cli.error", { error: payload.error })
-            setError(payload.error)
+          const message = payload.error ?? payload.message ?? null
+          if (message) {
+            markPerf("loading.tauri.cli.error", { error: message })
+            setError(message)
             setStatusKey("loadingScreen.status.issue")
           }
         })
