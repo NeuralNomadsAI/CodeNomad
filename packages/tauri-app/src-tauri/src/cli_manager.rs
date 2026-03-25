@@ -869,11 +869,13 @@ impl CliProcessManager {
             .ok()
             .and_then(|u| u.port_or_known_default())
             .map(|p| p as u16);
-        let mut locked = status.lock();
-        locked.port = port;
-        locked.url = Some(base_url.clone());
-        locked.state = CliState::Ready;
-        locked.error = None;
+        {
+            let mut locked = status.lock();
+            locked.port = port;
+            locked.url = Some(base_url.clone());
+            locked.state = CliState::Ready;
+            locked.error = None;
+        }
         log_line(&format!("cli ready on {base_url}"));
 
         let token = bootstrap_token.lock().take();
@@ -907,9 +909,10 @@ impl CliProcessManager {
         } else {
             navigate_main(app, &base_url);
         }
-        let _ = app.emit("cli:ready", locked.clone());
         record_startup_event(status, app, "cli.ready", json!({ "url": base_url }));
-        Self::emit_status(app, &locked);
+        let snapshot = status.lock().clone();
+        let _ = app.emit("cli:ready", snapshot.clone());
+        Self::emit_status(app, &snapshot);
     }
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
