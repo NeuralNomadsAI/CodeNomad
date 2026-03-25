@@ -3,6 +3,7 @@ import { z } from "zod"
 import { probeBinaryVersion } from "../../workspaces/runtime"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
+import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
 
 interface RouteDeps {
   settings: SettingsService
@@ -20,10 +21,10 @@ function validateBinaryPath(binaryPath: string): { valid: boolean; version?: str
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   // Full-document access
-  app.get("/api/storage/config", async () => deps.settings.getDoc("config"))
+  app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
-      return deps.settings.mergePatchDoc("config", request.body ?? {})
+      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", request.body ?? {}))
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
@@ -31,12 +32,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.get<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request) => {
-    return deps.settings.getOwner("config", request.params.owner)
+    return sanitizeConfigOwner(request.params.owner, deps.settings.getOwner("config", request.params.owner))
   })
 
   app.patch<{ Params: { owner: string } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
-      return deps.settings.mergePatchOwner("config", request.params.owner, request.body ?? {})
+      return sanitizeConfigOwner(
+        request.params.owner,
+        deps.settings.mergePatchOwner("config", request.params.owner, request.body ?? {}),
+      )
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
