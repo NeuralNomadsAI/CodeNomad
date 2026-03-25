@@ -1,6 +1,5 @@
-import { createSignal, Show, onMount, onCleanup, createEffect, on } from "solid-js"
-import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
-import UnifiedPicker from "./unified-picker"
+import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -19,7 +18,9 @@ import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
+import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 const log = getLogger("actions")
+const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
@@ -450,8 +451,44 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const shouldShowOverlay = () => prompt().length === 0
+  const voiceInput = usePromptVoiceInput({
+    prompt,
+    setPrompt,
+    getTextarea: () => textareaRef ?? null,
+    enabled: () => preferences().showPromptVoiceInput,
+    disabled: () => Boolean(props.disabled),
+  })
+  const showVoiceInput = () =>
+    preferences().showPromptVoiceInput &&
+    (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
 
   const instance = () => getActiveInstance()
+
+  let voiceButtonPressed = false
+
+  const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
+    if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
+    voiceButtonPressed = true
+
+    if (event instanceof PointerEvent) {
+      const target = event.currentTarget
+      if (target instanceof HTMLElement) {
+        try {
+          target.setPointerCapture(event.pointerId)
+        } catch {
+          // no-op
+        }
+      }
+    }
+
+    void voiceInput.startRecording()
+  }
+
+  const endVoicePress = () => {
+    if (!voiceButtonPressed) return
+    voiceButtonPressed = false
+    voiceInput.stopRecording()
+  }
 
   return (
     <div class="prompt-input-container">
@@ -467,18 +504,20 @@ export default function PromptInput(props: PromptInputProps) {
         onDrop={handleDrop}
       >
         <Show when={showPicker() && instance()}>
-          <UnifiedPicker
-            open={showPicker()}
-            mode={pickerMode()}
-            onClose={handlePickerClose}
-            onSelect={handlePickerSelect}
-            agents={instanceAgents()}
-            commands={getCommands(props.instanceId)}
-            instanceClient={instance()!.client}
-            searchQuery={searchQuery()}
-            textareaRef={textareaRef}
-            workspaceId={props.instanceId}
-          />
+          <Suspense fallback={null}>
+            <LazyUnifiedPicker
+              open={showPicker()}
+              mode={pickerMode()}
+              onClose={handlePickerClose}
+              onSelect={handlePickerSelect}
+              agents={instanceAgents()}
+              commands={getCommands(props.instanceId)}
+              instanceClient={instance()!.client}
+              searchQuery={searchQuery()}
+              textareaRef={textareaRef}
+              workspaceId={props.instanceId}
+            />
+          </Suspense>
         </Show>
 
         <div class="flex flex-1 flex-col">
@@ -504,10 +543,54 @@ export default function PromptInput(props: PromptInputProps) {
                 autocomplete="off"
               />
               <div class="prompt-nav-buttons">
-                <ExpandButton
-                  expandState={expandState}
-                  onToggleExpand={handleExpandToggle}
-                />
+                <div class="prompt-nav-top-row">
+                  <Show when={showVoiceInput()}>
+                    <button
+                      type="button"
+                      class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
+                      onPointerDown={(event) => {
+                        event.preventDefault()
+                        beginVoicePress(event)
+                      }}
+                      onPointerUp={(event) => {
+                        event.preventDefault()
+                        endVoicePress()
+                      }}
+                      onPointerCancel={() => endVoicePress()}
+                      onLostPointerCapture={() => endVoicePress()}
+                      onKeyDown={(event) => {
+                        if (event.repeat) return
+                        if (event.key !== " " && event.key !== "Enter") return
+                        event.preventDefault()
+                        beginVoicePress(event)
+                      }}
+                      onKeyUp={(event) => {
+                        if (event.key !== " " && event.key !== "Enter") return
+                        event.preventDefault()
+                        endVoicePress()
+                      }}
+                      onBlur={() => endVoicePress()}
+                      disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
+                      aria-label={voiceInput.buttonTitle()}
+                      title={voiceInput.buttonTitle()}
+                    >
+                      <Show
+                        when={voiceInput.isRecording()}
+                        fallback={
+                          <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                            <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                          </Show>
+                        }
+                      >
+                        <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
+                      </Show>
+                    </button>
+                  </Show>
+                  <ExpandButton
+                    expandState={expandState}
+                    onToggleExpand={handleExpandToggle}
+                  />
+                </div>
                 <Show when={hasHistory()}>
                   <button
                     type="button"
@@ -628,4 +711,11 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
     </div>
   )
+}
+
+function formatVoiceTimer(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }

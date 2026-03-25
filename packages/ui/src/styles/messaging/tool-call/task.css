@@ -86,7 +86,7 @@
 .tool-call-task-summary .tool-call::before {
   content: "";
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   top: 0;
   bottom: 0;
   width: 3px;
@@ -117,7 +117,7 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.5rem 0.35rem 0.75rem;
-  border-left: 2px solid var(--tool-call-border-color, var(--border-base));
+  border-inline-start: 2px solid var(--tool-call-border-color, var(--border-base));
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   line-height: 1.35;
@@ -134,19 +134,19 @@
 }
 
 .tool-call-task-item[data-task-status="completed"] {
-  border-left-color: var(--status-success);
+  border-inline-start-color: var(--status-success);
 }
 
 .tool-call-task-item[data-task-status="running"] {
-  border-left-color: var(--status-warning);
+  border-inline-start-color: var(--status-warning);
 }
 
 .tool-call-task-item[data-task-status="pending"] {
-  border-left-color: var(--accent-primary);
+  border-inline-start-color: var(--accent-primary);
 }
 
 .tool-call-task-item[data-task-status="error"] {
-  border-left-color: var(--status-error);
+  border-inline-start-color: var(--status-error);
 }
 
 .tool-call-task-icon {

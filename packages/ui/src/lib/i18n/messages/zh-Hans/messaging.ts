@@ -140,4 +140,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "发送消息",
   "promptInput.send.errorFallback": "发送消息失败",
   "promptInput.send.errorTitle": "发送失败",
+  "promptInput.voiceInput.start.title": "开始语音输入",
+  "promptInput.voiceInput.stop.title": "停止录音并转写",
+  "promptInput.voiceInput.transcribing.title": "正在转写音频",
+  "promptInput.voiceInput.error.title": "语音输入失败",
+  "promptInput.voiceInput.error.permission": "录制语音输入需要麦克风访问权限。",
+  "promptInput.voiceInput.error.unsupported": "此浏览器不支持语音输入。",
+  "promptInput.voiceInput.error.transcribe": "无法转写录制的音频。",
 } as const

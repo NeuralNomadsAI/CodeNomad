@@ -83,6 +83,8 @@ fn workspace_root() -> Option<PathBuf> {
 const SESSION_COOKIE_NAME: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
+#[cfg(windows)]
+const CLI_WINDOWS_FORCE_GRACE_MS: u64 = 2_000;
 
 #[cfg(unix)]
 fn configure_posix_process_group(command: &mut Command) {
@@ -449,6 +451,8 @@ impl CliProcessManager {
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
             log_line(&format!("stopping CLI pid={}", child.id()));
+            #[cfg(windows)]
+            let mut forced_tree_shutdown = false;
             #[cfg(unix)]
             unsafe {
                 let pid = child.id() as i32;
@@ -461,9 +465,7 @@ impl CliProcessManager {
             }
             #[cfg(windows)]
             {
-                if !kill_process_tree_windows(child.id(), false) {
-                    let _ = child.kill();
-                }
+                let _ = kill_process_tree_windows(child.id(), false);
             }
 
             let start = Instant::now();
@@ -471,6 +473,21 @@ impl CliProcessManager {
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => {
+                        #[cfg(windows)]
+                        if !forced_tree_shutdown
+                            && start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS)
+                        {
+                            log_line(&format!(
+                                "regular Windows shutdown still running after {}ms; escalating pid={}",
+                                CLI_WINDOWS_FORCE_GRACE_MS,
+                                child.id()
+                            ));
+                            forced_tree_shutdown = true;
+                            if !kill_process_tree_windows(child.id(), true) {
+                                let _ = child.kill();
+                            }
+                        }
+
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
                             log_line(&format!(
                                 "stop timed out after {}s; sending SIGKILL pid={}",
@@ -487,7 +504,11 @@ impl CliProcessManager {
                             }
                             #[cfg(windows)]
                             {
-                                if !kill_process_tree_windows(child.id(), true) {
+                                if !forced_tree_shutdown
+                                    && !kill_process_tree_windows(child.id(), true)
+                                {
+                                    let _ = child.kill();
+                                } else if forced_tree_shutdown {
                                     let _ = child.kill();
                                 }
                             }
