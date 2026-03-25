@@ -140,4 +140,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Отправить сообщение",
   "promptInput.send.errorFallback": "Не удалось отправить сообщение",
   "promptInput.send.errorTitle": "Не удалось отправить",
+  "promptInput.voiceInput.start.title": "Начать голосовой ввод",
+  "promptInput.voiceInput.stop.title": "Остановить запись и расшифровать",
+  "promptInput.voiceInput.transcribing.title": "Идёт расшифровка аудио",
+  "promptInput.voiceInput.error.title": "Сбой голосового ввода",
+  "promptInput.voiceInput.error.permission": "Для записи голосового ввода требуется доступ к микрофону.",
+  "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",
+  "promptInput.voiceInput.error.transcribe": "Не удалось расшифровать записанное аудио.",
 } as const

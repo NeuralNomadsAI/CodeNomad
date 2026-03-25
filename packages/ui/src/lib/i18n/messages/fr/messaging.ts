@@ -140,4 +140,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "Envoyer le message",
   "promptInput.send.errorFallback": "Impossible d'envoyer le message",
   "promptInput.send.errorTitle": "Échec de l'envoi",
+  "promptInput.voiceInput.start.title": "Démarrer la saisie vocale",
+  "promptInput.voiceInput.stop.title": "Arrêter l'enregistrement et transcrire",
+  "promptInput.voiceInput.transcribing.title": "Transcription de l'audio",
+  "promptInput.voiceInput.error.title": "Échec de la saisie vocale",
+  "promptInput.voiceInput.error.permission": "L'accès au microphone est requis pour enregistrer la saisie vocale.",
+  "promptInput.voiceInput.error.unsupported": "La saisie vocale n'est pas prise en charge dans ce navigateur.",
+  "promptInput.voiceInput.error.transcribe": "Impossible de transcrire l'audio enregistré.",
 } as const

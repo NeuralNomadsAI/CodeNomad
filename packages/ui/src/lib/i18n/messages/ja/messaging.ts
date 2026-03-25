@@ -140,4 +140,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "メッセージを送信",
   "promptInput.send.errorFallback": "メッセージの送信に失敗しました",
   "promptInput.send.errorTitle": "送信に失敗",
+  "promptInput.voiceInput.start.title": "音声入力を開始",
+  "promptInput.voiceInput.stop.title": "録音を停止して文字起こし",
+  "promptInput.voiceInput.transcribing.title": "音声を文字起こし中",
+  "promptInput.voiceInput.error.title": "音声入力に失敗しました",
+  "promptInput.voiceInput.error.permission": "音声入力を録音するにはマイクへのアクセスが必要です。",
+  "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
+  "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
 } as const

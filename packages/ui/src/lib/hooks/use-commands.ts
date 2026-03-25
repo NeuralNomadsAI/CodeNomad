@@ -34,6 +34,7 @@ export interface UseCommandsOptions {
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
   togglePromptSubmitOnEnter: () => void
+  toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: ExpansionPreference) => void
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
@@ -435,6 +436,7 @@ export function useCommands(options: UseCommandsOptions) {
       toggleUsageMetrics: options.toggleUsageMetrics,
       toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,
       togglePromptSubmitOnEnter: options.togglePromptSubmitOnEnter,
+      toggleShowPromptVoiceInput: options.toggleShowPromptVoiceInput,
       setDiffViewMode: options.setDiffViewMode,
       setToolOutputExpansion: options.setToolOutputExpansion,
       setDiagnosticsExpansion: options.setDiagnosticsExpansion,

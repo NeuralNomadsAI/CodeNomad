@@ -138,4 +138,11 @@ export const messagingMessages = {
   "promptInput.send.ariaLabel": "שלח הודעה",
   "promptInput.send.errorFallback": "שליחת ההודעה נכשלה",
   "promptInput.send.errorTitle": "השליחה נכשלה",
+  "promptInput.voiceInput.start.title": "התחל קלט קולי",
+  "promptInput.voiceInput.stop.title": "עצור הקלטה ותמלל",
+  "promptInput.voiceInput.transcribing.title": "מתמלל אודיו",
+  "promptInput.voiceInput.error.title": "קלט קולי נכשל",
+  "promptInput.voiceInput.error.permission": "נדרשת גישה למיקרופון כדי להקליט קלט קולי.",
+  "promptInput.voiceInput.error.unsupported": "קלט קולי אינו נתמך בדפדפן זה.",
+  "promptInput.voiceInput.error.transcribe": "לא ניתן היה לתמלל את האודיו שהוקלט.",
 } as const

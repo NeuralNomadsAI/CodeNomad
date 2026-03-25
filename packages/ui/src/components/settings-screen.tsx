@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Settings, Bell, MonitorUp, Paintbrush, Terminal, X } from "lucide-solid"
+import { Settings, Bell, MonitorUp, Paintbrush, Terminal, Volume2, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -13,6 +13,7 @@ import { AppearanceSettingsSection } from "./settings/appearance-settings-sectio
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
+import { SpeechSettingsSection } from "./settings/speech-settings-section"
 
 export const SettingsScreen: Component = () => {
   const { t } = useI18n()
@@ -21,6 +22,7 @@ export const SettingsScreen: Component = () => {
     { id: "appearance" as SettingsSectionId, icon: Paintbrush, label: t("settings.nav.appearance") },
     { id: "notifications" as SettingsSectionId, icon: Bell, label: t("settings.nav.notifications") },
     { id: "remote" as SettingsSectionId, icon: MonitorUp, label: t("settings.nav.remote") },
+    { id: "speech" as SettingsSectionId, icon: Volume2, label: t("settings.nav.speech") },
     { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
   ])
 
@@ -30,6 +32,8 @@ export const SettingsScreen: Component = () => {
         return <NotificationsSettingsSection />
       case "remote":
         return <RemoteAccessSettingsSection />
+      case "speech":
+        return <SpeechSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
       case "appearance":
