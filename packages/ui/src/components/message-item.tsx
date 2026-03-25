@@ -29,6 +29,7 @@ interface MessageItemProps {
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
   selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
@@ -95,7 +96,16 @@ export default function MessageItem(props: MessageItemProps) {
     })
   })
 
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
+  const isSelectedForDeletion = () => {
+    if (props.selectedMessageIds?.().has(props.record.id)) return true
+    const toolKeys = props.selectedToolPartKeys?.()
+    if (!toolKeys || toolKeys.size === 0) return false
+    const prefix = `${props.record.id}:`
+    for (const key of toolKeys) {
+      if (key.startsWith(prefix)) return true
+    }
+    return false
+  }
 
   let topRowEl: HTMLDivElement | undefined
   let actionsEl: HTMLDivElement | undefined
@@ -390,7 +400,10 @@ export default function MessageItem(props: MessageItemProps) {
       data-message-role={isUser() ? "user" : "assistant"}
       data-message-status={props.record.status}
     >
-      <header class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"}`}>
+      <header
+        class={`message-item-header ${isUser() ? "pb-0.5" : "pb-0"} delete-hover-scope`}
+        data-delete-part-hover={isSelectedForDeletion() ? "true" : undefined}
+      >
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
@@ -562,7 +575,11 @@ export default function MessageItem(props: MessageItemProps) {
         <For each={messageParts()}>
           {(part) => {
             return (
-              <div class="message-part-shell">
+              <div
+                class="message-part-shell delete-hover-scope"
+                data-part-type={part?.type}
+                data-delete-part-hover={part?.type === "text" && isSelectedForDeletion() ? "true" : undefined}
+              >
                 <MessagePart
                   part={part}
                   messageType={props.record.role}

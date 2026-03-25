@@ -209,6 +209,7 @@ interface MessageContentItemProps {
   showDeleteMessage?: boolean
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
@@ -299,6 +300,7 @@ function MessageContentItem(props: MessageContentItemProps) {
           showDeleteMessage={props.showDeleteMessage}
           onDeleteHoverChange={props.onDeleteHoverChange}
           selectedMessageIds={props.selectedMessageIds}
+          selectedToolPartKeys={props.selectedToolPartKeys}
           onToggleSelectedMessage={props.onToggleSelectedMessage}
           onRevert={props.onRevert}
           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
@@ -582,11 +584,6 @@ export default function MessageBlock(props: MessageBlockProps) {
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
 
-    const selected = props.selectedMessageIds?.() ?? new Set<string>()
-    if (selected.has(props.messageId)) {
-      return true
-    }
-
     if (hover.kind === "message") {
       return hover.messageId === props.messageId
     }
@@ -812,6 +809,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onRevert={props.onRevert}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedToolPartKeys={props.selectedToolPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onFork={props.onFork}
                     onContentRendered={props.onContentRendered}
@@ -886,6 +884,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedToolPartKeys={props.selectedToolPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
@@ -902,6 +901,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
+                    selectedToolPartKeys={props.selectedToolPartKeys}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
@@ -1280,6 +1280,7 @@ interface ReasoningCardProps {
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
+  selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
 }
 
@@ -1288,7 +1289,16 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+  const isSelectedForDeletion = () => {
+    if (props.selectedMessageIds?.().has(props.messageId)) return true
+    const toolKeys = props.selectedToolPartKeys?.()
+    if (!toolKeys || toolKeys.size === 0) return false
+    const prefix = `${props.messageId}:`
+    for (const key of toolKeys) {
+      if (key.startsWith(prefix)) return true
+    }
+    return false
+  }
 
   let headerEl: HTMLDivElement | undefined
   let actionsEl: HTMLDivElement | undefined
@@ -1427,7 +1437,10 @@ function ReasoningCard(props: ReasoningCardProps) {
   }
 
   return (
-    <div class="delete-hover-scope message-reasoning-card">
+    <div
+      class="delete-hover-scope message-reasoning-card"
+      data-delete-part-hover={isSelectedForDeletion() ? "true" : undefined}
+    >
       <div class="message-reasoning-header" ref={(el) => (headerEl = el)}>
         <button
           type="button"

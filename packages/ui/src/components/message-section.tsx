@@ -506,6 +506,8 @@ export default function MessageSection(props: MessageSectionProps) {
     }
 
     const stepFinishPartsToDelete: { messageId: string; partId: string }[] = []
+    const reasoningPartsToDelete: { messageId: string; partId: string }[] = []
+    const textPartsToDelete: { messageId: string; partId: string }[] = []
     if (toolPartsByMessage.size > 0) {
       const s = store()
       for (const [messageId, selectedToolPartIds] of toolPartsByMessage.entries()) {
@@ -513,6 +515,8 @@ export default function MessageSection(props: MessageSectionProps) {
         const record = s.getMessage(messageId)
         if (!record) continue
         const stepFinishPartIds: string[] = []
+        const reasoningPartIds: string[] = []
+        const textPartIds: string[] = []
         for (const partId of record.partIds ?? []) {
           const partRecord = record.parts?.[partId]
           const part = partRecord?.data
@@ -520,10 +524,22 @@ export default function MessageSection(props: MessageSectionProps) {
           if (part.type === "step-finish") {
             stepFinishPartIds.push(partId)
           }
+          if (part.type === "reasoning") {
+            reasoningPartIds.push(partId)
+          }
+          if (part.type === "text") {
+            textPartIds.push(partId)
+          }
         }
-        if (selectedToolPartIds.size === 0 || stepFinishPartIds.length === 0) continue
+        if (selectedToolPartIds.size === 0) continue
         for (const partId of stepFinishPartIds) {
           stepFinishPartsToDelete.push({ messageId, partId })
+        }
+        for (const partId of reasoningPartIds) {
+          reasoningPartsToDelete.push({ messageId, partId })
+        }
+        for (const partId of textPartIds) {
+          textPartsToDelete.push({ messageId, partId })
         }
       }
     }
@@ -537,6 +553,14 @@ export default function MessageSection(props: MessageSectionProps) {
         await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
       }
       for (const { messageId, partId } of stepFinishPartsToDelete) {
+        if (!allowed.has(messageId)) continue
+        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
+      }
+      for (const { messageId, partId } of reasoningPartsToDelete) {
+        if (!allowed.has(messageId)) continue
+        await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
+      }
+      for (const { messageId, partId } of textPartsToDelete) {
         if (!allowed.has(messageId)) continue
         await deleteMessagePart(props.instanceId, props.sessionId, messageId, partId)
       }
