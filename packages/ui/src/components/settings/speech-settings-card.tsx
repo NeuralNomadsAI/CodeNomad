@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, type Component } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, type Component } from "solid-js"
 import { Mic, Volume2 } from "lucide-solid"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
@@ -17,7 +17,7 @@ type DraftFields = {
 
 function createDraftFields(speech: SpeechSettings): DraftFields {
   return {
-    apiKey: speech.apiKey ?? "",
+    apiKey: "",
     baseUrl: speech.baseUrl ?? "",
     sttModel: speech.sttModel,
     ttsModel: speech.ttsModel,
@@ -36,6 +36,8 @@ export const SpeechSettingsCard: Component = () => {
   const [isSaving, setIsSaving] = createSignal(false)
   const [saveStatus, setSaveStatus] = createSignal<"idle" | "saved" | "error">("saved")
   const [drafts, setDrafts] = createSignal<DraftFields>(initialDrafts)
+  const [apiKeyTouched, setApiKeyTouched] = createSignal(false)
+  const [clearStoredApiKey, setClearStoredApiKey] = createSignal(false)
 
   createEffect(() => {
     const speech = serverSettings().speech
@@ -43,6 +45,12 @@ export const SpeechSettingsCard: Component = () => {
     if (!isSaving() && !isDirty()) {
       if (!isDraftEqual(drafts(), nextDrafts)) {
         setDrafts(nextDrafts)
+      }
+      if (apiKeyTouched()) {
+        setApiKeyTouched(false)
+      }
+      if (clearStoredApiKey()) {
+        setClearStoredApiKey(false)
       }
     }
   })
@@ -59,14 +67,20 @@ export const SpeechSettingsCard: Component = () => {
 
   const updateDraft = (key: keyof DraftFields, value: string) => {
     setSaveStatus("idle")
+    if (key === "apiKey") {
+      setApiKeyTouched(true)
+      setClearStoredApiKey(false)
+    }
     setDrafts((current) => ({ ...current, [key]: value }))
   }
+
+  const apiKeyDirty = createMemo(() => clearStoredApiKey() || drafts().apiKey.trim().length > 0)
 
   const isDirty = createMemo(() => {
     const speech = serverSettings().speech
     const current = drafts()
     return (
-      (current.apiKey || "") !== (speech.apiKey || "") ||
+      apiKeyDirty() ||
       (current.baseUrl || "") !== (speech.baseUrl || "") ||
       current.sttModel !== speech.sttModel ||
       current.ttsModel !== speech.ttsModel ||
@@ -87,8 +101,9 @@ export const SpeechSettingsCard: Component = () => {
     setIsSaving(true)
     setSaveStatus("idle")
     try {
+      const trimmedApiKey = current.apiKey.trim()
       await updateSpeechSettings({
-        apiKey: current.apiKey.trim() || undefined,
+        ...(clearStoredApiKey() ? { apiKey: null } : trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
         baseUrl: current.baseUrl.trim() || undefined,
         sttModel: current.sttModel.trim() || undefined,
         ttsModel: current.ttsModel.trim() || undefined,
@@ -96,12 +111,14 @@ export const SpeechSettingsCard: Component = () => {
       })
       await loadSpeechCapabilities(true)
       setDrafts({
-        apiKey: current.apiKey.trim(),
+        apiKey: "",
         baseUrl: current.baseUrl.trim(),
         sttModel: current.sttModel.trim() || serverSettings().speech.sttModel,
         ttsModel: current.ttsModel.trim() || serverSettings().speech.ttsModel,
         ttsVoice: current.ttsVoice.trim() || serverSettings().speech.ttsVoice,
       })
+      setApiKeyTouched(false)
+      setClearStoredApiKey(false)
       setSaveStatus("saved")
     } catch (error) {
       log.error("Failed to save speech settings", error)
@@ -151,7 +168,25 @@ export const SpeechSettingsCard: Component = () => {
           value={drafts().apiKey}
           onInput={(value) => updateDraft("apiKey", value)}
           type="password"
+          placeholder={serverSettings().speech.hasApiKey ? t("settings.speech.apiKey.placeholder") : undefined}
         />
+        <Show when={serverSettings().speech.hasApiKey && !apiKeyTouched() && drafts().apiKey.length === 0}>
+          <div class="settings-inline-note">
+            {clearStoredApiKey() ? t("settings.speech.apiKey.clearPending") : t("settings.speech.apiKey.storedNote")}{" "}
+            <Show when={!clearStoredApiKey()}>
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+                onClick={() => {
+                  setClearStoredApiKey(true)
+                  setSaveStatus("idle")
+                }}
+              >
+                {t("settings.speech.apiKey.clearAction")}
+              </button>
+            </Show>
+          </div>
+        </Show>
         <Field
           label={t("settings.speech.baseUrl.title")}
           caption={t("settings.speech.baseUrl.subtitle")}

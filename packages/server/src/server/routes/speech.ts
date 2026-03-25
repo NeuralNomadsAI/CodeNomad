@@ -19,6 +19,20 @@ const SynthesizeBodySchema = z.object({
   format: z.enum(["mp3", "wav", "opus"]).optional(),
 })
 
+function getSpeechErrorStatus(error: unknown): number {
+  if (error instanceof z.ZodError) {
+    return 400
+  }
+  if (error instanceof Error && /not configured/i.test(error.message)) {
+    return 503
+  }
+  return 502
+}
+
+function getSpeechErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async () => deps.speechService.getCapabilities())
 
@@ -28,8 +42,8 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
       return await deps.speechService.transcribe(body)
     } catch (error) {
       request.log.error({ err: error }, "Failed to transcribe audio")
-      reply.code(400)
-      return { error: error instanceof Error ? error.message : "Failed to transcribe audio" }
+      reply.code(getSpeechErrorStatus(error))
+      return { error: getSpeechErrorMessage(error, "Failed to transcribe audio") }
     }
   })
 
@@ -39,8 +53,8 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
       return await deps.speechService.synthesize(body)
     } catch (error) {
       request.log.error({ err: error }, "Failed to synthesize audio")
-      reply.code(400)
-      return { error: error instanceof Error ? error.message : "Failed to synthesize audio" }
+      reply.code(getSpeechErrorStatus(error))
+      return { error: getSpeechErrorMessage(error, "Failed to synthesize audio") }
     }
   })
 }

@@ -33,10 +33,15 @@ export type SpeechProviderPreference = "openai-compatible"
 export interface SpeechSettings {
   provider: SpeechProviderPreference
   apiKey?: string
+  hasApiKey: boolean
   baseUrl?: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
+}
+
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
+  apiKey?: string | null
 }
 
 export interface UiSettings {
@@ -136,6 +141,7 @@ const defaultUiSettings: UiSettings = {
 
 const defaultSpeechSettings: SpeechSettings = {
   provider: "openai-compatible",
+  hasApiKey: false,
   sttModel: "gpt-4o-mini-transcribe",
   ttsModel: "gpt-4o-mini-tts",
   ttsVoice: "alloy",
@@ -183,6 +189,7 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
   return {
     provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
     apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
+    hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
     baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
     sttModel:
       typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
@@ -388,10 +395,21 @@ function updateLastUsedBinary(path: string): void {
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to update binary list", error))
 }
 
-async function updateSpeechSettings(updates: Partial<SpeechSettings>): Promise<void> {
-  const next = normalizeSpeechSettings({ ...serverSettings().speech, ...updates })
+async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
+  const apiKeyPatch = updates.apiKey
+  const { apiKey: _apiKey, ...restUpdates } = updates
+  const next = normalizeSpeechSettings({
+    ...serverSettings().speech,
+    ...restUpdates,
+    ...(apiKeyPatch === null ? {} : { apiKey: apiKeyPatch }),
+  })
+  const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
+  const patch = {
+    ...persistedSpeech,
+    ...(apiKeyPatch === null ? { apiKey: null } : {}),
+  }
   try {
-    await patchConfigOwner("server", { speech: next })
+    await patchConfigOwner("server", { speech: patch })
   } catch (error) {
     log.error("Failed to update speech settings", error)
     throw error
