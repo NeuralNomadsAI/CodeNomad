@@ -288,6 +288,7 @@ fn main() {
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
         })
         .setup(|app| {
+            app.state::<AppState>().manager.clear_startup_events();
             set_windows_app_user_model_id();
             build_menu(&app.handle())?;
             if let Some(shortcut) = fullscreen_shortcut() {
@@ -308,9 +309,11 @@ fn main() {
                     });
                 }
             }
-            let _ = app
-                .handle()
-                .emit("perf:startup", json!({"stage": "tauri.setup.complete"}));
+            app.state::<AppState>().manager.record_startup_event(
+                &app.handle(),
+                "tauri.setup.complete",
+                json!({}),
+            );
             let dev_mode = is_dev_mode();
             let app_handle = app.handle().clone();
             let manager = app.state::<AppState>().manager.clone();

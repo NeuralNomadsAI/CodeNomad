@@ -39,6 +39,14 @@ fn emit_perf_startup(app: &AppHandle, stage: &str, detail: serde_json::Value) {
     );
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupPerfEvent {
+    pub stage: String,
+    #[serde(default)]
+    pub detail: serde_json::Value,
+}
+
 #[cfg(windows)]
 fn configure_spawn(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
@@ -328,12 +336,14 @@ pub enum CliState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliStatus {
     pub state: CliState,
     pub pid: Option<u32>,
     pub port: Option<u16>,
     pub url: Option<String>,
     pub error: Option<String>,
+    pub startup_events: Vec<StartupPerfEvent>,
 }
 
 impl Default for CliStatus {
@@ -344,6 +354,7 @@ impl Default for CliStatus {
             port: None,
             url: None,
             error: None,
+            startup_events: Vec::new(),
         }
     }
 }
@@ -481,6 +492,24 @@ impl CliProcessManager {
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
+    }
+
+    pub fn clear_startup_events(&self) {
+        self.status.lock().startup_events.clear();
+    }
+
+    pub fn record_startup_event(&self, app: &AppHandle, stage: &str, detail: serde_json::Value) {
+        let payload = StartupPerfEvent {
+            stage: stage.to_string(),
+            detail: detail.clone(),
+        };
+
+        {
+            let mut status = self.status.lock();
+            status.startup_events.push(payload);
+        }
+
+        emit_perf_startup(app, stage, detail);
     }
 
     fn spawn_cli(

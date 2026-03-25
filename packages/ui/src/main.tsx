@@ -18,8 +18,6 @@ if (!root) {
 
 const mount = root
 
-markPerf("ui.main.entry")
-
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
@@ -28,9 +26,11 @@ if (typeof document !== "undefined") {
 async function bootstrap() {
   const existingTrace = getPerfTrace()
   if (existingTrace.some((entry) => entry.name === "loading.screen.mounted")) {
+    markPerf("ui.main.entry")
     markPerf("ui.bootstrap.start")
   } else {
-    beginPerfTrace("ui.bootstrap.start", { source: "direct-ui-entry" })
+    beginPerfTrace("ui.main.entry", { source: "direct-ui-entry" })
+    markPerf("ui.bootstrap.start")
   }
 
   if (typeof document !== "undefined") {

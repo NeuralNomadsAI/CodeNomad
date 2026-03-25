@@ -28,6 +28,7 @@ interface CliStatus {
   state?: string
   url?: string | null
   error?: string | null
+  startupEvents?: StartupPerfEvent[]
 }
 
 interface StartupPerfEvent {
@@ -74,15 +75,27 @@ function LoadingApp() {
     const unsubscribers: Array<() => void> = []
 
     async function bootstrapTauri() {
+      const replayStartupEvent = (payload: StartupPerfEvent) => {
+        if (!payload?.stage) {
+          return
+        }
+
+        const markName = `loading.tauri.${payload.stage}`
+        if (typeof window !== "undefined") {
+          const trace = (window as any).__CODENOMAD_PERF__?.getTrace?.() ?? []
+          if (Array.isArray(trace) && trace.some((entry: { name?: string }) => entry?.name === markName)) {
+            return
+          }
+        }
+
+        markPerf(markName, payload.detail)
+      }
+
       try {
         markPerf("loading.tauri.bootstrap.start")
         const perfUnlisten = await listen("perf:startup", (event) => {
           const payload = (event?.payload as StartupPerfEvent) || {}
-          if (!payload.stage) {
-            return
-          }
-
-          markPerf(`loading.tauri.${payload.stage}`, payload.detail)
+          replayStartupEvent(payload)
         })
         const readyUnlisten = await listen("cli:ready", (event) => {
           const payload = (event?.payload as CliStatus) || {}
@@ -117,6 +130,7 @@ function LoadingApp() {
         unsubscribers.push(perfUnlisten, readyUnlisten, errorUnlisten, statusUnlisten)
 
         const result = await invoke<CliStatus>("cli_get_status")
+        result?.startupEvents?.forEach((entry) => replayStartupEvent(entry))
         if (result?.state === "ready" && result.url) {
           markPerf("loading.tauri.status.ready-on-load", { url: result.url })
           navigateTo(result.url)
