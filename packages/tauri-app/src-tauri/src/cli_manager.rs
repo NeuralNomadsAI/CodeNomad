@@ -39,6 +39,20 @@ fn emit_perf_startup(app: &AppHandle, stage: &str, detail: serde_json::Value) {
     );
 }
 
+fn record_startup_event(
+    status: &Arc<Mutex<CliStatus>>,
+    app: &AppHandle,
+    stage: &str,
+    detail: serde_json::Value,
+) {
+    let payload = StartupPerfEvent {
+        stage: stage.to_string(),
+        detail: detail.clone(),
+    };
+    status.lock().startup_events.push(payload);
+    emit_perf_startup(app, stage, detail);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartupPerfEvent {
@@ -379,7 +393,12 @@ impl CliProcessManager {
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         log_line(&format!("start requested (dev={dev})"));
-        emit_perf_startup(&app, "cli.start.requested", json!({ "dev": dev }));
+        record_startup_event(
+            &self.status,
+            &app,
+            "cli.start.requested",
+            json!({ "dev": dev }),
+        );
         self.stop()?;
         self.ready.store(false, Ordering::SeqCst);
         *self.bootstrap_token.lock() = None;
@@ -412,7 +431,8 @@ impl CliProcessManager {
                 locked.error = Some(err.to_string());
                 let snapshot = locked.clone();
                 drop(locked);
-                emit_perf_startup(
+                record_startup_event(
+                    &status_arc,
                     &app,
                     "cli.start.error",
                     json!({ "message": err.to_string() }),
@@ -499,17 +519,7 @@ impl CliProcessManager {
     }
 
     pub fn record_startup_event(&self, app: &AppHandle, stage: &str, detail: serde_json::Value) {
-        let payload = StartupPerfEvent {
-            stage: stage.to_string(),
-            detail: detail.clone(),
-        };
-
-        {
-            let mut status = self.status.lock();
-            status.startup_events.push(payload);
-        }
-
-        emit_perf_startup(app, stage, detail);
+        record_startup_event(&self.status, app, stage, detail);
     }
 
     fn spawn_cli(
@@ -523,7 +533,8 @@ impl CliProcessManager {
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
         let host = resolve_listening_host();
-        emit_perf_startup(
+        record_startup_event(
+            &status,
             &app,
             "cli.entry.resolved",
             json!({
@@ -601,7 +612,7 @@ impl CliProcessManager {
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
-        emit_perf_startup(&app, "cli.process.spawned", json!({ "pid": pid }));
+        record_startup_event(&status, &app, "cli.process.spawned", json!({ "pid": pid }));
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -687,7 +698,8 @@ impl CliProcessManager {
                     let _ = child.kill();
                 }
             }
-            emit_perf_startup(
+            record_startup_event(
+                &status_clone,
                 &app_clone,
                 "cli.start.timeout",
                 json!({ "message": "CLI did not start in time" }),
@@ -896,7 +908,7 @@ impl CliProcessManager {
             navigate_main(app, &base_url);
         }
         let _ = app.emit("cli:ready", locked.clone());
-        emit_perf_startup(app, "cli.ready", json!({ "url": base_url }));
+        record_startup_event(status, app, "cli.ready", json!({ "url": base_url }));
         Self::emit_status(app, &locked);
     }
 

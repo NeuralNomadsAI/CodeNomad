@@ -60,6 +60,7 @@ fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
 fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
     let dev_mode = is_dev_mode();
     state.manager.stop().map_err(|e| e.to_string())?;
+    state.manager.clear_startup_events();
     state
         .manager
         .start(app, dev_mode)
