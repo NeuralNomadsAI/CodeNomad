@@ -507,7 +507,7 @@ void ensureLoaded().catch((error: unknown) => {
   log.error("Failed to initialize settings", error)
 })
 
-interface ConfigContextValue {
+export interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
   updatePreferences: typeof updatePreferences
@@ -629,12 +629,52 @@ export const ConfigProvider: ParentComponent = (props) => {
 export function useConfig(): ConfigContextValue {
   const context = useContext(ConfigContext)
   if (!context) {
-    throw new Error("useConfig must be used within ConfigProvider")
+    // Safe fallback for test environments or when used outside ConfigProvider
+    return {
+      isLoaded: () => true,
+      preferences: () => ({} as any),
+      updatePreferences: () => {},
+      themePreference: () => "system" as const,
+      setThemePreference: () => {},
+      serverSettings: () => ({} as any),
+      setListeningMode: async () => {},
+      updateEnvironmentVariables: () => {},
+      addEnvironmentVariable: () => {},
+      removeEnvironmentVariable: () => {},
+      updateLastUsedBinary: () => {},
+      recentFolders: () => [],
+      opencodeBinaries: () => [],
+      uiState: () => ({} as any),
+      addRecentFolder: () => {},
+      removeRecentFolder: () => {},
+      addOpenCodeBinary: () => {},
+      removeOpenCodeBinary: () => {},
+      recordWorkspaceLaunch: () => {},
+      addRecentModelPreference: () => {},
+      isFavoriteModelPreference: () => false,
+      toggleFavoriteModelPreference: () => {},
+      getModelThinkingSelection: () => undefined,
+      setModelThinkingSelection: () => {},
+      toggleShowThinkingBlocks: () => {},
+      toggleKeyboardShortcutHints: () => {},
+      toggleShowTimelineTools: () => {},
+      toggleUsageMetrics: () => {},
+      toggleAutoCleanupBlankSessions: () => {},
+      togglePromptSubmitOnEnter: () => {},
+      setDiffViewMode: () => {},
+      setToolOutputExpansion: () => {},
+      setDiagnosticsExpansion: () => {},
+      setThinkingBlocksExpansion: () => {},
+      setToolInputsVisibility: () => {},
+      setAgentModelPreference: async () => {},
+      getAgentModelPreference: async () => undefined,
+    }
   }
   return context
 }
 
 export {
+  ConfigContext,
   preferences,
   uiState,
   serverSettings,

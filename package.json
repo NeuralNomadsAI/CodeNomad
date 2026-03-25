@@ -22,13 +22,17 @@
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
-    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version"
+    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version",
+    "postinstall": "npx patch-package"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
-    "google-auth-library": "^10.5.0"
+    "google-auth-library": "^10.5.0",
+    "solid-toast": "^0.5.0"
   },
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.11"
+    "baseline-browser-mapping": "^2.9.11",
+    "patch-package": "^8.0.1",
+    "postinstall-postinstall": "^2.1.0"
   }
 }

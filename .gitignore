@@ -13,3 +13,5 @@ out/
 .codenomad/
 .tmp/
 packages/cloudflare/.wrangler/
+packages/ui/playwright/.cache/
+packages/ui/test-results/.last-run.json

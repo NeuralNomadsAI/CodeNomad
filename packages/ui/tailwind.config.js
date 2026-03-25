@@ -40,5 +40,16 @@ export default {
       boxShadow: {},
     },
   },
-  plugins: [],
+  plugins: [
+    function ({ addUtilities }) {
+      addUtilities({
+        '.border-base': {
+          'border-color': 'var(--border-base)',
+        },
+        '.text-muted': {
+          'color': 'var(--text-muted)',
+        },
+      })
+    },
+  ],
 }

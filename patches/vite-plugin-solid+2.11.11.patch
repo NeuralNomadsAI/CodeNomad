@@ -1,0 +1,32 @@
+diff --git a/node_modules/vite-plugin-solid/dist/cjs/index.cjs b/node_modules/vite-plugin-solid/dist/cjs/index.cjs
+index 3dc5953..0d30d8b 100644
+--- a/node_modules/vite-plugin-solid/dist/cjs/index.cjs
++++ b/node_modules/vite-plugin-solid/dist/cjs/index.cjs
+@@ -153,9 +153,9 @@ function solidPlugin(options = {}) {
+           defaultServerConditions
+         } = await import('vite');
+         if (config.consumer === 'client' || name === 'client' || opts.isSsrTargetWebworker) {
+-          config.resolve.conditions = [...defaultClientConditions];
++          config.resolve.conditions = [...(defaultClientConditions || [])];
+         } else {
+-          config.resolve.conditions = [...defaultServerConditions];
++          config.resolve.conditions = [...(defaultServerConditions || [])];
+         }
+       }
+       config.resolve.conditions = ['solid', ...(replaceDev ? ['development'] : []), ...(isTestMode && !opts.isSsrTargetWebworker && !options.ssr ? ['browser'] : []), ...config.resolve.conditions];
+diff --git a/node_modules/vite-plugin-solid/dist/esm/index.mjs b/node_modules/vite-plugin-solid/dist/esm/index.mjs
+index 1c7839a..f5f1b11 100644
+--- a/node_modules/vite-plugin-solid/dist/esm/index.mjs
++++ b/node_modules/vite-plugin-solid/dist/esm/index.mjs
+@@ -131,9 +131,9 @@ function solidPlugin(options = {}) {
+           defaultServerConditions
+         } = await import('vite');
+         if (config.consumer === 'client' || name === 'client' || opts.isSsrTargetWebworker) {
+-          config.resolve.conditions = [...defaultClientConditions];
++          config.resolve.conditions = [...(defaultClientConditions || [])];
+         } else {
+-          config.resolve.conditions = [...defaultServerConditions];
++          config.resolve.conditions = [...(defaultServerConditions || [])];
+         }
+       }
+       config.resolve.conditions = ['solid', ...(replaceDev ? ['development'] : []), ...(isTestMode && !opts.isSsrTargetWebworker && !options.ssr ? ['browser'] : []), ...config.resolve.conditions];
