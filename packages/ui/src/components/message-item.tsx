@@ -575,11 +575,7 @@ export default function MessageItem(props: MessageItemProps) {
         <For each={messageParts()}>
           {(part) => {
             return (
-              <div
-                class="message-part-shell delete-hover-scope"
-                data-part-type={part?.type}
-                data-delete-part-hover={part?.type === "text" && isSelectedForDeletion() ? "true" : undefined}
-              >
+              <div class="message-part-shell">
                 <MessagePart
                   part={part}
                   messageType={props.record.role}
