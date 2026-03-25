@@ -543,10 +543,54 @@ export default function PromptInput(props: PromptInputProps) {
                 autocomplete="off"
               />
               <div class="prompt-nav-buttons">
-                <ExpandButton
-                  expandState={expandState}
-                  onToggleExpand={handleExpandToggle}
-                />
+                <div class="prompt-nav-top-row">
+                  <Show when={showVoiceInput()}>
+                    <button
+                      type="button"
+                      class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
+                      onPointerDown={(event) => {
+                        event.preventDefault()
+                        beginVoicePress(event)
+                      }}
+                      onPointerUp={(event) => {
+                        event.preventDefault()
+                        endVoicePress()
+                      }}
+                      onPointerCancel={() => endVoicePress()}
+                      onLostPointerCapture={() => endVoicePress()}
+                      onKeyDown={(event) => {
+                        if (event.repeat) return
+                        if (event.key !== " " && event.key !== "Enter") return
+                        event.preventDefault()
+                        beginVoicePress(event)
+                      }}
+                      onKeyUp={(event) => {
+                        if (event.key !== " " && event.key !== "Enter") return
+                        event.preventDefault()
+                        endVoicePress()
+                      }}
+                      onBlur={() => endVoicePress()}
+                      disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
+                      aria-label={voiceInput.buttonTitle()}
+                      title={voiceInput.buttonTitle()}
+                    >
+                      <Show
+                        when={voiceInput.isRecording()}
+                        fallback={
+                          <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                            <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                          </Show>
+                        }
+                      >
+                        <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
+                      </Show>
+                    </button>
+                  </Show>
+                  <ExpandButton
+                    expandState={expandState}
+                    onToggleExpand={handleExpandToggle}
+                  />
+                </div>
                 <Show when={hasHistory()}>
                   <button
                     type="button"
@@ -634,48 +678,6 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
 
         <div class="prompt-input-actions">
-          <Show when={showVoiceInput()}>
-            <button
-              type="button"
-              class={`prompt-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
-              onPointerDown={(event) => {
-                event.preventDefault()
-                beginVoicePress(event)
-              }}
-              onPointerUp={(event) => {
-                event.preventDefault()
-                endVoicePress()
-              }}
-              onPointerCancel={() => endVoicePress()}
-              onLostPointerCapture={() => endVoicePress()}
-              onKeyDown={(event) => {
-                if (event.repeat) return
-                if (event.key !== " " && event.key !== "Enter") return
-                event.preventDefault()
-                beginVoicePress(event)
-              }}
-              onKeyUp={(event) => {
-                if (event.key !== " " && event.key !== "Enter") return
-                event.preventDefault()
-                endVoicePress()
-              }}
-              onBlur={() => endVoicePress()}
-              disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
-              aria-label={voiceInput.buttonTitle()}
-              title={voiceInput.buttonTitle()}
-            >
-              <Show
-                when={voiceInput.isRecording()}
-                fallback={
-                  <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
-                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-                  </Show>
-                }
-              >
-                <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
-              </Show>
-            </button>
-          </Show>
           <button
             type="button"
             class="stop-button"
