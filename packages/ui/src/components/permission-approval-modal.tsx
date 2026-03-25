@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, createEffect, onCleanup, type Component } from "solid-js"
+import { For, Show, Suspense, createMemo, createSignal, createEffect, lazy, onCleanup, type Component } from "solid-js"
 import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionCallId, getPermissionDisplayTitle, getPermissionKind, getPermissionMessageId, getPermissionSessionId } from "../types/permission"
 import { getQuestionCallId, getQuestionMessageId, getQuestionSessionId, type QuestionRequest } from "../types/question"
@@ -12,7 +12,8 @@ import {
 } from "../stores/instances"
 import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import ToolCall from "./tool-call"
+
+const LazyToolCall = lazy(() => import("./tool-call"))
 
 interface PermissionApprovalModalProps {
   instanceId: string
@@ -408,15 +409,17 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                             }
                           >
                           {(data) => (
-                            <ToolCall
-                              toolCall={data().toolPart}
-                              toolCallId={data().toolPart.id}
-                              messageId={data().messageId}
-                              messageVersion={data().messageVersion}
-                              partVersion={data().partVersion}
-                              instanceId={props.instanceId}
-                              sessionId={data().sessionId}
-                            />
+                            <Suspense fallback={<div class="tool-call tool-call-loading" />}>
+                              <LazyToolCall
+                                toolCall={data().toolPart}
+                                toolCallId={data().toolPart.id}
+                                messageId={data().messageId}
+                                messageVersion={data().messageVersion}
+                                partVersion={data().partVersion}
+                                instanceId={props.instanceId}
+                                sessionId={data().sessionId}
+                              />
+                            </Suspense>
                           )}
                         </Show>
                       </div>

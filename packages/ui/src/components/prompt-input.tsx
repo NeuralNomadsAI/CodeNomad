@@ -1,6 +1,5 @@
-import { createSignal, Show, onMount, onCleanup, createEffect, on } from "solid-js"
+import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
 import { ArrowBigUp, ArrowBigDown } from "lucide-solid"
-import UnifiedPicker from "./unified-picker"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -20,6 +19,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 const log = getLogger("actions")
+const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
@@ -467,18 +467,20 @@ export default function PromptInput(props: PromptInputProps) {
         onDrop={handleDrop}
       >
         <Show when={showPicker() && instance()}>
-          <UnifiedPicker
-            open={showPicker()}
-            mode={pickerMode()}
-            onClose={handlePickerClose}
-            onSelect={handlePickerSelect}
-            agents={instanceAgents()}
-            commands={getCommands(props.instanceId)}
-            instanceClient={instance()!.client}
-            searchQuery={searchQuery()}
-            textareaRef={textareaRef}
-            workspaceId={props.instanceId}
-          />
+          <Suspense fallback={null}>
+            <LazyUnifiedPicker
+              open={showPicker()}
+              mode={pickerMode()}
+              onClose={handlePickerClose}
+              onSelect={handlePickerSelect}
+              agents={instanceAgents()}
+              commands={getCommands(props.instanceId)}
+              instanceClient={instance()!.client}
+              searchQuery={searchQuery()}
+              textareaRef={textareaRef}
+              workspaceId={props.instanceId}
+            />
+          </Suspense>
         </Show>
 
         <div class="flex flex-1 flex-col">

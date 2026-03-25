@@ -2,6 +2,7 @@ import type { Component } from "solid-js"
 
 import { AlignJustify, FoldVertical, Split, UnfoldVertical, WrapText } from "lucide-solid"
 
+import { useI18n } from "../../../../../lib/i18n"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
 
 interface DiffToolbarProps {
@@ -14,14 +15,15 @@ interface DiffToolbarProps {
 }
 
 const DiffToolbar: Component<DiffToolbarProps> = (props) => {
+  const { t } = useI18n()
   const nextViewMode = (): DiffViewMode => (props.viewMode === "split" ? "unified" : "split")
   const nextContextMode = (): DiffContextMode => (props.contextMode === "collapsed" ? "expanded" : "collapsed")
   const nextWordWrapMode = (): DiffWordWrapMode => (props.wordWrapMode === "on" ? "off" : "on")
 
-  const viewModeTitle = () => (nextViewMode() === "split" ? "Switch to split view" : "Switch to unified view")
+  const viewModeTitle = () => (nextViewMode() === "split" ? t("instanceShell.diff.switchToSplit") : t("instanceShell.diff.switchToUnified"))
   const contextModeTitle = () =>
-    nextContextMode() === "collapsed" ? "Hide unchanged regions" : "Show full file"
-  const wordWrapTitle = () => (nextWordWrapMode() === "on" ? "Enable word wrap" : "Disable word wrap")
+    nextContextMode() === "collapsed" ? t("instanceShell.diff.hideUnchanged") : t("instanceShell.diff.showFull")
+  const wordWrapTitle = () => (nextWordWrapMode() === "on" ? t("instanceShell.diff.enableWordWrap") : t("instanceShell.diff.disableWordWrap"))
 
   return (
     <div class="file-viewer-toolbar">

@@ -18,14 +18,13 @@ import {
   setWorktreeSlugForParentSession,
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
+import { useI18n } from "../lib/i18n"
 
 const log = getLogger("session")
 
 type WorktreeOption =
   | { kind: "action"; key: "__create__"; label: string }
   | { kind: "worktree"; key: string; slug: string; directory: string; raw: WorktreeDescriptor }
-
-const CREATE_OPTION: WorktreeOption = { kind: "action", key: "__create__", label: "+ Create worktree" }
 
 function preventSelectPress(event: PointerEvent | MouseEvent) {
   // Prevent Select.Item from treating this as a selection.
@@ -71,6 +70,7 @@ interface WorktreeSelectorProps {
 }
 
 export default function WorktreeSelector(props: WorktreeSelectorProps) {
+  const { t } = useI18n()
   const [isOpen, setIsOpen] = createSignal(false)
   const [createOpen, setCreateOpen] = createSignal(false)
   const [createSlug, setCreateSlug] = createSignal("")
@@ -99,7 +99,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       directory: wt.directory,
       raw: wt,
     }))
-    return [CREATE_OPTION, ...mapped]
+    const createOption: WorktreeOption = { kind: "action", key: "__create__", label: t("instanceShell.worktree.create") }
+    return [createOption, ...mapped]
   })
 
   const selectedOption = createMemo<WorktreeOption | undefined>(() => {

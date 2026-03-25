@@ -46,7 +46,9 @@ export function useDrawerResize(options: DrawerResizeOptions): DrawerResizeApi {
     if (!side) return
     const startWidth = resizeStartWidth()
     const clamp = side === "left" ? options.clampLeft : options.clampRight
-    const delta = side === "left" ? clientX - resizeStartX() : resizeStartX() - clientX
+    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
+    const rawDelta = side === "left" ? clientX - resizeStartX() : resizeStartX() - clientX
+    const delta = isRtl ? -rawDelta : rawDelta
     const nextWidth = clamp(startWidth + delta)
     applyDrawerWidth(side, nextWidth)
   }

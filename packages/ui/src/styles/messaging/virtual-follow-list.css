@@ -46,7 +46,7 @@
 .virtual-follow-list-controls-container {
   position: absolute;
   bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
-  right: var(--space-md);
+  inset-inline-end: var(--space-md);
   z-index: 20;
 }
 

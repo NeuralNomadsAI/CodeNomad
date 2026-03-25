@@ -1,11 +1,12 @@
-import { Show, Match, Switch } from "solid-js"
-import ToolCall from "./tool-call"
+import { Match, Show, Suspense, Switch, lazy } from "solid-js"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
+
+const LazyToolCall = lazy(() => import("./tool-call"))
 
 interface MessagePartProps {
   part: ClientPart
@@ -153,12 +154,14 @@ export default function MessagePart(props: MessagePartProps) {
       </Match>
 
       <Match when={partType() === "tool"}>
-        <ToolCall
-          toolCall={props.part as ToolCallPart}
-          toolCallId={props.part?.id}
-          instanceId={props.instanceId}
-          sessionId={props.sessionId}
-        />
+        <Suspense fallback={<div class="tool-call tool-call-loading" />}>
+          <LazyToolCall
+            toolCall={props.part as ToolCallPart}
+            toolCallId={props.part?.id}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+          />
+        </Suspense>
       </Match>
 
 

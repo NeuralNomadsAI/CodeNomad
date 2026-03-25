@@ -20,7 +20,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 64px;
+  inset-inline-end: 64px;
   width: 1px;
   background-color: var(--border-muted);
   pointer-events: none;
@@ -32,7 +32,7 @@
   }
 
   .message-layout--with-timeline::after {
-    right: 40px;
+    inset-inline-end: 40px;
   }
 }
 
@@ -311,12 +311,12 @@
 
 /* Tool segments that are part of a group get a left accent border. */
 .message-timeline-group-child {
-  border-left: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
+  border-inline-start: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
 }
 
 /* The assistant "parent" at the bottom of a tool group gets the same border. */
 .message-timeline-group-parent {
-  border-left: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
+  border-inline-start: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
 }
 
 /* Extra spacing before the first tool in a group to separate from the
@@ -346,7 +346,7 @@
   /* Extend the overlay box into the stream so ribs are not relying on
      overflow-visible behavior (which is brittle around scroll containers). */
   --xray-overhang: calc(var(--max-rib-width, 50vw) + 84px);
-  left: calc(-1 * var(--xray-overhang));
+  inset-inline-start: calc(-1 * var(--xray-overhang));
   width: calc(100% + var(--xray-overhang));
   overflow: hidden;
   padding: 0.25rem;
@@ -374,10 +374,10 @@
 
 .message-timeline-xray-token-label {
   position: absolute;
-  right: 100%;
+  inset-inline-end: 100%;
   top: 50%;
   transform: translateY(-50%);
-  margin-right: 4px;
+  margin-inline-end: 4px;
   height: 1.5rem;
   display: flex;
   align-items: center;
@@ -403,16 +403,25 @@
     var(--status-success) calc(100% - var(--segment-weight) * 100%),
     var(--status-error) calc(var(--segment-weight) * 100%)
   );
-  border-radius: 3px 0 0 3px;
+  border-start-start-radius: 3px;
+  border-end-start-radius: 3px;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
   transition: width 0.3s ease, background-color 0.3s ease;
   box-shadow: -2px 0 4px rgba(0, 0, 0, 0.25);
+}
+[dir="rtl"] .message-timeline-relative-bar {
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.25);
 }
 
 .message-timeline-absolute-bar {
   height: 3px;
   width: calc(var(--segment-weight) * var(--max-rib-width, 50vw));
   background-color: var(--text-muted);
-  border-radius: 2px 0 0 2px;
+  border-start-start-radius: 2px;
+  border-end-start-radius: 2px;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
   transition: width 0.3s ease;
   opacity: 0.5;
   position: relative;
@@ -425,7 +434,7 @@
 .message-timeline-absolute-bar-overflow::before {
   content: "";
   position: absolute;
-  left: -1px;
+  inset-inline-start: -1px;
   top: -3px;
   bottom: -3px;
   width: 3px;
