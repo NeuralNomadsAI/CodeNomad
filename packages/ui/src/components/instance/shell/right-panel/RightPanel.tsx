@@ -102,6 +102,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [browserSelectedContent, setBrowserSelectedContent] = createSignal<string | null>(null)
   const [browserSelectedLoading, setBrowserSelectedLoading] = createSignal(false)
   const [browserSelectedError, setBrowserSelectedError] = createSignal<string | null>(null)
+  const [browserSelectedDirty, setBrowserSelectedDirty] = createSignal(false)
+  const [browserSelectedSaving, setBrowserSelectedSaving] = createSignal(false)
 
   const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
@@ -539,6 +541,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(true)
     setBrowserSelectedError(null)
     setBrowserSelectedContent(null)
+    setBrowserSelectedDirty(false)
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {
@@ -566,6 +569,37 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
   }
 
+  const saveBrowserFile = async (content: string) => {
+    const path = browserSelectedPath()
+    if (!path) return
+
+    setBrowserSelectedSaving(true)
+    try {
+      const response = await fetch(
+        `/api/workspaces/${props.instanceId}/files/content?path=${encodeURIComponent(path)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: content }),
+        },
+      )
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Failed to save file" }))
+        throw new Error(err.error || "Failed to save file")
+      }
+      setBrowserSelectedContent(content)
+      setBrowserSelectedDirty(false)
+    } catch (error) {
+      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to save file")
+    } finally {
+      setBrowserSelectedSaving(false)
+    }
+  }
+
+  const handleBrowserFileChange = (content: string) => {
+    setBrowserSelectedDirty(true)
+  }
+
   createEffect(() => {
     if (rightPanelTab() !== "files") return
     if (browserLoading()) return
@@ -578,6 +612,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
+    setBrowserSelectedDirty(false)
   })
 
   createEffect(() => {
@@ -830,11 +865,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedContent={browserSelectedContent}
               browserSelectedLoading={browserSelectedLoading}
               browserSelectedError={browserSelectedError}
+              browserSelectedDirty={browserSelectedDirty}
+              browserSelectedSaving={browserSelectedSaving}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
               onOpenFile={(path: string) => void openBrowserFile(path)}
               onRefresh={() => void refreshFilesTab()}
+              onSave={(getContent: () => string) => void saveBrowserFile(getContent())}
+              onContentChange={(content: string) => handleBrowserFileChange(content)}
               listOpen={filesListOpen}
               onToggleList={toggleFilesList}
               splitWidth={filesSplitWidth}

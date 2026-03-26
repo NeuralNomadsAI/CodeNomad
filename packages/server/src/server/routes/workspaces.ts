@@ -19,6 +19,10 @@ const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
 })
 
+const WorkspaceFileContentBodySchema = z.object({
+  contents: z.string(),
+})
+
 const WorkspaceFileSearchQuerySchema = z.object({
   q: z.string().trim().min(1, "Query is required"),
   limit: z.coerce.number().int().positive().max(200).optional(),
@@ -96,6 +100,20 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       return deps.workspaceManager.readFile(request.params.id, query.path)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.put<{
+    Params: { id: string }
+    Querystring: { path?: string }
+  }>("/api/workspaces/:id/files/content", async (request, reply) => {
+    try {
+      const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
+      const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
+      reply.code(204)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
