@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
 import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
@@ -13,6 +14,7 @@ const ServerSpeechSettingsSchema = z.object({
       sttModel: z.string().optional(),
       ttsModel: z.string().optional(),
       ttsVoice: z.string().optional(),
+      ttsFormat: z.enum(["mp3", "wav", "opus", "aac"]).optional(),
     })
     .optional(),
 })
@@ -27,13 +29,19 @@ export interface TranscribeAudioInput {
 
 export interface SynthesizeSpeechInput {
   text: string
-  format?: "mp3" | "wav" | "opus"
+  format?: "mp3" | "wav" | "opus" | "aac"
+}
+
+export interface SpeechSynthesisStreamResponse {
+  stream: Readable
+  mimeType: string
 }
 
 export interface SpeechProvider {
   getCapabilities(): SpeechCapabilitiesResponse
   transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse>
   synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
+  synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse>
 }
 
 export interface NormalizedSpeechSettings {
@@ -43,12 +51,14 @@ export interface NormalizedSpeechSettings {
   sttModel: string
   ttsModel: string
   ttsVoice: string
+  ttsFormat: "mp3" | "wav" | "opus" | "aac"
 }
 
 const DEFAULT_PROVIDER = "openai-compatible"
 const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe"
 const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 const DEFAULT_TTS_VOICE = "alloy"
+const DEFAULT_TTS_FORMAT = "mp3"
 export class SpeechService {
   constructor(
     private readonly settings: SettingsService,
@@ -65,6 +75,10 @@ export class SpeechService {
 
   async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
     return this.createProvider().synthesize(input)
+  }
+
+  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+    return this.createProvider().synthesizeStream(input)
   }
 
   private createProvider(): SpeechProvider {
@@ -86,6 +100,7 @@ export class SpeechService {
       sttModel: speech.sttModel?.trim() || DEFAULT_STT_MODEL,
       ttsModel: speech.ttsModel?.trim() || DEFAULT_TTS_MODEL,
       ttsVoice: speech.ttsVoice?.trim() || DEFAULT_TTS_VOICE,
+      ttsFormat: speech.ttsFormat ?? DEFAULT_TTS_FORMAT,
     }
   }
 }

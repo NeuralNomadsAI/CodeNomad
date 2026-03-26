@@ -29,6 +29,8 @@ export type ExpansionPreference = "expanded" | "collapsed"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
 export type SpeechProviderPreference = "openai-compatible"
+export type SpeechPlaybackMode = "streaming" | "buffered"
+export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 
 export interface SpeechSettings {
   provider: SpeechProviderPreference
@@ -38,6 +40,8 @@ export interface SpeechSettings {
   sttModel: string
   ttsModel: string
   ttsVoice: string
+  playbackMode: SpeechPlaybackMode
+  ttsFormat: SpeechTtsFormat
 }
 
 export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
@@ -145,6 +149,8 @@ const defaultSpeechSettings: SpeechSettings = {
   sttModel: "gpt-4o-mini-transcribe",
   ttsModel: "gpt-4o-mini-tts",
   ttsVoice: "alloy",
+  playbackMode: "streaming",
+  ttsFormat: "mp3",
 }
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
@@ -203,6 +209,14 @@ function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): Speech
       typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
         ? sanitized.ttsVoice.trim()
         : defaultSpeechSettings.ttsVoice,
+    playbackMode:
+      sanitized.playbackMode === "buffered" || sanitized.playbackMode === "streaming"
+        ? sanitized.playbackMode
+        : defaultSpeechSettings.playbackMode,
+    ttsFormat:
+      sanitized.ttsFormat === "wav" || sanitized.ttsFormat === "opus" || sanitized.ttsFormat === "aac" || sanitized.ttsFormat === "mp3"
+        ? sanitized.ttsFormat
+        : defaultSpeechSettings.ttsFormat,
   }
 }
 

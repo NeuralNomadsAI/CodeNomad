@@ -16,7 +16,7 @@ const TranscribeBodySchema = z.object({
 
 const SynthesizeBodySchema = z.object({
   text: z.string().trim().min(1, "Text is required"),
-  format: z.enum(["mp3", "wav", "opus"]).optional(),
+  format: z.enum(["mp3", "wav", "opus", "aac"]).optional(),
 })
 
 function getSpeechErrorStatus(error: unknown): number {
@@ -55,6 +55,20 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
       request.log.error({ err: error }, "Failed to synthesize audio")
       reply.code(getSpeechErrorStatus(error))
       return { error: getSpeechErrorMessage(error, "Failed to synthesize audio") }
+    }
+  })
+
+  app.post("/api/speech/synthesize/stream", async (request, reply) => {
+    try {
+      const body = SynthesizeBodySchema.parse(request.body ?? {})
+      const result = await deps.speechService.synthesizeStream(body)
+      reply.header("Content-Type", result.mimeType)
+      reply.header("Cache-Control", "no-store")
+      return reply.send(result.stream)
+    } catch (error) {
+      request.log.error({ err: error }, "Failed to stream synthesized audio")
+      reply.code(getSpeechErrorStatus(error))
+      return { error: getSpeechErrorMessage(error, "Failed to stream synthesized audio") }
     }
   })
 }

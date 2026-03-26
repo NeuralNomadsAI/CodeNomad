@@ -219,10 +219,13 @@ export interface SpeechCapabilitiesResponse {
   provider: string
   supportsStt: boolean
   supportsTts: boolean
+  supportsStreamingTts: boolean
   baseUrl?: string
   sttModel: string
   ttsModel: string
   ttsVoice: string
+  ttsFormats: string[]
+  streamingTtsFormats: string[]
 }
 
 export interface SpeechTranscriptionResponse {
