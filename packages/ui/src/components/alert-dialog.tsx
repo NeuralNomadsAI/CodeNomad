@@ -115,7 +115,7 @@ const AlertDialog: Component = () => {
           >
             <Dialog.Portal>
               <Dialog.Overlay class="modal-overlay" />
-               <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+               <div class="fixed inset-0 z-100 flex items-center justify-center p-4">
                  <Dialog.Content class="modal-surface w-full max-w-sm p-6 border border-base shadow-2xl" tabIndex={-1}>
                    <div class="flex items-start gap-3">
                      <div
@@ -140,10 +140,11 @@ const AlertDialog: Component = () => {
 
                     <Show when={isPrompt}>
                       <div class="mt-4">
-                        <label class="text-sm font-medium text-secondary">
+                        <label for="prompt-input" class="text-sm font-medium text-secondary">
                           {payload.inputLabel || t("alertDialog.prompt.inputLabel")}
                         </label>
                         <input
+                          id="prompt-input"
                           ref={(el) => {
                             promptInputRef = el
                           }}

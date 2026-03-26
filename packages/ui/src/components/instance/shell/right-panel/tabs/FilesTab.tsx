@@ -44,7 +44,7 @@ interface FilesTabProps {
 const FilesTab: Component<FilesTabProps> = (props) => {
   const handleSave = () => {
     const content = props.browserSelectedContent()
-    if (content) {
+    if (content !== undefined && content !== null) {
       props.onSave(content)
     }
   }
