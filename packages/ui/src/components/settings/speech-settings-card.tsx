@@ -5,6 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError, speechCapabilitiesLoading } from "../../stores/speech"
 import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
+import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
 
 const log = getLogger("actions")
 
@@ -97,6 +98,26 @@ export const SpeechSettingsCard: Component = () => {
   }
 
   const apiKeyDirty = createMemo(() => clearStoredApiKey() || drafts().apiKey.trim().length > 0)
+  const playbackSupport = createMemo(() =>
+    getSpeechPlaybackSupport({
+      playbackMode: drafts().playbackMode,
+      ttsFormat: drafts().ttsFormat,
+      capabilities: speechCapabilities(),
+    }),
+  )
+  const compatibilityMessage = createMemo(() => {
+    const capabilities = speechCapabilities()
+    if (!capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
+      return null
+    }
+    if (drafts().playbackMode === "streaming" && !capabilities.supportsStreamingTts) {
+      return t("settings.speech.compatibility.streamingUnavailable")
+    }
+    if (drafts().playbackMode === "streaming" && !playbackSupport().available) {
+      return t("settings.speech.compatibility.browserStreamingUnavailable")
+    }
+    return t("settings.speech.compatibility.runtimeNote")
+  })
 
   const isDirty = createMemo(() => {
     const speech = serverSettings().speech
@@ -291,6 +312,7 @@ export const SpeechSettingsCard: Component = () => {
         />
 
         <div class="settings-inline-note">{t("settings.speech.help")}</div>
+        <Show when={compatibilityMessage()}>{(message) => <div class="settings-inline-note">{message()}</div>}</Show>
         <div class="settings-inline-note">{t("settings.speech.testPlayback.note")}</div>
       </div>
     </div>

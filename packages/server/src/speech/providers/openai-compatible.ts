@@ -108,11 +108,12 @@ export class OpenAICompatibleSpeechProvider {
     )
 
     const response = await this.requestSpeechAudio(input.text, format)
+    const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
 
     const audioBuffer = Buffer.from(await response.arrayBuffer())
     return {
       audioBase64: audioBuffer.toString("base64"),
-      mimeType: mimeTypeForFormat(format),
+      mimeType,
     }
   }
 
@@ -135,7 +136,7 @@ export class OpenAICompatibleSpeechProvider {
 
     return {
       stream: Readable.fromWeb(response.body as any),
-      mimeType: mimeTypeForFormat(format),
+      mimeType: response.headers.get("content-type") || mimeTypeForFormat(format),
     }
   }
 
@@ -193,7 +194,7 @@ function extensionForMime(mimeType: string): string {
 
 function mimeTypeForFormat(format: "mp3" | "wav" | "opus" | "aac"): string {
   if (format === "wav") return "audio/wav"
-  if (format === "opus") return "audio/opus"
+  if (format === "opus") return 'audio/ogg; codecs="opus"'
   if (format === "aac") return "audio/aac"
   return "audio/mpeg"
 }

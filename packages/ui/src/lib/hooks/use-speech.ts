@@ -4,6 +4,7 @@ import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
+import { formatToMimeType, getSpeechPlaybackSupport } from "../speech-playback-support"
 
 type SpeechPlaybackState = "idle" | "loading" | "playing"
 
@@ -107,10 +108,11 @@ export function useSpeech(options: UseSpeechOptions) {
     if (!isSupported() || !capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
       return false
     }
-    if (resolvedSettings().playbackMode === "streaming") {
-      return Boolean(capabilities.supportsStreamingTts)
-    }
-    return true
+    return getSpeechPlaybackSupport({
+      playbackMode: resolvedSettings().playbackMode,
+      ttsFormat: resolvedSettings().ttsFormat,
+      capabilities,
+    }).available
   }
 
   const stop = () => {
@@ -137,6 +139,27 @@ export function useSpeech(options: UseSpeechOptions) {
     if (!capabilities?.available || !capabilities?.configured || !capabilities?.supportsTts) {
       showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
         title: t("messageItem.actions.speak.error.title"),
+        variant: "error",
+      })
+      return
+    }
+
+    const support = getSpeechPlaybackSupport({
+      playbackMode: resolvedSettings().playbackMode,
+      ttsFormat: resolvedSettings().ttsFormat,
+      capabilities,
+    })
+    if (!support.available) {
+      const detailKey =
+        support.reason === "provider-streaming-unavailable"
+          ? "settings.speech.compatibility.streamingUnavailable"
+          : support.reason === "browser-streaming-unavailable"
+            ? "settings.speech.compatibility.browserStreamingUnavailable"
+            : "messageItem.actions.speak.error.unsupported"
+
+      showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
+        title: t("messageItem.actions.speak.error.title"),
+        detail: t(detailKey),
         variant: "error",
       })
       return
@@ -390,11 +413,4 @@ function createObjectUrlFromBase64(audioBase64: string, mimeType: string): strin
     bytes[index] = binary.charCodeAt(index)
   }
   return URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }))
-}
-
-function formatToMimeType(format: "mp3" | "wav" | "opus" | "aac"): string {
-  if (format === "wav") return "audio/wav"
-  if (format === "opus") return "audio/opus"
-  if (format === "aac") return "audio/aac"
-  return "audio/mpeg"
 }
