@@ -673,6 +673,7 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
         detail: tGlobal("sessionState.cleanup.deepConfirm.detail"),
         confirmLabel: tGlobal("sessionState.cleanup.deepConfirm.confirmLabel"),
         cancelLabel: tGlobal("sessionState.cleanup.deepConfirm.cancelLabel"),
+        dismissible: false,
       }
     )
     if (!confirmed) return

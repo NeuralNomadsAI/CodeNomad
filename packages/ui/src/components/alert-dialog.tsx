@@ -108,7 +108,8 @@ const AlertDialog: Component = () => {
             open
             modal
             onOpenChange={(open) => {
-              if (!open) {
+              // Only handle dismiss if dialog is dismissible (default: true)
+              if (!open && payload.dismissible !== false) {
                 dismiss(false, payload)
               }
             }}

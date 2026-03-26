@@ -598,6 +598,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               variant: "warning",
               confirmLabel: props.t("instanceShell.rightPanel.actions.conflict.confirmLabel"),
               cancelLabel: props.t("instanceShell.rightPanel.actions.conflict.cancelLabel"),
+              dismissible: false,
             },
           )
           if (!confirmed) {
@@ -646,6 +647,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           variant: "warning",
           confirmLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.confirmLabel"),
           cancelLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.cancelLabel"),
+          dismissible: false,
         },
       )
       if (confirmed) {
@@ -735,6 +737,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           variant: "warning",
           confirmLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.confirmLabel"),
           cancelLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.cancelLabel"),
+          dismissible: false,
         },
       )
       if (!confirmed) {
