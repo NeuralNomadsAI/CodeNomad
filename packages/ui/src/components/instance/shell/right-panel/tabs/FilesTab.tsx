@@ -1,7 +1,7 @@
 import { For, Show, Suspense, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { RefreshCw } from "lucide-solid"
+import { RefreshCw, Save } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 
@@ -21,13 +21,17 @@ interface FilesTabProps {
   browserSelectedContent: Accessor<string | null>
   browserSelectedLoading: Accessor<boolean>
   browserSelectedError: Accessor<string | null>
+  browserSelectedDirty: Accessor<boolean>
+  browserSelectedSaving: Accessor<boolean>
 
   parentPath: Accessor<string | null>
   scopeKey: Accessor<string>
 
   onLoadEntries: (path: string) => void
-  onOpenFile: (path: string) => void
+  onRequestOpenFile: (path: string) => void
   onRefresh: () => void
+  onSave: (content: string) => void
+  onContentChange: (content: string) => void
 
   listOpen: Accessor<boolean>
   onToggleList: () => void
@@ -38,6 +42,13 @@ interface FilesTabProps {
 }
 
 const FilesTab: Component<FilesTabProps> = (props) => {
+  const handleSave = () => {
+    const content = props.browserSelectedContent()
+    if (content) {
+      props.onSave(content)
+    }
+  }
+
   const renderContent = (): JSX.Element => {
     const entriesValue = props.browserEntries()
     const entries = entriesValue || []
@@ -86,7 +97,13 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                           </div>
                         }
                       >
-                        <LazyMonacoFileViewer scopeKey={props.scopeKey()} path={payload().path} content={payload().content} />
+                        <LazyMonacoFileViewer
+                          scopeKey={props.scopeKey()}
+                          path={payload().path}
+                          content={payload().content}
+                          onSave={props.onSave}
+                          onContentChange={props.onContentChange}
+                        />
                       </Suspense>
                     )}
                   </Show>
@@ -135,7 +152,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                   props.onLoadEntries(item.path)
                   return
                 }
-                props.onOpenFile(item.path)
+                props.onRequestOpenFile(item.path)
               }}
               title={item.path}
             >
@@ -168,7 +185,20 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               </Show>
               <Show when={props.browserError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
-
+            <Show when={props.browserSelectedDirty()}>
+              <button
+                type="button"
+                class="files-header-icon-button"
+                title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
+                aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
+                disabled={props.browserSelectedSaving()}
+                onClick={handleSave}
+              >
+                <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>
+                  <RefreshCw class="h-4 w-4 animate-spin" />
+                </Show>
+              </button>
+            </Show>
             <button
               type="button"
               class="files-header-icon-button"

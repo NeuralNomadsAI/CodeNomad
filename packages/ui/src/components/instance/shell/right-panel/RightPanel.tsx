@@ -24,6 +24,8 @@ import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } f
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
+import { showConfirmDialog } from "../../../../stores/alerts"
+import { showToastNotification } from "../../../../lib/notifications"
 import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
@@ -589,15 +591,41 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
       setBrowserSelectedContent(content)
       setBrowserSelectedDirty(false)
+      showToastNotification({
+        message: props.t("instanceShell.rightPanel.toast.saveSuccess"),
+        variant: "success",
+      })
     } catch (error) {
       setBrowserSelectedError(error instanceof Error ? error.message : "Failed to save file")
+      showToastNotification({
+        message: props.t("instanceShell.rightPanel.toast.saveError"),
+        variant: "error",
+      })
     } finally {
       setBrowserSelectedSaving(false)
     }
   }
 
   const handleBrowserFileChange = (content: string) => {
+    setBrowserSelectedContent(content)
     setBrowserSelectedDirty(true)
+  }
+
+  const handleOpenBrowserFileRequest = async (path: string) => {
+    if (browserSelectedDirty()) {
+      const confirmed = await showConfirmDialog(
+        props.t("instanceShell.rightPanel.actions.saveConfirm.message", { path: browserSelectedPath() || "" }),
+        {
+          variant: "warning",
+          confirmLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.confirmLabel"),
+          cancelLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.cancelLabel"),
+        },
+      )
+      if (confirmed) {
+        await saveBrowserFile(browserSelectedContent() || "")
+      }
+    }
+    await openBrowserFile(path)
   }
 
   createEffect(() => {
@@ -870,9 +898,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
-              onOpenFile={(path: string) => void openBrowserFile(path)}
+              onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
               onRefresh={() => void refreshFilesTab()}
-              onSave={(getContent: () => string) => void saveBrowserFile(getContent())}
+              onSave={(content: string) => void saveBrowserFile(content)}
               onContentChange={(content: string) => handleBrowserFileChange(content)}
               listOpen={filesListOpen}
               onToggleList={toggleFilesList}
