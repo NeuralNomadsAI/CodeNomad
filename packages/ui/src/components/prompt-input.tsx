@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -351,6 +351,19 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
+  function handleClearPrompt() {
+    clearPrompt()
+    clearHistoryDraft()
+    resetHistoryNavigation()
+    setShowPicker(false)
+    setPickerMode("mention")
+    setAtPosition(null)
+    setSearchQuery("")
+    setIgnoredAtPositions(new Set<number>())
+    syncAttachmentCounters("")
+    textareaRef?.focus()
+  }
+
   function insertBlockContent(block: string) {
     const textarea = textareaRef
     const current = prompt()
@@ -421,6 +434,8 @@ export default function PromptInput(props: PromptInputProps) {
     if (mode() === "shell") return hasText
     return hasText || attachments().length > 0
   }
+
+  const canClearPrompt = () => prompt().length > 0
 
   const shellHint = () =>
     mode() === "shell"
@@ -543,7 +558,7 @@ export default function PromptInput(props: PromptInputProps) {
                 autocomplete="off"
               />
               <div class="prompt-nav-buttons">
-                <div class="prompt-nav-top-row">
+                <div class="prompt-nav-column prompt-nav-column-left">
                   <Show when={showVoiceInput()}>
                     <button
                       type="button"
@@ -586,43 +601,55 @@ export default function PromptInput(props: PromptInputProps) {
                       </Show>
                     </button>
                   </Show>
+                  <button
+                    type="button"
+                    class="prompt-clear-button"
+                    onClick={handleClearPrompt}
+                    disabled={!canClearPrompt()}
+                    aria-label={t("promptInput.clear.ariaLabel")}
+                    title={t("promptInput.clear.title")}
+                  >
+                    <X class="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+                <div class="prompt-nav-column prompt-nav-column-right">
                   <ExpandButton
                     expandState={expandState}
                     onToggleExpand={handleExpandToggle}
                   />
+                  <Show when={hasHistory()}>
+                    <button
+                      type="button"
+                      class="prompt-history-button"
+                      onClick={() =>
+                        selectPreviousHistory({
+                          force: true,
+                          isPickerOpen: showPicker(),
+                          getTextarea: () => textareaRef,
+                        })
+                      }
+                      disabled={!canHistoryGoPrevious()}
+                      aria-label={t("promptInput.history.previousAriaLabel")}
+                    >
+                      <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      class="prompt-history-button"
+                      onClick={() =>
+                        selectNextHistory({
+                          force: true,
+                          isPickerOpen: showPicker(),
+                          getTextarea: () => textareaRef,
+                        })
+                      }
+                      disabled={!canHistoryGoNext()}
+                      aria-label={t("promptInput.history.nextAriaLabel")}
+                    >
+                      <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </Show>
                 </div>
-                <Show when={hasHistory()}>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectPreviousHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoPrevious()}
-                    aria-label={t("promptInput.history.previousAriaLabel")}
-                  >
-                    <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectNextHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoNext()}
-                    aria-label={t("promptInput.history.nextAriaLabel")}
-                  >
-                    <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </Show>
               </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>

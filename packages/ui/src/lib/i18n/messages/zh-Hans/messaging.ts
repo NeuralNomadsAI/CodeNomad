@@ -144,6 +144,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "再次按下以中止会话",
   "promptInput.stopSession.ariaLabel": "停止会话",
   "promptInput.stopSession.title": "停止会话",
+  "promptInput.clear.ariaLabel": "清除输入框文本",
+  "promptInput.clear.title": "清除输入框文本",
   "promptInput.send.ariaLabel": "发送消息",
   "promptInput.send.errorFallback": "发送消息失败",
   "promptInput.send.errorTitle": "发送失败",

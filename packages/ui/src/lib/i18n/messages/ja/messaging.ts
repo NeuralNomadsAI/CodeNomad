@@ -144,6 +144,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "もう一度押すとセッションを中断",
   "promptInput.stopSession.ariaLabel": "セッションを停止",
   "promptInput.stopSession.title": "セッションを停止",
+  "promptInput.clear.ariaLabel": "プロンプトのテキストをクリア",
+  "promptInput.clear.title": "プロンプトのテキストをクリア",
   "promptInput.send.ariaLabel": "メッセージを送信",
   "promptInput.send.errorFallback": "メッセージの送信に失敗しました",
   "promptInput.send.errorTitle": "送信に失敗",

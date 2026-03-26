@@ -142,6 +142,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "שוב כדי לבטל את הסשן",
   "promptInput.stopSession.ariaLabel": "עצור סשן",
   "promptInput.stopSession.title": "עצור סשן",
+  "promptInput.clear.ariaLabel": "נקה את טקסט הפרומפט",
+  "promptInput.clear.title": "נקה את טקסט הפרומפט",
   "promptInput.send.ariaLabel": "שלח הודעה",
   "promptInput.send.errorFallback": "שליחת ההודעה נכשלה",
   "promptInput.send.errorTitle": "השליחה נכשלה",
