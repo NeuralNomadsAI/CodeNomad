@@ -220,6 +220,16 @@
   color: var(--button-danger-text, var(--text-inverted, #ffffff));
 }
 
+.prompt-voice-button.is-recording:hover:not(:disabled) {
+  background-color: var(--button-danger-hover-bg, rgba(239, 68, 68, 0.9));
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
+}
+
+.prompt-voice-button.is-recording:active:not(:disabled) {
+  background-color: var(--button-danger-active-bg, rgba(239, 68, 68, 1));
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
+}
+
 .prompt-nav-voice-button {
   min-width: 1.75rem;
   width: 1.75rem;
@@ -228,8 +238,8 @@
 }
 
 .prompt-nav-voice-button.is-recording {
-  min-width: 3.5rem;
-  width: auto;
+  min-width: 1.75rem;
+  width: 1.75rem;
 }
 
 .prompt-voice-button:disabled {

@@ -605,7 +605,7 @@ export default function PromptInput(props: PromptInputProps) {
                           </Show>
                         }
                       >
-                        <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
+                        <Mic class="h-4 w-4" aria-hidden="true" />
                       </Show>
                     </button>
                   </Show>
@@ -759,11 +759,4 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
     </div>
   )
-}
-
-function formatVoiceTimer(elapsedMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }
