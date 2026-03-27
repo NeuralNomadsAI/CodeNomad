@@ -63,6 +63,7 @@ import {
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
+import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -330,8 +331,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     if (messageInfo) {
       upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
     }
- 
+  
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
+    handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
     if (part.type === "tool" && part.tool === "question") {
       // Questions can arrive before their tool part exists; re-link now.

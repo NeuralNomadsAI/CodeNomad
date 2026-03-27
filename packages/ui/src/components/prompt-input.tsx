@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -19,6 +19,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import { canUseConversationMode, isConversationModeEnabled, toggleConversationMode } from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 
@@ -476,6 +477,13 @@ export default function PromptInput(props: PromptInputProps) {
   const showVoiceInput = () =>
     preferences().showPromptVoiceInput &&
     (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
+  const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
+  const showConversationToggle = () => showVoiceInput() || conversationModeEnabled()
+  const canToggleConversationMode = () => canUseConversationMode()
+  const conversationModeButtonTitle = () =>
+    conversationModeEnabled()
+      ? t("promptInput.conversationMode.disable.title")
+      : t("promptInput.conversationMode.enable.title")
 
   const instance = () => getActiveInstance()
 
@@ -599,6 +607,19 @@ export default function PromptInput(props: PromptInputProps) {
                       >
                         <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
                       </Show>
+                    </button>
+                  </Show>
+                  <Show when={showConversationToggle()}>
+                    <button
+                      type="button"
+                      class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
+                      onClick={() => toggleConversationMode(props.instanceId)}
+                      disabled={!conversationModeEnabled() && !canToggleConversationMode()}
+                      aria-pressed={conversationModeEnabled()}
+                      aria-label={conversationModeButtonTitle()}
+                      title={conversationModeButtonTitle()}
+                    >
+                      <Volume2 class="h-4 w-4" aria-hidden="true" />
                     </button>
                   </Show>
                   <button

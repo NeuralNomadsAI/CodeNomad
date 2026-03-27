@@ -236,6 +236,16 @@
   @apply opacity-50 cursor-not-allowed;
 }
 
+.prompt-conversation-button.is-active {
+  background-color: color-mix(in oklab, var(--accent-primary) 76%, var(--surface-secondary));
+  color: var(--text-inverted);
+}
+
+.prompt-conversation-button.is-active:hover:not(:disabled) {
+  background-color: color-mix(in oklab, var(--accent-primary) 88%, var(--surface-secondary));
+  color: var(--text-inverted);
+}
+
 .prompt-voice-timer {
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;

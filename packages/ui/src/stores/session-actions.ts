@@ -10,6 +10,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
+import { clearConversationPlaybackForSession } from "./conversation-speech"
 
 const log = getLogger("actions")
 
@@ -164,6 +165,8 @@ async function sendMessage(
 
   const store = messageStoreBus.getOrCreate(instanceId)
   const createdAt = Date.now()
+
+  clearConversationPlaybackForSession(instanceId, sessionId)
 
   store.upsertMessage({
     id: messageId,
