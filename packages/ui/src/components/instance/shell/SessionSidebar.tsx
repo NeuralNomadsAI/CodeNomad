@@ -1,4 +1,4 @@
-import { Show, type Accessor, type Component } from "solid-js"
+import { Show, createEffect, createMemo, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { Session } from "../../../types/session"
 import { keyboardRegistry, type KeyboardShortcut } from "../../../lib/keyboard-registry"
@@ -18,6 +18,14 @@ import AgentSelector from "../../agent-selector"
 import ModelSelector from "../../model-selector"
 import ThinkingSelector from "../../thinking-selector"
 import { getLogger } from "../../../lib/logger"
+import { getPermissionQueue, sendPermissionResponse } from "../../../stores/instances"
+import { getPermissionSessionId } from "../../../types/permission"
+import {
+  canAutoRespondPermission,
+  finishAutoRespondPermission,
+  isPermissionAutoAcceptEnabled,
+  togglePermissionAutoAccept,
+} from "../../../stores/permission-auto-accept"
 
 const log = getLogger("session")
 
@@ -47,105 +55,153 @@ interface SessionSidebarProps {
   setContentEl: (el: HTMLElement | null) => void
 }
 
-const SessionSidebar: Component<SessionSidebarProps> = (props) => (
-  <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
-    <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
-      <div class="flex items-center justify-between gap-2">
-        <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
-          {props.t("instanceShell.leftPanel.sessionsTitle")}
-        </span>
-        <div class="flex items-center gap-2 text-primary">
-          <IconButton
-            size="small"
-            color="inherit"
-            aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
-            title={props.t("sessionList.actions.newSession.title")}
-            onClick={() => {
-              const result = props.onNewSession()
-              if (result instanceof Promise) {
-                void result.catch((error) => log.error("Failed to create session:", error))
-              }
-            }}
-          >
-            <PlusSquare class="w-5 h-5" />
-          </IconButton>
-          <IconButton
-            size="small"
-            color="inherit"
-            aria-label={props.t("sessionList.filter.ariaLabel")}
-            title={props.t("sessionList.filter.ariaLabel")}
-            aria-pressed={props.showSearch()}
-            onClick={props.onToggleSearch}
-            sx={{
-              color: props.showSearch() ? "var(--text-primary)" : "inherit",
-              backgroundColor: props.showSearch() ? "var(--surface-hover)" : "transparent",
-              "&:hover": {
-                backgroundColor: "var(--surface-hover)",
-              },
-            }}
-          >
-            <Search class="w-5 h-5" />
-          </IconButton>
-          <IconButton
-            size="small"
-            color="inherit"
-            aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
-            title={props.t("instanceShell.leftPanel.instanceInfo")}
-            onClick={() => props.onSelectSession("info")}
-          >
-            <InfoOutlinedIcon fontSize="small" />
-          </IconButton>
-          <Show when={!props.isPhoneLayout()}>
+const SessionSidebar: Component<SessionSidebarProps> = (props) => {
+  const activePermissionQueue = createMemo(() => {
+    const session = props.activeSession()
+    if (!session) return []
+    return getPermissionQueue(props.instanceId).filter((permission) => getPermissionSessionId(permission) === session.id)
+  })
+
+  createEffect(() => {
+    const session = props.activeSession()
+    if (!session || !isPermissionAutoAcceptEnabled(props.instanceId, session.id)) {
+      return
+    }
+
+    for (const permission of activePermissionQueue()) {
+      if (!permission?.id) continue
+      if (!canAutoRespondPermission(props.instanceId, session.id, permission.id)) continue
+
+      void sendPermissionResponse(props.instanceId, session.id, permission.id, "once")
+        .catch((error) => {
+          log.error("Failed to auto-accept permission", error)
+        })
+        .finally(() => {
+          finishAutoRespondPermission(props.instanceId, session.id, permission.id)
+        })
+    }
+  })
+
+  function handleToggleAutoAccept(sessionId: string) {
+    const nextEnabled = !isPermissionAutoAcceptEnabled(props.instanceId, sessionId)
+    togglePermissionAutoAccept(props.instanceId, sessionId)
+
+    if (!nextEnabled) {
+      return
+    }
+
+    for (const permission of activePermissionQueue()) {
+      if (!permission?.id) continue
+      if (!canAutoRespondPermission(props.instanceId, sessionId, permission.id)) continue
+
+      void sendPermissionResponse(props.instanceId, sessionId, permission.id, "once")
+        .catch((error) => {
+          log.error("Failed to auto-accept permission", error)
+        })
+        .finally(() => {
+          finishAutoRespondPermission(props.instanceId, sessionId, permission.id)
+        })
+    }
+  }
+
+  return (
+    <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
+      <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
+        <div class="flex items-center justify-between gap-2">
+          <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
+            {props.t("instanceShell.leftPanel.sessionsTitle")}
+          </span>
+          <div class="flex items-center gap-2 text-primary">
             <IconButton
               size="small"
               color="inherit"
-              aria-label={props.leftPinned() ? props.t("instanceShell.leftDrawer.unpin") : props.t("instanceShell.leftDrawer.pin")}
-              onClick={() => (props.leftPinned() ? props.onUnpinLeftDrawer() : props.onPinLeftDrawer())}
+              aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
+              title={props.t("sessionList.actions.newSession.title")}
+              onClick={() => {
+                const result = props.onNewSession()
+                if (result instanceof Promise) {
+                  void result.catch((error) => log.error("Failed to create session:", error))
+                }
+              }}
             >
-              {props.leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              <PlusSquare class="w-5 h-5" />
             </IconButton>
-          </Show>
-          <Show when={props.drawerState() === "floating-open"}>
             <IconButton
               size="small"
               color="inherit"
-              aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
-              title={props.t("instanceShell.leftDrawer.toggle.close")}
-              onClick={props.onCloseLeftDrawer}
+              aria-label={props.t("sessionList.filter.ariaLabel")}
+              title={props.t("sessionList.filter.ariaLabel")}
+              aria-pressed={props.showSearch()}
+              onClick={props.onToggleSearch}
+              sx={{
+                color: props.showSearch() ? "var(--text-primary)" : "inherit",
+                backgroundColor: props.showSearch() ? "var(--surface-hover)" : "transparent",
+                "&:hover": {
+                  backgroundColor: "var(--surface-hover)",
+                },
+              }}
             >
-              <MenuOpenIcon fontSize="small" />
+              <Search class="w-5 h-5" />
             </IconButton>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
+              title={props.t("instanceShell.leftPanel.instanceInfo")}
+              onClick={() => props.onSelectSession("info")}
+            >
+              <InfoOutlinedIcon fontSize="small" />
+            </IconButton>
+            <Show when={!props.isPhoneLayout()}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={props.leftPinned() ? props.t("instanceShell.leftDrawer.unpin") : props.t("instanceShell.leftDrawer.pin")}
+                onClick={() => (props.leftPinned() ? props.onUnpinLeftDrawer() : props.onPinLeftDrawer())}
+              >
+                {props.leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+              </IconButton>
+            </Show>
+            <Show when={props.drawerState() === "floating-open"}>
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
+                title={props.t("instanceShell.leftDrawer.toggle.close")}
+                onClick={props.onCloseLeftDrawer}
+              >
+                <MenuOpenIcon fontSize="small" />
+              </IconButton>
+            </Show>
+          </div>
+        </div>
+        <div class="session-sidebar-shortcuts">
+          <Show when={props.keyboardShortcuts().length}>
+            <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
           </Show>
         </div>
       </div>
-      <div class="session-sidebar-shortcuts">
-        <Show when={props.keyboardShortcuts().length}>
-          <KeyboardHint shortcuts={props.keyboardShortcuts()} separator=" " showDescription={false} />
-        </Show>
-      </div>
-    </div>
 
-    <div class="session-sidebar flex flex-col flex-1 min-h-0">
-      <SessionList
-        instanceId={props.instanceId}
-        threads={props.threads()}
-        activeSessionId={props.activeSessionId()}
-        onSelect={props.onSelectSession}
-        onNew={() => {
-          const result = props.onNewSession()
-          if (result instanceof Promise) {
-            void result.catch((error) => log.error("Failed to create session:", error))
-          }
-        }}
-        enableFilterBar={props.showSearch()}
-        showHeader={false}
-        showFooter={false}
-      />
+      <div class="session-sidebar flex flex-col flex-1 min-h-0">
+        <SessionList
+          instanceId={props.instanceId}
+          threads={props.threads()}
+          activeSessionId={props.activeSessionId()}
+          onSelect={props.onSelectSession}
+          onNew={() => {
+            const result = props.onNewSession()
+            if (result instanceof Promise) {
+              void result.catch((error) => log.error("Failed to create session:", error))
+            }
+          }}
+          enableFilterBar={props.showSearch()}
+          showHeader={false}
+          showFooter={false}
+        />
 
-      <div class="session-sidebar-separator" />
-      <Show when={props.activeSession()}>
-        {(activeSession) => (
-          <>
+        <div class="session-sidebar-separator" />
+        <Show when={props.activeSession()}>
+          {(activeSession) => (
             <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
               <WorktreeSelector instanceId={props.instanceId} sessionId={activeSession().id} />
 
@@ -165,6 +221,18 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
               <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
 
+              <label class="session-sidebar-toggle" for={`session-auto-accept-${activeSession().id}`}>
+                <span class="session-sidebar-toggle-title">
+                  {props.t("instanceShell.leftPanel.autoAcceptPermissions.title")}
+                </span>
+                <input
+                  id={`session-auto-accept-${activeSession().id}`}
+                  type="checkbox"
+                  checked={isPermissionAutoAcceptEnabled(props.instanceId, activeSession().id)}
+                  onChange={() => handleToggleAutoAccept(activeSession().id)}
+                />
+              </label>
+
               <KeyboardHint
                 class="session-sidebar-selector-hints"
                 ariaHidden={true}
@@ -177,11 +245,11 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
                 showDescription={false}
               />
             </div>
-          </>
-        )}
-      </Show>
+          )}
+        </Show>
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 export default SessionSidebar

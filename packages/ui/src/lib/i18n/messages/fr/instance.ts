@@ -26,6 +26,7 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Sessions",
   "instanceShell.leftPanel.instanceInfo": "Infos de l'instance",
+  "instanceShell.leftPanel.autoAcceptPermissions.title": "Permission automatique",
 
   "instanceShell.leftDrawer.pin": "Épingler le tiroir gauche",
   "instanceShell.leftDrawer.unpin": "Désépingler le tiroir gauche",

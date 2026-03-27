@@ -26,6 +26,7 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Sesiones",
   "instanceShell.leftPanel.instanceInfo": "Info de la instancia",
+  "instanceShell.leftPanel.autoAcceptPermissions.title": "Permiso automático",
 
   "instanceShell.leftDrawer.pin": "Fijar panel izquierdo",
   "instanceShell.leftDrawer.unpin": "Desfijar panel izquierdo",
