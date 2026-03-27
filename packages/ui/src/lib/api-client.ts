@@ -7,6 +7,9 @@ import type {
   FileSystemCreateFolderResponse,
   FileSystemListResponse,
   InstanceData,
+  SpeechCapabilitiesResponse,
+  SpeechSynthesisResponse,
+  SpeechTranscriptionResponse,
   ServerMeta,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
@@ -118,6 +121,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
     throw error
   }
+}
+
+async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
+  const url = API_BASE ? new URL(path, API_BASE).toString() : path
+  const headers = normalizeHeaders(init?.headers)
+  if (init?.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json"
+  }
+
+  const method = (init?.method ?? "GET").toUpperCase()
+  const startedAt = Date.now()
+  logHttp(`${method} ${path}`)
+
+  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  if (!response.ok) {
+    const message = await response.text()
+    logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
+    throw new Error(message || `Request failed with ${response.status}`)
+  }
+
+  logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt })
+  return response
 }
 
 
@@ -233,6 +258,37 @@ export const serverApi = {
     return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
+    })
+  },
+  fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
+    return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+  },
+  transcribeAudio(payload: {
+    audioBase64: string
+    mimeType: string
+    filename?: string
+    language?: string
+    prompt?: string
+  }): Promise<SpeechTranscriptionResponse> {
+    return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+    return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  synthesizeSpeechStream(
+    payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    return requestRaw("/api/speech/synthesize/stream", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal,
     })
   },
   listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {

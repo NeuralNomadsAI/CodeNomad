@@ -3,7 +3,7 @@
 .message-select-checkbox {
   width: 14px;
   height: 14px;
-  margin-right: 0.5rem;
+  margin-inline-end: 0.5rem;
   cursor: pointer;
   accent-color: var(--status-error);
   flex: 0 0 auto;
@@ -134,7 +134,7 @@
 }
 
 .message-delete-mode-menu {
-  right: 0;
+  inset-inline-end: 0;
   bottom: calc(100% + 6px);
   min-width: 150px;
   width: max-content;

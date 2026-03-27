@@ -16,6 +16,7 @@ import { getLogger } from "../../lib/logger"
 import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
+import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 
 const log = getLogger("session")
 
@@ -88,6 +89,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     on(
       () => props.isActive,
       (isActive) => {
+        if (!isActive) {
+          clearConversationPlaybackForSession(props.instanceId, props.sessionId)
+          return
+        }
         if (!isActive) return
 
         // On phones, focusing the prompt on session switch is disruptive (it raises the OSK).

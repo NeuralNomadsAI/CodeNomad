@@ -1,7 +1,6 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack } from "solid-js"
 import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
 import MessageItem from "./message-item"
-import ToolCall from "./tool-call"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
 import { partHasRenderableText } from "../types/message"
@@ -15,6 +14,8 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
 import type { DeleteHoverState } from "../types/delete-hover"
+import { useSpeech } from "../lib/hooks/use-speech"
+import SpeechActionButton from "./speech-action-button"
 
 function DeleteUpToIcon() {
   return (
@@ -28,6 +29,12 @@ const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+
+const LazyToolCall = lazy(() => import("./tool-call"))
+
+function ToolCallFallback() {
+  return <div class="tool-call tool-call-loading" />
+}
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -500,16 +507,18 @@ function ToolCallItem(props: ToolCallItemProps) {
             </div>
           </div>
 
-          <ToolCall
-            toolCall={resolvedToolPart()}
-            toolCallId={props.partId}
-            messageId={props.messageId}
-            messageVersion={messageVersion()}
-            partVersion={partVersion()}
-            instanceId={props.instanceId}
-            sessionId={props.sessionId}
-            onContentRendered={props.onContentRendered}
-          />
+          <Suspense fallback={<ToolCallFallback />}>
+            <LazyToolCall
+              toolCall={resolvedToolPart()}
+              toolCallId={props.partId}
+              messageId={props.messageId}
+              messageVersion={messageVersion()}
+              partVersion={partVersion()}
+              instanceId={props.instanceId}
+              sessionId={props.sessionId}
+              onContentRendered={props.onContentRendered}
+            />
+          </Suspense>
         </div>
       )}
     </Show>
@@ -902,6 +911,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
               </Switch>
@@ -1280,6 +1290,7 @@ interface ReasoningCardProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  onContentRendered?: () => void
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
@@ -1288,6 +1299,25 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+  let pendingRenderNotificationFrame: number | null = null
+
+  const notifyContentRendered = () => {
+    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
+    if (pendingRenderNotificationFrame !== null) {
+      cancelAnimationFrame(pendingRenderNotificationFrame)
+    }
+    pendingRenderNotificationFrame = requestAnimationFrame(() => {
+      pendingRenderNotificationFrame = null
+      props.onContentRendered?.()
+    })
+  }
+
+  onCleanup(() => {
+    if (pendingRenderNotificationFrame !== null) {
+      cancelAnimationFrame(pendingRenderNotificationFrame)
+      pendingRenderNotificationFrame = null
+    }
+  })
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1355,6 +1385,19 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const viewHideLabel = () =>
     expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
+
+  const speech = useSpeech({
+    id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${(props.part as any)?.id ?? "reasoning"}`,
+    text: reasoningText,
+  })
+
+  const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
+
+  createEffect(() => {
+    if (!expanded()) return
+    reasoningText()
+    notifyContentRendered()
+  })
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
@@ -1428,6 +1471,20 @@ function ReasoningCard(props: ReasoningCardProps) {
         </button>
 
         <div class="message-reasoning-actions">
+          <Show when={canSpeakReasoning()}>
+            <SpeechActionButton
+              class="message-action-button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                void speech.toggle()
+              }}
+              title={speech.buttonTitle()}
+              isLoading={speech.isLoading()}
+              isPlaying={speech.isPlaying()}
+            />
+          </Show>
+
           <button
             type="button"
             class="message-action-button"
@@ -1497,7 +1554,7 @@ function ReasoningCard(props: ReasoningCardProps) {
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
             <div class="message-reasoning-output" role="region" aria-label={t("messageBlock.reasoning.detailsAriaLabel")}>
-              <pre class="message-reasoning-text">{reasoningText() || ""}</pre>
+              <pre class="message-reasoning-text" dir="auto">{reasoningText() || ""}</pre>
             </div>
           </div>
         </div>

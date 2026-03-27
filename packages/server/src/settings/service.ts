@@ -4,6 +4,7 @@ import type { ConfigLocation } from "../config/location"
 import { YamlDocStore, type SettingsDoc } from "./yaml-doc-store"
 import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
+import { sanitizeConfigOwner } from "./public-config"
 
 export type DocKind = "config" | "state"
 
@@ -45,10 +46,11 @@ export class SettingsService {
   private publish(kind: DocKind, owner: string, value?: SettingsDoc) {
     if (!this.eventBus) return
     const type = kind === "config" ? "storage.configChanged" : "storage.stateChanged"
+    const nextValue = value ?? this.getOwner(kind, owner)
     const payload: WorkspaceEventPayload = {
       type,
       owner,
-      value: value ?? this.getOwner(kind, owner),
+      value: kind === "config" ? sanitizeConfigOwner(owner, nextValue) : nextValue,
     } as any
     this.eventBus.publish(payload)
   }

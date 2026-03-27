@@ -5,7 +5,7 @@
 .tool-call-message {
   @apply flex flex-col gap-2 p-3 w-full;
   background-color: var(--message-tool-bg);
-  border-left: 4px solid var(--message-tool-border);
+  border-inline-start: 4px solid var(--message-tool-border);
   color: inherit;
 }
 
@@ -94,7 +94,7 @@
 }
 
 .tool-call-header-toggle {
-  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full bg-transparent border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   border-radius: 0;
@@ -105,7 +105,7 @@
 .tool-call-header-toggle::before {
   content: "▶";
   font-size: 11px;
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
@@ -159,7 +159,7 @@
 }
 
 .tool-call-summary {
-  @apply flex-1 text-left inline-flex items-center gap-2;
+  @apply flex-1 text-start inline-flex items-center gap-2;
   color: var(--text-primary);
 }
 
@@ -168,26 +168,26 @@
 }
 
 .tool-call-summary[data-tool-icon=""]::before {
-  margin-right: 0;
+  margin-inline-end: 0;
   content: "";
 }
 
 .tool-call-summary[data-tool-icon]:not([data-tool-icon=""])::before {
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
 .tool-call-status-completed,
 .tool-call-status-success {
-  border-left: 3px solid var(--status-success);
+  border-inline-start: 3px solid var(--status-success);
 }
 
 .tool-call-status-error {
-  border-left: 3px solid var(--status-error);
+  border-inline-start: 3px solid var(--status-error);
 }
 
 .tool-call-status-running {
-  border-left: 3px solid var(--status-warning);
+  border-inline-start: 3px solid var(--status-warning);
 }
 
 .tool-call-status-running .tool-call-status {
@@ -195,7 +195,7 @@
 }
 
 .tool-call-status-pending {
-  border-left: 3px solid var(--accent-primary);
+  border-inline-start: 3px solid var(--accent-primary);
 }
 
 .tool-call-status-pending .tool-call-summary {
@@ -257,7 +257,7 @@
   border: none;
   border-bottom: 1px solid var(--tool-call-border-color);
   width: 100%;
-  text-align: left;
+  text-align: start;
   font-size: 0.875rem;
   font-weight: normal;
   color: var(--text-primary);
@@ -267,7 +267,7 @@
 .tool-call-io-toggle::before {
   content: "▶";
   font-size: 11px;
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
   color: var(--text-secondary);
 }
 
@@ -393,7 +393,7 @@
 }
 
 .tool-call-awaiting-permission {
-  border-left-color: var(--status-warning);
+  border-inline-start-color: var(--status-warning);
 }
 
 .tool-call-permission {
@@ -484,7 +484,7 @@
 }
 
 .tool-call-permission-shortcuts .kbd {
-  margin-right: 0.25rem;
+  margin-inline-end: 0.25rem;
 }
 
 .tool-call-permission-queued-text {
@@ -549,6 +549,7 @@
   min-height: auto;
   max-height: none;
   overflow-y: visible;
+  direction: ltr;
 }
 
 /* Shiki injects inline background colors; force token surfaces. */
@@ -610,7 +611,7 @@
 }
 
 .tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: var(--text-primary);
@@ -634,7 +635,7 @@
 
 
 .tool-call-diagnostics-heading {
-  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-left;
+  @apply flex items-center gap-2 p-2 w-full border-none cursor-pointer text-start;
   font-family: var(--font-family-mono);
   font-size: 13px;
   color: var(--text-primary);
@@ -693,8 +694,8 @@
   gap: var(--space-xs);
   max-height: calc(4 * var(--tool-call-line-unit, 1.4em));
   overflow-y: scroll;
-  padding-right: 0;
-  margin-right: 0;
+  padding-inline-end: 0;
+  margin-inline-end: 0;
   scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
 }
@@ -762,6 +763,7 @@
   overflow-x: auto;
   max-height: var(--tool-call-max-height-compact, calc(25 * 1.4em));
   overflow-y: scroll;
+  direction: ltr;
 }
 
 .tool-call-section code {
@@ -843,7 +845,7 @@
 
 .tool-call-error-content {
   background-color: var(--message-error-bg);
-  border-left: 3px solid var(--status-error);
+  border-inline-start: 3px solid var(--status-error);
   padding: 12px;
   margin: 8px 0;
   border-radius: 4px;

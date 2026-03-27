@@ -1,8 +1,10 @@
 import {
   Show,
+  Suspense,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   onCleanup,
   type Accessor,
   type Component,
@@ -19,11 +21,6 @@ import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
-
-import ChangesTab from "./tabs/ChangesTab"
-import FilesTab from "./tabs/FilesTab"
-import GitChangesTab from "./tabs/GitChangesTab"
-import StatusTab from "./tabs/StatusTab"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
@@ -48,6 +45,15 @@ import {
   readStoredPanelWidth,
   readStoredRightPanelTab,
 } from "../storage"
+
+const LazyChangesTab = lazy(() => import("./tabs/ChangesTab"))
+const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
+const LazyFilesTab = lazy(() => import("./tabs/FilesTab"))
+const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
+
+function RightPanelTabFallback() {
+  return <div class="flex-1 min-h-0" />
+}
 
 interface RightPanelProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -243,7 +249,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const mode = activeSplitResize()
     if (!mode) return
     event.preventDefault()
-    const delta = event.clientX - splitResizeStartX()
+    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
+    const delta = (event.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
     else if (mode === "git-changes") setGitChangesSplitWidth(next)
@@ -266,7 +273,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const touch = event.touches[0]
     if (!touch) return
     event.preventDefault()
-    const delta = touch.clientX - splitResizeStartX()
+    const isRtl = typeof document !== "undefined" && document.documentElement.dir === "rtl"
+    const delta = (touch.clientX - splitResizeStartX()) * (isRtl ? -1 : 1)
     const next = clampSplitWidth(splitResizeStartWidth() + delta)
     if (mode === "changes") setChangesSplitWidth(next)
     else if (mode === "git-changes") setGitChangesSplitWidth(next)
@@ -566,10 +574,25 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   createEffect(() => {
+    if (rightPanelTab() === "files") return
+    setBrowserSelectedContent(null)
+    setBrowserSelectedLoading(false)
+    setBrowserSelectedError(null)
+  })
+
+  createEffect(() => {
     if (rightPanelTab() !== "git-changes") return
     if (gitStatusLoading()) return
     if (gitStatusEntries() !== null) return
     void loadGitStatus()
+  })
+
+  createEffect(() => {
+    if (rightPanelTab() === "git-changes") return
+    setGitSelectedBefore(null)
+    setGitSelectedAfter(null)
+    setGitSelectedLoading(false)
+    setGitSelectedError(null)
   })
 
   const handleSelectChangesFile = (file: string, closeList: boolean) => {
@@ -738,101 +761,109 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       <div class="flex-1 overflow-y-auto">
         <Show when={rightPanelTab() === "changes"}>
-          <ChangesTab
-            t={props.t}
-            instanceId={props.instanceId}
-            activeSessionId={props.activeSessionId}
-            activeSessionDiffs={props.activeSessionDiffs}
-            selectedFile={selectedFile}
-            onSelectFile={handleSelectChangesFile}
-            diffViewMode={diffViewMode}
-            diffContextMode={diffContextMode}
-            diffWordWrapMode={diffWordWrapMode}
-            onViewModeChange={setDiffViewMode}
-            onContextModeChange={setDiffContextMode}
-            onWordWrapModeChange={setDiffWordWrapMode}
-            listOpen={changesListOpen}
-            onToggleList={toggleChangesList}
-            splitWidth={changesSplitWidth}
-            onResizeMouseDown={handleSplitResizeMouseDown("changes")}
-            onResizeTouchStart={handleSplitResizeTouchStart("changes")}
-            isPhoneLayout={props.isPhoneLayout}
-          />
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyChangesTab
+              t={props.t}
+              instanceId={props.instanceId}
+              activeSessionId={props.activeSessionId}
+              activeSessionDiffs={props.activeSessionDiffs}
+              selectedFile={selectedFile}
+              onSelectFile={handleSelectChangesFile}
+              diffViewMode={diffViewMode}
+              diffContextMode={diffContextMode}
+              diffWordWrapMode={diffWordWrapMode}
+              onViewModeChange={setDiffViewMode}
+              onContextModeChange={setDiffContextMode}
+              onWordWrapModeChange={setDiffWordWrapMode}
+              listOpen={changesListOpen}
+              onToggleList={toggleChangesList}
+              splitWidth={changesSplitWidth}
+              onResizeMouseDown={handleSplitResizeMouseDown("changes")}
+              onResizeTouchStart={handleSplitResizeTouchStart("changes")}
+              isPhoneLayout={props.isPhoneLayout}
+            />
+          </Suspense>
         </Show>
 
         <Show when={rightPanelTab() === "git-changes"}>
-          <GitChangesTab
-            t={props.t}
-            activeSessionId={props.activeSessionId}
-            entries={gitStatusEntries}
-            statusLoading={gitStatusLoading}
-            statusError={gitStatusError}
-            selectedPath={gitSelectedPath}
-            selectedLoading={gitSelectedLoading}
-            selectedError={gitSelectedError}
-            selectedBefore={gitSelectedBefore}
-            selectedAfter={gitSelectedAfter}
-            mostChangedPath={gitMostChangedPath}
-            scopeKey={gitScopeKey}
-            diffViewMode={diffViewMode}
-            diffContextMode={diffContextMode}
-            diffWordWrapMode={diffWordWrapMode}
-            onViewModeChange={setDiffViewMode}
-            onContextModeChange={setDiffContextMode}
-            onWordWrapModeChange={setDiffWordWrapMode}
-            onOpenFile={(path) => void openGitFile(path)}
-            onRefresh={() => void refreshGitStatus()}
-            listOpen={gitChangesListOpen}
-            onToggleList={toggleGitList}
-            splitWidth={gitChangesSplitWidth}
-            onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
-            onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
-            isPhoneLayout={props.isPhoneLayout}
-          />
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyGitChangesTab
+              t={props.t}
+              activeSessionId={props.activeSessionId}
+              entries={gitStatusEntries}
+              statusLoading={gitStatusLoading}
+              statusError={gitStatusError}
+              selectedPath={gitSelectedPath}
+              selectedLoading={gitSelectedLoading}
+              selectedError={gitSelectedError}
+              selectedBefore={gitSelectedBefore}
+              selectedAfter={gitSelectedAfter}
+              mostChangedPath={gitMostChangedPath}
+              scopeKey={gitScopeKey}
+              diffViewMode={diffViewMode}
+              diffContextMode={diffContextMode}
+              diffWordWrapMode={diffWordWrapMode}
+              onViewModeChange={setDiffViewMode}
+              onContextModeChange={setDiffContextMode}
+              onWordWrapModeChange={setDiffWordWrapMode}
+              onOpenFile={(path: string) => void openGitFile(path)}
+              onRefresh={() => void refreshGitStatus()}
+              listOpen={gitChangesListOpen}
+              onToggleList={toggleGitList}
+              splitWidth={gitChangesSplitWidth}
+              onResizeMouseDown={handleSplitResizeMouseDown("git-changes")}
+              onResizeTouchStart={handleSplitResizeTouchStart("git-changes")}
+              isPhoneLayout={props.isPhoneLayout}
+            />
+          </Suspense>
         </Show>
 
         <Show when={rightPanelTab() === "files"}>
-          <FilesTab
-            t={props.t}
-            browserPath={browserPath}
-            browserEntries={browserEntries}
-            browserLoading={browserLoading}
-            browserError={browserError}
-            browserSelectedPath={browserSelectedPath}
-            browserSelectedContent={browserSelectedContent}
-            browserSelectedLoading={browserSelectedLoading}
-            browserSelectedError={browserSelectedError}
-            parentPath={browserParentPath}
-            scopeKey={browserScopeKey}
-            onLoadEntries={(path) => void loadBrowserEntries(path)}
-            onOpenFile={(path) => void openBrowserFile(path)}
-            onRefresh={() => void refreshFilesTab()}
-            listOpen={filesListOpen}
-            onToggleList={toggleFilesList}
-            splitWidth={filesSplitWidth}
-            onResizeMouseDown={handleSplitResizeMouseDown("files")}
-            onResizeTouchStart={handleSplitResizeTouchStart("files")}
-            isPhoneLayout={props.isPhoneLayout}
-          />
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyFilesTab
+              t={props.t}
+              browserPath={browserPath}
+              browserEntries={browserEntries}
+              browserLoading={browserLoading}
+              browserError={browserError}
+              browserSelectedPath={browserSelectedPath}
+              browserSelectedContent={browserSelectedContent}
+              browserSelectedLoading={browserSelectedLoading}
+              browserSelectedError={browserSelectedError}
+              parentPath={browserParentPath}
+              scopeKey={browserScopeKey}
+              onLoadEntries={(path: string) => void loadBrowserEntries(path)}
+              onOpenFile={(path: string) => void openBrowserFile(path)}
+              onRefresh={() => void refreshFilesTab()}
+              listOpen={filesListOpen}
+              onToggleList={toggleFilesList}
+              splitWidth={filesSplitWidth}
+              onResizeMouseDown={handleSplitResizeMouseDown("files")}
+              onResizeTouchStart={handleSplitResizeTouchStart("files")}
+              isPhoneLayout={props.isPhoneLayout}
+            />
+          </Suspense>
         </Show>
 
         <Show when={rightPanelTab() === "status"}>
-          <StatusTab
-            t={props.t}
-            instanceId={props.instanceId}
-            instance={props.instance}
-            activeSessionId={props.activeSessionId}
-            activeSession={props.activeSession}
-            activeSessionDiffs={props.activeSessionDiffs}
-            latestTodoState={props.latestTodoState}
-            backgroundProcessList={props.backgroundProcessList}
-            onOpenBackgroundOutput={props.onOpenBackgroundOutput}
-            onStopBackgroundProcess={props.onStopBackgroundProcess}
-            onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
-            expandedItems={rightPanelExpandedItems}
-            onExpandedItemsChange={handleAccordionChange}
-            onOpenChangesTab={openChangesTabFromStatus}
-          />
+          <Suspense fallback={<RightPanelTabFallback />}>
+            <LazyStatusTab
+              t={props.t}
+              instanceId={props.instanceId}
+              instance={props.instance}
+              activeSessionId={props.activeSessionId}
+              activeSession={props.activeSession}
+              activeSessionDiffs={props.activeSessionDiffs}
+              latestTodoState={props.latestTodoState}
+              backgroundProcessList={props.backgroundProcessList}
+              onOpenBackgroundOutput={props.onOpenBackgroundOutput}
+              onStopBackgroundProcess={props.onStopBackgroundProcess}
+              onTerminateBackgroundProcess={props.onTerminateBackgroundProcess}
+              expandedItems={rightPanelExpandedItems}
+              onExpandedItemsChange={handleAccordionChange}
+              onOpenChangesTab={openChangesTabFromStatus}
+            />
+          </Suspense>
         </Show>
       </div>
     </div>

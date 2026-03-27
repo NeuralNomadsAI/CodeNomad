@@ -13,8 +13,11 @@ import { formatCompactCount } from "../lib/formatters"
 import { useI18n, type Locale } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
+import { openExternalUrl } from "../lib/external-url"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
+const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
 
 
 interface FolderSelectionViewProps {
@@ -42,6 +45,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     { value: "ru", label: "Русский" },
     { value: "ja", label: "日本語" },
     { value: "zh-Hans", label: "简体中文" },
+    { value: "he", label: "עברית" },
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
@@ -232,11 +236,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     props.onSelectFolder(path, selectedBinary())
   }
 
-  const openExternalLink = (url: string) => {
-    if (typeof window === "undefined") return
-    window.open(url, "_blank", "noopener,noreferrer")
-  }
- 
   async function handleBrowse() {
     if (isLoading()) return
     setFocusMode("new")
@@ -343,7 +342,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
           aria-busy={isLoading() ? "true" : "false"}
         >
-          <div class="absolute top-4 left-6">
+          <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
             <Select<LanguageOption>
               value={selectedLanguageOption()}
               onChange={(value) => {
@@ -387,7 +386,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </Select.Portal>
             </Select>
           </div>
-          <div class="absolute top-4 right-6 flex items-center gap-2">
+          <div class="absolute top-4 flex items-center gap-2" style="inset-inline-end: 1.5rem;">
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
@@ -425,7 +424,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
               <a
-                href="https://github.com/NeuralNomadsAI/CodeNomad"
+                href={GITHUB_URL}
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
@@ -433,13 +432,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 title={t("folderSelection.links.github")}
                 onClick={(event) => {
                   event.preventDefault()
-                  openExternalLink("https://github.com/NeuralNomadsAI/CodeNomad")
+                  void openExternalUrl(GITHUB_URL, "folder-selection")
                 }}
               >
                 <GitHubMarkIcon class="w-4 h-4" />
               </a>
               <a
-                href="https://github.com/NeuralNomadsAI/CodeNomad"
+                href={GITHUB_URL}
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
@@ -447,7 +446,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 title={t("folderSelection.links.githubStars")}
                 onClick={(event) => {
                   event.preventDefault()
-                  openExternalLink("https://github.com/NeuralNomadsAI/CodeNomad")
+                  void openExternalUrl(GITHUB_URL, "folder-selection")
                 }}
               >
                 <Star class="w-4 h-4" />
@@ -456,7 +455,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 </Show>
               </a>
               <a
-                href="https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
+                href={DISCORD_URL}
                 target="_blank"
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
@@ -464,9 +463,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 title={t("folderSelection.links.discord")}
                 onClick={(event) => {
                   event.preventDefault()
-                  openExternalLink(
-                    "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945",
-                  )
+                  void openExternalUrl(DISCORD_URL, "folder-selection")
                 }}
               >
                 <DiscordSymbolIcon class="w-4 h-4" />

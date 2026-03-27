@@ -47,16 +47,9 @@ declare global {
     webkitGetAsEntry?: () => FileSystemEntry | null
   }
 
-  interface TauriDialogModule {
-    open?: (options: Record<string, unknown>) => Promise<string | string[] | null>
-    save?: (options: Record<string, unknown>) => Promise<string | null>
-  }
-
   interface TauriBridge {
-    invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
-    dialog?: TauriDialogModule
-    event?: {
-      listen: (event: string, handler: (payload: { payload: unknown }) => void) => Promise<() => void>
+    core?: {
+      invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
     }
   }
 

@@ -9,6 +9,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,9 +19,23 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
+
+#[cfg(windows)]
+fn configure_spawn(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_spawn(_command: &mut Command) {}
 
 fn workspace_root() -> Option<PathBuf> {
     std::env::current_dir().ok().and_then(|mut dir| {
@@ -35,7 +51,49 @@ fn workspace_root() -> Option<PathBuf> {
 const SESSION_COOKIE_NAME_PREFIX: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
+#[cfg(windows)]
+const CLI_WINDOWS_FORCE_GRACE_MS: u64 = 2_000;
 
+#[cfg(unix)]
+fn configure_posix_process_group(command: &mut Command) {
+    // Ensure the CLI runs in its own process group so we can terminate wrapper
+    // processes (login shell/tsx) without leaving the server orphaned.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_tree_windows(pid: u32, force: bool) -> bool {
+    let mut args = vec!["/PID".to_string(), pid.to_string(), "/T".to_string()];
+    if force {
+        args.push("/F".to_string());
+    }
+
+    let mut command = Command::new("taskkill");
+    command.args(&args);
+    configure_spawn(&mut command);
+
+    match command.output() {
+        Ok(output) => {
+            if output.status.success() {
+                return true;
+            }
+
+            // If the PID is already gone, treat it as success.
+            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+            let combined = format!("{stdout}\n{stderr}");
+            combined.contains("not found") || combined.contains("no running instance")
+        }
+        Err(_) => false,
+    }
+}
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
         let mut display = url.to_string();
@@ -365,13 +423,21 @@ impl CliProcessManager {
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
             log_line(&format!("stopping CLI pid={}", child.id()));
+            #[cfg(windows)]
+            let mut forced_tree_shutdown = false;
             #[cfg(unix)]
             unsafe {
-                libc::kill(child.id() as i32, libc::SIGTERM);
+                let pid = child.id() as i32;
+                // Prefer signaling the process group to avoid orphaning children
+                // when the CLI was launched via a wrapper shell.
+                let group_res = libc::kill(-pid, libc::SIGTERM);
+                if group_res != 0 {
+                    let _ = libc::kill(pid, libc::SIGTERM);
+                }
             }
             #[cfg(windows)]
             {
-                let _ = child.kill();
+                let _ = kill_process_tree_windows(child.id(), false);
             }
 
             let start = Instant::now();
@@ -379,6 +445,21 @@ impl CliProcessManager {
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => {
+                        #[cfg(windows)]
+                        if !forced_tree_shutdown
+                            && start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS)
+                        {
+                            log_line(&format!(
+                                "regular Windows shutdown still running after {}ms; escalating pid={}",
+                                CLI_WINDOWS_FORCE_GRACE_MS,
+                                child.id()
+                            ));
+                            forced_tree_shutdown = true;
+                            if !kill_process_tree_windows(child.id(), true) {
+                                let _ = child.kill();
+                            }
+                        }
+
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
                             log_line(&format!(
                                 "stop timed out after {}s; sending SIGKILL pid={}",
@@ -387,11 +468,21 @@ impl CliProcessManager {
                             ));
                             #[cfg(unix)]
                             unsafe {
-                                libc::kill(child.id() as i32, libc::SIGKILL);
+                                let pid = child.id() as i32;
+                                let group_res = libc::kill(-pid, libc::SIGKILL);
+                                if group_res != 0 {
+                                    let _ = libc::kill(pid, libc::SIGKILL);
+                                }
                             }
                             #[cfg(windows)]
                             {
-                                let _ = child.kill();
+                                if !forced_tree_shutdown
+                                    && !kill_process_tree_windows(child.id(), true)
+                                {
+                                    let _ = child.kill();
+                                } else if forced_tree_shutdown {
+                                    let _ = child.kill();
+                                }
                             }
                             break;
                         }
@@ -470,9 +561,12 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
+                #[cfg(unix)]
+                configure_posix_process_group(&mut c);
                 c.spawn()?
             }
             ShellCommandType::Direct(cmd) => {
@@ -482,9 +576,12 @@ impl CliProcessManager {
                     .env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
                 }
+                #[cfg(unix)]
+                configure_posix_process_group(&mut c);
                 c.spawn()?
             }
         };
@@ -560,7 +657,24 @@ impl CliProcessManager {
             locked.error = Some("CLI did not start in time".to_string());
             log_line("timeout waiting for CLI readiness");
             if let Some(child) = child_holder_clone.lock().as_mut() {
-                let _ = child.kill();
+                #[cfg(unix)]
+                unsafe {
+                    let pid = child.id() as i32;
+                    let group_res = libc::kill(-pid, libc::SIGKILL);
+                    if group_res != 0 {
+                        let _ = libc::kill(pid, libc::SIGKILL);
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    if !kill_process_tree_windows(child.id(), true) {
+                        let _ = child.kill();
+                    }
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    let _ = child.kill();
+                }
             }
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);

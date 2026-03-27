@@ -1,7 +1,7 @@
 import type { Accessor, JSXElement } from "solid-js"
 import type { RenderCache } from "../../types/message"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../lib/ansi"
-import { escapeHtml } from "../../lib/markdown"
+import { escapeHtml } from "../../lib/text-render-utils"
 import type { AnsiRenderOptions, ToolScrollHelpers } from "./types"
 
 type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
@@ -20,6 +20,14 @@ export function createAnsiContentRenderer(params: {
   const runningAnsiRenderer = createAnsiStreamRenderer()
   let runningAnsiSource = ""
 
+  const registerTracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element)
+  }
+
+  const registerUntracked = (element: HTMLDivElement | null) => {
+    params.scrollHelpers.registerContainer(element, { disableTracking: true })
+  }
+
   const getMode = () => {
     const version = params.partVersion?.()
     return typeof version === "number" ? String(version) : undefined
@@ -36,6 +44,8 @@ export function createAnsiContentRenderer(params: {
     const cached = cacheHandle.get<AnsiRenderCache>()
     const mode = getMode()
     const isRunningVariant = options.variant === "running"
+    const disableScrollTracking = !isRunningVariant
+    const registerRef = disableScrollTracking ? registerUntracked : registerTracked
 
     let nextCache: AnsiRenderCache
 
@@ -87,9 +97,9 @@ export function createAnsiContentRenderer(params: {
     }
 
     return (
-      <div class={messageClass} ref={params.scrollHelpers.registerContainer} onScroll={params.scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" innerHTML={nextCache.html} />
-        {params.scrollHelpers.renderSentinel()}
+      <div class={messageClass} ref={registerRef} onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}>
+        <pre class="tool-call-content tool-call-ansi" dir="auto" innerHTML={nextCache.html} />
+        {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )
   }

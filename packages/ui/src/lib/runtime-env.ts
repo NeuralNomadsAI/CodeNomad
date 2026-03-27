@@ -9,17 +9,14 @@ export interface RuntimeEnvironment {
 }
 
 declare global {
+  interface TauriCoreModule {
+    invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
+  }
+
   interface Window {
     electronAPI?: unknown
     __TAURI__?: {
-      invoke?: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
-      event?: {
-        listen: (event: string, handler: (payload: { payload: unknown }) => void) => Promise<() => void>
-      }
-      dialog?: {
-        open?: (options: Record<string, unknown>) => Promise<string | string[] | null>
-        save?: (options: Record<string, unknown>) => Promise<string | null>
-      }
+      core?: TauriCoreModule
     }
   }
 }

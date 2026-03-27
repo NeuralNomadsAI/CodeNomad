@@ -3,20 +3,52 @@
 mod cli_manager;
 
 use cli_manager::{CliProcessManager, CliStatus};
+use keepawake::KeepAwake;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
-use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent, Wry};
+use tauri_plugin_global_shortcut::{
+    Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
+};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::iter;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
-#[derive(Clone)]
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
+const ZOOM_STEP: f64 = 0.2;
+const MIN_ZOOM_LEVEL: f64 = 0.2;
+const MAX_ZOOM_LEVEL: f64 = 5.0;
+
+#[cfg(windows)]
+const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
+
 pub struct AppState {
     pub manager: CliProcessManager,
+    pub wake_lock: Mutex<Option<KeepAwake>>,
+    pub zoom_level: Mutex<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct WakeLockConfig {
+    display: bool,
+    idle: bool,
+    sleep: bool,
 }
 
 #[tauri::command]
@@ -33,6 +65,39 @@ fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatu
         .start(app, dev_mode)
         .map_err(|e| e.to_string())?;
     Ok(state.manager.status())
+}
+
+#[tauri::command]
+fn wake_lock_start(
+    state: tauri::State<AppState>,
+    config: Option<WakeLockConfig>,
+) -> Result<(), String> {
+    let config = config.unwrap_or(WakeLockConfig {
+        display: true,
+        idle: false,
+        sleep: false,
+    });
+
+    let mut builder = keepawake::Builder::default();
+    builder
+        .display(config.display)
+        .idle(config.idle)
+        .sleep(config.sleep)
+        .reason("CodeNomad active session")
+        .app_name("CodeNomad")
+        .app_reverse_domain("ai.neuralnomads.codenomad.client");
+
+    let wake_lock = builder.create().map_err(|err| err.to_string())?;
+    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    *state_lock = Some(wake_lock);
+    Ok(())
+}
+
+#[tauri::command]
+fn wake_lock_stop(state: tauri::State<AppState>) -> Result<(), String> {
+    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    state_lock.take();
+    Ok(())
 }
 
 fn is_dev_mode() -> bool {
@@ -101,6 +166,99 @@ fn emit_folder_drop_event(
     }
 }
 
+fn clamp_zoom_level(value: f64) -> f64 {
+    value.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL)
+}
+
+fn set_main_window_zoom(app_handle: &AppHandle, next_zoom: f64) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let normalized = clamp_zoom_level(next_zoom);
+        if window.set_zoom(normalized).is_ok() {
+            if let Ok(mut zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
+                *zoom_level = normalized;
+            }
+        }
+    }
+}
+
+fn reload_main_window(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.reload();
+    }
+}
+
+fn force_reload_main_window(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        if let Ok(mut url) = window.url() {
+            if should_allow_internal(&url) {
+                let reload_token = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    .to_string();
+
+                let existing_pairs: Vec<(String, String)> = url
+                    .query_pairs()
+                    .into_owned()
+                    .filter(|(key, _)| key != "__codenomad_force_reload")
+                    .collect();
+
+                {
+                    let mut pairs = url.query_pairs_mut();
+                    pairs.clear();
+                    for (key, value) in existing_pairs {
+                        pairs.append_pair(&key, &value);
+                    }
+                    pairs.append_pair("__codenomad_force_reload", &reload_token);
+                }
+
+                let _ = window.navigate(url);
+                return;
+            }
+        }
+
+        let _ = window.reload();
+    }
+}
+
+fn toggle_fullscreen_window(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
+        let _ = window.set_fullscreen(next_fullscreen);
+        if cfg!(not(target_os = "macos")) {
+            if next_fullscreen {
+                let _ = window.hide_menu();
+            } else {
+                let _ = window.show_menu();
+            }
+        }
+    }
+}
+
+fn fullscreen_shortcut() -> Option<Shortcut> {
+    if cfg!(target_os = "macos") {
+        None
+    } else {
+        Some(Shortcut::new(None, ShortcutCode::F11))
+    }
+}
+
+#[cfg(windows)]
+fn set_windows_app_user_model_id() {
+    let app_id: Vec<u16> = OsStr::new(WINDOWS_APP_USER_MODEL_ID)
+        .encode_wide()
+        .chain(iter::once(0))
+        .collect();
+
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr()) };
+    if result < 0 {
+        eprintln!("[tauri] failed to set AppUserModelID: {result}");
+    }
+}
+
+#[cfg(not(windows))]
+fn set_windows_app_user_model_id() {}
+
 fn main() {
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
@@ -109,14 +267,48 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_keepawake::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+
+                    if fullscreen_shortcut().as_ref() == Some(shortcut) {
+                        toggle_fullscreen_window(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),
+            wake_lock: Mutex::new(None),
+            zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
         })
         .setup(|app| {
+            set_windows_app_user_model_id();
             build_menu(&app.handle())?;
+            if let Some(shortcut) = fullscreen_shortcut() {
+                let shortcut_manager = app.handle().global_shortcut();
+                let _ = shortcut_manager.register(shortcut.clone());
+
+                if let Some(window) = app.get_webview_window("main") {
+                    let app_handle = app.handle().clone();
+                    window.on_window_event(move |event| {
+                        if let WindowEvent::Focused(focused) = event {
+                            let shortcut_manager = app_handle.global_shortcut();
+                            if *focused {
+                                let _ = shortcut_manager.register(shortcut.clone());
+                            } else {
+                                let _ = shortcut_manager.unregister(shortcut.clone());
+                            }
+                        }
+                    });
+                }
+            }
+
             let dev_mode = is_dev_mode();
             let app_handle = app.handle().clone();
             let manager = app.state::<AppState>().manager.clone();
@@ -127,7 +319,12 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli_get_status, cli_restart])
+        .invoke_handler(tauri::generate_handler![
+            cli_get_status,
+            cli_restart,
+            wake_lock_start,
+            wake_lock_stop
+        ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
                 // File menu
@@ -136,36 +333,42 @@ fn main() {
                         let _ = window.emit("menu:newInstance", ());
                     }
                 }
-                "close" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.close();
-                    }
-                }
                 "quit" => {
                     app_handle.exit(0);
                 }
 
                 // View menu
                 "reload" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.eval("window.location.reload()");
-                    }
+                    reload_main_window(app_handle);
                 }
                 "force_reload" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.eval("window.location.reload(true)");
-                    }
+                    force_reload_main_window(app_handle);
                 }
                 "toggle_devtools" => {
                     if let Some(window) = app_handle.get_webview_window("main") {
-                        window.open_devtools();
+                        if window.is_devtools_open() {
+                            window.close_devtools();
+                        } else {
+                            window.open_devtools();
+                        }
+                    }
+                }
+                "reset_zoom" => {
+                    set_main_window_zoom(app_handle, DEFAULT_ZOOM_LEVEL);
+                }
+                "zoom_in" => {
+                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
+                        set_main_window_zoom(app_handle, *zoom_level + ZOOM_STEP);
+                    }
+                }
+                "zoom_out" => {
+                    if let Ok(zoom_level) = app_handle.state::<AppState>().zoom_level.lock() {
+                        set_main_window_zoom(app_handle, *zoom_level - ZOOM_STEP);
                     }
                 }
 
                 "toggle_fullscreen" => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.set_fullscreen(!window.is_fullscreen().unwrap_or(false));
-                    }
+                    toggle_fullscreen_window(app_handle);
                 }
 
                 // Window menu
@@ -177,6 +380,11 @@ fn main() {
                 "zoom" => {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.maximize();
+                    }
+                }
+                "close_window" => {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.close();
                     }
                 }
 
@@ -266,6 +474,7 @@ fn main() {
 
 fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     let is_mac = cfg!(target_os = "macos");
+    let is_linux = cfg!(target_os = "linux");
 
     // Create submenus
     let mut submenus = Vec::new();
@@ -293,15 +502,73 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         Some("CmdOrCtrl+N"),
     )?;
 
-    let file_menu = SubmenuBuilder::new(app, "File")
-        .item(&new_instance_item)
-        .separator()
-        .text(
-            if is_mac { "close" } else { "quit" },
-            if is_mac { "Close" } else { "Quit" },
-        )
-        .build()?;
+    let file_menu = if is_mac {
+        SubmenuBuilder::new(app, "File")
+            .item(&new_instance_item)
+            .separator()
+            .close_window()
+            .build()?
+    } else {
+        SubmenuBuilder::new(app, "File")
+            .item(&new_instance_item)
+            .separator()
+            .text("quit", "Quit")
+            .build()?
+    };
     submenus.push(file_menu);
+
+    let reload_item = MenuItem::with_id(app, "reload", "Reload", true, Some("CmdOrCtrl+R"))?;
+    let force_reload_item = MenuItem::with_id(
+        app,
+        "force_reload",
+        "Force Reload",
+        true,
+        Some("CmdOrCtrl+Shift+R"),
+    )?;
+    let toggle_devtools_item = MenuItem::with_id(
+        app,
+        "toggle_devtools",
+        "Toggle Developer Tools",
+        true,
+        Some("Alt+CmdOrCtrl+I"),
+    )?;
+    let reset_zoom_item =
+        MenuItem::with_id(app, "reset_zoom", "Actual Size", true, Some("CmdOrCtrl+0"))?;
+    let zoom_in_item = MenuItem::with_id(
+        app,
+        "zoom_in",
+        if is_mac { "Zoom In" } else { "Zoom In\tCtrl++" },
+        true,
+        None::<&str>,
+    )?;
+    let zoom_out_item = MenuItem::with_id(
+        app,
+        "zoom_out",
+        if is_mac {
+            "Zoom Out"
+        } else {
+            "Zoom Out\tCtrl+-"
+        },
+        true,
+        None::<&str>,
+    )?;
+    let toggle_fullscreen_item = MenuItem::with_id(
+        app,
+        "toggle_fullscreen",
+        if is_mac {
+            "Toggle Full Screen"
+        } else {
+            "Toggle Full Screen\tF11"
+        },
+        true,
+        if is_mac {
+            Some("Ctrl+Cmd+F")
+        } else {
+            None::<&str>
+        },
+    )?;
+    let close_window_item =
+        MenuItem::with_id(app, "close_window", "Close", true, Some("CmdOrCtrl+W"))?;
 
     // Edit menu with predefined items for standard functionality
     let edit_menu = SubmenuBuilder::new(app, "Edit")
@@ -318,20 +585,39 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     // View menu
     let view_menu = SubmenuBuilder::new(app, "View")
-        .text("reload", "Reload")
-        .text("force_reload", "Force Reload")
-        .text("toggle_devtools", "Toggle Developer Tools")
+        .item(&reload_item)
+        .item(&force_reload_item)
+        .item(&toggle_devtools_item)
         .separator()
+        .item(&reset_zoom_item)
+        .item(&zoom_in_item)
+        .item(&zoom_out_item)
         .separator()
-        .text("toggle_fullscreen", "Toggle Full Screen")
+        .item(&toggle_fullscreen_item)
         .build()?;
     submenus.push(view_menu);
 
     // Window menu
-    let window_menu = SubmenuBuilder::new(app, "Window")
-        .text("minimize", "Minimize")
-        .text("zoom", "Zoom")
-        .build()?;
+    let window_menu = if is_linux {
+        SubmenuBuilder::new(app, "Window")
+            .text("minimize", "Minimize")
+            .text("zoom", "Zoom")
+            .separator()
+            .item(&close_window_item)
+            .build()?
+    } else if is_mac {
+        SubmenuBuilder::new(app, "Window")
+            .minimize()
+            .maximize()
+            .build()?
+    } else {
+        SubmenuBuilder::new(app, "Window")
+            .minimize()
+            .maximize()
+            .separator()
+            .close_window()
+            .build()?
+    };
     submenus.push(window_menu);
 
     // Build the main menu with all submenus

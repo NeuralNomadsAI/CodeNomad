@@ -40,11 +40,11 @@
 }
 
 .selector-trigger-primary--align-left {
-  @apply text-left w-full;
+  @apply text-start w-full;
 }
 
 .selector-trigger-secondary {
-  @apply text-xs text-left truncate;
+  @apply text-xs text-start truncate w-full;
   color: var(--text-muted);
 }
 

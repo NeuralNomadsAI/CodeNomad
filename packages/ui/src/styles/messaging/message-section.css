@@ -207,7 +207,7 @@
 
 .message-scroll-button-wrapper {
   position: absolute;
-  right: 1rem;
+  inset-inline-end: 1rem;
   bottom: 1rem;
   display: flex;
   flex-direction: column;
@@ -274,7 +274,7 @@
 }
 
 .message-quote-button + .message-quote-button {
-  border-left: 1px solid var(--list-item-highlight-border);
+  border-inline-start: 1px solid var(--list-item-highlight-border);
 }
 
 .message-quote-button:hover {

@@ -207,6 +207,39 @@ export interface BinaryValidationResult {
   error?: string
 }
 
+export interface SpeechSegment {
+  startMs: number
+  endMs: number
+  text: string
+}
+
+export interface SpeechCapabilitiesResponse {
+  available: boolean
+  configured: boolean
+  provider: string
+  supportsStt: boolean
+  supportsTts: boolean
+  supportsStreamingTts: boolean
+  baseUrl?: string
+  sttModel: string
+  ttsModel: string
+  ttsVoice: string
+  ttsFormats: string[]
+  streamingTtsFormats: string[]
+}
+
+export interface SpeechTranscriptionResponse {
+  text: string
+  language?: string
+  durationMs?: number
+  segments?: SpeechSegment[]
+}
+
+export interface SpeechSynthesisResponse {
+  audioBase64: string
+  mimeType: string
+}
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"

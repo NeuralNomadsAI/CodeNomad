@@ -42,7 +42,7 @@
 }
 
 .modal-item {
-  @apply w-full px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer border-none text-left;
+  @apply w-full px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer border-none text-start;
   color: var(--text-primary);
 }
 

@@ -4,7 +4,7 @@ import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
-import { I18nProvider } from "./lib/i18n"
+import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
@@ -31,15 +31,19 @@ async function bootstrap() {
 
     try {
       const uiConfig = await storage.loadConfigOwner("ui")
-      const theme = (uiConfig as any)?.theme ?? "system"
+      const theme = (uiConfig as any)?.theme
+      const locale = typeof (uiConfig as any)?.settings?.locale === "string" ? (uiConfig as any).settings.locale : undefined
 
-      if (theme === "system") {
-        document.documentElement.removeAttribute("data-theme")
-      } else {
+      if (theme === "light" || theme === "dark") {
         document.documentElement.setAttribute("data-theme", theme)
+      } else {
+        document.documentElement.removeAttribute("data-theme")
       }
+
+      await preloadLocaleMessages(locale)
     } catch {
       // If config fails to load, fall back to CSS defaults.
+      await preloadLocaleMessages()
     }
   }
 

@@ -1,0 +1,57 @@
+name: PR Build Validation
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.auth.outputs.allowed }}
+    env:
+      ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
+      ACTOR: ${{ github.actor }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+    steps:
+      - name: Check PR authorization
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BASE_REF" = "dev" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          normalized=",${ALLOWED_ACTORS},"
+          if [[ "$normalized" == *",${ACTOR},"* ]]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping builds for unauthorized PR targeting $BASE_REF" >&2
+          fi
+
+  build:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    uses: ./.github/workflows/build-and-upload.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      upload: false
+      upload_actions_artifacts: true
+      actions_artifacts_retention_days: 7
+      actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
+      set_versions: false

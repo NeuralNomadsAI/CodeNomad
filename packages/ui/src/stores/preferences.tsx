@@ -7,6 +7,7 @@ import {
   updateInstanceConfig as updateInstanceData,
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
+import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 
 const log = getLogger("actions")
 
@@ -27,6 +28,25 @@ export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
+export type SpeechProviderPreference = "openai-compatible"
+export type SpeechPlaybackMode = "streaming" | "buffered"
+export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
+
+export interface SpeechSettings {
+  provider: SpeechProviderPreference
+  apiKey?: string
+  hasApiKey: boolean
+  baseUrl?: string
+  sttModel: string
+  ttsModel: string
+  ttsVoice: string
+  playbackMode: SpeechPlaybackMode
+  ttsFormat: SpeechTtsFormat
+}
+
+export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "apiKey">> & {
+  apiKey?: string | null
+}
 
 export interface UiSettings {
   showThinkingBlocks: boolean
@@ -34,6 +54,7 @@ export interface UiSettings {
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
   promptSubmitOnEnter: boolean
+  showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
   toolOutputExpansion: ExpansionPreference
@@ -75,6 +96,7 @@ interface ServerConfigBucket {
   listeningMode?: ListeningMode
   environmentVariables?: Record<string, string>
   opencodeBinary?: string
+  speech?: Partial<SpeechSettings>
 }
 
 interface UiStateBucket {
@@ -107,6 +129,7 @@ const defaultUiSettings: UiSettings = {
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
   promptSubmitOnEnter: false,
+  showPromptVoiceInput: true,
   diffViewMode: "split",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
@@ -120,6 +143,16 @@ const defaultUiSettings: UiSettings = {
   notifyOnIdle: true,
 }
 
+const defaultSpeechSettings: SpeechSettings = {
+  provider: "openai-compatible",
+  hasApiKey: false,
+  sttModel: "gpt-4o-mini-transcribe",
+  ttsModel: "gpt-4o-mini-tts",
+  ttsVoice: "alloy",
+  playbackMode: "streaming",
+  ttsFormat: "mp3",
+}
+
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   return {
@@ -129,6 +162,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
@@ -154,6 +188,36 @@ function normalizeRecord(value: unknown): Record<string, string> {
     if (typeof v === "string") out[k] = v
   }
   return out
+}
+
+function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
+  const sanitized = input ?? {}
+  return {
+    provider: sanitized.provider === "openai-compatible" ? sanitized.provider : defaultSpeechSettings.provider,
+    apiKey: typeof sanitized.apiKey === "string" && sanitized.apiKey.trim() ? sanitized.apiKey.trim() : undefined,
+    hasApiKey: sanitized.hasApiKey === true || (typeof sanitized.apiKey === "string" && sanitized.apiKey.trim().length > 0),
+    baseUrl: typeof sanitized.baseUrl === "string" && sanitized.baseUrl.trim() ? sanitized.baseUrl.trim() : undefined,
+    sttModel:
+      typeof sanitized.sttModel === "string" && sanitized.sttModel.trim()
+        ? sanitized.sttModel.trim()
+        : defaultSpeechSettings.sttModel,
+    ttsModel:
+      typeof sanitized.ttsModel === "string" && sanitized.ttsModel.trim()
+        ? sanitized.ttsModel.trim()
+        : defaultSpeechSettings.ttsModel,
+    ttsVoice:
+      typeof sanitized.ttsVoice === "string" && sanitized.ttsVoice.trim()
+        ? sanitized.ttsVoice.trim()
+        : defaultSpeechSettings.ttsVoice,
+    playbackMode:
+      sanitized.playbackMode === "buffered" || sanitized.playbackMode === "streaming"
+        ? sanitized.playbackMode
+        : defaultSpeechSettings.playbackMode,
+    ttsFormat:
+      sanitized.ttsFormat === "wav" || sanitized.ttsFormat === "opus" || sanitized.ttsFormat === "aac" || sanitized.ttsFormat === "mp3"
+        ? sanitized.ttsFormat
+        : defaultSpeechSettings.ttsFormat,
+  }
 }
 
 function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
@@ -206,12 +270,15 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   }
 }
 
-function normalizeServerConfig(input?: ServerConfigBucket | null): Required<Pick<ServerConfigBucket, "listeningMode" | "environmentVariables" | "opencodeBinary">> {
+function normalizeServerConfig(
+  input?: ServerConfigBucket | null,
+): Required<Pick<ServerConfigBucket, "listeningMode" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
-  return { listeningMode, opencodeBinary, environmentVariables }
+  const speech = normalizeSpeechSettings(source.speech)
+  return { listeningMode, opencodeBinary, environmentVariables, speech }
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -340,6 +407,27 @@ function updateLastUsedBinary(path: string): void {
   // also bump lastUsed in state ui.opencodeBinaries
   const nextList = buildBinaryList(target, undefined, opencodeBinaries())
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to update binary list", error))
+}
+
+async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
+  const apiKeyPatch = updates.apiKey
+  const { apiKey: _apiKey, ...restUpdates } = updates
+  const next = normalizeSpeechSettings({
+    ...serverSettings().speech,
+    ...restUpdates,
+    ...(apiKeyPatch === null ? {} : { apiKey: apiKeyPatch }),
+  })
+  const { hasApiKey: _hasApiKey, ...persistedSpeech } = next
+  const patch = {
+    ...persistedSpeech,
+    ...(apiKeyPatch === null ? { apiKey: null } : {}),
+  }
+  try {
+    await patchConfigOwner("server", { speech: patch })
+  } catch (error) {
+    log.error("Failed to update speech settings", error)
+    throw error
+  }
 }
 
 function addOpenCodeBinary(path: string, version?: string): void {
@@ -476,6 +564,10 @@ function togglePromptSubmitOnEnter(): void {
   updateUiSettings({ promptSubmitOnEnter: !preferences().promptSubmitOnEnter })
 }
 
+function toggleShowPromptVoiceInput(): void {
+  updateUiSettings({ showPromptVoiceInput: !preferences().showPromptVoiceInput })
+}
+
 function toggleAutoCleanupBlankSessions(): void {
   const nextValue = !preferences().autoCleanupBlankSessions
   log.info("toggle auto cleanup", { value: nextValue })
@@ -521,6 +613,7 @@ interface ConfigContextValue {
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
   updateLastUsedBinary: typeof updateLastUsedBinary
+  updateSpeechSettings: typeof updateSpeechSettings
 
   // ui-owned state
   recentFolders: typeof recentFolders
@@ -544,6 +637,7 @@ interface ConfigContextValue {
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
   togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
+  toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
   setDiffViewMode: typeof setDiffViewMode
   setToolOutputExpansion: typeof setToolOutputExpansion
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
@@ -569,6 +663,7 @@ const configContextValue: ConfigContextValue = {
   addEnvironmentVariable,
   removeEnvironmentVariable,
   updateLastUsedBinary,
+  updateSpeechSettings,
   recentFolders,
   opencodeBinaries,
   uiState,
@@ -588,6 +683,7 @@ const configContextValue: ConfigContextValue = {
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
   togglePromptSubmitOnEnter,
+  toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
@@ -610,6 +706,8 @@ export const ConfigProvider: ParentComponent = (props) => {
     const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
       setServerConfigBucket(bucket as any)
       setIsLoaded(true)
+      resetSpeechCapabilities()
+      void loadSpeechCapabilities(true)
     })
     const unsubStateUi = storage.onStateOwnerChanged("ui", (bucket) => {
       setUiStateBucket(bucket as any)
@@ -648,6 +746,7 @@ export {
   addEnvironmentVariable,
   removeEnvironmentVariable,
   updateLastUsedBinary,
+  updateSpeechSettings,
   addRecentFolder,
   removeRecentFolder,
   addOpenCodeBinary,
@@ -664,6 +763,7 @@ export {
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
   togglePromptSubmitOnEnter,
+  toggleShowPromptVoiceInput,
   setDiffViewMode,
   setToolOutputExpansion,
   setDiagnosticsExpansion,

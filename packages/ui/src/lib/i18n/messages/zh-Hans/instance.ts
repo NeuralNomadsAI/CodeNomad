@@ -90,6 +90,7 @@ export const instanceMessages = {
 
   "instanceShell.rightPanel.title": "状态面板",
   "instanceShell.rightPanel.tabs.changes": "更改",
+  "instanceShell.rightPanel.tabs.gitChanges": "Git 更改",
   "instanceShell.rightPanel.tabs.files": "文件",
   "instanceShell.rightPanel.tabs.status": "状态",
   "instanceShell.rightPanel.tabs.ariaLabel": "右侧面板标签页",
@@ -111,6 +112,10 @@ export const instanceMessages = {
   "instanceShell.sessionChanges.empty": "暂无会话更改。",
   "instanceShell.sessionChanges.filesChanged": "已更改 {count} 个文件",
   "instanceShell.sessionChanges.actions.show": "显示更改",
+
+  "instanceShell.gitChanges.loading": "正在加载 Git 更改...",
+  "instanceShell.gitChanges.empty": "暂无 Git 更改。",
+  "instanceShell.gitChanges.deleted": "已删除",
 
   "instanceShell.filesShell.fileListTitle": "文件列表",
   "instanceShell.filesShell.mobileSelectorLabel": "选择文件",

@@ -20,6 +20,7 @@ const serverDevInstallCommand =
   "npm install --workspace @neuralnomads/codenomad --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
+const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
 
 const envWithRootBin = {
   ...process.env,
@@ -89,6 +90,15 @@ function ensureUiBuild() {
   if (!fs.existsSync(loadingHtml)) {
     throw new Error("[prebuild] ui loading assets missing after build")
   }
+}
+
+function syncServerUiBundle() {
+  console.log("[prebuild] syncing server public UI bundle...")
+  execSync(serverPrepareUiCommand, {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+    env: envWithRootBin,
+  })
 }
 
 function ensureServerDevDependencies() {
@@ -246,6 +256,7 @@ function copyUiLoadingAssets() {
   ensureServerDependencies()
   ensureServerBuild()
   ensureUiBuild()
+  syncServerUiBundle()
   copyServerArtifacts()
   stripNodeModuleBins()
   copyUiLoadingAssets()

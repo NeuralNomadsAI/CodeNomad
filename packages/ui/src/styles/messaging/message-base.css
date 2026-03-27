@@ -132,15 +132,22 @@
   margin-bottom: 0;
 }
 
+.message-stream-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin-top: 0;
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin: 0;
 }
 
@@ -165,7 +172,7 @@
   font-size: 9px;
   color: var(--text-muted);
   font-weight: var(--font-weight-medium);
-  margin-right: 0.35rem;
+  margin-inline-end: 0.35rem;
 }
 
 .message-step-heading {
@@ -182,7 +189,7 @@
 }
 
 .message-error-block {
-  @apply text-sm p-3 rounded border-l-[3px] my-2;
+  @apply text-sm p-3 rounded border-s-[3px] my-2;
   color: var(--status-error);
   background-color: var(--message-error-bg);
   border-color: var(--status-error);
@@ -251,6 +258,7 @@
   padding: 8px;
   background-color: var(--surface-code);
   border-radius: 4px;
+  direction: ltr;
 }
 
 .message-error-part {
@@ -328,12 +336,12 @@
 
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
 }
 
 .message-step-heading {
@@ -356,7 +364,7 @@
 }
 
 .message-step-time {
-  @apply text-[11px] text-[var(--text-muted)] font-normal ml-auto;
+  @apply text-[11px] text-[var(--text-muted)] font-normal ms-auto;
 }
 
 .message-step-meta-inline {
@@ -383,7 +391,7 @@
 .message-reasoning-card {
   --reasoning-border-color: var(--border-strong, var(--border-base));
   background-color: var(--message-assistant-bg);
-  border-left: 4px solid var(--message-assistant-border);
+  border-inline-start: 4px solid var(--message-assistant-border);
   margin-top: 0;
   margin-bottom: 0;
   padding: 0;
@@ -417,7 +425,7 @@
   padding: 0.25rem 0.6rem;
   font: inherit;
   color: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -539,4 +547,5 @@
   color: var(--text-primary);
   white-space: pre-wrap;
   margin: 0;
+  unicode-bidi: plaintext;
 }

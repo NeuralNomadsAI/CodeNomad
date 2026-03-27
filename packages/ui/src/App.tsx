@@ -11,10 +11,8 @@ import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
-import { initMarkdown } from "./lib/markdown"
 import { initGithubStars } from "./stores/github-stars"
 
-import { useTheme } from "./lib/theme"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { getLogger } from "./lib/logger"
@@ -59,7 +57,6 @@ import { openSettings } from "./stores/settings-screen"
 const log = getLogger("actions")
 
 const App: Component = () => {
-  const { isDark } = useTheme()
   const { t } = useI18n()
   const {
     preferences,
@@ -71,6 +68,7 @@ const App: Component = () => {
     toggleAutoCleanupBlankSessions,
     toggleUsageMetrics,
     togglePromptSubmitOnEnter,
+    toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,
@@ -181,10 +179,6 @@ const App: Component = () => {
     if (!isPhoneLayout() && mobileFullscreenMode()) {
       void exitMobileFullscreen()
     }
-  })
-
-  createEffect(() => {
-    void initMarkdown(isDark()).catch((error) => log.error("Failed to initialize markdown", error))
   })
 
   createEffect(() => {
@@ -360,6 +354,7 @@ const App: Component = () => {
     toggleShowTimelineTools,
     toggleUsageMetrics,
     togglePromptSubmitOnEnter,
+    toggleShowPromptVoiceInput,
     setDiffViewMode,
     setToolOutputExpansion,
     setDiagnosticsExpansion,

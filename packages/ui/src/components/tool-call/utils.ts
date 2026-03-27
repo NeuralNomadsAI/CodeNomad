@@ -1,5 +1,5 @@
 import { isRenderableDiffText } from "../../lib/diff-utils"
-import { getLanguageFromPath } from "../../lib/markdown"
+import { getLanguageFromPath } from "../../lib/text-render-utils"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
@@ -230,4 +230,38 @@ export function getDefaultToolAction(toolName: string) {
     default:
       return tGlobal("toolCall.renderer.action.working")
   }
+}
+
+export function buildToolSpeechText(options: {
+  title: string
+  state?: ToolState
+  t: (key: string, params?: Record<string, unknown>) => string
+}): string {
+  const sections: string[] = []
+
+  if (options.title.trim()) {
+    sections.push(options.title.trim())
+  }
+
+  const { input, output } = readToolStatePayload(options.state)
+  const formattedInput = formatUnknown(input)
+  const formattedOutput = formatUnknown(output)
+
+  if (formattedInput?.text?.trim()) {
+    sections.push(`${options.t("toolCall.io.input")}:\n${formattedInput.text.trim()}`)
+  }
+
+  if (formattedOutput?.text?.trim()) {
+    sections.push(`${options.t("toolCall.io.output")}:\n${formattedOutput.text.trim()}`)
+  }
+
+  if (options.state?.status === "error" && options.state.error?.trim()) {
+    sections.push(`${options.t("toolCall.error.label")} ${options.state.error.trim()}`)
+  }
+
+  if (sections.length === 1 && options.state?.status === "pending") {
+    sections.push(options.t("toolCall.pending.waitingToRun"))
+  }
+
+  return sections.join("\n\n").trim()
 }

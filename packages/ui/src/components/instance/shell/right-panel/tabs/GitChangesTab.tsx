@@ -1,13 +1,15 @@
-import { For, Show, createMemo, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
 
-import { MonacoDiffViewer } from "../../../../file-viewer/monaco-diff-viewer"
-
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
+
+const LazyMonacoDiffViewer = lazy(() =>
+  import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
+)
 
 interface GitChangesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -80,11 +82,11 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   })
 
   const emptyViewerMessage = createMemo(() => {
-    if (!hasSession()) return "Select a session to view changes."
+    if (!hasSession()) return props.t("instanceShell.gitChanges.noSessionSelected")
     const currentEntries = entries()
-    if (currentEntries === null) return "Loading git changes…"
-    if (nonDeleted().length === 0) return "No git changes yet."
-    return "No file selected."
+    if (currentEntries === null) return props.t("instanceShell.gitChanges.loading")
+    if (nonDeleted().length === 0) return props.t("instanceShell.gitChanges.empty")
+    return props.t("instanceShell.filesShell.viewerEmpty")
   })
 
   const renderContent = (): JSX.Element => {
@@ -122,7 +124,14 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     }
                   >
                     {(file) => (
-                        <MonacoDiffViewer
+                      <Suspense
+                        fallback={
+                          <div class="file-viewer-empty">
+                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                          </div>
+                        }
+                      >
+                        <LazyMonacoDiffViewer
                           scopeKey={props.scopeKey()}
                           path={String(file().path || "")}
                           before={String((file() as any).before || "")}
@@ -131,7 +140,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
                         />
-                      )}
+                      </Suspense>
+                    )}
                   </Show>
                 }
               >
@@ -144,7 +154,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
             }
           >
             <div class="file-viewer-empty">
-              <span class="file-viewer-empty-text">Loading…</span>
+              <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
             </div>
           </Show>
         </div>
@@ -169,7 +179,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">deleted</span>
+                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
@@ -200,7 +210,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 </div>
                 <div class="file-list-item-stats">
                   <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">deleted</span>
+                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
@@ -220,8 +230,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
           <SplitFilePanel
             header={
               <>
-                <span class="files-tab-selected-path" title={selected?.path || "Git Changes"}>
-                  <span class="file-path-text">{selected?.path || "Git Changes"}</span>
+                <span class="files-tab-selected-path" title={selected?.path || props.t("instanceShell.rightPanel.tabs.gitChanges")}>
+                  <span class="file-path-text">{selected?.path || props.t("instanceShell.rightPanel.tabs.gitChanges")}</span>
                 </span>
 
             <div class="files-tab-stats" style={{ flex: "0 0 auto" }}>
@@ -264,7 +274,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         onResizeMouseDown={props.onResizeMouseDown}
         onResizeTouchStart={props.onResizeTouchStart}
         isPhoneLayout={props.isPhoneLayout()}
-        overlayAriaLabel="Git Changes"
+        overlayAriaLabel={props.t("instanceShell.rightPanel.tabs.gitChanges")}
       />
     )
   }
