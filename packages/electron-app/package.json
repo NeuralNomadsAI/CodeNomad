@@ -20,6 +20,8 @@
     "dev:debug": "cross-env CLI_LOG_LEVEL=debug electron-vite dev",
     "dev:trace": "cross-env CLI_LOG_LEVEL=trace electron-vite dev",
     "dev:electron": "NODE_ENV=development ELECTRON_ENABLE_LOGGING=1 NODE_OPTIONS=\"--import tsx\" electron electron/main/main.ts",
+    "prepare:resources": "node scripts/prepare-resources.js",
+    "prebuild": "npm run prepare:resources",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "electron-vite preview",
@@ -33,8 +35,11 @@
     "build:linux-arm64": "node scripts/build.js linux-arm64",
     "build:linux-rpm": "node scripts/build.js linux-rpm",
     "build:all": "node scripts/build.js all",
+    "prepackage:mac": "npm run prepare:resources",
     "package:mac": "electron-builder --mac",
+    "prepackage:win": "npm run prepare:resources",
     "package:win": "electron-builder --win",
+    "prepackage:linux": "npm run prepare:resources",
     "package:linux": "electron-builder --linux"
   },
   "dependencies": {
@@ -82,6 +87,12 @@
       }
     ],
     "mac": {
+      "entitlements": "electron/resources/entitlements.mac.plist",
+      "entitlementsInherit": "electron/resources/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "CodeNomad needs microphone access for speech-to-text prompt input.",
+        "NSLocalNetworkUsageDescription": "CodeNomad needs local network access to connect to locally hosted AI and speech services."
+      },
       "category": "public.app-category.developer-tools",
       "target": [
         {

@@ -1,14 +1,17 @@
 import { spawn, spawnSync, type ChildProcess } from "child_process"
-import { app } from "electron"
+import { app, utilityProcess, type UtilityProcess } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
 import { existsSync, readFileSync } from "fs"
 import os from "os"
 import path from "path"
+import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
+const mainFilename = fileURLToPath(import.meta.url)
+const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
 
@@ -37,6 +40,9 @@ interface CliEntryResolution {
   runner: "node" | "tsx"
   runnerPath?: string
 }
+
+type ManagedChild = ChildProcess | UtilityProcess
+type ChildLaunchMode = "spawn" | "utility"
 
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 
@@ -117,7 +123,8 @@ export declare interface CliProcessManager {
 }
 
 export class CliProcessManager extends EventEmitter {
-  private child?: ChildProcess
+  private child?: ManagedChild
+  private childLaunchMode: ChildLaunchMode = "spawn"
   private status: CliStatus = { state: "stopped" }
   private stdoutBuffer = ""
   private stderrBuffer = ""
@@ -135,33 +142,63 @@ export class CliProcessManager extends EventEmitter {
     this.requestedStop = false
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
-    const cliEntry = this.resolveCliEntry(options)
     const listeningMode = this.resolveListeningMode()
     const host = resolveHostForMode(listeningMode)
     const args = this.buildCliArgs(options, host)
 
-    console.info(
-      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
-    )
+    let child: ManagedChild
 
-    const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-    env.ELECTRON_RUN_AS_NODE = "1"
+    if (this.shouldUsePackagedShellSupervisor(options)) {
+      const runtimePath = this.resolveShellNodeCommand()
+      const entryPath = this.resolveBundledProdEntry()
+      const supervisorPath = this.resolveCliSupervisorPath()
+      const shellEnv = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+      const shellCommand = buildUserShellCommand(`exec ${this.buildExecutableCommand(runtimePath, [entryPath, ...args])}`)
+      const supervisorPayload = JSON.stringify({
+        command: shellCommand.command,
+        args: shellCommand.args,
+        cwd: process.cwd(),
+      })
 
-    const spawnDetails = supportsUserShell()
-      ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
-      : this.buildDirectSpawn(cliEntry, args)
+      console.info(
+        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) via utility supervisor using node at ${runtimePath} (host=${host})`,
+      )
+      console.info(`[cli] utility supervisor: ${supervisorPath}`)
+      console.info(`[cli] shell command: ${shellCommand.command} ${shellCommand.args.join(" ")}`)
 
-    const detached = process.platform !== "win32"
-    const child = spawn(spawnDetails.command, spawnDetails.args, {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      env,
-      shell: false,
-      detached,
-    })
+      child = utilityProcess.fork(supervisorPath, [supervisorPayload], {
+        env: shellEnv,
+        stdio: "pipe",
+        serviceName: "CodeNomad CLI Supervisor",
+      })
+      this.childLaunchMode = "utility"
+    } else {
+      const cliEntry = this.resolveCliEntry(options)
+      console.info(
+        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
+      )
 
-    console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
-    if (!child.pid) {
+      const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+      env.ELECTRON_RUN_AS_NODE = "1"
+
+      const spawnDetails = supportsUserShell()
+        ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
+        : this.buildDirectSpawn(cliEntry, args)
+
+      const detached = process.platform !== "win32"
+      child = spawn(spawnDetails.command, spawnDetails.args, {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env,
+        shell: false,
+        detached,
+      })
+
+      console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
+      this.childLaunchMode = "spawn"
+    }
+
+    if (this.childLaunchMode === "spawn" && !child.pid) {
       console.error("[cli] spawn failed: no pid")
     }
 
@@ -176,23 +213,48 @@ export class CliProcessManager extends EventEmitter {
       this.handleStream(data.toString(), "stderr")
     })
 
-    child.on("error", (error) => {
-      console.error("[cli] failed to start CLI:", error)
-      this.updateStatus({ state: "error", error: error.message })
-      this.emit("error", error)
-    })
+    if (this.childLaunchMode === "utility") {
+      const utilityChild = child as UtilityProcess
 
-    child.on("exit", (code, signal) => {
-      const failed = this.status.state !== "ready"
-      const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
-      console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
-      this.updateStatus({ state: failed ? "error" : "stopped", error })
-      if (failed && error) {
-        this.emit("error", new Error(error))
-      }
-      this.emit("exit", this.status)
-      this.child = undefined
-    })
+      utilityChild.on("error", (error) => {
+        const message = this.describeUtilityProcessError(error)
+        console.error("[cli] utility supervisor failed:", error)
+        this.updateStatus({ state: "error", error: message })
+        this.emit("error", new Error(message))
+      })
+
+      utilityChild.on("exit", (code) => {
+        const failed = this.status.state !== "ready"
+        const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}` : undefined
+        console.info(`[cli] exit (code=${code ?? ""})${error ? ` error=${error}` : ""}`)
+        this.updateStatus({ state: failed ? "error" : "stopped", error })
+        if (failed && error) {
+          this.emit("error", new Error(error))
+        }
+        this.emit("exit", this.status)
+        this.child = undefined
+      })
+    } else {
+      const spawnedChild = child as ChildProcess
+
+      spawnedChild.on("error", (error) => {
+        console.error("[cli] failed to start CLI:", error)
+        this.updateStatus({ state: "error", error: error.message })
+        this.emit("error", error)
+      })
+
+      spawnedChild.on("exit", (code, signal) => {
+        const failed = this.status.state !== "ready"
+        const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
+        console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
+        this.updateStatus({ state: failed ? "error" : "stopped", error })
+        if (failed && error) {
+          this.emit("error", new Error(error))
+        }
+        this.emit("exit", this.status)
+        this.child = undefined
+      })
+    }
 
     return new Promise<CliStatus>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -219,16 +281,22 @@ export class CliProcessManager extends EventEmitter {
       return
     }
 
+    if (this.childLaunchMode === "utility") {
+      return this.stopUtilityChild(child as UtilityProcess)
+    }
+
+    const spawnedChild = child as ChildProcess
+
     this.requestedStop = true
 
-    const pid = child.pid
+    const pid = spawnedChild.pid
     if (!pid) {
       this.child = undefined
       this.updateStatus({ state: "stopped" })
       return
     }
 
-    const isAlreadyExited = () => child.exitCode !== null || child.signalCode !== null
+    const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
 
     const tryKillPosixGroup = (signal: NodeJS.Signals) => {
       try {
@@ -304,7 +372,7 @@ export class CliProcessManager extends EventEmitter {
         sendStopSignal("SIGKILL")
       }, 30000)
 
-      child.on("exit", () => {
+      spawnedChild.on("exit", () => {
         clearTimeout(killTimeout)
         this.child = undefined
         console.info("[cli] CLI process exited")
@@ -324,6 +392,46 @@ export class CliProcessManager extends EventEmitter {
     })
   }
 
+  private stopUtilityChild(child: UtilityProcess): Promise<void> {
+    this.requestedStop = true
+
+    const pid = child.pid
+    if (!pid) {
+      this.child = undefined
+      this.updateStatus({ state: "stopped" })
+      return Promise.resolve()
+    }
+
+    return new Promise((resolve) => {
+      const killTimeout = setTimeout(() => {
+        console.warn(`[cli] stop timed out after 30000ms; sending SIGKILL (pid=${pid})`)
+        try {
+          process.kill(pid, "SIGKILL")
+        } catch {
+          // no-op
+        }
+      }, 30000)
+
+      child.once("exit", () => {
+        clearTimeout(killTimeout)
+        this.child = undefined
+        console.info("[cli] CLI process exited")
+        this.updateStatus({ state: "stopped" })
+        resolve()
+      })
+
+      if (child.pid === undefined) {
+        clearTimeout(killTimeout)
+        this.child = undefined
+        this.updateStatus({ state: "stopped" })
+        resolve()
+        return
+      }
+
+      child.kill()
+    })
+  }
+
   getStatus(): CliStatus {
     return { ...this.status }
   }
@@ -335,14 +443,22 @@ export class CliProcessManager extends EventEmitter {
   private handleTimeout() {
     if (this.child) {
       const pid = this.child.pid
-      if (pid && process.platform !== "win32") {
+      if (this.childLaunchMode === "utility") {
+        if (pid) {
+          try {
+            process.kill(pid, "SIGKILL")
+          } catch {
+            // no-op
+          }
+        }
+      } else if (pid && process.platform !== "win32") {
         try {
           process.kill(-pid, "SIGKILL")
         } catch {
-          this.child.kill("SIGKILL")
+          ;(this.child as ChildProcess).kill("SIGKILL")
         }
       } else {
-        this.child.kill("SIGKILL")
+        ;(this.child as ChildProcess).kill("SIGKILL")
       }
       this.child = undefined
     }
@@ -449,6 +565,10 @@ export class CliProcessManager extends EventEmitter {
     return parts.join(" ")
   }
 
+  private buildExecutableCommand(command: string, args: string[]): string {
+    return [JSON.stringify(command), ...args.map((arg) => JSON.stringify(arg))].join(" ")
+  }
+
   private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
     if (cliEntry.runner === "tsx") {
       return { command: process.execPath, args: [cliEntry.runnerPath!, cliEntry.entry, ...args] }
@@ -518,5 +638,59 @@ export class CliProcessManager extends EventEmitter {
       // fall through to error below
     }
     throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
+  }
+
+  private shouldUsePackagedShellSupervisor(options: StartOptions): boolean {
+    return !options.dev && app.isPackaged && process.platform === "darwin"
+  }
+
+  private resolveCliSupervisorPath(): string {
+    const candidates = [
+      path.join(process.resourcesPath, "cli-supervisor.cjs"),
+      path.join(mainDirname, "../resources/cli-supervisor.cjs"),
+    ]
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    throw new Error("Unable to locate CodeNomad CLI supervisor script.")
+  }
+
+  private resolveShellNodeCommand(): string {
+    const configured = process.env.NODE_BINARY?.trim()
+    return configured && configured.length > 0 ? configured : "node"
+  }
+
+  private resolveBundledProdEntry(): string {
+    const candidates = [
+      path.join(process.resourcesPath, "server", "dist", "bin.js"),
+      path.join(mainDirname, "../resources/server/dist/bin.js"),
+    ]
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    throw new Error("Unable to locate bundled CodeNomad CLI build in app resources.")
+  }
+
+  private describeUtilityProcessError(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message
+    }
+
+    if (error && typeof error === "object") {
+      const typed = error as { type?: unknown; location?: unknown }
+      if (typeof typed.type === "string") {
+        return typeof typed.location === "string" ? `${typed.type} at ${typed.location}` : typed.type
+      }
+    }
+
+    return String(error)
   }
 }

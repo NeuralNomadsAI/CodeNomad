@@ -111,6 +111,12 @@ async function build(platform) {
       env: { NODE_PATH: workspaceNodeModulesPath },
     })
 
+    console.log("\n📦 Step 1.5/3: Preparing packaged server resources...\n")
+    await run(process.execPath, [join(appDir, "scripts", "prepare-resources.js")], {
+      cwd: workspaceRoot,
+      env: { NODE_PATH: workspaceNodeModulesPath },
+    })
+
     console.log("\n📦 Step 2/3: Building Electron app...\n")
     await run(npmCmd, ["run", "build"])
 

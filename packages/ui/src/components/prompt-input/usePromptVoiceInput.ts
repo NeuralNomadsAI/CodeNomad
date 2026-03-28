@@ -3,6 +3,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { isElectronHost } from "../../lib/runtime-env"
 
 interface UsePromptVoiceInputOptions {
   prompt: Accessor<string>
@@ -88,6 +89,14 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     try {
       recordedChunks = []
       shouldTranscribe = true
+
+      if (isElectronHost()) {
+        const granted = await (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.()
+        if (granted && !granted.granted) {
+          throw new Error(t("promptInput.voiceInput.error.permissionDenied"))
+        }
+      }
+
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
       mediaRecorder = createRecorder(mediaStream)
 

@@ -158,6 +158,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.transcribing.title": "音声を文字起こし中",
   "promptInput.voiceInput.error.title": "音声入力に失敗しました",
   "promptInput.voiceInput.error.permission": "音声入力を録音するにはマイクへのアクセスが必要です。",
+  "promptInput.voiceInput.error.permissionDenied": "macOS によりマイクへのアクセスが拒否されました。",
   "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
   "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
 } as const

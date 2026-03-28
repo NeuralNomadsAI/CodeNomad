@@ -158,6 +158,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.transcribing.title": "Transcribiendo audio",
   "promptInput.voiceInput.error.title": "La entrada de voz falló",
   "promptInput.voiceInput.error.permission": "Se requiere acceso al micrófono para grabar la entrada de voz.",
+  "promptInput.voiceInput.error.permissionDenied": "macOS denegó el acceso al micrófono.",
   "promptInput.voiceInput.error.unsupported": "La entrada de voz no es compatible con este navegador.",
   "promptInput.voiceInput.error.transcribe": "No se pudo transcribir el audio grabado.",
 } as const
