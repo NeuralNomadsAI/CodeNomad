@@ -3,3 +3,8 @@ dist/
 .vite/
 src/renderer/public/logo.png
 src/renderer/public/monaco/
+playwright/.cache/
+test-results/
+playwright-report/
+*.log
+*.png

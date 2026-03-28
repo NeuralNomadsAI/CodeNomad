@@ -1,5 +1,5 @@
 import { Component, JSX, For } from "solid-js"
-import useMediaQuery from "@suid/material/useMediaQuery"
+import useMediaQuery from "@suid/material/useMediaQuery.js"
 import { isMac } from "../lib/keyboard-utils"
 
 interface KbdProps {

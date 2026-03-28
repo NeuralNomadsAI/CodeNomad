@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { Show } from "solid-js"
 import App from "./App"
 import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider } from "./stores/preferences"

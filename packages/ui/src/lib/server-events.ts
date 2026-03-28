@@ -29,9 +29,11 @@ class ServerEvents {
     }
     logSse("Connecting to backend events stream")
     this.source = serverApi.connectEvents((event) => this.dispatch(event), () => this.scheduleReconnect())
-    this.source.onopen = () => {
-      logSse("Events stream connected")
-      this.retryDelay = RETRY_BASE_DELAY
+    if (this.source) {
+      this.source.onopen = () => {
+        logSse("Events stream connected")
+        this.retryDelay = RETRY_BASE_DELAY
+      }
     }
   }
 

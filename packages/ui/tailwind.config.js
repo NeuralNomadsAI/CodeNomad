@@ -11,7 +11,32 @@ export default {
   darkMode: ["class", '[data-theme="dark"]'],
   theme: {
     extend: {
-      colors: {},
+      colors: {
+        accent: {
+          primary: 'var(--accent-primary)',
+          hover: 'var(--accent-hover)',
+        },
+      },
+      borderColor: {
+        base: 'var(--border-base)',
+        secondary: 'var(--border-secondary)',
+        muted: 'var(--border-muted)',
+        strong: 'var(--border-strong)',
+      },
+      backgroundColor: {
+        surface: {
+          base: 'var(--surface-base)',
+          primary: 'var(--surface-primary)',
+          secondary: 'var(--surface-secondary)',
+          muted: 'var(--surface-muted)',
+          hover: 'var(--surface-hover)',
+        },
+      },
+      textColor: {
+        primary: 'var(--text-primary)',
+        secondary: 'var(--text-secondary)',
+        muted: 'var(--text-muted)',
+      },
       spacing: {},
       fontSize: {
         'xs': ['var(--font-size-xs)', { lineHeight: 'var(--line-height-normal)' }],

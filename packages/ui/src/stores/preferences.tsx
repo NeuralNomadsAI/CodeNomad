@@ -599,7 +599,7 @@ void ensureLoaded().catch((error: unknown) => {
   log.error("Failed to initialize settings", error)
 })
 
-interface ConfigContextValue {
+export interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
   updatePreferences: typeof updatePreferences
@@ -649,7 +649,7 @@ interface ConfigContextValue {
   getAgentModelPreference: typeof getAgentModelPreference
 }
 
-const ConfigContext = createContext<ConfigContextValue>()
+export const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,

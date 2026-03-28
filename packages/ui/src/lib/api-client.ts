@@ -25,11 +25,13 @@ import type {
 } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
 
-const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
+const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? window.location?.origin : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
-const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
+
+// Safety for environments where import.meta.env might be undefined (like Node.js during test scanning)
+const env = (import.meta as any).env || {}
+const API_BASE = env.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
+const EVENTS_URL = buildEventsUrl(API_BASE, env.VITE_CODENOMAD_EVENTS_URL ?? DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
 
@@ -363,6 +365,10 @@ export const serverApi = {
     )
   },
   connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
+    if (typeof EventSource === "undefined") {
+      sseLogger.warn("EventSource is not defined, returning dummy source")
+      return { close: () => {}, onmessage: null, onerror: null, onopen: null } as any
+    }
     sseLogger.info(`Connecting to ${EVENTS_URL}`)
     const source = new EventSource(EVENTS_URL, { withCredentials: true } as any)
     source.onmessage = (event) => {
