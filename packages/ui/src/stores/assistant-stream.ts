@@ -1,10 +1,26 @@
 import { createSignal } from "solid-js"
 import type { AssistantStreamChunkEvent } from "../lib/event-transport-contract"
 
-const [streamTexts, setStreamTexts] = createSignal(new Map<string, string>())
+interface StreamEntry {
+  text: string
+  get: () => string
+  set: (value: string) => void
+}
+
+const streamEntries = new Map<string, StreamEntry>()
 
 function makeKey(instanceId: string, sessionId: string, messageId: string, partId: string) {
   return `${instanceId}:${sessionId}:${messageId}:${partId}`
+}
+
+function getOrCreateEntry(key: string): StreamEntry {
+  let entry = streamEntries.get(key)
+  if (!entry) {
+    const [get, set] = createSignal("")
+    entry = { text: "", get, set: (v: string) => set(v) }
+    streamEntries.set(key, entry)
+  }
+  return entry
 }
 
 export function appendAssistantStreamChunk(instanceId: string, event: AssistantStreamChunkEvent) {
@@ -12,13 +28,12 @@ export function appendAssistantStreamChunk(instanceId: string, event: AssistantS
   if (!props?.sessionID || !props?.messageID || !props.partID || typeof props.delta !== "string") {
     return
   }
+  if (props.delta.length === 0) return
 
   const key = makeKey(instanceId, props.sessionID, props.messageID, props.partID)
-  setStreamTexts((prev) => {
-    const next = new Map(prev)
-    next.set(key, `${next.get(key) ?? ""}${props.delta}`)
-    return next
-  })
+  const entry = getOrCreateEntry(key)
+  entry.text += props.delta
+  entry.set(entry.text)
 }
 
 export function getAssistantStreamPreviewText(
@@ -28,7 +43,11 @@ export function getAssistantStreamPreviewText(
   partId: string | undefined,
 ) {
   if (!sessionId || !messageId || !partId) return undefined
-  return streamTexts().get(makeKey(instanceId, sessionId, messageId, partId))
+  const key = makeKey(instanceId, sessionId, messageId, partId)
+  const entry = streamEntries.get(key)
+  if (!entry) return undefined
+  // Subscribe to this specific key's signal
+  return entry.get() || undefined
 }
 
 export function clearAssistantStreamMessage(
@@ -38,17 +57,12 @@ export function clearAssistantStreamMessage(
 ) {
   if (!sessionId || !messageId) return
   const prefix = `${instanceId}:${sessionId}:${messageId}:`
-  setStreamTexts((prev) => {
-    let changed = false
-    const next = new Map(prev)
-    for (const key of next.keys()) {
-      if (key.startsWith(prefix)) {
-        next.delete(key)
-        changed = true
-      }
+  for (const [key, entry] of streamEntries) {
+    if (key.startsWith(prefix)) {
+      entry.set("")
+      streamEntries.delete(key)
     }
-    return changed ? next : prev
-  })
+  }
 }
 
 export function clearAssistantStreamPart(
@@ -59,48 +73,36 @@ export function clearAssistantStreamPart(
 ) {
   if (!sessionId || !messageId || !partId) return
   const key = makeKey(instanceId, sessionId, messageId, partId)
-  setStreamTexts((prev) => {
-    if (!prev.has(key)) return prev
-    const next = new Map(prev)
-    next.delete(key)
-    return next
-  })
+  const entry = streamEntries.get(key)
+  if (!entry) return
+  entry.set("")
+  streamEntries.delete(key)
 }
 
 export function clearAssistantStreamAll() {
-  setStreamTexts((prev) => {
-    if (prev.size === 0) return prev
-    return new Map()
-  })
+  for (const entry of streamEntries.values()) {
+    entry.set("")
+  }
+  streamEntries.clear()
 }
 
 export function clearAssistantStreamInstance(instanceId: string) {
   const prefix = `${instanceId}:`
-  setStreamTexts((prev) => {
-    let changed = false
-    const next = new Map(prev)
-    for (const key of next.keys()) {
-      if (key.startsWith(prefix)) {
-        next.delete(key)
-        changed = true
-      }
+  for (const [key, entry] of streamEntries) {
+    if (key.startsWith(prefix)) {
+      entry.set("")
+      streamEntries.delete(key)
     }
-    return changed ? next : prev
-  })
+  }
 }
 
 export function clearAssistantStreamSession(instanceId: string, sessionId: string | undefined) {
   if (!sessionId) return
   const prefix = `${instanceId}:${sessionId}:`
-  setStreamTexts((prev) => {
-    let changed = false
-    const next = new Map(prev)
-    for (const key of next.keys()) {
-      if (key.startsWith(prefix)) {
-        next.delete(key)
-        changed = true
-      }
+  for (const [key, entry] of streamEntries) {
+    if (key.startsWith(prefix)) {
+      entry.set("")
+      streamEntries.delete(key)
     }
-    return changed ? next : prev
-  })
+  }
 }

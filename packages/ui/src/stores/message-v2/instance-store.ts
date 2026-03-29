@@ -254,7 +254,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function isPendingSyntheticRecord(record: MessageRecord | undefined) {
-    return Boolean(record?.isEphemeral && record?.status === "sending")
+    return Boolean(record?.isEphemeral && (record?.status === "sending" || record?.status === "sent"))
   }
 
   function removePendingSyntheticMessageId(messageId: string | undefined) {
@@ -701,35 +701,38 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     let nextRecord: MessageRecord | undefined
 
-    setState("messages", input.id, (previous) => {
-      const revision = previous ? previous.revision + (shouldBump ? 1 : 0) : 0
-      const record: MessageRecord = {
-        id: input.id,
-        sessionId: input.sessionId,
-        role: input.role,
-        status: input.status,
-        createdAt: input.createdAt ?? previous?.createdAt ?? now,
-        updatedAt: input.updatedAt ?? now,
-        isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
-        revision,
-        partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
-        parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
+    batch(() => {
+      setState("messages", input.id, (previous) => {
+        const revision = previous ? previous.revision + (shouldBump ? 1 : 0) : 0
+        const record: MessageRecord = {
+          id: input.id,
+          sessionId: input.sessionId,
+          role: input.role,
+          status: input.status,
+          createdAt: input.createdAt ?? previous?.createdAt ?? now,
+          updatedAt: input.updatedAt ?? now,
+          isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
+          revision,
+          partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
+          parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
+        }
+        nextRecord = record
+        return record
+      })
+
+      if (nextRecord) {
+        syncPendingSyntheticRecord(nextRecord, previousRecord?.id)
+        if (normalizedParts) {
+          clearToolCallPartIndexForMessage(previousRecord)
+          indexToolCallPartsForMessage(nextRecord)
+        }
+        maybeUpdateLatestTodoFromRecord(nextRecord)
       }
-      nextRecord = record
-      return record
+
+      insertMessageIntoSession(input.sessionId, input.id)
+      flushPendingParts(input.id)
     })
 
-    if (nextRecord) {
-      syncPendingSyntheticRecord(nextRecord, previousRecord?.id)
-      if (normalizedParts) {
-        clearToolCallPartIndexForMessage(previousRecord)
-        indexToolCallPartsForMessage(nextRecord)
-      }
-      maybeUpdateLatestTodoFromRecord(nextRecord)
-    }
-
-    insertMessageIntoSession(input.sessionId, input.id)
-    flushPendingParts(input.id)
     recomputeLastAssistantMessageId(input.sessionId)
     scheduleSessionRevisionBump(input.sessionId)
   }
@@ -810,8 +813,66 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       "messages",
       input.messageId,
       produce((draft: MessageRecord) => {
+        // When replacing a synthetic (optimistic) message ID with the server ID
+        // (clearParts: false), synthetic parts are kept to avoid a visible flash.
+        // When the first real server part arrives for the same type, evict the
+        // synthetic duplicate so the user's text doesn't appear twice.
         if (!draft.partIds.includes(partId)) {
-          draft.partIds = [...draft.partIds, partId]
+          const syntheticIds = draft.partIds.filter((pid) => {
+            const entry = draft.parts[pid]
+            if (!entry) return false
+            const data = entry.data as any
+            return data?.synthetic === true && data?.type === cloned.type
+          })
+          for (const sid of syntheticIds) {
+            draft.partIds = draft.partIds.filter((pid) => pid !== sid)
+            delete draft.parts[sid]
+          }
+
+          // When a reasoning/thinking part arrives, insert it before any
+          // existing text-placeholder parts.  The Rust active-text assembler
+          // can emit `assistant.stream.chunk` events (which create a text
+          // part placeholder) before the reasoning snapshot arrives via
+          // `message.part.updated`.  Without this, text appears before
+          // reasoning in the partIds array, breaking display order.
+          //
+          // When multiple reasoning parts arrive, insert after the last
+          // existing reasoning part (rather than before the first text part)
+          // to preserve chronological order among reasoning parts.
+          const isReasoningLike = cloned.type === "reasoning"
+          if (isReasoningLike && draft.partIds.length > 0) {
+            // Find the last existing reasoning part
+            let lastReasoningIdx = -1
+            for (let i = draft.partIds.length - 1; i >= 0; i--) {
+              const data = draft.parts[draft.partIds[i]]?.data as any
+              if (data?.type === "reasoning") {
+                lastReasoningIdx = i
+                break
+              }
+            }
+
+            if (lastReasoningIdx !== -1) {
+              // Insert after the last reasoning part
+              const next = [...draft.partIds]
+              next.splice(lastReasoningIdx + 1, 0, partId)
+              draft.partIds = next
+            } else {
+              // No reasoning yet — insert before first text part
+              const insertIdx = draft.partIds.findIndex((pid) => {
+                const data = draft.parts[pid]?.data as any
+                return data?.type === "text"
+              })
+              if (insertIdx !== -1) {
+                const next = [...draft.partIds]
+                next.splice(insertIdx, 0, partId)
+                draft.partIds = next
+              } else {
+                draft.partIds = [...draft.partIds, partId]
+              }
+            }
+          } else {
+            draft.partIds = [...draft.partIds, partId]
+          }
         }
         const existing = draft.parts[partId]
         const nextRevision = existing ? existing.revision + 1 : (cloned as any).version ?? 0

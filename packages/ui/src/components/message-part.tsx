@@ -3,7 +3,6 @@ import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
-
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -98,6 +97,7 @@ export default function MessagePart(props: MessagePartProps) {
 
   const createTextPartForMarkdown = (): TextPart => {
     const part = props.part
+
     if (part.type === "text" && typeof part.text === "string") {
       // Pass through the original part so `renderCache` updates persist.
       return part as unknown as TextPart

@@ -9,6 +9,7 @@
   /* Isolate stacking context so sidebar z-indices don't compete with
      Portals (Command Palette, modals) that live at the body level. */
   isolation: isolate;
+  contain: layout style;
 }
 
 .message-layout--with-timeline {

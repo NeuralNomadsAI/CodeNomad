@@ -109,6 +109,7 @@ class ServerEvents {
     }
 
     logSse("event batch", { size: events.length })
+
     solidBatch(() => {
       for (const event of events) {
         this.dispatch(event)

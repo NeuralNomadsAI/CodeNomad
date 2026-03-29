@@ -70,6 +70,7 @@ export function seedSessionMessagesV2(
 interface MessageInfoOptions {
   status?: MessageStatus
   bumpRevision?: boolean
+  isEphemeral?: boolean
 }
 
 export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null | undefined, options?: MessageInfoOptions): void {
@@ -89,6 +90,7 @@ export function upsertMessageInfoV2(instanceId: string, info: MessageInfo | null
     createdAt,
     updatedAt: endAt ?? createdAt,
     bumpRevision: Boolean(options?.bumpRevision),
+    ...(typeof options?.isEphemeral === "boolean" ? { isEphemeral: options.isEphemeral } : {}),
   })
   store.setMessageInfo(info.id, info)
 }
