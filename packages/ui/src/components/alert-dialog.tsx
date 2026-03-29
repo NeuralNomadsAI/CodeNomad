@@ -116,7 +116,7 @@ const AlertDialog: Component = () => {
           >
             <Dialog.Portal>
               <Dialog.Overlay class="modal-overlay z-[60]" />
-              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[70] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
+              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
                    <div class="flex items-start gap-3">
                      <div
                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-base font-semibold"
