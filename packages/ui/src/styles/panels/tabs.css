@@ -154,6 +154,31 @@
   ring-offset-color: var(--surface-base);
 }
 
+.tab-pill {
+  @apply inline-flex items-center gap-1 px-3 py-2 rounded-t-md max-w-[220px] text-sm;
+  background-color: var(--tab-inactive-bg);
+  color: var(--tab-inactive-text);
+  border-bottom: 2px solid var(--tab-active-bg);
+}
+
+.tab-pill-active {
+  background-color: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  border-bottom-color: var(--accent-primary);
+}
+
+.tab-pill-button {
+  @apply truncate;
+}
+
+.tab-pill-close {
+  @apply inline-flex items-center justify-center rounded w-5 h-5 text-xs;
+}
+
+.tab-pill-close:hover {
+  background-color: var(--new-tab-hover-bg);
+}
+
 /* Session tabs */
 .session-tab-base {
   @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md max-w-[150px] transition-colors text-sm;

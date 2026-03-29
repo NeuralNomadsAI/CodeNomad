@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "מתחבר...",
   "folderSelection.servers.dialog.errorRequired": "שם השרת והכתובת הם שדות חובה.",
   "folderSelection.servers.dialog.errorConnect": "לא ניתן היה להתחבר לשרת המרוחק.",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

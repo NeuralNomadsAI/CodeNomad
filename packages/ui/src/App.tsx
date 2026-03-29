@@ -10,7 +10,10 @@ import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
+import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
+import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
+import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
 
 import { useCommands } from "./lib/hooks/use-commands"
@@ -53,6 +56,15 @@ import {
 
 import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
+import {
+  activeSidecarTab,
+  activeSidecarToken,
+  closeSidecarTab,
+  ensureSidecarsLoaded,
+  openSidecarTab,
+  setActiveSidecarToken,
+  sidecarTabs,
+} from "./stores/sidecars"
 
 const log = getLogger("actions")
 
@@ -77,6 +89,7 @@ const App: Component = () => {
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
+  const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
 
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
@@ -270,8 +283,26 @@ const App: Component = () => {
   }
 
   function handleNewInstanceRequest() {
-    if (hasInstances()) {
-      setShowFolderSelection(true)
+    setShowFolderSelection(true)
+  }
+
+  function handleOpenSidecarPicker() {
+    setSidecarPickerOpen(true)
+    void ensureSidecarsLoaded()
+  }
+
+  async function handleOpenSidecar(sidecarId: string) {
+    try {
+      await openSidecarTab(sidecarId)
+      setShowFolderSelection(false)
+      setSidecarPickerOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      showAlertDialog(message, {
+        variant: "error",
+        title: t("sidecars.open.errorTitle"),
+      })
+      log.error("Failed to open SideCar", error)
     }
   }
 
@@ -470,15 +501,24 @@ const App: Component = () => {
           </div>
         </Show>
         <Show
-          when={!hasInstances()}
+          when={!hasInstances() && sidecarTabs().length === 0}
           fallback={
             <>
               <Show when={!isPhoneLayout() || !mobileFullscreenMode()}>
                 <InstanceTabs
                   instances={instances()}
                   activeInstanceId={activeInstanceId()}
-                  onSelect={setActiveInstanceId}
+                  sidecarTabs={sidecarTabs()}
+                  activeSidecarToken={activeSidecarToken()}
+                  onSelect={(instanceId) => {
+                    setActiveSidecarToken(null)
+                    setActiveInstanceId(instanceId)
+                  }}
+                  onSelectSidecar={(token) => {
+                    setActiveSidecarToken(token)
+                  }}
                   onClose={handleCloseInstance}
+                  onCloseSidecar={closeSidecarTab}
                   onNew={handleNewInstanceRequest}
                 />
               </Show>
@@ -486,7 +526,7 @@ const App: Component = () => {
               <For each={Array.from(instances().values())}>
                 {(instance) => {
                   const isActiveInstance = () => activeInstanceId() === instance.id
-                  const isVisible = () => isActiveInstance() && !showFolderSelection()
+                  const isVisible = () => isActiveInstance() && !activeSidecarToken() && !showFolderSelection()
                     return (
                        <div
                          class="flex-1 min-h-0 overflow-hidden"
@@ -519,12 +559,21 @@ const App: Component = () => {
                 }}
               </For>
 
+              <Show when={activeSidecarTab() && !showFolderSelection() ? activeSidecarTab() : null}>
+                {(tab) => (
+                  <div class="flex-1 min-h-0 overflow-hidden" style={{ display: activeSidecarToken() && !showFolderSelection() ? "flex" : "none" }}>
+                    <SideCarView tab={tab()} />
+                  </div>
+                )}
+              </Show>
+
             </>
           }
         >
           <FolderSelectionView
             onSelectFolder={handleSelectFolder}
             isLoading={isSelectingFolder()}
+            onOpenSidecar={handleOpenSidecarPicker}
           />
         </Show>
 
@@ -534,6 +583,7 @@ const App: Component = () => {
               <FolderSelectionView
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
+                onOpenSidecar={handleOpenSidecarPicker}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
@@ -544,6 +594,7 @@ const App: Component = () => {
         </Show>
  
         <SettingsScreen />
+        <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
  
         <AlertDialog />
 

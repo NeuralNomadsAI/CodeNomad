@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Подключение...",
   "folderSelection.servers.dialog.errorRequired": "Имя сервера и URL обязательны.",
   "folderSelection.servers.dialog.errorConnect": "Не удалось подключиться к удаленному серверу.",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

@@ -9,12 +9,17 @@ import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
+import type { SideCarTabRecord } from "../stores/sidecars"
 
 interface InstanceTabsProps {
   instances: Map<string, Instance>
   activeInstanceId: string | null
+  sidecarTabs: SideCarTabRecord[]
+  activeSidecarToken: string | null
   onSelect: (instanceId: string) => void
+  onSelectSidecar: (token: string) => void
   onClose: (instanceId: string) => void
+  onCloseSidecar: (token: string) => void
   onNew: () => void
 }
 
@@ -52,6 +57,18 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   />
                 )}
               </For>
+              <For each={props.sidecarTabs}>
+                {(tab) => (
+                  <div class={`tab-pill ${tab.token === props.activeSidecarToken ? "tab-pill-active" : ""}`}>
+                    <button class="tab-pill-button" onClick={() => props.onSelectSidecar(tab.token)}>
+                      <span class="truncate max-w-[180px]">{tab.name}</span>
+                    </button>
+                    <button class="tab-pill-close" onClick={() => props.onCloseSidecar(tab.token)} aria-label={tab.name}>
+                      ×
+                    </button>
+                  </div>
+                )}
+              </For>
               <button
                 class="new-tab-button"
                 onClick={props.onNew}
@@ -62,7 +79,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               </button>
             </div>
             <div class="tab-strip-spacer" />
-            <Show when={Array.from(props.instances.entries()).length > 1}>
+            <Show when={Array.from(props.instances.entries()).length + props.sidecarTabs.length > 1}>
               <div class="tab-shortcuts">
                 <KeyboardHint
                   shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(

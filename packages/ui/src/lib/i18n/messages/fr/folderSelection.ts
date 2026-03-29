@@ -5,7 +5,7 @@ export const folderSelectionMessages = {
   "folderSelection.tagline": "Sélectionnez un dossier pour commencer à coder avec l'IA",
 
   "folderSelection.links.github": "GitHub de CodeNomad",
-  "folderSelection.links.githubStars": "Stars GitHub de CodeNomad",
+  "folderSelection.links.githubStars": "Étoiles GitHub de CodeNomad",
   "folderSelection.links.discord": "Discord de CodeNomad",
 
   "folderSelection.empty.title": "Aucun dossier récent",
@@ -16,13 +16,13 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.other": "{count} dossiers disponibles",
   "folderSelection.recent.remove": "Retirer des récents",
 
-  "folderSelection.browse.title": "Parcourir les dossiers",
+  "folderSelection.browse.title": "Parcourir un dossier",
   "folderSelection.browse.subtitle": "Sélectionnez n'importe quel dossier sur votre ordinateur",
   "folderSelection.browse.button": "Parcourir les dossiers",
   "folderSelection.browse.buttonOpening": "Ouverture...",
-  "folderSelection.actions.title": "Ouvrir un dossier ou connecter un serveur",
+  "folderSelection.actions.title": "Ouvrir un dossier ou se connecter à un serveur",
   "folderSelection.actions.subtitle": "Ouvrez un dossier local ou connectez-vous à un serveur CodeNomad",
-  "folderSelection.actions.connectButton": "Connecter un serveur CodeNomad",
+  "folderSelection.actions.connectButton": "Se connecter au serveur CodeNomad",
 
   "folderSelection.advancedSettings": "Paramètres avancés",
   "folderSelection.opencode": "OpenCode",
@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Connexion...",
   "folderSelection.servers.dialog.errorRequired": "Le nom du serveur et l'URL sont requis.",
   "folderSelection.servers.dialog.errorConnect": "Impossible de se connecter au serveur distant.",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

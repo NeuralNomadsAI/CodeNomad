@@ -23,6 +23,7 @@ import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerSideCarRoutes } from "./routes/sidecars"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -33,6 +34,7 @@ import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import { PluginChannelManager } from "../plugins/channel"
 import { VoiceModeManager } from "../plugins/voice-mode"
+import type { SideCarManager } from "../sidecars/manager"
 
 interface HttpServerDeps {
   bindHost: string
@@ -48,6 +50,7 @@ interface HttpServerDeps {
   serverMeta: ServerMeta
   instanceStore: InstanceStore
   speechService: SpeechService
+  sidecarManager: SideCarManager
   authManager: AuthManager
   uiStaticDir: string
   uiDevServerUrl?: string
@@ -204,7 +207,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const session = deps.authManager.getSessionFromRequest(request)
 
-    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/")
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/")
     if (requiresAuthForApi && !session) {
       // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
       const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
@@ -273,6 +276,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
   registerSpeechRoutes(app, { speechService: deps.speechService })
+  registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
+  registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPluginRoutes(app, {
     workspaceManager: deps.workspaceManager,
     eventBus: deps.eventBus,
@@ -353,6 +358,42 @@ export function createHttpServer(deps: HttpServerDeps) {
 interface InstanceProxyDeps {
   workspaceManager: WorkspaceManager
   logger: Logger
+}
+
+interface SideCarProxyDeps {
+  sidecarManager: SideCarManager
+  logger: Logger
+}
+
+function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
+  const proxyBaseHandler = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxySideCarRequest({
+      request,
+      reply,
+      sidecarManager: deps.sidecarManager,
+      logger: deps.logger,
+      pathSuffix: "",
+    })
+  }
+
+  const proxyWildcardHandler = async (
+    request: FastifyRequest<{ Params: { id: string; "*": string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxySideCarRequest({
+      request,
+      reply,
+      sidecarManager: deps.sidecarManager,
+      logger: deps.logger,
+      pathSuffix: request.params["*"] ?? "",
+    })
+  }
+
+  app.all("/sidecars/:id", proxyBaseHandler)
+  app.all("/sidecars/:id/*", proxyWildcardHandler)
 }
 
 function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
@@ -838,4 +879,75 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
+}
+
+async function proxySideCarRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  sidecarManager: SideCarManager
+  logger: Logger
+  pathSuffix?: string
+}) {
+  const sidecarId = (args.request.params as { id?: string }).id ?? ""
+  const sidecar = await args.sidecarManager.get(sidecarId)
+  if (!sidecar) {
+    args.reply.code(404).send({ error: "SideCar not found" })
+    return
+  }
+
+  const pathname = (args.request.raw.url ?? args.request.url ?? "").split("?")[0] ?? ""
+  const queryIndex = (args.request.raw.url ?? args.request.url ?? "").indexOf("?")
+  const search = queryIndex >= 0 ? (args.request.raw.url ?? args.request.url ?? "").slice(queryIndex) : ""
+  const pathSuffix = args.pathSuffix ?? ""
+  const requestPath = pathSuffix ? `${args.sidecarManager.buildProxyBasePath(sidecarId)}/${pathSuffix.replace(/^\/+/, "")}` : args.sidecarManager.buildProxyBasePath(sidecarId)
+  const targetPath = args.sidecarManager.buildTargetPath(sidecarId, requestPath, search)
+  const targetOrigin = args.sidecarManager.buildTargetOrigin(sidecar)
+  const targetUrl = `${targetOrigin}${targetPath}`
+  args.logger.debug({ sidecarId: sidecar.id, targetUrl, pathname, prefixMode: sidecar.prefixMode }, "Proxying request to SideCar")
+
+  await args.reply.from(targetUrl, {
+    rewriteHeaders: (headers) => rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode),
+    onError: (reply, { error }) => {
+      args.logger.error({ sidecarId: sidecar.id, err: error, targetUrl }, "Failed to proxy SideCar request")
+      if (!reply.sent) {
+        reply.code(502).send({ error: "SideCar proxy failed" })
+      }
+    },
+  })
+}
+
+function rewriteSideCarResponseHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  sidecarId: string,
+  targetOrigin: string,
+  prefixMode: "strip" | "preserve",
+) {
+  if (prefixMode === "preserve") {
+    return headers
+  }
+
+  const next = { ...headers }
+  const locationHeader = next.location
+  const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+  if (!location) {
+    return next
+  }
+
+  const publicBase = `/sidecars/${encodeURIComponent(sidecarId)}`
+
+  if (location.startsWith("/")) {
+    next.location = `${publicBase}${location}`
+    return next
+  }
+
+  try {
+    const parsed = new URL(location)
+    if (parsed.origin === targetOrigin) {
+      next.location = `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    // Relative redirects should continue to resolve against the public sidecar path.
+  }
+
+  return next
 }

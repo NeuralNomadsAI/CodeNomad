@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Connecting...",
   "folderSelection.servers.dialog.errorRequired": "Server name and URL are required.",
   "folderSelection.servers.dialog.errorConnect": "Could not connect to the remote server.",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

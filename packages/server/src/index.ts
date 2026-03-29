@@ -24,6 +24,7 @@ import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
+import { SideCarManager } from "./sidecars/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -315,6 +316,12 @@ async function main() {
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
   const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
+  const sidecarManager = new SideCarManager({
+    settings,
+    eventBus,
+    logger: logger.child({ component: "sidecars" }),
+    rootDir: options.rootDir,
+  })
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -400,6 +407,7 @@ async function main() {
         serverMeta,
         instanceStore,
         speechService,
+        sidecarManager,
         authManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
@@ -421,6 +429,7 @@ async function main() {
         serverMeta,
         instanceStore,
         speechService,
+        sidecarManager,
         authManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
@@ -518,6 +527,12 @@ async function main() {
         instanceEventBridge.shutdown()
       } catch (error) {
         logger.warn({ err: error }, "Instance event bridge shutdown failed")
+      }
+
+      try {
+        await sidecarManager.shutdown()
+      } catch (error) {
+        logger.error({ err: error }, "SideCar manager shutdown failed")
       }
 
       try {

@@ -170,6 +170,28 @@ export interface InstanceStreamEvent {
   [key: string]: unknown
 }
 
+export type SideCarKind = "managed" | "port"
+
+export type SideCarPrefixMode = "strip" | "preserve"
+
+export type SideCarStatus = "starting" | "running" | "stopped" | "error"
+
+export interface SideCar {
+  id: string
+  kind: SideCarKind
+  name: string
+  port: number
+  insecure: boolean
+  autoStart: boolean
+  prefixMode: SideCarPrefixMode
+  startupCommand?: string
+  status: SideCarStatus
+  pid?: number
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface BinaryRecord {
   id: string
   path: string
@@ -276,6 +298,8 @@ export type WorkspaceEventType =
   | "workspace.error"
   | "workspace.stopped"
   | "workspace.log"
+  | "sidecar.updated"
+  | "sidecar.removed"
   | "storage.configChanged"
   | "storage.stateChanged"
   | "instance.dataChanged"
@@ -288,6 +312,8 @@ export type WorkspaceEventPayload =
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
   | { type: "workspace.stopped"; workspaceId: string }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
+  | { type: "sidecar.updated"; sidecar: SideCar }
+  | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
