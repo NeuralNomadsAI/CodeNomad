@@ -86,6 +86,7 @@ export const RemoteAccessSettingsSection: Component = () => {
       variant: "warning",
       confirmLabel: t("remoteAccess.listeningMode.restartConfirm.confirmLabel"),
       cancelLabel: t("remoteAccess.listeningMode.restartConfirm.cancelLabel"),
+      dismissible: false,
     })
 
     if (!confirmed) return

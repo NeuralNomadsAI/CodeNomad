@@ -234,6 +234,16 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
+  writeWorkspaceFile(id: string, relativePath: string, contents: string): Promise<void> {
+    const params = new URLSearchParams({ path: relativePath })
+    return request(
+      `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ contents }),
+      },
+    )
+  },
 
   fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)

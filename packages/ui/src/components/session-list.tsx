@@ -157,6 +157,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.delete.confirmLabel"),
         cancelLabel: t("sessionList.delete.cancelLabel"),
+        dismissible: false,
       },
     )
     if (!confirmed) return
@@ -285,6 +286,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
         cancelLabel: t("sessionList.bulkDelete.cancelLabel"),
+        dismissible: false,
       },
     )
 

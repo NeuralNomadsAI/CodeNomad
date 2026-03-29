@@ -83,6 +83,12 @@ export class WorkspaceManager {
     }
   }
 
+  writeFile(workspaceId: string, relativePath: string, contents: string): void {
+    const workspace = this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    browser.writeFile(relativePath, contents)
+  }
+
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
  
     const id = `${Date.now().toString(36)}`
