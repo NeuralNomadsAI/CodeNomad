@@ -185,27 +185,25 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               </Show>
               <Show when={props.browserError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
-            <Show when={props.browserSelectedDirty()}>
-              <button
-                type="button"
-                class="files-header-icon-button"
-                title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
-                aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
-                disabled={props.browserSelectedSaving()}
-                onClick={handleSave}
-              >
-                <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>
-                  <RefreshCw class="h-4 w-4 animate-spin" />
-                </Show>
-              </button>
-            </Show>
+            <button
+              type="button"
+              class="files-header-icon-button"
+              title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
+              aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
+              disabled={props.browserSelectedSaving() || !props.browserSelectedDirty()}
+              style={{ "margin-inline-start": "auto" }}
+              onClick={handleSave}
+            >
+              <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>
+                <RefreshCw class="h-4 w-4 animate-spin" />
+              </Show>
+            </button>
             <button
               type="button"
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.refresh")}
               aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
               disabled={props.browserLoading()}
-              style={{ "margin-inline-start": "auto" }}
               onClick={() => props.onRefresh()}
             >
               <RefreshCw class={`h-4 w-4${props.browserLoading() ? " animate-spin" : ""}`} />
