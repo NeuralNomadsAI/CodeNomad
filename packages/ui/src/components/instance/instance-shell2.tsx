@@ -258,28 +258,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
-  const activePermissionQueue = createMemo(() => {
-    const session = activeSessionForInstance()
-    if (!session) return []
-    return getPermissionQueue(props.instance.id).filter((permission) => getPermissionSessionId(permission) === session.id)
-  })
+  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
 
   createEffect(() => {
-    const session = activeSessionForInstance()
-    if (!session || !isPermissionAutoAcceptEnabled(props.instance.id, session.id)) {
-      return
-    }
-
-    for (const permission of activePermissionQueue()) {
+    for (const permission of permissionQueue()) {
+      const sessionId = getPermissionSessionId(permission)
+      if (!sessionId) continue
       if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instance.id, session.id, permission.id)) continue
+      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
 
-      void sendPermissionResponse(props.instance.id, session.id, permission.id, "once")
+      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
         .catch((error) => {
           log.error("Failed to auto-accept permission", error)
         })
         .finally(() => {
-          finishAutoRespondPermission(props.instance.id, session.id, permission.id)
+          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
         })
     }
   })

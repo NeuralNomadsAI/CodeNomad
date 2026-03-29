@@ -26,8 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "会话",
   "instanceShell.leftPanel.instanceInfo": "实例信息",
-  "instanceShell.leftPanel.autoAcceptPermissions.title": "自动授权",
-
   "instanceShell.leftDrawer.pin": "固定左侧抽屉",
   "instanceShell.leftDrawer.unpin": "取消固定左侧抽屉",
   "instanceShell.leftDrawer.toggle.pinned": "左侧抽屉已固定",

@@ -26,8 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "סשנים",
   "instanceShell.leftPanel.instanceInfo": "מידע על המופע",
-  "instanceShell.leftPanel.autoAcceptPermissions.title": "אישור אוטומטי",
-
   "instanceShell.leftDrawer.pin": "נעץ מגירה שמאלית",
   "instanceShell.leftDrawer.unpin": "שחרר נעיצת מגירה שמאלית",
   "instanceShell.leftDrawer.toggle.pinned": "המגירה השמאלית נעוצה",

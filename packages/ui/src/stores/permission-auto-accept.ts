@@ -15,7 +15,7 @@ function readInitialState() {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return new Map<string, boolean>()
     const parsed = JSON.parse(raw) as Record<string, boolean>
-    return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"))
+    return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => entry[1] === true))
   } catch {
     return new Map<string, boolean>()
   }
@@ -45,7 +45,11 @@ export function setPermissionAutoAcceptEnabled(instanceId: string, sessionId: st
   const key = makeKey(instanceId, sessionId)
   setAutoAcceptState((prev) => {
     const next = new Map(prev)
-    next.set(key, enabled)
+    if (enabled) {
+      next.set(key, true)
+    } else {
+      next.delete(key)
+    }
     persist(next)
     return next
   })

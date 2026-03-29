@@ -26,8 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "セッション",
   "instanceShell.leftPanel.instanceInfo": "インスタンス情報",
-  "instanceShell.leftPanel.autoAcceptPermissions.title": "自動許可",
-
   "instanceShell.leftDrawer.pin": "左ドロワーを固定",
   "instanceShell.leftDrawer.unpin": "左ドロワーの固定を解除",
   "instanceShell.leftDrawer.toggle.pinned": "左ドロワーを固定しました",

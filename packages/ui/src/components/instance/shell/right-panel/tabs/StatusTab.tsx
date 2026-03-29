@@ -323,9 +323,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                   <span class="section-left">
                     <Tooltip openDelay={200} gutter={4} placement="top">
                       <Tooltip.Trigger
+                        as="span"
                         class="section-info-trigger"
                         aria-label={props.t(section.tooltipKey)}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                        }}
                       >
                         <Info class="section-info-icon" />
                       </Tooltip.Trigger>
