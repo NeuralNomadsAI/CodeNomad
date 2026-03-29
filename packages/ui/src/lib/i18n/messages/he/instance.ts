@@ -108,6 +108,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "בטל",
   "instanceShell.rightPanel.toast.saveSuccess": "הקובץ נשמר בהצלחה",
   "instanceShell.rightPanel.toast.saveError": "כשלון בשמירת הקובץ",
+  "instanceShell.rightPanel.sections.yoloMode": "מצב Yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "מאשר אוטומטית בקשות הרשאה עבור הסשן הנוכחי. השתמשו בזה רק אם אתם סומכים על הכלים שרצים.",
   "instanceShell.rightPanel.sections.sessionChanges": "שינויי סשן",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "קבצים שהשתנו בסשן הנוכחי. מציג הוספות ומחיקות לכל קובץ.",
   "instanceShell.rightPanel.sections.plan": "תוכנית",
@@ -148,6 +150,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "בחר סשן לצפייה בתוכנית.",
   "instanceShell.plan.empty": "עדיין לא תוכנן דבר.",
+
+  "instanceShell.yoloMode.noSessionSelected": "בחרו סשן כדי להגדיר מצב Yolo.",
+  "instanceShell.yoloMode.title": "מצב Yolo",
+  "instanceShell.yoloMode.description": "מאשר אוטומטית בקשות הרשאה עבור הסשן הזה. כבוי כברירת מחדל.",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "מצב Yolo פעיל",
 
   "instanceShell.backgroundProcesses.empty": "אין תהליכי רקע.",
   "instanceShell.backgroundProcesses.status": "סטטוס: {status}",

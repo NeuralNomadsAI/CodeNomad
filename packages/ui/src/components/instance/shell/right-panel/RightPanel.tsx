@@ -89,6 +89,7 @@ interface RightPanelProps {
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
+    "yolo-mode",
     "plan",
     "background-processes",
     "mcp",

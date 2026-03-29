@@ -108,6 +108,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "キャンセル",
   "instanceShell.rightPanel.toast.saveSuccess": "ファイルを保存しました",
   "instanceShell.rightPanel.toast.saveError": "ファイルの保存に失敗しました",
+  "instanceShell.rightPanel.sections.yoloMode": "Yoloモード",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "現在のセッションの権限リクエストを自動承認します。実行中のツールを信頼できる場合にのみ使用してください。",
   "instanceShell.rightPanel.sections.sessionChanges": "セッション変更",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "現在のセッションで変更されたファイル。各ファイルの追加と削除を表示します。",
   "instanceShell.rightPanel.sections.plan": "計画",
@@ -140,6 +142,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",
+
+  "instanceShell.yoloMode.noSessionSelected": "Yoloモードを設定するにはセッションを選択してください。",
+  "instanceShell.yoloMode.title": "Yoloモード",
+  "instanceShell.yoloMode.description": "このセッションの権限リクエストを自動承認します。デフォルトでは無効です。",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Yoloモードが有効",
 
   "instanceShell.backgroundProcesses.empty": "バックグラウンドプロセスはありません。",
   "instanceShell.backgroundProcesses.status": "状態: {status}",

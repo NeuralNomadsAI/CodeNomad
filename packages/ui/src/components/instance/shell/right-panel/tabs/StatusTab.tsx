@@ -2,6 +2,7 @@ import { For, Show, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
+import Switch from "@suid/material/Switch"
 
 import { ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
@@ -12,6 +13,7 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
+import { isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "../../../../../stores/permission-auto-accept"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -38,6 +40,35 @@ interface StatusTabProps {
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
+
+  const renderYoloModeSection = () => {
+    const session = props.activeSession()
+    if (!session) {
+      return (
+        <div class="right-panel-empty right-panel-empty--left">
+          <span class="text-xs">{props.t("instanceShell.yoloMode.noSessionSelected")}</span>
+        </div>
+      )
+    }
+
+    return (
+      <div class="rounded-md border border-base bg-surface-secondary px-3 py-2">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-primary">{props.t("instanceShell.yoloMode.title")}</div>
+            <p class="mt-1 text-xs text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
+          </div>
+          <Switch
+            checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
+            color="warning"
+            size="small"
+            inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
+            onChange={() => togglePermissionAutoAccept(props.instanceId, session.id)}
+          />
+        </div>
+      </div>
+    )
+  }
 
   const renderStatusSessionChanges = () => {
     const sessionId = props.activeSessionId()
@@ -204,6 +235,12 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   }
 
   const statusSections = [
+    {
+      id: "yolo-mode",
+      labelKey: "instanceShell.rightPanel.sections.yoloMode",
+      tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
+      render: renderYoloModeSection,
+    },
     {
       id: "session-changes",
       labelKey: "instanceShell.rightPanel.sections.sessionChanges",

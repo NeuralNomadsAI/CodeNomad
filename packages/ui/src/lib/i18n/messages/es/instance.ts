@@ -108,6 +108,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Cancelar",
   "instanceShell.rightPanel.toast.saveSuccess": "Archivo guardado exitosamente",
   "instanceShell.rightPanel.toast.saveError": "Error al guardar el archivo",
+  "instanceShell.rightPanel.sections.yoloMode": "Modo yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Aprueba automaticamente las solicitudes de permiso de la sesion actual. Usalo solo si confias en las herramientas que se estan ejecutando.",
   "instanceShell.rightPanel.sections.sessionChanges": "Cambios de sesión",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Archivos modificados en la sesión actual. Muestra las adiciones y eliminaciones de cada archivo.",
   "instanceShell.rightPanel.sections.plan": "Plan",
@@ -140,6 +142,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Selecciona una sesion para configurar el modo yolo.",
+  "instanceShell.yoloMode.title": "Modo yolo",
+  "instanceShell.yoloMode.description": "Aprueba automaticamente las solicitudes de permiso de esta sesion. Esta desactivado por defecto.",
+  "instanceShell.yoloMode.badge": "Modo yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Modo yolo activado",
 
   "instanceShell.backgroundProcesses.empty": "No hay procesos en segundo plano.",
   "instanceShell.backgroundProcesses.status": "Estado: {status}",

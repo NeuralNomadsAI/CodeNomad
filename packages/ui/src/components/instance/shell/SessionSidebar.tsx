@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, type Accessor, type Component } from "solid-js"
+import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { Session } from "../../../types/session"
 import { keyboardRegistry, type KeyboardShortcut } from "../../../lib/keyboard-registry"
@@ -18,14 +18,6 @@ import AgentSelector from "../../agent-selector"
 import ModelSelector from "../../model-selector"
 import ThinkingSelector from "../../thinking-selector"
 import { getLogger } from "../../../lib/logger"
-import { getPermissionQueue, sendPermissionResponse } from "../../../stores/instances"
-import { getPermissionSessionId } from "../../../types/permission"
-import {
-  canAutoRespondPermission,
-  finishAutoRespondPermission,
-  isPermissionAutoAcceptEnabled,
-  togglePermissionAutoAccept,
-} from "../../../stores/permission-auto-accept"
 
 const log = getLogger("session")
 
@@ -55,56 +47,7 @@ interface SessionSidebarProps {
   setContentEl: (el: HTMLElement | null) => void
 }
 
-const SessionSidebar: Component<SessionSidebarProps> = (props) => {
-  const activePermissionQueue = createMemo(() => {
-    const session = props.activeSession()
-    if (!session) return []
-    return getPermissionQueue(props.instanceId).filter((permission) => getPermissionSessionId(permission) === session.id)
-  })
-
-  createEffect(() => {
-    const session = props.activeSession()
-    if (!session || !isPermissionAutoAcceptEnabled(props.instanceId, session.id)) {
-      return
-    }
-
-    for (const permission of activePermissionQueue()) {
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instanceId, session.id, permission.id)) continue
-
-      void sendPermissionResponse(props.instanceId, session.id, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instanceId, session.id, permission.id)
-        })
-    }
-  })
-
-  function handleToggleAutoAccept(sessionId: string) {
-    const nextEnabled = !isPermissionAutoAcceptEnabled(props.instanceId, sessionId)
-    togglePermissionAutoAccept(props.instanceId, sessionId)
-
-    if (!nextEnabled) {
-      return
-    }
-
-    for (const permission of activePermissionQueue()) {
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instanceId, sessionId, permission.id)) continue
-
-      void sendPermissionResponse(props.instanceId, sessionId, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instanceId, sessionId, permission.id)
-        })
-    }
-  }
-
-  return (
+const SessionSidebar: Component<SessionSidebarProps> = (props) => (
     <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
         <div class="flex items-center justify-between gap-2">
@@ -221,18 +164,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
 
               <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
 
-              <label class="session-sidebar-toggle" for={`session-auto-accept-${activeSession().id}`}>
-                <span class="session-sidebar-toggle-title">
-                  {props.t("instanceShell.leftPanel.autoAcceptPermissions.title")}
-                </span>
-                <input
-                  id={`session-auto-accept-${activeSession().id}`}
-                  type="checkbox"
-                  checked={isPermissionAutoAcceptEnabled(props.instanceId, activeSession().id)}
-                  onChange={() => handleToggleAutoAccept(activeSession().id)}
-                />
-              </label>
-
               <KeyboardHint
                 class="session-sidebar-selector-hints"
                 ariaHidden={true}
@@ -250,6 +181,5 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
       </div>
     </div>
   )
-}
 
 export default SessionSidebar

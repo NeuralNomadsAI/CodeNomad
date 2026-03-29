@@ -480,6 +480,16 @@ session-sidebar-controls .selector-trigger-primary {
   border: 1px solid transparent;
 }
 
+.status-indicator.session-yolo-mode {
+  color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 14%, transparent);
+  border-color: color-mix(in oklab, var(--accent-primary) 28%, transparent);
+}
+
+.status-indicator.session-yolo-mode .status-dot {
+  background-color: var(--accent-primary);
+}
+
 @media (max-width: 768px) {
   .session-list-container {
     min-width: 200px;
