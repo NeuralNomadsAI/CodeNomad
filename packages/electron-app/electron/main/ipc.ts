@@ -1,5 +1,6 @@
 import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, type OpenDialogOptions } from "electron"
 import fs from "fs"
+import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager, CliStatus } from "./process-manager"
 
 let wakeLockId: number | null = null
@@ -110,6 +111,11 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
     }
     return { enabled: false }
   })
+
+  ipcMain.handle(
+    "media:requestMicrophoneAccess",
+    async (): Promise<{ granted: boolean }> => ({ granted: await requestMicrophoneAccess() }),
+  )
 
   ipcMain.handle(
     "notifications:show",

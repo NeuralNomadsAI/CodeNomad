@@ -14,6 +14,8 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
 import type { DeleteHoverState } from "../types/delete-hover"
+import { useSpeech } from "../lib/hooks/use-speech"
+import SpeechActionButton from "./speech-action-button"
 
 function DeleteUpToIcon() {
   return (
@@ -1384,6 +1386,13 @@ function ReasoningCard(props: ReasoningCardProps) {
   const viewHideLabel = () =>
     expanded() ? t("messageBlock.reasoning.indicator.hide") : t("messageBlock.reasoning.indicator.view")
 
+  const speech = useSpeech({
+    id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${(props.part as any)?.id ?? "reasoning"}`,
+    text: reasoningText,
+  })
+
+  const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
+
   createEffect(() => {
     if (!expanded()) return
     reasoningText()
@@ -1462,6 +1471,20 @@ function ReasoningCard(props: ReasoningCardProps) {
         </button>
 
         <div class="message-reasoning-actions">
+          <Show when={canSpeakReasoning()}>
+            <SpeechActionButton
+              class="message-action-button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                void speech.toggle()
+              }}
+              title={speech.buttonTitle()}
+              isLoading={speech.isLoading()}
+              isPlaying={speech.isPlaying()}
+            />
+          </Show>
+
           <button
             type="button"
             class="message-action-button"

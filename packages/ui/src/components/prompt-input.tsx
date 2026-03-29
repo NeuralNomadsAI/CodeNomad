@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -19,6 +19,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import { canUseConversationMode, isConversationModeEnabled, toggleConversationMode } from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 
@@ -351,6 +352,19 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
+  function handleClearPrompt() {
+    clearPrompt()
+    clearHistoryDraft()
+    resetHistoryNavigation()
+    setShowPicker(false)
+    setPickerMode("mention")
+    setAtPosition(null)
+    setSearchQuery("")
+    setIgnoredAtPositions(new Set<number>())
+    syncAttachmentCounters("")
+    textareaRef?.focus()
+  }
+
   function insertBlockContent(block: string) {
     const textarea = textareaRef
     const current = prompt()
@@ -422,6 +436,8 @@ export default function PromptInput(props: PromptInputProps) {
     return hasText || attachments().length > 0
   }
 
+  const canClearPrompt = () => prompt().length > 0
+
   const shellHint = () =>
     mode() === "shell"
       ? { key: "Esc", text: t("promptInput.hints.shell.exit") }
@@ -461,6 +477,13 @@ export default function PromptInput(props: PromptInputProps) {
   const showVoiceInput = () =>
     preferences().showPromptVoiceInput &&
     (voiceInput.canUseVoiceInput() || voiceInput.isRecording() || voiceInput.isTranscribing())
+  const conversationModeEnabled = () => isConversationModeEnabled(props.instanceId)
+  const showConversationToggle = () => showVoiceInput() || conversationModeEnabled()
+  const canToggleConversationMode = () => canUseConversationMode()
+  const conversationModeButtonTitle = () =>
+    conversationModeEnabled()
+      ? t("promptInput.conversationMode.disable.title")
+      : t("promptInput.conversationMode.enable.title")
 
   const instance = () => getActiveInstance()
 
@@ -543,7 +566,7 @@ export default function PromptInput(props: PromptInputProps) {
                 autocomplete="off"
               />
               <div class="prompt-nav-buttons">
-                <div class="prompt-nav-top-row">
+                <div class="prompt-nav-column prompt-nav-column-left">
                   <Show when={showVoiceInput()}>
                     <button
                       type="button"
@@ -582,47 +605,72 @@ export default function PromptInput(props: PromptInputProps) {
                           </Show>
                         }
                       >
-                        <span class="prompt-voice-timer">{formatVoiceTimer(voiceInput.elapsedMs())}</span>
+                        <Mic class="h-4 w-4" aria-hidden="true" />
                       </Show>
                     </button>
                   </Show>
+                  <Show when={showConversationToggle()}>
+                    <button
+                      type="button"
+                      class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
+                      onClick={() => toggleConversationMode(props.instanceId)}
+                      disabled={!conversationModeEnabled() && !canToggleConversationMode()}
+                      aria-pressed={conversationModeEnabled()}
+                      aria-label={conversationModeButtonTitle()}
+                      title={conversationModeButtonTitle()}
+                    >
+                      <Volume2 class="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </Show>
+                  <button
+                    type="button"
+                    class="prompt-clear-button"
+                    onClick={handleClearPrompt}
+                    disabled={!canClearPrompt()}
+                    aria-label={t("promptInput.clear.ariaLabel")}
+                    title={t("promptInput.clear.title")}
+                  >
+                    <X class="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+                <div class="prompt-nav-column prompt-nav-column-right">
                   <ExpandButton
                     expandState={expandState}
                     onToggleExpand={handleExpandToggle}
                   />
+                  <Show when={hasHistory()}>
+                    <button
+                      type="button"
+                      class="prompt-history-button"
+                      onClick={() =>
+                        selectPreviousHistory({
+                          force: true,
+                          isPickerOpen: showPicker(),
+                          getTextarea: () => textareaRef,
+                        })
+                      }
+                      disabled={!canHistoryGoPrevious()}
+                      aria-label={t("promptInput.history.previousAriaLabel")}
+                    >
+                      <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      class="prompt-history-button"
+                      onClick={() =>
+                        selectNextHistory({
+                          force: true,
+                          isPickerOpen: showPicker(),
+                          getTextarea: () => textareaRef,
+                        })
+                      }
+                      disabled={!canHistoryGoNext()}
+                      aria-label={t("promptInput.history.nextAriaLabel")}
+                    >
+                      <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </Show>
                 </div>
-                <Show when={hasHistory()}>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectPreviousHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoPrevious()}
-                    aria-label={t("promptInput.history.previousAriaLabel")}
-                  >
-                    <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    class="prompt-history-button"
-                    onClick={() =>
-                      selectNextHistory({
-                        force: true,
-                        isPickerOpen: showPicker(),
-                        getTextarea: () => textareaRef,
-                      })
-                    }
-                    disabled={!canHistoryGoNext()}
-                    aria-label={t("promptInput.history.nextAriaLabel")}
-                  >
-                    <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
-                  </button>
-                </Show>
               </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
@@ -711,11 +759,4 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
     </div>
   )
-}
-
-function formatVoiceTimer(elapsedMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }

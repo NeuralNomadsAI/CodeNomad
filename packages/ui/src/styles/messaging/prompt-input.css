@@ -37,7 +37,7 @@
 .prompt-input {
   @apply w-full pt-2.5 border text-sm resize-none outline-none transition-colors;
   padding-inline-start: 0.75rem;
-  padding-inline-end: 5.5rem;
+  padding-inline-end: 7.5rem;
   font-family: inherit;
   background-color: var(--surface-base);
   color: var(--text-primary);
@@ -90,22 +90,32 @@
   inset-inline-end: 0.25rem;
   bottom: 0.25rem;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-start;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: 0.125rem;
   z-index: 2;
 }
 
-.prompt-nav-top-row {
+.prompt-nav-column {
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
   gap: 0.125rem;
 }
 
+.prompt-nav-column-left {
+  min-width: 1.75rem;
+}
+
+.prompt-nav-column-right {
+  min-width: 1.75rem;
+}
+
 .prompt-expand-button,
-.prompt-history-button {
+.prompt-history-button,
+.prompt-clear-button {
   @apply w-7 h-7 flex items-center justify-center rounded-md;
   color: var(--text-muted);
   background-color: var(--control-ghost-bg);
@@ -115,7 +125,8 @@
 }
 
 .prompt-expand-button:hover:not(:disabled),
-.prompt-history-button:hover:not(:disabled) {
+.prompt-history-button:hover:not(:disabled),
+.prompt-clear-button:hover:not(:disabled) {
   background-color: var(--surface-secondary);
   color: var(--text-primary);
 }
@@ -127,7 +138,8 @@
 }
 
 .prompt-expand-button:disabled,
-.prompt-history-button:disabled {
+.prompt-history-button:disabled,
+.prompt-clear-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -208,6 +220,16 @@
   color: var(--button-danger-text, var(--text-inverted, #ffffff));
 }
 
+.prompt-voice-button.is-recording:hover:not(:disabled) {
+  background-color: var(--button-danger-hover-bg, rgba(239, 68, 68, 0.9));
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
+}
+
+.prompt-voice-button.is-recording:active:not(:disabled) {
+  background-color: var(--button-danger-active-bg, rgba(239, 68, 68, 1));
+  color: var(--button-danger-text, var(--text-inverted, #ffffff));
+}
+
 .prompt-nav-voice-button {
   min-width: 1.75rem;
   width: 1.75rem;
@@ -216,12 +238,22 @@
 }
 
 .prompt-nav-voice-button.is-recording {
-  min-width: 3.5rem;
-  width: auto;
+  min-width: 1.75rem;
+  width: 1.75rem;
 }
 
 .prompt-voice-button:disabled {
   @apply opacity-50 cursor-not-allowed;
+}
+
+.prompt-conversation-button.is-active {
+  background-color: color-mix(in oklab, var(--accent-primary) 76%, var(--surface-secondary));
+  color: var(--text-inverted);
+}
+
+.prompt-conversation-button.is-active:hover:not(:disabled) {
+  background-color: color-mix(in oklab, var(--accent-primary) 88%, var(--surface-secondary));
+  color: var(--text-inverted);
 }
 
 .prompt-voice-timer {
@@ -397,7 +429,7 @@
   .prompt-input {
     min-height: 0;
     padding: 0.5rem 0.75rem;
-    padding-inline-end: 5.5rem;
+    padding-inline-end: 7.5rem;
     padding-bottom: 0.75rem;
   }
 

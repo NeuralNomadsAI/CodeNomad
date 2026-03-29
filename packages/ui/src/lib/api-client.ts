@@ -123,6 +123,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
+  const url = API_BASE ? new URL(path, API_BASE).toString() : path
+  const headers = normalizeHeaders(init?.headers)
+  if (init?.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json"
+  }
+
+  const method = (init?.method ?? "GET").toUpperCase()
+  const startedAt = Date.now()
+  logHttp(`${method} ${path}`)
+
+  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  if (!response.ok) {
+    const message = await response.text()
+    logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
+    throw new Error(message || `Request failed with ${response.status}`)
+  }
+
+  logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt })
+  return response
+}
+
 
 export const serverApi = {
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
@@ -263,10 +285,20 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
-  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" }): Promise<SpeechSynthesisResponse> {
+  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
     return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
       method: "POST",
       body: JSON.stringify(payload),
+    })
+  },
+  synthesizeSpeechStream(
+    payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    return requestRaw("/api/speech/synthesize/stream", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal,
     })
   },
   listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {

@@ -11,6 +11,8 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
+import { useSpeech } from "../lib/hooks/use-speech"
+import SpeechActionButton from "./speech-action-button"
 
 function DeleteUpToIcon() {
   return (
@@ -294,6 +296,13 @@ export default function MessageItem(props: MessageItemProps) {
       .join("\n\n")
   }
 
+  const speech = useSpeech({
+    id: () => `${props.instanceId}:${props.sessionId}:${props.record.id}`,
+    text: getRawContent,
+  })
+
+  const canSpeakMessage = () => getRawContent().trim().length > 0 && speech.canUseSpeech()
+
   const handleCopy = async () => {
     const content = getRawContent()
     if (!content) return
@@ -443,6 +452,16 @@ export default function MessageItem(props: MessageItemProps) {
                   <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
 
+                <Show when={canSpeakMessage()}>
+                  <SpeechActionButton
+                    class="message-action-button"
+                    onClick={() => void speech.toggle()}
+                    title={speech.buttonTitle()}
+                    isLoading={speech.isLoading()}
+                    isPlaying={speech.isPlaying()}
+                  />
+                </Show>
+
                 <Show when={props.onFork}>
                   <button
                     class="message-action-button"
@@ -502,6 +521,16 @@ export default function MessageItem(props: MessageItemProps) {
                 >
                   <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
+
+                <Show when={canSpeakMessage()}>
+                  <SpeechActionButton
+                    class="message-action-button"
+                    onClick={() => void speech.toggle()}
+                    title={speech.buttonTitle()}
+                    isLoading={speech.isLoading()}
+                    isPlaying={speech.isPlaying()}
+                  />
+                </Show>
 
                 <Show when={props.showDeleteMessage}>
                   <button

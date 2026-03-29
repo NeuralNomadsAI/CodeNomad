@@ -29,6 +29,7 @@ import type {
   ToolScrollHelpers,
 } from "./tool-call/types"
 import {
+  buildToolSpeechText,
   ensureMarkdownContent,
   getRelativePath,
   getToolIcon,
@@ -41,6 +42,8 @@ import {
 } from "./tool-call/utils"
 import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
+import { useSpeech } from "../lib/hooks/use-speech"
+import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
 
@@ -960,6 +963,21 @@ export default function ToolCall(props: ToolCallProps) {
     return renderToolTitle()
   })
 
+  const speechText = createMemo(() =>
+    buildToolSpeechText({
+      title: headerText(),
+      state: toolState(),
+      t,
+    }),
+  )
+
+  const speech = useSpeech({
+    id: () => `${props.instanceId}:${props.sessionId}:${props.messageId ?? "message"}:${toolCallIdentifier()}`,
+    text: speechText,
+  })
+
+  const canSpeakToolCall = () => speechText().trim().length > 0 && speech.canUseSpeech()
+
   const handleCopyHeader = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -1022,6 +1040,16 @@ export default function ToolCall(props: ToolCallProps) {
         >
           <Copy class="w-3.5 h-3.5" />
         </button>
+
+        <Show when={canSpeakToolCall()}>
+          <SpeechActionButton
+            class="tool-call-header-copy"
+            onClick={() => void speech.toggle()}
+            title={speech.buttonTitle()}
+            isLoading={speech.isLoading()}
+            isPlaying={speech.isPlaying()}
+          />
+        </Show>
 
         <span class="tool-call-header-status" aria-hidden="true">
           {statusIcon()}

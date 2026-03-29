@@ -29,6 +29,7 @@ declare global {
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
     getPathForFile?: (file: File) => string | null
+    requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>

@@ -1,8 +1,9 @@
+import { Readable } from "node:stream"
 import OpenAI from "openai"
 import { toFile } from "openai/uploads"
 import type { SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../../api-types"
 import type { Logger } from "../../logger"
-import type { NormalizedSpeechSettings, SynthesizeSpeechInput, TranscribeAudioInput } from "../service"
+import type { NormalizedSpeechSettings, SpeechSynthesisStreamResponse, SynthesizeSpeechInput, TranscribeAudioInput } from "../service"
 
 interface OpenAICompatibleSpeechProviderOptions {
   settings: NormalizedSpeechSettings
@@ -20,10 +21,13 @@ export class OpenAICompatibleSpeechProvider {
       provider: settings.provider,
       supportsStt: true,
       supportsTts: true,
+      supportsStreamingTts: true,
       baseUrl: settings.baseUrl,
       sttModel: settings.sttModel,
       ttsModel: settings.ttsModel,
       ttsVoice: settings.ttsVoice,
+      ttsFormats: ["mp3", "wav", "opus", "aac"],
+      streamingTtsFormats: ["mp3", "wav", "opus", "aac"],
     }
   }
 
@@ -92,8 +96,7 @@ export class OpenAICompatibleSpeechProvider {
   }
 
   async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
-    const client = this.createClient()
-    const format = input.format ?? "mp3"
+    const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
       {
@@ -104,18 +107,96 @@ export class OpenAICompatibleSpeechProvider {
       "speech.synthesize",
     )
 
-    const response = await client.audio.speech.create({
-      model: this.options.settings.ttsModel,
-      voice: this.options.settings.ttsVoice as any,
-      input: input.text,
-      response_format: format as any,
-    })
+    const response = await this.requestSpeechAudio(input.text, format)
+    const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
 
     const audioBuffer = Buffer.from(await response.arrayBuffer())
     return {
       audioBase64: audioBuffer.toString("base64"),
-      mimeType: mimeTypeForFormat(format),
+      mimeType,
     }
+  }
+
+  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+    const format = input.format ?? this.options.settings.ttsFormat
+
+    this.options.logger.info(
+      {
+        model: this.options.settings.ttsModel,
+        voice: this.options.settings.ttsVoice,
+        format,
+      },
+      "speech.synthesize.stream",
+    )
+
+    const response = await this.requestSpeechAudio(input.text, format)
+    if (!response.body) {
+      throw new Error("Speech provider did not return a stream.")
+    }
+
+    return {
+      stream: Readable.fromWeb(response.body as any),
+      mimeType: response.headers.get("content-type") || mimeTypeForFormat(format),
+    }
+  }
+
+  private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac"): Promise<Response> {
+    const { settings } = this.options
+    if (!settings.apiKey) {
+      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+    }
+
+    const endpoint = new URL("audio/speech", ensureTrailingSlash(settings.baseUrl ?? "https://api.openai.com/v1"))
+    let response: Response
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${settings.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: settings.ttsModel,
+          voice: settings.ttsVoice,
+          input: text,
+          response_format: format,
+        }),
+      })
+    } catch (error) {
+      const detailedError = error as Error & {
+        cause?: unknown
+        code?: string
+        errno?: number | string
+        syscall?: string
+        address?: string
+        port?: number
+      }
+      this.options.logger.error(
+        {
+          err: error,
+          endpoint: endpoint.toString(),
+          baseUrl: settings.baseUrl,
+          model: settings.ttsModel,
+          voice: settings.ttsVoice,
+          format,
+          cause: detailedError.cause,
+          code: detailedError.code,
+          errno: detailedError.errno,
+          syscall: detailedError.syscall,
+          address: detailedError.address,
+          port: detailedError.port,
+        },
+        "speech.synthesize fetch failed",
+      )
+      throw error
+    }
+
+    if (!response.ok) {
+      const detail = await response.text()
+      throw new Error(detail || `Speech synthesis failed with ${response.status}`)
+    }
+
+    return response
   }
 
   private createClient(): OpenAI {
@@ -141,8 +222,13 @@ function extensionForMime(mimeType: string): string {
   return "webm"
 }
 
-function mimeTypeForFormat(format: "mp3" | "wav" | "opus"): string {
+function mimeTypeForFormat(format: "mp3" | "wav" | "opus" | "aac"): string {
   if (format === "wav") return "audio/wav"
-  if (format === "opus") return "audio/opus"
+  if (format === "opus") return 'audio/ogg; codecs="opus"'
+  if (format === "aac") return "audio/aac"
   return "audio/mpeg"
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`
 }
