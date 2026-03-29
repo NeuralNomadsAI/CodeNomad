@@ -29,7 +29,7 @@ function syncCargoToml(version) {
     return false
   }
 
-  const updated = current.replace(packageVersionPattern, `$1${version}$3`)
+  const updated = current.replace(packageVersionPattern, (_, prefix, __, suffix) => `${prefix}${version}${suffix}`)
 
   fs.writeFileSync(cargoTomlPath, updated)
   return true
@@ -67,4 +67,10 @@ function main() {
   console.log(`[sync-tauri-version] synced ${version} -> ${changed.join(", ")}`)
 }
 
-main()
+try {
+  main()
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`[sync-tauri-version] failed: ${message}`)
+  process.exit(1)
+}

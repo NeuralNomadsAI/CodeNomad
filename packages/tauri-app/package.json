@@ -11,7 +11,7 @@
     "sync:version": "node ./scripts/sync-tauri-version.js",
     "prebuild": "npm run sync:version && node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
-    "build": "npm run sync:version && tauri build"
+    "build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"
