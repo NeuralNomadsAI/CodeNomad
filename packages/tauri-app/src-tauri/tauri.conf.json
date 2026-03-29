@@ -1,15 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CodeNomad",
-  "version": "0.12.3",
+  "version": "0.13.1",
   "identifier": "ai.neuralnomads.codenomad.client",
   "build": {
     "beforeDevCommand": "npm run dev:bootstrap",
     "beforeBuildCommand": "npm run bundle:server",
     "frontendDist": "resources/ui-loading"
   },
-
- 
 
   "app": {
     "withGlobalTauri": true,

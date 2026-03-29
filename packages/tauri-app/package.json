@@ -4,13 +4,14 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "npm run sync:version && tauri dev",
     "dev:ui": "npm run dev --workspace @codenomad/ui",
     "dev:prep": "node ./scripts/dev-prep.js",
     "dev:bootstrap": "npm run dev:prep && npm run dev:ui",
-    "prebuild": "node ./scripts/prebuild.js",
+    "sync:version": "node ./scripts/sync-tauri-version.js",
+    "prebuild": "npm run sync:version && node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
-    "build": "tauri build"
+    "build": "npm run sync:version && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"
