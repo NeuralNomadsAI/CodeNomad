@@ -1,7 +1,7 @@
 import type { PermissionRequestLike } from "../../types/permission"
-import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
+import { getPermissionCallId, getPermissionMessageId, getPermissionSessionId } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
-import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
+import { getQuestionCallId, getQuestionMessageId, getQuestionSessionId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
 import type { Session } from "../../types/session"
 import { messageStoreBus } from "./bus"
@@ -148,6 +148,8 @@ function extractPermissionCallId(permission: PermissionRequestLike): string | un
 
 function resolvePartIdFromCallId(store: ReturnType<typeof messageStoreBus.getOrCreate>, messageId?: string, callId?: string): string | undefined {
   if (!messageId || !callId) return undefined
+  const indexed = store.resolveToolCallPartId(messageId, callId)
+  if (indexed) return indexed
   const record = store.getMessage(messageId)
   if (!record) return undefined
   for (const partId of record.partIds) {
@@ -170,36 +172,39 @@ export function upsertPermissionV2(instanceId: string, permission: PermissionReq
   if (!permission) return
   const store = messageStoreBus.getOrCreate(instanceId)
   const messageId = extractPermissionMessageId(permission)
+  const sessionId = getPermissionSessionId(permission)
+  const callId = extractPermissionCallId(permission)
   let partId = extractPermissionPartId(permission)
   if (!partId) {
-    const callId = extractPermissionCallId(permission)
     partId = resolvePartIdFromCallId(store, messageId, callId)
   }
   store.upsertPermission({
     permission,
     messageId,
     partId,
+    sessionId,
+    callId,
     enqueuedAt: (permission as any).time?.created ?? Date.now(),
   })
 }
 
 export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: string): void {
   const store = messageStoreBus.getOrCreate(instanceId)
-  const pending = store.state.permissions.queue
+  const pending = store.getPendingPermissionEntries(sessionId)
   if (!pending || pending.length === 0) return
 
   for (const entry of pending) {
-    if (!entry || entry.partId) continue
+    if (!entry) continue
     const permission = entry.permission
     if (!permission) continue
 
-    const permissionSessionId = (permission as any)?.sessionID ?? (permission as any)?.sessionId ?? undefined
+    const permissionSessionId = entry.sessionId ?? (permission as any)?.sessionID ?? (permission as any)?.sessionId ?? undefined
     if (sessionId && permissionSessionId && permissionSessionId !== sessionId) {
       continue
     }
 
     const messageId = entry.messageId ?? extractPermissionMessageId(permission)
-    const callId = extractPermissionCallId(permission)
+    const callId = entry.callId ?? extractPermissionCallId(permission)
     const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
     if (!resolvedPartId) continue
 
@@ -223,6 +228,7 @@ export function upsertQuestionV2(instanceId: string, request: QuestionRequest): 
   if (!request) return
   const store = messageStoreBus.getOrCreate(instanceId)
   const messageId = extractQuestionMessageId(request)
+  const sessionId = getQuestionSessionId(request)
   let partId: string | undefined = undefined
   const callId = extractQuestionCallId(request)
   if (callId) {
@@ -232,27 +238,29 @@ export function upsertQuestionV2(instanceId: string, request: QuestionRequest): 
     request,
     messageId,
     partId,
+    sessionId,
+    callId,
     enqueuedAt: (request as any).time?.created ?? Date.now(),
   })
 }
 
 export function reconcilePendingQuestionsV2(instanceId: string, sessionId?: string): void {
   const store = messageStoreBus.getOrCreate(instanceId)
-  const pending = store.state.questions.queue
+  const pending = store.getPendingQuestionEntries(sessionId)
   if (!pending || pending.length === 0) return
 
   for (const entry of pending) {
-    if (!entry || entry.partId) continue
+    if (!entry) continue
     const request = entry.request
     if (!request) continue
 
-    const questionSessionId = request.sessionID
+    const questionSessionId = entry.sessionId ?? request.sessionID
     if (sessionId && questionSessionId && questionSessionId !== sessionId) {
       continue
     }
 
     const messageId = entry.messageId ?? extractQuestionMessageId(request)
-    const callId = extractQuestionCallId(request)
+    const callId = entry.callId ?? extractQuestionCallId(request)
     const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
     if (!resolvedPartId) continue
 

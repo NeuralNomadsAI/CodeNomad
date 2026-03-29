@@ -56,6 +56,7 @@ import {
   updateSessionModel,
 } from "./session-actions"
 import {
+  handleAssistantStreamChunk,
   handleMessagePartRemoved,
   handleMessageRemoved,
   handleMessagePartDelta,
@@ -76,6 +77,7 @@ import {
 sseManager.onMessageUpdate = handleMessageUpdate
 sseManager.onMessagePartUpdated = handleMessageUpdate
 sseManager.onMessagePartDelta = handleMessagePartDelta
+sseManager.onAssistantStreamChunk = handleAssistantStreamChunk
 sseManager.onMessageRemoved = handleMessageRemoved
 sseManager.onMessagePartRemoved = handleMessagePartRemoved
 sseManager.onSessionUpdate = handleSessionUpdate

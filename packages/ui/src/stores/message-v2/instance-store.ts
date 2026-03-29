@@ -206,9 +206,11 @@ export interface InstanceMessageStore {
   setMessageInfo: (messageId: string, info: MessageInfo) => void
   getMessageInfo: (messageId: string) => MessageInfo | undefined
   upsertPermission: (entry: PermissionEntry) => void
+  getPendingPermissionEntries: (sessionId?: string) => PermissionEntry[]
   removePermission: (permissionId: string) => void
   getPermissionState: (messageId?: string, partId?: string) => { entry: PermissionEntry; active: boolean } | null
   upsertQuestion: (entry: QuestionEntry) => void
+  getPendingQuestionEntries: (sessionId?: string) => QuestionEntry[]
   removeQuestion: (requestId: string) => void
   getQuestionState: (messageId?: string, partId?: string) => { entry: QuestionEntry; active: boolean } | null
   setSessionRevert: (sessionId: string, revert?: SessionRecord["revert"] | null) => void
@@ -220,6 +222,8 @@ export interface InstanceMessageStore {
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
   getLastAssistantMessageId: (sessionId: string) => string | undefined
+  getPendingSyntheticMessageId: (sessionId: string, role: MessageRecord["role"]) => string | undefined
+  resolveToolCallPartId: (messageId: string, callId?: string) => string | undefined
   // Index of the most recent message in the session that contains a compaction part.
   // Returns -1 if there has been no compaction.
   getLastCompactionMessageIndex: (sessionId: string) => number
@@ -235,6 +239,157 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+  const toolCallPartIndex = new Map<string, string>()
+  const pendingPermissionEntriesById = new Map<string, PermissionEntry>()
+  const pendingPermissionIdsBySession = new Map<string, Set<string>>()
+  const pendingQuestionEntriesById = new Map<string, QuestionEntry>()
+  const pendingQuestionIdsBySession = new Map<string, Set<string>>()
+  const pendingSyntheticMessageIdsBySessionRole = new Map<string, string[]>()
+  const pendingSyntheticKeyByMessageId = new Map<string, string>()
+  const pendingSessionRevisionBumps = new Set<string>()
+  let sessionRevisionFlushQueued = false
+
+  function makePendingSyntheticKey(sessionId: string, role: MessageRecord["role"]) {
+    return `${sessionId}:${role}`
+  }
+
+  function isPendingSyntheticRecord(record: MessageRecord | undefined) {
+    return Boolean(record?.isEphemeral && record?.status === "sending")
+  }
+
+  function removePendingSyntheticMessageId(messageId: string | undefined) {
+    if (!messageId) return
+    const key = pendingSyntheticKeyByMessageId.get(messageId)
+    if (!key) return
+    pendingSyntheticKeyByMessageId.delete(messageId)
+    const existing = pendingSyntheticMessageIdsBySessionRole.get(key)
+    if (!existing) return
+    const next = existing.filter((id) => id !== messageId)
+    if (next.length === 0) {
+      pendingSyntheticMessageIdsBySessionRole.delete(key)
+      return
+    }
+    pendingSyntheticMessageIdsBySessionRole.set(key, next)
+  }
+
+  function addPendingSyntheticRecord(record: MessageRecord | undefined) {
+    if (!record || !isPendingSyntheticRecord(record)) return
+    const key = makePendingSyntheticKey(record.sessionId, record.role)
+    const existing = pendingSyntheticMessageIdsBySessionRole.get(key) ?? []
+    if (!existing.includes(record.id)) {
+      pendingSyntheticMessageIdsBySessionRole.set(key, [...existing, record.id])
+    }
+    pendingSyntheticKeyByMessageId.set(record.id, key)
+  }
+
+  function syncPendingSyntheticRecord(nextRecord: MessageRecord | undefined, previousMessageId?: string) {
+    removePendingSyntheticMessageId(previousMessageId ?? nextRecord?.id)
+    addPendingSyntheticRecord(nextRecord)
+  }
+
+  function getPendingSyntheticMessageId(sessionId: string, role: MessageRecord["role"]) {
+    if (!sessionId) return undefined
+    const ids = pendingSyntheticMessageIdsBySessionRole.get(makePendingSyntheticKey(sessionId, role))
+    return ids?.[0]
+  }
+
+  function addIdToSessionIndex(index: Map<string, Set<string>>, sessionId: string | undefined, entryId: string) {
+    if (!sessionId || !entryId) return
+    const set = index.get(sessionId) ?? new Set<string>()
+    set.add(entryId)
+    index.set(sessionId, set)
+  }
+
+  function removeIdFromSessionIndex(index: Map<string, Set<string>>, sessionId: string | undefined, entryId: string) {
+    if (!sessionId || !entryId) return
+    const set = index.get(sessionId)
+    if (!set) return
+    set.delete(entryId)
+    if (set.size === 0) {
+      index.delete(sessionId)
+    }
+  }
+
+  function updatePermissionPendingIndex(previous: PermissionEntry | undefined, next: PermissionEntry) {
+    const permissionId = next.permission?.id
+    if (!permissionId) return
+    if (previous) {
+      removeIdFromSessionIndex(pendingPermissionIdsBySession, previous.sessionId, permissionId)
+    }
+    pendingPermissionEntriesById.set(permissionId, next)
+    if (!next.partId) {
+      addIdToSessionIndex(pendingPermissionIdsBySession, next.sessionId, permissionId)
+    }
+  }
+
+  function removePermissionPendingIndex(entry: PermissionEntry | undefined) {
+    const permissionId = entry?.permission?.id
+    if (!permissionId) return
+    removeIdFromSessionIndex(pendingPermissionIdsBySession, entry?.sessionId, permissionId)
+    pendingPermissionEntriesById.delete(permissionId)
+  }
+
+  function updateQuestionPendingIndex(previous: QuestionEntry | undefined, next: QuestionEntry) {
+    const requestId = next.request?.id
+    if (!requestId) return
+    if (previous) {
+      removeIdFromSessionIndex(pendingQuestionIdsBySession, previous.sessionId, requestId)
+    }
+    pendingQuestionEntriesById.set(requestId, next)
+    if (!next.partId) {
+      addIdToSessionIndex(pendingQuestionIdsBySession, next.sessionId, requestId)
+    }
+  }
+
+  function removeQuestionPendingIndex(entry: QuestionEntry | undefined) {
+    const requestId = entry?.request?.id
+    if (!requestId) return
+    removeIdFromSessionIndex(pendingQuestionIdsBySession, entry?.sessionId, requestId)
+    pendingQuestionEntriesById.delete(requestId)
+  }
+
+  function getToolCallId(part: ClientPart | undefined): string | undefined {
+    if (!part || part.type !== "tool") {
+      return undefined
+    }
+
+    return (
+      (part as any).callID ??
+      (part as any).callId ??
+      (part as any).toolCallID ??
+      (part as any).toolCallId ??
+      undefined
+    )
+  }
+
+  function makeToolCallPartKey(messageId: string, callId: string) {
+    return `${messageId}:${callId}`
+  }
+
+  function clearToolCallPartIndexForMessage(record: MessageRecord | undefined) {
+    if (!record) return
+    for (const partId of record.partIds) {
+      const part = record.parts[partId]?.data
+      const callId = getToolCallId(part)
+      if (!callId) continue
+      toolCallPartIndex.delete(makeToolCallPartKey(record.id, callId))
+    }
+  }
+
+  function indexToolCallPartsForMessage(record: MessageRecord | undefined) {
+    if (!record) return
+    for (const partId of record.partIds) {
+      const part = record.parts[partId]?.data
+      const callId = getToolCallId(part)
+      if (!callId) continue
+      toolCallPartIndex.set(makeToolCallPartKey(record.id, callId), partId)
+    }
+  }
+
+  function resolveToolCallPartId(messageId: string, callId?: string) {
+    if (!messageId || !callId) return undefined
+    return toolCallPartIndex.get(makeToolCallPartKey(messageId, callId))
+  }
 
   function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
     for (let index = messageIds.length - 1; index >= 0; index -= 1) {
@@ -317,6 +472,33 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
+  }
+
+  function flushPendingSessionRevisionBumps() {
+    sessionRevisionFlushQueued = false
+    if (pendingSessionRevisionBumps.size === 0) {
+      return
+    }
+
+    const pending = Array.from(pendingSessionRevisionBumps)
+    pendingSessionRevisionBumps.clear()
+
+    batch(() => {
+      for (const sessionId of pending) {
+        bumpSessionRevision(sessionId)
+      }
+    })
+  }
+
+  function scheduleSessionRevisionBump(sessionId: string) {
+    if (!sessionId) return
+    pendingSessionRevisionBumps.add(sessionId)
+    if (sessionRevisionFlushQueued) {
+      return
+    }
+
+    sessionRevisionFlushQueued = true
+    queueMicrotask(flushPendingSessionRevisionBumps)
   }
 
   function getSessionRevisionValue(sessionId: string) {
@@ -440,7 +622,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     Object.entries(normalizedRecords).forEach(([id, record]) => {
+      clearToolCallPartIndexForMessage(state.messages[id])
+      syncPendingSyntheticRecord(record, id)
       nextMessages[id] = record
+      indexToolCallPartsForMessage(record)
     })
 
     if (infoList) {
@@ -473,7 +658,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         maybeUpdateLatestTodoFromRecord(record)
       })
 
-      bumpSessionRevision(sessionId)
+      scheduleSessionRevisionBump(sessionId)
     })
   }
 
@@ -512,6 +697,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
+    const previousRecord = state.messages[input.id]
 
     let nextRecord: MessageRecord | undefined
 
@@ -534,13 +720,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (nextRecord) {
+      syncPendingSyntheticRecord(nextRecord, previousRecord?.id)
+      if (normalizedParts) {
+        clearToolCallPartIndexForMessage(previousRecord)
+        indexToolCallPartsForMessage(nextRecord)
+      }
       maybeUpdateLatestTodoFromRecord(nextRecord)
     }
 
     insertMessageIntoSession(input.sessionId, input.id)
     flushPendingParts(input.id)
     recomputeLastAssistantMessageId(input.sessionId)
-    bumpSessionRevision(input.sessionId)
+    scheduleSessionRevisionBump(input.sessionId)
   }
 
   function bufferPendingPart(entry: PendingPartEntry) {
@@ -613,6 +804,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const partId = ensurePartId(input.messageId, input.part, message.partIds.length)
     const cloned = clonePart(input.part)
+    const previousPart = message.parts[partId]?.data as ClientPart | undefined
 
     setState(
       "messages",
@@ -636,6 +828,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
 
     rebindPermissionForPart(input.messageId, partId, cloned)
+    const previousCallId = getToolCallId(previousPart)
+    if (previousCallId) {
+      toolCallPartIndex.delete(makeToolCallPartKey(input.messageId, previousCallId))
+    }
+    const nextCallId = getToolCallId(cloned)
+    if (nextCallId) {
+      toolCallPartIndex.set(makeToolCallPartKey(input.messageId, nextCallId), partId)
+    }
 
     if (isCompletedTodoPart(cloned)) {
       recordLatestTodoSnapshot(message.sessionId, {
@@ -647,7 +847,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   
     // Any part update can change the rendered height of the message
     // list, so we treat it as a session revision for scroll purposes.
-    bumpSessionRevision(message.sessionId)
+    scheduleSessionRevisionBump(message.sessionId)
   }
 
   function applyPartDelta(input: {
@@ -692,7 +892,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
 
     if (applied && (input.bumpSessionRevision ?? true)) {
-      bumpSessionRevision(message.sessionId)
+      scheduleSessionRevisionBump(message.sessionId)
     }
   }
 
@@ -713,6 +913,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
+    clearToolCallPartIndexForMessage(record)
+    removePendingSyntheticMessageId(messageId)
 
     batch(() => {
       sessionIds.forEach((sessionId) => {
@@ -766,6 +968,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (!message) return
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
+    const part = message.parts[partId]?.data as ClientPart | undefined
+    const callId = getToolCallId(part)
+    if (callId) {
+      toolCallPartIndex.delete(makeToolCallPartKey(messageId, callId))
+    }
 
     batch(() => {
       setState(
@@ -821,6 +1028,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       parts: options.clearParts ? {} : existing.parts,
     }
 
+    clearToolCallPartIndexForMessage(existing)
+    removePendingSyntheticMessageId(options.oldId)
+    indexToolCallPartsForMessage(cloned)
+    addPendingSyntheticRecord(cloned)
+
     setState("messages", options.newId, cloned)
     setState("messages", (prev) => {
       const next = { ...prev }
@@ -843,7 +1055,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     affectedSessions.forEach((sessionId) => {
       recomputeLastAssistantMessageId(sessionId)
-      bumpSessionRevision(sessionId)
+      scheduleSessionRevisionBump(sessionId)
     })
 
     const infoEntry = messageInfoCache.get(options.oldId)
@@ -905,6 +1117,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertPermission(entry: PermissionEntry) {
+    const previous = pendingPermissionEntriesById.get(entry.permission.id)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
 
@@ -924,9 +1137,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         }
       }),
     )
+    updatePermissionPendingIndex(previous, entry)
+  }
+
+  function getPendingPermissionEntries(sessionId?: string) {
+    if (!sessionId) {
+      return state.permissions.queue.filter((entry) => !entry?.partId)
+    }
+
+    const ids = pendingPermissionIdsBySession.get(sessionId)
+    if (!ids || ids.size === 0) {
+      return []
+    }
+
+    const result: PermissionEntry[] = []
+    ids.forEach((id) => {
+      const entry = pendingPermissionEntriesById.get(id)
+      if (entry && !entry.partId) {
+        result.push(entry)
+      }
+    })
+    return result
   }
 
   function removePermission(permissionId: string) {
+    const previous = pendingPermissionEntriesById.get(permissionId)
     setState(
       "permissions",
       produce((draft) => {
@@ -947,6 +1182,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         })
       }),
     )
+    removePermissionPendingIndex(previous)
   }
 
   function getPermissionState(messageId?: string, partId?: string) {
@@ -959,6 +1195,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertQuestion(entry: QuestionEntry) {
+    const previous = pendingQuestionEntriesById.get(entry.request.id)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.request?.id ?? "__global__"
 
@@ -978,9 +1215,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         }
       }),
     )
+    updateQuestionPendingIndex(previous, entry)
+  }
+
+  function getPendingQuestionEntries(sessionId?: string) {
+    if (!sessionId) {
+      return state.questions.queue.filter((entry) => !entry?.partId)
+    }
+
+    const ids = pendingQuestionIdsBySession.get(sessionId)
+    if (!ids || ids.size === 0) {
+      return []
+    }
+
+    const result: QuestionEntry[] = []
+    ids.forEach((id) => {
+      const entry = pendingQuestionEntriesById.get(id)
+      if (entry && !entry.partId) {
+        result.push(entry)
+      }
+    })
+    return result
   }
 
   function removeQuestion(requestId: string) {
+    const previous = pendingQuestionEntriesById.get(requestId)
     setState(
       "questions",
       produce((draft) => {
@@ -1001,6 +1260,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         })
       }),
     )
+    removeQuestionPendingIndex(previous)
   }
 
   function getQuestionState(messageId?: string, partId?: string) {
@@ -1020,6 +1280,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const removedIds = session.messageIds.slice(stopIndex)
     const keptIds = session.messageIds.slice(0, stopIndex)
     if (removedIds.length === 0) return
+
+    removedIds.forEach((id) => clearToolCallPartIndexForMessage(state.messages[id]))
+    removedIds.forEach((id) => removePendingSyntheticMessageId(id))
 
     setState("sessions", sessionId, "messageIds", keptIds)
 
@@ -1099,12 +1362,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
    function clearSession(sessionId: string) {
      if (!sessionId) return
 
-    const messageIds = Object.values(state.messages)
-      .filter((record) => record.sessionId === sessionId)
-      .map((record) => record.id)
+    const session = state.sessions[sessionId]
+    const messageIds = session?.messageIds?.length
+      ? [...session.messageIds]
+      : Object.values(state.messages)
+          .filter((record) => record.sessionId === sessionId)
+          .map((record) => record.id)
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
+    messageIds.forEach((id) => clearToolCallPartIndexForMessage(state.messages[id]))
+    messageIds.forEach((id) => removePendingSyntheticMessageId(id))
  
     batch(() => {
       setState("messages", (prev) => {
@@ -1194,10 +1462,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
  
-   function clearInstance() {
-     messageInfoCache.clear()
-      setState(reconcile(createInitialState(instanceId)))
-    }
+    function clearInstance() {
+     toolCallPartIndex.clear()
+      pendingPermissionEntriesById.clear()
+      pendingPermissionIdsBySession.clear()
+      pendingQuestionEntriesById.clear()
+      pendingQuestionIdsBySession.clear()
+      pendingSyntheticMessageIdsBySessionRole.clear()
+      pendingSyntheticKeyByMessageId.clear()
+      messageInfoCache.clear()
+       setState(reconcile(createInitialState(instanceId)))
+     }
  
     return {
 
@@ -1216,11 +1491,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      replaceMessageId,
      setMessageInfo,
      getMessageInfo,
-      upsertPermission,
-      removePermission,
-      getPermissionState,
-      upsertQuestion,
-      removeQuestion,
+       upsertPermission,
+       getPendingPermissionEntries,
+       removePermission,
+       getPermissionState,
+       upsertQuestion,
+       getPendingQuestionEntries,
+       removeQuestion,
       getQuestionState,
 
      setSessionRevert,
@@ -1232,10 +1509,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
+      getPendingSyntheticMessageId,
+      resolveToolCallPartId,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
       clearSession,
       clearInstance,
-     }
-   }
+    }
+  }

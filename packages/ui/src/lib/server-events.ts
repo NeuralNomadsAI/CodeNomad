@@ -1,6 +1,6 @@
+import { batch as solidBatch } from "solid-js"
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
-import { getClientIdentity } from "./client-identity"
+import { connectWorkspaceEvents, type WorkspaceEventConnection } from "./event-transport"
 import { getLogger } from "./logger"
 
 const RETRY_BASE_DELAY = 1000
@@ -18,55 +18,102 @@ function logSse(message: string, context?: Record<string, unknown>) {
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
-  private source: EventSource | null = null
+  private connection: WorkspaceEventConnection | null = null
+  private connectGeneration = 0
   private retryDelay = RETRY_BASE_DELAY
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
-    this.connect()
+    void this.connect()
   }
 
-  private connect() {
-    if (this.source) {
-      this.source.close()
+  private async connect() {
+    const generation = ++this.connectGeneration
+    this.clearReconnectTimer()
+
+    if (this.connection) {
+      this.connection.disconnect()
+      this.connection = null
     }
+
     logSse("Connecting to backend events stream")
-    this.source = serverApi.connectEvents(
-      (event) => this.dispatch(event),
-      () => this.scheduleReconnect(),
-      (payload) => {
-        void serverApi
-          .sendClientConnectionPong({
-            ...getClientIdentity(),
-            pingTs: payload.ts,
-          })
-          .catch((error) => {
-            log.error("Failed to send client connection pong", error)
-          })
-      },
-    )
-    this.source.onopen = () => {
-      logSse("Events stream connected")
-      this.retryDelay = RETRY_BASE_DELAY
-      this.openHandlers.forEach((handler) => handler())
+
+    try {
+      const connection = await connectWorkspaceEvents({
+        onBatch: (events) => this.dispatchBatch(events),
+        onError: () => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
+          this.scheduleReconnect()
+        },
+        onOpen: () => {
+          if (generation !== this.connectGeneration) {
+            return
+          }
+          logSse("Events stream connected")
+          this.retryDelay = RETRY_BASE_DELAY
+          this.openHandlers.forEach((handler) => handler())
+        },
+      })
+
+      if (generation !== this.connectGeneration) {
+        connection.disconnect()
+        return
+      }
+
+      this.connection = connection
+    } catch (error) {
+      logSse("Events stream failed to connect, scheduling reconnect", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      this.scheduleReconnect()
     }
   }
 
   private scheduleReconnect() {
-    if (this.source) {
-      this.source.close()
-      this.source = null
+    if (this.retryTimer) {
+      return
     }
+
+    if (this.connection) {
+      this.connection.disconnect()
+      this.connection = null
+    }
+
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
-    setTimeout(() => {
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
       this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_DELAY)
-      this.connect()
+      void this.connect()
     }, this.retryDelay)
   }
 
+  private clearReconnectTimer() {
+    if (!this.retryTimer) {
+      return
+    }
+
+    clearTimeout(this.retryTimer)
+    this.retryTimer = null
+  }
+
   private dispatch(event: WorkspaceEventPayload) {
-    logSse(`event ${event.type}`)
     this.handlers.get("*")?.forEach((handler) => handler(event))
     this.handlers.get(event.type)?.forEach((handler) => handler(event))
+  }
+
+  private dispatchBatch(events: WorkspaceEventPayload[]) {
+    if (events.length === 0) {
+      return
+    }
+
+    logSse("event batch", { size: events.length })
+    solidBatch(() => {
+      for (const event of events) {
+        this.dispatch(event)
+      }
+    })
   }
 
   on(type: WorkspaceEventType | "*", handler: (event: WorkspaceEventPayload) => void): () => void {
