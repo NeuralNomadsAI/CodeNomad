@@ -2,7 +2,7 @@
 
 import fs from "fs"
 import path, { join } from "path"
-import { execFileSync } from "child_process"
+import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
@@ -11,7 +11,8 @@ const workspaceRoot = join(appDir, "..", "..")
 const serverRoot = join(appDir, "..", "server")
 const resourcesRoot = join(appDir, "electron", "resources")
 const serverDest = join(resourcesRoot, "server")
-const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
+const npmExecPath = process.env.npm_execpath
+const npmNodeExecPath = process.env.npm_node_execpath
 
 const serverSources = ["dist", "public", "node_modules", "package.json"]
 const serverDepsMarker = join(serverRoot, "node_modules", "fastify", "package.json")
@@ -34,27 +35,34 @@ function ensureServerDependencies() {
   }
 
   log("installing production server dependencies")
-  execFileSync(
-    npmCmd,
-    [
-      "install",
-      "--omit=dev",
-      "--ignore-scripts",
-      "--workspaces=false",
-      "--package-lock=false",
-      "--install-strategy=shallow",
-      "--fund=false",
-      "--audit=false",
-    ],
-    {
-      cwd: serverRoot,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        PATH: `${join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`,
-      },
-    },
-  )
+  const npmArgs = [
+    "install",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--workspaces=false",
+    "--package-lock=false",
+    "--install-strategy=shallow",
+    "--fund=false",
+    "--audit=false",
+  ]
+
+  const env = {
+    ...process.env,
+    PATH: `${join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+    npm_config_workspaces: "false",
+  }
+
+  const npmCli = npmExecPath && npmNodeExecPath ? [npmNodeExecPath, [npmExecPath, ...npmArgs]] : null
+  const result = npmCli
+    ? spawnSync(npmCli[0], npmCli[1], { cwd: serverRoot, stdio: "inherit", env })
+    : spawnSync("npm", npmArgs, { cwd: serverRoot, stdio: "inherit", env, shell: process.platform === "win32" })
+
+  if (result.status !== 0) {
+    if (result.error) {
+      throw result.error
+    }
+    throw new Error(`npm install exited with code ${result.status ?? 1}`)
+  }
 }
 
 function copyServerArtifacts() {
