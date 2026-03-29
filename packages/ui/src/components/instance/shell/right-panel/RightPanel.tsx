@@ -788,7 +788,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setRightPanelTab("changes")
   }
 
-  const statusSectionIds = ["session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const statusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
 
   createEffect(() => {
     const currentExpanded = new Set(rightPanelExpandedItems())
