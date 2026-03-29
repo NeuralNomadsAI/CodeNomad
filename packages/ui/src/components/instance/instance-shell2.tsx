@@ -420,6 +420,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={closeLeftDrawer}
         ModalProps={modalProps}
         sx={{
+          zIndex: 60,
           "& .MuiDrawer-paper": {
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
@@ -530,6 +531,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onClose={closeRightDrawer}
         ModalProps={modalProps}
         sx={{
+          zIndex: 60,
           "& .MuiDrawer-paper": {
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
