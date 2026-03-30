@@ -10,6 +10,9 @@ export interface SideCarTabRecord {
   token: string
   sidecarId: string
   name: string
+  port?: number
+  prefixMode: SideCar["prefixMode"]
+  proxyBasePath: string
   shellUrl: string
 }
 
@@ -91,6 +94,9 @@ async function openSidecarTab(sidecarId: string) {
     token,
     sidecarId,
     name: sidecar?.name ?? sidecarId,
+    port: sidecar?.port,
+    prefixMode: sidecar?.prefixMode ?? "strip",
+    proxyBasePath: buildSidecarShellUrl(sidecarId).replace(/\/$/, ""),
     shellUrl: buildSidecarShellUrl(sidecarId),
   }
 

@@ -234,4 +234,6 @@ export const settingsMessages = {
   "sidecars.open.errorTitle": "Unable to open SideCar",
   "sidecars.back": "Back",
   "sidecars.refresh": "Refresh",
+  "sidecars.path": "Path",
+  "sidecars.go": "Go",
 } as const
