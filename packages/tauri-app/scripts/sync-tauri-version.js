@@ -6,6 +6,7 @@ const path = require("path")
 const root = path.resolve(__dirname, "..")
 const packageJsonPath = path.join(root, "package.json")
 const cargoTomlPath = path.join(root, "src-tauri", "Cargo.toml")
+const cargoLockPath = path.join(root, "Cargo.lock")
 const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json")
 
 function readPackageVersion() {
@@ -30,8 +31,29 @@ function syncCargoToml(version) {
   }
 
   const updated = current.replace(packageVersionPattern, (_, prefix, __, suffix) => `${prefix}${version}${suffix}`)
-
   fs.writeFileSync(cargoTomlPath, updated)
+  return true
+}
+
+function syncCargoLock(version) {
+  if (!fs.existsSync(cargoLockPath)) {
+    return false
+  }
+
+  const current = fs.readFileSync(cargoLockPath, "utf8")
+  const packageVersionPattern = /(\[\[package\]\]\r?\nname = "codenomad-tauri"\r?\nversion = ")([^"]+)(")/
+  const match = current.match(packageVersionPattern)
+
+  if (!match) {
+    throw new Error("Unable to find codenomad-tauri version in packages/tauri-app/Cargo.lock")
+  }
+
+  if (match[2] === version) {
+    return false
+  }
+
+  const updated = current.replace(packageVersionPattern, (_, prefix, __, suffix) => `${prefix}${version}${suffix}`)
+  fs.writeFileSync(cargoLockPath, updated)
   return true
 }
 
@@ -53,6 +75,10 @@ function main() {
 
   if (syncCargoToml(version)) {
     changed.push(path.relative(root, cargoTomlPath))
+  }
+
+  if (syncCargoLock(version)) {
+    changed.push(path.relative(root, cargoLockPath))
   }
 
   if (syncTauriConfig(version)) {

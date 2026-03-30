@@ -21,36 +21,6 @@ function log(message) {
   console.log(`[prepare-resources] ${message}`)
 }
 
-function runNpm(args, options = {}) {
-  const env = {
-    ...process.env,
-    ...options.env,
-  }
-
-  const result = npmExecPath && npmNodeExecPath
-    ? spawnSync(npmNodeExecPath, [npmExecPath, ...args], {
-        ...options,
-        stdio: "inherit",
-        env,
-      })
-    : spawnSync("npm", args, {
-        ...options,
-        stdio: "inherit",
-        env,
-        shell: process.platform === "win32",
-      })
-
-  if (result.status === 0) {
-    return
-  }
-
-  if (result.error) {
-    throw result.error
-  }
-
-  throw new Error(`npm ${args.join(" ")} exited with code ${result.status ?? 1}`)
-}
-
 function ensureServerBuild() {
   const distPath = join(serverRoot, "dist")
   const publicPath = join(serverRoot, "public")
@@ -65,25 +35,34 @@ function ensureServerDependencies() {
   }
 
   log("installing production server dependencies")
-  runNpm(
-    [
-      "install",
-      "--omit=dev",
-      "--ignore-scripts",
-      "--workspaces=false",
-      "--package-lock=false",
-      "--install-strategy=shallow",
-      "--fund=false",
-      "--audit=false",
-    ],
-    {
-      cwd: serverRoot,
-      env: {
-        PATH: `${join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`,
-        npm_config_workspaces: "false",
-      },
-    },
-  )
+  const npmArgs = [
+    "install",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--workspaces=false",
+    "--package-lock=false",
+    "--install-strategy=shallow",
+    "--fund=false",
+    "--audit=false",
+  ]
+
+  const env = {
+    ...process.env,
+    PATH: `${join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+    npm_config_workspaces: "false",
+  }
+
+  const npmCli = npmExecPath && npmNodeExecPath ? [npmNodeExecPath, [npmExecPath, ...npmArgs]] : null
+  const result = npmCli
+    ? spawnSync(npmCli[0], npmCli[1], { cwd: serverRoot, stdio: "inherit", env })
+    : spawnSync("npm", npmArgs, { cwd: serverRoot, stdio: "inherit", env, shell: process.platform === "win32" })
+
+  if (result.status !== 0) {
+    if (result.error) {
+      throw result.error
+    }
+    throw new Error(`npm install exited with code ${result.status ?? 1}`)
+  }
 }
 
 function copyServerArtifacts() {

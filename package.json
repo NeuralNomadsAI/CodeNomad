@@ -22,7 +22,7 @@
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
-    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version"
+    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version && npm run sync:version --workspace @codenomad/tauri-app"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",

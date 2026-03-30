@@ -252,7 +252,7 @@ A: Approximately 100-150 MB (includes Electron runtime).
 A: Not required, but recommended for public distribution to avoid security warnings.
 
 **Q: How do I update the version?**  
-A: Update `version` in `package.json`, then rebuild. The Tauri app syncs `packages/tauri-app/src-tauri/Cargo.toml` and `packages/tauri-app/src-tauri/tauri.conf.json` from `packages/tauri-app/package.json` during prebuild.
+A: Update `version` in `package.json`, then rebuild.
 
 ## Support
 
