@@ -34,6 +34,7 @@ function persist(next: Map<string, boolean>) {
 }
 
 const [autoAcceptState, setAutoAcceptState] = createSignal(readInitialState())
+const [inFlightVersion, setInFlightVersion] = createSignal(0)
 
 const inFlight = new Set<string>()
 
@@ -68,6 +69,13 @@ export function canAutoRespondPermission(instanceId: string, sessionId: string, 
   return true
 }
 
+export function getPermissionAutoAcceptInFlightVersion() {
+  return inFlightVersion()
+}
+
 export function finishAutoRespondPermission(instanceId: string, sessionId: string, requestId: string) {
-  inFlight.delete(`${makeKey(instanceId, sessionId)}:${requestId}`)
+  if (!inFlight.delete(`${makeKey(instanceId, sessionId)}:${requestId}`)) {
+    return
+  }
+  setInFlightVersion((value) => value + 1)
 }

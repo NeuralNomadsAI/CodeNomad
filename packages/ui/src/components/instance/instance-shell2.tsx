@@ -61,6 +61,7 @@ import { getPermissionSessionId } from "../../types/permission"
 import {
   canAutoRespondPermission,
   finishAutoRespondPermission,
+  getPermissionAutoAcceptInFlightVersion,
   isPermissionAutoAcceptEnabled,
 } from "../../stores/permission-auto-accept"
 
@@ -261,6 +262,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
 
   createEffect(() => {
+    getPermissionAutoAcceptInFlightVersion()
+
     for (const permission of permissionQueue()) {
       const sessionId = getPermissionSessionId(permission)
       if (!sessionId) continue
