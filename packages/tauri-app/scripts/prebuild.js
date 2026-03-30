@@ -53,52 +53,10 @@ async function ensureMonacoAssets() {
   })
 }
 
-function latestModifiedTime(targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    return 0
-  }
-
-  const stat = fs.statSync(targetPath)
-  if (!stat.isDirectory()) {
-    return stat.mtimeMs
-  }
-
-  let latest = stat.mtimeMs
-  for (const entry of fs.readdirSync(targetPath, { withFileTypes: true })) {
-    const entryPath = path.join(targetPath, entry.name)
-    const entryLatest = latestModifiedTime(entryPath)
-    if (entryLatest > latest) {
-      latest = entryLatest
-    }
-  }
-
-  return latest
-}
-
-function serverBuildIsStale(distPath) {
-  const outputLatest = latestModifiedTime(distPath)
-  if (!outputLatest) {
-    return true
-  }
-
-  const sourceCandidates = [
-    path.join(serverRoot, "src"),
-    path.join(serverRoot, "scripts"),
-    path.join(serverRoot, "package.json"),
-    path.join(serverRoot, "tsconfig.json"),
-  ]
-
-  return sourceCandidates.some((candidate) => latestModifiedTime(candidate) > outputLatest)
-}
-
 function ensureServerBuild() {
   const distPath = path.join(serverRoot, "dist")
   const publicPath = path.join(serverRoot, "public")
-  if (fs.existsSync(distPath) && fs.existsSync(publicPath) && !serverBuildIsStale(distPath)) {
-    return
-  }
-
-  console.log("[prebuild] server build missing or stale; running workspace build...")
+  console.log("[prebuild] rebuilding server workspace for desktop packaging...")
   execSync("npm --workspace @neuralnomads/codenomad run build", {
     cwd: workspaceRoot,
     stdio: "inherit",
