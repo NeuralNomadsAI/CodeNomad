@@ -170,11 +170,11 @@ export interface InstanceStreamEvent {
   [key: string]: unknown
 }
 
-export type SideCarKind = "managed" | "port"
+export type SideCarKind = "port"
 
 export type SideCarPrefixMode = "strip" | "preserve"
 
-export type SideCarStatus = "starting" | "running" | "stopped" | "error"
+export type SideCarStatus = "running" | "stopped"
 
 export interface SideCar {
   id: string
@@ -182,12 +182,8 @@ export interface SideCar {
   name: string
   port: number
   insecure: boolean
-  autoStart: boolean
   prefixMode: SideCarPrefixMode
-  startupCommand?: string
   status: SideCarStatus
-  pid?: number
-  error?: string
   createdAt: string
   updatedAt: string
 }

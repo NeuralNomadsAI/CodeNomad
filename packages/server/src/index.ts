@@ -320,7 +320,6 @@ async function main() {
     settings,
     eventBus,
     logger: logger.child({ component: "sidecars" }),
-    rootDir: options.rootDir,
   })
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,

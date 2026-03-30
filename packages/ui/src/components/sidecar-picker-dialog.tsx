@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createEffect, createMemo, type Component } from "solid-js"
-import { Globe, Play, Square } from "lucide-solid"
+import { Globe, Square } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../stores/sidecars"
 
@@ -41,7 +41,7 @@ export const SideCarPickerDialog: Component<SideCarPickerDialogProps> = (props) 
                       <button
                         type="button"
                         class="panel-list-item panel-list-item-content text-left disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={sidecar.kind === "port" && sidecar.status !== "running"}
+                        disabled={sidecar.status !== "running"}
                         onClick={() => void props.onOpenSidecar(sidecar.id)}
                       >
                         <div class="flex items-center justify-between gap-4 w-full">
@@ -52,13 +52,13 @@ export const SideCarPickerDialog: Component<SideCarPickerDialogProps> = (props) 
                             <div class="min-w-0">
                               <div class="text-sm font-medium text-primary truncate">{sidecar.name}</div>
                               <div class="text-xs text-muted">
-                                {sidecar.kind === "managed" ? t("sidecars.kind.managed") : t("sidecars.kind.port")} - {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
+                                {t("sidecars.kind.port")} - {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
                               </div>
                               <div class="text-xs text-muted mt-1">{t("sidecars.basePath")}: <code>/sidecars/{sidecar.id}</code></div>
                             </div>
                           </div>
                           <div class="text-xs text-secondary flex items-center gap-2">
-                            {sidecar.status === "running" ? <Play class="w-4 h-4" /> : <Square class="w-4 h-4" />}
+                            <Square class="w-4 h-4" />
                             <span>{t(`sidecars.status.${sidecar.status}`)}</span>
                           </div>
                         </div>

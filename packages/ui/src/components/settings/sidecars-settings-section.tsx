@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show, onMount, type Component } from "solid-js"
-import { Globe, Loader2, Play, Plus, Square, Trash2 } from "lucide-solid"
+import { Globe, Loader2, Plus, Trash2 } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../../stores/sidecars"
@@ -15,13 +15,10 @@ function deriveSidecarId(value: string): string {
 
 export const SideCarsSettingsSection: Component = () => {
   const { t } = useI18n()
-  const [kind, setKind] = createSignal<"managed" | "port">("managed")
   const [name, setName] = createSignal("")
   const [port, setPort] = createSignal("3000")
   const [insecure, setInsecure] = createSignal(false)
-  const [autoStart, setAutoStart] = createSignal(true)
   const [prefixMode, setPrefixMode] = createSignal<"strip" | "preserve">("strip")
-  const [startupCommand, setStartupCommand] = createSignal("")
   const [busyId, setBusyId] = createSignal<string | null>(null)
   const [creating, setCreating] = createSignal(false)
   const [formError, setFormError] = createSignal<string | null>(null)
@@ -46,48 +43,20 @@ export const SideCarsSettingsSection: Component = () => {
     setFormError(null)
     try {
       await serverApi.createSidecar({
-        kind: kind(),
+        kind: "port",
         name: trimmedName,
         port: nextPort,
         insecure: insecure(),
-        autoStart: kind() === "managed" ? autoStart() : false,
         prefixMode: prefixMode(),
-        startupCommand: kind() === "managed" ? startupCommand().trim() : undefined,
       })
       setName("")
       setPort("3000")
-      setStartupCommand("")
       setInsecure(false)
-      setAutoStart(true)
       setPrefixMode("strip")
     } catch (error) {
       setFormError(error instanceof Error ? error.message : String(error))
     } finally {
       setCreating(false)
-    }
-  }
-
-  async function handleStart(id: string) {
-    setBusyId(id)
-    setActionError(null)
-    try {
-      await serverApi.startSidecar(id)
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  async function handleStop(id: string) {
-    setBusyId(id)
-    setActionError(null)
-    try {
-      await serverApi.stopSidecar(id)
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusyId(null)
     }
   }
 
@@ -151,34 +120,6 @@ export const SideCarsSettingsSection: Component = () => {
 
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
-              <div class="settings-toggle-title">{t("sidecars.form.kind")}</div>
-              <div class="settings-toggle-caption">{t("sidecars.picker.subtitle")}</div>
-            </div>
-            <select class="selector-input w-full max-w-xs" value={kind()} onChange={(event) => setKind(event.currentTarget.value as "managed" | "port") }>
-              <option value="managed">{t("sidecars.kind.managed")}</option>
-              <option value="port">{t("sidecars.kind.port")}</option>
-            </select>
-          </div>
-
-          <Show when={kind() === "managed"}>
-            <div class="settings-toggle-row settings-toggle-row-compact">
-              <div>
-                <div class="settings-toggle-title">{t("sidecars.form.command")}</div>
-                <div class="settings-toggle-caption">{t("sidecars.form.command.help")}</div>
-              </div>
-              <input
-                class="selector-input w-full max-w-xs"
-                value={startupCommand()}
-                onInput={(event) => {
-                  setFormError(null)
-                  setStartupCommand(event.currentTarget.value)
-                }}
-              />
-            </div>
-          </Show>
-
-          <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
               <div class="settings-toggle-title">{t("sidecars.form.protocol")}</div>
               <div class="settings-toggle-caption">{t("sidecars.form.protocol.help")}</div>
             </div>
@@ -198,19 +139,6 @@ export const SideCarsSettingsSection: Component = () => {
               <option value="preserve">{t("sidecars.form.prefixMode.preserve")}</option>
             </select>
           </div>
-
-          <Show when={kind() === "managed"}>
-            <div class="settings-toggle-row settings-toggle-row-compact">
-              <div>
-                <div class="settings-toggle-title">{t("sidecars.form.autoStart")}</div>
-                <div class="settings-toggle-caption">{t("sidecars.form.autoStart.help")}</div>
-              </div>
-              <select class="selector-input w-full max-w-xs" value={autoStart() ? "true" : "false"} onChange={(event) => setAutoStart(event.currentTarget.value === "true") }>
-                <option value="true">{t("settings.common.enabled")}</option>
-                <option value="false">{t("settings.common.disabled")}</option>
-              </select>
-            </div>
-          </Show>
 
           <Show when={formError()}>
             <div class="text-sm text-red-500">{formError()}</div>
@@ -248,28 +176,15 @@ export const SideCarsSettingsSection: Component = () => {
                     <div>
                       <div class="settings-toggle-title">{sidecar.name}</div>
                       <div class="settings-toggle-caption">
-                        {sidecar.kind === "managed" ? t("sidecars.kind.managed") : t("sidecars.kind.port")} · {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
+                        {t("sidecars.kind.port")} · {sidecar.insecure ? "http" : "https"}://127.0.0.1:{sidecar.port}
                       </div>
                       <div class="settings-toggle-caption">
                         {t("sidecars.basePath")}: <code>/sidecars/{sidecar.id}</code> · {t(`sidecars.form.prefixMode.${sidecar.prefixMode}`)}
                       </div>
-                      <Show when={sidecar.error}>
-                        <div class="text-sm text-red-500 mt-1">{sidecar.error}</div>
-                      </Show>
                     </div>
 
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-secondary min-w-[4.5rem] text-right">{t(`sidecars.status.${sidecar.status}`)}</span>
-                      <Show when={sidecar.kind === "managed" && sidecar.status !== "running"}>
-                        <button type="button" class="selector-button selector-button-secondary" disabled={busyId() === sidecar.id} onClick={() => void handleStart(sidecar.id)}>
-                          <Play class="w-4 h-4" />
-                        </button>
-                      </Show>
-                      <Show when={sidecar.kind === "managed" && (sidecar.status === "running" || sidecar.status === "starting") }>
-                        <button type="button" class="selector-button selector-button-secondary" disabled={busyId() === sidecar.id} onClick={() => void handleStop(sidecar.id)}>
-                          <Square class="w-4 h-4" />
-                        </button>
-                      </Show>
                       <button type="button" class="selector-button selector-button-secondary" disabled={busyId() === sidecar.id} onClick={() => void handleDelete(sidecar.id)}>
                         <Trash2 class="w-4 h-4" />
                       </button>

@@ -1,5 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
+import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
 import type { SideCar } from "../../../server/src/api-types"
@@ -83,19 +84,21 @@ serverEvents.on("sidecar.removed", (event) => {
 async function openSidecarTab(sidecarId: string) {
   await ensureSidecarsLoaded()
 
-  let sidecar = sidecars().get(sidecarId)
-  if (sidecar?.kind === "managed" && sidecar.status !== "running") {
-    sidecar = await serverApi.startSidecar(sidecarId)
-    upsertSidecar(sidecar)
+  const sidecar = sidecars().get(sidecarId)
+  if (!sidecar) {
+    throw new Error(tGlobal("sidecars.open.notFound"))
+  }
+  if (sidecar.status !== "running") {
+    throw new Error(tGlobal("sidecars.open.notRunning"))
   }
 
   const token = `${sidecarId}:${Date.now().toString(36)}`
   const nextTab: SideCarTabRecord = {
     token,
     sidecarId,
-    name: sidecar?.name ?? sidecarId,
-    port: sidecar?.port,
-    prefixMode: sidecar?.prefixMode ?? "strip",
+    name: sidecar.name,
+    port: sidecar.port,
+    prefixMode: sidecar.prefixMode,
     proxyBasePath: buildSidecarShellUrl(sidecarId).replace(/\/$/, ""),
     shellUrl: buildSidecarShellUrl(sidecarId),
   }

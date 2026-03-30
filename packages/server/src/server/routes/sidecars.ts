@@ -7,13 +7,11 @@ interface RouteDeps {
 }
 
 const SideCarCreateSchema = z.object({
-  kind: z.enum(["managed", "port"]),
+  kind: z.literal("port").default("port"),
   name: z.string().trim().min(1),
   port: z.number().int().min(1).max(65535),
   insecure: z.boolean().default(false),
-  autoStart: z.boolean().default(true),
   prefixMode: z.enum(["strip", "preserve"]).default("strip"),
-  startupCommand: z.string().trim().optional(),
 })
 
 const SideCarUpdateSchema = SideCarCreateSchema.omit({ kind: true }).partial().refine((value) => Object.keys(value).length > 0, {
@@ -55,23 +53,4 @@ export function registerSideCarRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
     reply.code(204)
   })
-
-  app.post<{ Params: { id: string } }>("/api/sidecars/:id/start", async (request, reply) => {
-    try {
-      return await deps.sidecarManager.start(request.params.id)
-    } catch (error) {
-      reply.code(400)
-      return { error: error instanceof Error ? error.message : "Failed to start SideCar" }
-    }
-  })
-
-  app.post<{ Params: { id: string } }>("/api/sidecars/:id/stop", async (request, reply) => {
-    try {
-      return await deps.sidecarManager.stop(request.params.id)
-    } catch (error) {
-      reply.code(400)
-      return { error: error instanceof Error ? error.message : "Failed to stop SideCar" }
-    }
-  })
-
 }

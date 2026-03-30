@@ -198,13 +198,11 @@ export const serverApi = {
     return request<{ sidecars: SideCar[] }>("/api/sidecars")
   },
   createSidecar(payload: {
-    kind: "managed" | "port"
+    kind: "port"
     name: string
     port: number
     insecure: boolean
-    autoStart: boolean
     prefixMode: "strip" | "preserve"
-    startupCommand?: string
   }): Promise<SideCar> {
     return request<SideCar>("/api/sidecars", {
       method: "POST",
@@ -213,7 +211,7 @@ export const serverApi = {
   },
   updateSidecar(
     id: string,
-    payload: Partial<{ name: string; port: number; insecure: boolean; autoStart: boolean; startupCommand?: string }>,
+    payload: Partial<{ name: string; port: number; insecure: boolean; prefixMode: "strip" | "preserve" }>,
   ): Promise<SideCar> {
     return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -222,12 +220,6 @@ export const serverApi = {
   },
   deleteSidecar(id: string): Promise<void> {
     return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  startSidecar(id: string): Promise<SideCar> {
-    return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}/start`, { method: "POST" })
-  },
-  stopSidecar(id: string): Promise<SideCar> {
-    return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}/stop`, { method: "POST" })
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
