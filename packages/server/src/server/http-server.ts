@@ -3,7 +3,9 @@ import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
+import { connect as connectTcp, type Socket } from "net"
 import path from "path"
+import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -278,6 +280,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
+  setupSideCarWebSocketProxy(app, {
+    sidecarManager: deps.sidecarManager,
+    authManager: deps.authManager,
+    logger: proxyLogger,
+  })
   registerPluginRoutes(app, {
     workspaceManager: deps.workspaceManager,
     eventBus: deps.eventBus,
@@ -365,6 +372,10 @@ interface SideCarProxyDeps {
   logger: Logger
 }
 
+interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
+  authManager: AuthManager
+}
+
 function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
   const proxyBaseHandler = async (
     request: FastifyRequest<{ Params: { id: string } }>,
@@ -394,6 +405,28 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
 
   app.all("/sidecars/:id", proxyBaseHandler)
   app.all("/sidecars/:id/*", proxyWildcardHandler)
+}
+
+function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    const parsed = parseSideCarUpgradePath(rawUrl)
+    if (!parsed) {
+      return
+    }
+
+    void proxySideCarWebSocketUpgrade({
+      request,
+      socket: socket as Socket,
+      head,
+      sidecarId: parsed.sidecarId,
+      incomingPath: parsed.pathname,
+      search: parsed.search,
+      sidecarManager: deps.sidecarManager,
+      authManager: deps.authManager,
+      logger: deps.logger,
+    })
+  })
 }
 
 function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
@@ -914,6 +947,180 @@ async function proxySideCarRequest(args: {
       }
     },
   })
+}
+
+function parseSideCarUpgradePath(rawUrl: string): { sidecarId: string; pathname: string; search: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl, "http://localhost")
+  } catch {
+    return null
+  }
+
+  const match = parsed.pathname.match(/^\/sidecars\/([^/]+)(?:\/.*)?$/)
+  if (!match) {
+    return null
+  }
+
+  try {
+    return {
+      sidecarId: decodeURIComponent(match[1] ?? ""),
+      pathname: parsed.pathname,
+      search: parsed.search,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function proxySideCarWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  sidecarId: string
+  incomingPath: string
+  search: string
+  sidecarManager: SideCarManager
+  authManager: AuthManager
+  logger: Logger
+}) {
+  const { request, socket, head, sidecarId, incomingPath, search, sidecarManager, authManager, logger } = args
+
+  if (!isWebSocketUpgradeRequest(request)) {
+    rejectUpgrade(socket, 400, "Bad Request")
+    return
+  }
+
+  const session = authManager.getSessionFromHeaders(request.headers)
+  if (!session) {
+    rejectUpgrade(socket, 401, "Unauthorized")
+    return
+  }
+
+  const sidecar = await sidecarManager.get(sidecarId)
+  if (!sidecar) {
+    rejectUpgrade(socket, 404, "Not Found")
+    return
+  }
+
+  const targetOrigin = sidecarManager.buildTargetOrigin(sidecar)
+  const targetPath = sidecarManager.buildTargetPath(sidecarId, incomingPath, search)
+  const targetUrl = new URL(`${targetOrigin}${targetPath}`)
+  logger.debug({ sidecarId, targetUrl: targetUrl.toString(), prefixMode: sidecar.prefixMode }, "Proxying websocket to SideCar")
+
+  const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
+
+  const closeBoth = () => {
+    if (!socket.destroyed) {
+      socket.destroy()
+    }
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  }
+
+  upstream.once("error", (error) => {
+    logger.error({ sidecarId, err: error, targetUrl: targetUrl.toString() }, "Failed to proxy SideCar websocket")
+    rejectUpgrade(socket, 502, "Bad Gateway")
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  })
+
+  socket.once("error", (error) => {
+    logger.debug({ sidecarId, err: error }, "SideCar websocket client socket errored")
+    if (!upstream.destroyed) {
+      upstream.destroy()
+    }
+  })
+
+  upstream.once(readyEvent, () => {
+    try {
+      upstream.write(buildSideCarWebSocketRequest(request, targetUrl))
+      if (head.length > 0) {
+        upstream.write(head)
+      }
+      upstream.pipe(socket)
+      socket.pipe(upstream)
+    } catch (error) {
+      logger.error({ sidecarId, err: error, targetUrl: targetUrl.toString() }, "Failed to forward SideCar websocket upgrade")
+      closeBoth()
+    }
+  })
+
+  upstream.once("close", () => {
+    if (!socket.destroyed) {
+      socket.end()
+    }
+  })
+
+  socket.once("close", () => {
+    if (!upstream.destroyed) {
+      upstream.end()
+    }
+  })
+}
+
+function createSideCarUpstreamSocket(targetUrl: URL): { socket: Socket | TLSSocket; readyEvent: "connect" | "secureConnect" } {
+  const port = Number(targetUrl.port || (targetUrl.protocol === "https:" ? 443 : 80))
+  if (targetUrl.protocol === "https:") {
+    return {
+      socket: connectTls({
+        host: targetUrl.hostname,
+        port,
+        servername: targetUrl.hostname,
+      }),
+      readyEvent: "secureConnect",
+    }
+  }
+  return {
+    socket: connectTcp(port, targetUrl.hostname),
+    readyEvent: "connect",
+  }
+}
+
+function buildSideCarWebSocketRequest(request: import("http").IncomingMessage, targetUrl: URL): string {
+  const pathWithQuery = `${targetUrl.pathname}${targetUrl.search}`
+  const requestLine = `${request.method ?? "GET"} ${pathWithQuery} HTTP/${request.httpVersion}\r\n`
+  const headerLines: string[] = []
+  const rawHeaders = request.rawHeaders ?? []
+
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const key = rawHeaders[index]
+    const value = rawHeaders[index + 1]
+    if (!key || value === undefined) continue
+    const lower = key.toLowerCase()
+    if (lower === "host") continue
+    if (lower === "origin") {
+      headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
+      continue
+    }
+    headerLines.push(`${key}: ${value}\r\n`)
+  }
+
+  const hostValue = targetUrl.port ? `${targetUrl.hostname}:${targetUrl.port}` : targetUrl.hostname
+  headerLines.push(`Host: ${hostValue}\r\n`)
+  headerLines.push("\r\n")
+
+  return requestLine + headerLines.join("")
+}
+
+function isWebSocketUpgradeRequest(request: import("http").IncomingMessage): boolean {
+  const upgrade = request.headers.upgrade
+  if (typeof upgrade !== "string" || upgrade.toLowerCase() !== "websocket") {
+    return false
+  }
+  const connection = request.headers.connection
+  const connectionValue = Array.isArray(connection) ? connection.join(",") : connection ?? ""
+  return connectionValue.toLowerCase().split(",").map((part) => part.trim()).includes("upgrade")
+}
+
+function rejectUpgrade(socket: Socket, statusCode: number, statusText: string) {
+  if (socket.destroyed) {
+    return
+  }
+  socket.write(`HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  socket.destroy()
 }
 
 function rewriteSideCarResponseHeaders(

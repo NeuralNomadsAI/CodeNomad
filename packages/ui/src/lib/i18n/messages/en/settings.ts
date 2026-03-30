@@ -233,4 +233,6 @@ export const settingsMessages = {
   "sidecars.picker.empty": "No SideCars are available yet.",
   "sidecars.picker.close": "Close",
   "sidecars.open.errorTitle": "Unable to open SideCar",
+  "sidecars.back": "Back",
+  "sidecars.refresh": "Refresh",
 } as const

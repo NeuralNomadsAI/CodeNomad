@@ -79,11 +79,6 @@ serverEvents.on("sidecar.removed", (event) => {
 
 async function openSidecarTab(sidecarId: string) {
   await ensureSidecarsLoaded()
-  const existing = sidecarTabs().find((tab) => tab.sidecarId === sidecarId)
-  if (existing) {
-    setActiveSidecarToken(existing.token)
-    return existing
-  }
 
   let sidecar = sidecars().get(sidecarId)
   if (sidecar?.kind === "managed" && sidecar.status !== "running") {
