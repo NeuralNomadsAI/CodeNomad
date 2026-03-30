@@ -11,6 +11,7 @@ let highlighterPromise: Promise<Highlighter> | null = null
 let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
+let escapeRawHtmlEnabled = false
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
@@ -285,6 +286,14 @@ function setupRenderer(isDark: boolean) {
     return `<code class="inline-code">${escapeHtml(decoded)}</code>`
   }
 
+  renderer.html = (html: string) => {
+    if (!escapeRawHtmlEnabled) {
+      return html
+    }
+
+    return escapeHtml(decodeHtmlEntities(html))
+  }
+
   marked.use({ renderer })
   rendererSetup = true
 }
@@ -308,6 +317,7 @@ export async function renderMarkdown(
   content: string,
   options?: {
     suppressHighlight?: boolean
+    escapeRawHtml?: boolean
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -316,6 +326,7 @@ export async function renderMarkdown(
   }
 
   const suppressHighlight = options?.suppressHighlight ?? false
+  const escapeRawHtml = options?.escapeRawHtml ?? false
   const decoded = decodeHtmlEntities(content)
 
   if (!suppressHighlight) {
@@ -324,13 +335,16 @@ export async function renderMarkdown(
   }
 
   const previousSuppressed = highlightSuppressed
+  const previousEscapeRawHtml = escapeRawHtmlEnabled
   highlightSuppressed = suppressHighlight
+  escapeRawHtmlEnabled = escapeRawHtml
 
   try {
     // Proceed to parse immediately - highlighting will be available on next render
     return marked.parse(decoded) as Promise<string>
   } finally {
     highlightSuppressed = previousSuppressed
+    escapeRawHtmlEnabled = previousEscapeRawHtml
   }
 }
 
