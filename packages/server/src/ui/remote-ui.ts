@@ -250,7 +250,7 @@ async function pickBestLocalUi(args: {
       uiStaticDir: currentResolved,
       source: "downloaded",
       uiVersion: await readUiVersion(currentResolved),
-      priority: 2,
+      priority: 1,
     })
   }
 
@@ -260,7 +260,7 @@ async function pickBestLocalUi(args: {
       uiStaticDir: bundledResolved,
       source: "bundled",
       uiVersion: await readUiVersion(bundledResolved),
-      priority: 1,
+      priority: 2,
     })
   }
 
