@@ -11,6 +11,7 @@ import type {
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   ServerMeta,
+  VoiceModeStateResponse,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -347,6 +348,12 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/terminate`,
       { method: "POST" },
     )
+  },
+  updateVoiceMode(instanceId: string, enabled: boolean): Promise<VoiceModeStateResponse> {
+    return request<VoiceModeStateResponse>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/voice-mode`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    })
   },
   fetchBackgroundProcessOutput(
     instanceId: string,

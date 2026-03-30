@@ -29,6 +29,7 @@ import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
+import { PluginChannelManager } from "../plugins/channel"
 
 interface HttpServerDeps {
   bindHost: string
@@ -173,6 +174,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     logger: deps.logger.child({ component: "background-processes" }),
   })
+  const pluginChannel = new PluginChannelManager(deps.logger.child({ component: "plugin-channel" }))
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
@@ -256,7 +258,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerSpeechRoutes(app, { speechService: deps.speechService })
-  registerPluginRoutes(app, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: proxyLogger })
+  registerPluginRoutes(app, {
+    workspaceManager: deps.workspaceManager,
+    eventBus: deps.eventBus,
+    logger: proxyLogger,
+    channel: pluginChannel,
+  })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
 

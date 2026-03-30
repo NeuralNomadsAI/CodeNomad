@@ -240,6 +240,10 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
+export interface VoiceModeStateResponse {
+  enabled: boolean
+}
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"
