@@ -58,8 +58,47 @@ export function resolveNetworkAddresses(args: {
   return results.sort((a, b) => {
     const scopeDelta = scopeWeight[a.scope] - scopeWeight[b.scope]
     if (scopeDelta !== 0) return scopeDelta
-    return a.ip.localeCompare(b.ip)
+
+    const addressDelta = compareAddressPriority(a.ip, b.ip)
+    if (addressDelta !== 0) return addressDelta
+
+    return 0
   })
+}
+
+export function isAdvertisableRemoteAddress(address: Pick<NetworkAddress, "ip" | "scope">): boolean {
+  if (address.scope !== "external") return false
+  return !isLinkLocalIPv4(address.ip)
+}
+
+function compareAddressPriority(left: string, right: string): number {
+  return getAddressPriority(left) - getAddressPriority(right)
+}
+
+function getAddressPriority(ip: string): number {
+  const octets = parseIPv4(ip)
+  if (!octets) return 100
+
+  const [first, second] = octets
+
+  if (isLinkLocalIPv4(ip)) return 90
+  if (first === 172 && second >= 16 && second <= 31) return 10
+  if (first === 10) return 10
+  if (first === 192 && second === 168) return 10
+
+  return 50
+}
+
+function isLinkLocalIPv4(ip: string): boolean {
+  const octets = parseIPv4(ip)
+  if (!octets) return false
+  const [first, second] = octets
+  return first === 169 && second === 254
+}
+
+function parseIPv4(value: string): number[] | null {
+  if (!isIPv4Address(value)) return null
+  return value.split(".").map((part) => Number(part))
 }
 
 function isIPv4Address(value: string | undefined): value is string {
