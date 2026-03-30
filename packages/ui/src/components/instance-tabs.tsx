@@ -1,6 +1,5 @@
 import { Component, For, Show, createMemo } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import type { Instance } from "../types/instance"
 import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
 import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
@@ -9,17 +8,13 @@ import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
-import type { SideCarTabRecord } from "../stores/sidecars"
+import type { AppTabRecord } from "../stores/app-tabs"
 
 interface InstanceTabsProps {
-  instances: Map<string, Instance>
-  activeInstanceId: string | null
-  sidecarTabs: SideCarTabRecord[]
-  activeSidecarToken: string | null
-  onSelect: (instanceId: string) => void
-  onSelectSidecar: (token: string) => void
-  onClose: (instanceId: string) => void
-  onCloseSidecar: (token: string) => void
+  tabs: AppTabRecord[]
+  activeTabId: string | null
+  onSelect: (tabId: string) => void
+  onClose: (tabId: string) => void
   onNew: () => void
 }
 
@@ -47,27 +42,25 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
         <div class="tab-scroll">
           <div class="tab-strip">
             <div class="tab-strip-tabs">
-              <For each={Array.from(props.instances.entries())}>
-                {([id, instance]) => (
-                  <InstanceTab
-                    instance={instance}
-                    active={id === props.activeInstanceId}
-                    onSelect={() => props.onSelect(id)}
-                    onClose={() => props.onClose(id)}
-                  />
-                )}
-              </For>
-              <For each={props.sidecarTabs}>
-                {(tab) => (
-                  <div class={`tab-pill ${tab.token === props.activeSidecarToken ? "tab-pill-active" : ""}`}>
-                    <button class="tab-pill-button" onClick={() => props.onSelectSidecar(tab.token)}>
-                      <span class="truncate max-w-[180px]">{tab.name}</span>
-                    </button>
-                    <button class="tab-pill-close" onClick={() => props.onCloseSidecar(tab.token)} aria-label={tab.name}>
-                      ×
-                    </button>
-                  </div>
-                )}
+              <For each={props.tabs}>
+                {(tab) =>
+                  tab.kind === "instance" ? (
+                    <InstanceTab
+                      instance={tab.instance}
+                      active={tab.id === props.activeTabId}
+                      onSelect={() => props.onSelect(tab.id)}
+                      onClose={() => props.onClose(tab.id)}
+                    />
+                  ) : (
+                    <div class={`tab-pill ${tab.id === props.activeTabId ? "tab-pill-active" : ""}`}>
+                      <button class="tab-pill-button" onClick={() => props.onSelect(tab.id)}>
+                        <span class="truncate max-w-[180px]">{tab.sidecarTab.name}</span>
+                      </button>
+                      <button class="tab-pill-close" onClick={() => props.onClose(tab.id)} aria-label={tab.sidecarTab.name}>
+                        ×
+                      </button>
+                    </div>
+                  )}
               </For>
               <button
                 class="new-tab-button"
@@ -79,7 +72,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               </button>
             </div>
             <div class="tab-strip-spacer" />
-            <Show when={Array.from(props.instances.entries()).length + props.sidecarTabs.length > 1}>
+            <Show when={props.tabs.length > 1}>
               <div class="tab-shortcuts">
                 <KeyboardHint
                   shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(

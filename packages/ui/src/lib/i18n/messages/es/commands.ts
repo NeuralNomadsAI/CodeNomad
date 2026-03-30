@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "Abrir el selector de carpetas para crear una nueva instancia",
   "commands.newInstance.keywords": "carpeta, proyecto, workspace",
 
-  "commands.closeInstance.label": "Cerrar instancia",
-  "commands.closeInstance.description": "Detener el servidor de la instancia actual",
-  "commands.closeInstance.keywords": "detener, salir, cerrar",
+  "commands.closeInstance.label": "Cerrar pestaña",
+  "commands.closeInstance.description": "Cerrar la pestaña superior actual",
+  "commands.closeInstance.keywords": "detener, salir, cerrar, pestaña",
 
-  "commands.nextInstance.label": "Siguiente instancia",
-  "commands.nextInstance.description": "Cambiar a la siguiente pestaña de instancia",
-  "commands.nextInstance.keywords": "cambiar, navegar",
+  "commands.nextInstance.label": "Siguiente pestaña",
+  "commands.nextInstance.description": "Cambiar a la siguiente pestaña superior",
+  "commands.nextInstance.keywords": "cambiar, navegar, pestaña",
 
-  "commands.previousInstance.label": "Instancia anterior",
-  "commands.previousInstance.description": "Cambiar a la pestaña de instancia anterior",
-  "commands.previousInstance.keywords": "cambiar, navegar",
+  "commands.previousInstance.label": "Pestaña anterior",
+  "commands.previousInstance.description": "Cambiar a la pestaña superior anterior",
+  "commands.previousInstance.keywords": "cambiar, navegar, pestaña",
 
   "commands.newSession.label": "Nueva sesión",
   "commands.newSession.description": "Crear una nueva sesión principal",

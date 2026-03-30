@@ -9,7 +9,7 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
-import { setActiveInstanceId } from "../stores/instances"
+import { selectInstanceTab } from "../stores/app-tabs"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
@@ -130,7 +130,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
-  setActiveInstanceId(location.instanceId)
+  selectInstanceTab(location.instanceId)
   const parentToActivate = location.parentId ?? location.sessionId
   setActiveParentSession(location.instanceId, parentToActivate)
   if (location.parentId) {

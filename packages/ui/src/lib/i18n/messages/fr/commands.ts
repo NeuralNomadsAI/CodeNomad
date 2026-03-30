@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "Ouvrir le sélecteur de dossiers pour créer une nouvelle instance",
   "commands.newInstance.keywords": "dossier, projet, espace de travail",
 
-  "commands.closeInstance.label": "Fermer l'instance",
-  "commands.closeInstance.description": "Arrêter le serveur de l'instance actuelle",
-  "commands.closeInstance.keywords": "arrêter, quitter, fermer",
+  "commands.closeInstance.label": "Fermer l'onglet",
+  "commands.closeInstance.description": "Fermer l'onglet de premier niveau actuel",
+  "commands.closeInstance.keywords": "arrêter, quitter, fermer, onglet",
 
-  "commands.nextInstance.label": "Instance suivante",
-  "commands.nextInstance.description": "Passer à l'onglet d'instance suivant",
-  "commands.nextInstance.keywords": "changer, naviguer, suivant",
+  "commands.nextInstance.label": "Onglet suivant",
+  "commands.nextInstance.description": "Passer à l'onglet de premier niveau suivant",
+  "commands.nextInstance.keywords": "changer, naviguer, suivant, onglet",
 
-  "commands.previousInstance.label": "Instance précédente",
-  "commands.previousInstance.description": "Passer à l'onglet d'instance précédent",
-  "commands.previousInstance.keywords": "changer, naviguer, précédent",
+  "commands.previousInstance.label": "Onglet précédent",
+  "commands.previousInstance.description": "Passer à l'onglet de premier niveau précédent",
+  "commands.previousInstance.keywords": "changer, naviguer, précédent, onglet",
 
   "commands.newSession.label": "Nouvelle session",
   "commands.newSession.description": "Créer une nouvelle session parente",
