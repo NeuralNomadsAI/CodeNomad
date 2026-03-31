@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "会话",
   "instanceShell.leftPanel.instanceInfo": "实例信息",
-
   "instanceShell.leftDrawer.pin": "固定左侧抽屉",
   "instanceShell.leftDrawer.unpin": "取消固定左侧抽屉",
   "instanceShell.leftDrawer.toggle.pinned": "左侧抽屉已固定",
@@ -107,6 +106,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "取消",
   "instanceShell.rightPanel.toast.saveSuccess": "文件保存成功",
   "instanceShell.rightPanel.toast.saveError": "保存文件失败",
+  "instanceShell.rightPanel.sections.yoloMode": "Yolo 模式",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "自动批准当前会话的权限请求。仅在你信任正在运行的工具时启用。",
   "instanceShell.rightPanel.sections.sessionChanges": "会话更改",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "当前会话中修改的文件。显示每个文件的添加和删除。",
   "instanceShell.rightPanel.sections.plan": "计划",
@@ -139,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",
+
+  "instanceShell.yoloMode.noSessionSelected": "请选择一个会话来配置 Yolo 模式。",
+  "instanceShell.yoloMode.title": "Yolo 模式",
+  "instanceShell.yoloMode.description": "自动批准此会话的权限请求。默认关闭。",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Yolo 模式已启用",
 
   "instanceShell.backgroundProcesses.empty": "没有后台进程。",
   "instanceShell.backgroundProcesses.status": "状态：{status}",
