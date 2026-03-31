@@ -29,7 +29,9 @@ import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
+import { ClientConnectionManager } from "../clients/connection-manager"
 import { PluginChannelManager } from "../plugins/channel"
+import { VoiceModeManager } from "../plugins/voice-mode"
 
 interface HttpServerDeps {
   bindHost: string
@@ -174,7 +176,13 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     logger: deps.logger.child({ component: "background-processes" }),
   })
+  const clientConnectionManager = new ClientConnectionManager(deps.logger.child({ component: "client-connections" }))
   const pluginChannel = new PluginChannelManager(deps.logger.child({ component: "plugin-channel" }))
+  const voiceModeManager = new VoiceModeManager({
+    connections: clientConnectionManager,
+    channel: pluginChannel,
+    logger: deps.logger.child({ component: "voice-mode" }),
+  })
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
@@ -250,7 +258,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
-  registerEventRoutes(app, { eventBus: deps.eventBus, registerClient: registerSseClient, logger: sseLogger })
+  registerEventRoutes(app, {
+    eventBus: deps.eventBus,
+    registerClient: registerSseClient,
+    logger: sseLogger,
+    connectionManager: clientConnectionManager,
+  })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
@@ -263,6 +276,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     logger: proxyLogger,
     channel: pluginChannel,
+    voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
@@ -328,6 +342,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
     stop: () => {
       closeSseClients()
+      clientConnectionManager.shutdown()
       return app.close()
     },
   }

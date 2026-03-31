@@ -6,12 +6,14 @@ import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { PluginChannelManager } from "../../plugins/channel"
 import { buildPingEvent, handlePluginEvent } from "../../plugins/handlers"
+import { VoiceModeManager } from "../../plugins/voice-mode"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
   eventBus: EventBus
   logger: Logger
   channel: PluginChannelManager
+  voiceModeManager: VoiceModeManager
 }
 
 const PluginEventSchema = z.object({
@@ -21,6 +23,8 @@ const PluginEventSchema = z.object({
 
 const VoiceModeStateSchema = z.object({
   enabled: z.boolean(),
+  clientId: z.string().trim().min(1),
+  connectionId: z.string().trim().min(1),
 })
 
 export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -38,6 +42,7 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.hijack()
 
     const registration = deps.channel.register(request.params.id, reply)
+    deps.voiceModeManager.syncInstance(request.params.id)
 
     const heartbeat = setInterval(() => {
       deps.channel.send(request.params.id, buildPingEvent())
@@ -61,13 +66,11 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const payload = VoiceModeStateSchema.parse(request.body ?? {})
-    deps.channel.send(request.params.id, {
-      type: "codenomad.voiceMode",
-      properties: {
-        enabled: payload.enabled,
-        formatVersion: "v1",
-      },
-    })
+    deps.voiceModeManager.setEnabled(
+      request.params.id,
+      { clientId: payload.clientId, connectionId: payload.connectionId },
+      payload.enabled,
+    )
     return { enabled: payload.enabled }
   })
 

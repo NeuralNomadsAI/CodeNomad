@@ -4,6 +4,7 @@ import { showToastNotification } from "../lib/notifications"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
+import { serverEvents } from "../lib/server-events"
 import { serverSettings } from "./preferences"
 import { loadSpeechCapabilities, speechCapabilities } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
@@ -43,6 +44,10 @@ let currentPlayback:
   | null = null
 let queueRunner: Promise<void> | null = null
 let playbackErrorShown = false
+
+serverEvents.onOpen(() => {
+  void syncConversationModesToServer()
+})
 
 function getEntryKey(instanceId: string, sessionId: string, messageId: string, partId: string): string {
   return `${instanceId}:${sessionId}:${messageId}:${partId}`
@@ -531,4 +536,13 @@ function extractLeadingSpokenBlock(text: string): string {
   const match = text.match(LEADING_SPOKEN_BLOCK_REGEX)
   if (!match?.[1]) return ""
   return match[1].trim()
+}
+
+async function syncConversationModesToServer(): Promise<void> {
+  const updates: Promise<unknown>[] = []
+  for (const [instanceId, enabled] of conversationModeInstances()) {
+    if (!enabled) continue
+    updates.push(serverApi.updateVoiceMode(instanceId, true))
+  }
+  await Promise.allSettled(updates)
 }
