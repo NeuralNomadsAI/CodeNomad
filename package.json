@@ -22,7 +22,10 @@
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
     "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
-    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version && npm run sync:version --workspace @codenomad/tauri-app"
+    "bumpVersion": "npm version --workspaces --include-workspace-root --no-git-tag-version && npm run sync:version --workspace @codenomad/tauri-app",
+    "test": "npm run test:ui && npm run test:server",
+    "test:ui": "npm run test-ct --workspace @codenomad/ui",
+    "test:server": "npm run test --workspace @neuralnomads/codenomad"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
@@ -30,5 +33,9 @@
   },
   "devDependencies": {
     "baseline-browser-mapping": "^2.9.11"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.60.0",
+    "@rollup/rollup-win32-x64-msvc": "^4.60.0"
   }
 }

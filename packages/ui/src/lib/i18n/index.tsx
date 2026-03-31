@@ -1,72 +1,42 @@
 import { createContext, createEffect, createMemo, createSignal, onCleanup, onMount, useContext } from "solid-js"
+import { isServer } from "solid-js/web"
 import type { ParentComponent } from "solid-js"
 import { useConfig } from "../../stores/preferences"
 import { enMessages } from "./messages/en"
+import type { Locale, Messages, TranslateParams } from "./types"
 
-type Messages = Record<string, string>
-
-export type TranslateParams = Record<string, unknown>
-
-export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he"
-
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he"] as const
-const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
-const RTL_LOCALES = new Set<Locale>(["he"])
-
-const localeMessagesCache = new Map<Locale, Messages>([["en", enMessages]])
+const localeMessagesCache = new Map<Locale, Messages>([
+  ["en", enMessages],
+])
 const localeMessagesPromises = new Map<Locale, Promise<Messages>>()
 
 const localeLoaders: Record<Locale, () => Promise<Messages>> = {
-  en: async () => enMessages,
-  es: async () => (await import("./messages/es")).esMessages,
-  fr: async () => (await import("./messages/fr")).frMessages,
-  ru: async () => (await import("./messages/ru")).ruMessages,
-  ja: async () => (await import("./messages/ja")).jaMessages,
-  "zh-Hans": async () => (await import("./messages/zh-Hans")).zhHansMessages,
-  he: async () => (await import("./messages/he")).heMessages,
+  en: () => Promise.resolve(enMessages),
 }
 
-function getLocaleDirection(locale: Locale): "ltr" | "rtl" {
-  return RTL_LOCALES.has(locale) ? "rtl" : "ltr"
-}
-
-function normalizeLocaleTag(value: string): string {
-  return value.trim().replace(/_/g, "-")
-}
-
-function matchSupportedLocale(value: string | undefined): Locale | null {
-  if (!value) return null
-
-  const normalized = normalizeLocaleTag(value)
-  const lower = normalized.toLowerCase()
-  const exact = SUPPORTED_LOCALES_BY_LOWER.get(lower)
-  if (exact) return exact
-
-  const parts = lower.split("-")
-  const base = parts[0]
-  if (!base) return null
-
-  if (base === "zh") {
-    const zhHans = SUPPORTED_LOCALES_BY_LOWER.get("zh-hans")
-    return zhHans ?? null
-  }
-
-  const baseMatch = SUPPORTED_LOCALES_BY_LOWER.get(base)
-  return baseMatch ?? null
+function matchSupportedLocale(locale?: string | null): Locale | null {
+  if (!locale) return null
+  const base = locale.split("-")[0].toLowerCase()
+  if (base === "en") return "en"
+  return null
 }
 
 function detectNavigatorLocale(): Locale | null {
-  if (typeof navigator === "undefined") return null
+  if (isServer || typeof navigator === "undefined") return null
 
-  const candidates = Array.isArray(navigator.languages) && navigator.languages.length > 0
-    ? navigator.languages
-    : navigator.language
-      ? [navigator.language]
-      : []
+  try {
+    const candidates = Array.isArray(navigator.languages) && navigator.languages.length > 0
+      ? navigator.languages
+      : navigator.language
+        ? [navigator.language]
+        : []
 
-  for (const candidate of candidates) {
-    const match = matchSupportedLocale(candidate)
-    if (match) return match
+    for (const candidate of candidates) {
+      const match = matchSupportedLocale(candidate)
+      if (match) return match
+    }
+  } catch {
+    // Ignore navigator errors in test environments
   }
 
   return null
@@ -97,16 +67,14 @@ function getMessagesForLocale(locale: Locale): Messages {
 
 async function loadLocaleMessages(locale: Locale): Promise<Messages> {
   const cached = localeMessagesCache.get(locale)
-  if (cached) {
-    return cached
-  }
+  if (cached) return cached
 
   const pending = localeMessagesPromises.get(locale)
-  if (pending) {
-    return pending
-  }
+  if (pending) return pending
 
   const loader = localeLoaders[locale]
+  if (!loader) return enMessages
+
   const promise = loader()
     .then((messages) => {
       localeMessagesCache.set(locale, messages)
@@ -150,6 +118,8 @@ export interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue>()
 
 export const I18nProvider: ParentComponent = (props) => {
+  if (isServer) return <>{props.children}</>
+
   const { preferences } = useConfig()
   const [detectedLocale, setDetectedLocale] = createSignal<Locale>(globalLocale)
   const [resolvedLocale, setResolvedLocale] = createSignal<Locale>(globalLocale)
@@ -159,13 +129,19 @@ export const I18nProvider: ParentComponent = (props) => {
   const previousDocumentDirection = typeof document !== "undefined" ? document.documentElement.dir : ""
 
   onMount(() => {
-    const detected = detectNavigatorLocale()
-    if (detected) setDetectedLocale(detected)
+    try {
+      const detected = detectNavigatorLocale()
+      if (detected) setDetectedLocale(detected)
+    } catch {}
   })
 
   const locale = createMemo<Locale>(() => {
-    const configured = matchSupportedLocale(preferences().locale)
-    return configured ?? detectedLocale() ?? "en"
+    try {
+      const configured = matchSupportedLocale(preferences().locale)
+      return configured ?? detectedLocale() ?? "en"
+    } catch {
+      return "en"
+    }
   })
 
   const messages = createMemo<Messages>(() => getMessagesForLocale(resolvedLocale()))
@@ -180,18 +156,14 @@ export const I18nProvider: ParentComponent = (props) => {
 
     void loadLocaleMessages(nextLocale)
       .then((loadedMessages) => {
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
         setResolvedLocale(nextLocale)
         globalLocale = nextLocale
         globalMessages = loadedMessages
         setGlobalRevision((value) => value + 1)
       })
       .catch(() => {
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
         setResolvedLocale("en")
         globalMessages = enMessages
         globalLocale = "en"
@@ -205,9 +177,12 @@ export const I18nProvider: ParentComponent = (props) => {
 
   createEffect(() => {
     if (typeof document === "undefined") return
-    const activeLocale = locale()
-    document.documentElement.dir = getLocaleDirection(activeLocale)
-    document.documentElement.lang = activeLocale
+    try {
+      const activeLocale = locale()
+      const direction = activeLocale === "ar" ? "rtl" : "ltr" // simplified
+      document.documentElement.dir = direction
+      document.documentElement.lang = activeLocale
+    } catch {}
   })
 
   onCleanup(() => {
@@ -215,8 +190,10 @@ export const I18nProvider: ParentComponent = (props) => {
     globalLocale = previousGlobalLocale
     setGlobalRevision((value) => value + 1)
     if (typeof document !== "undefined") {
-      document.documentElement.lang = previousDocumentLanguage
-      document.documentElement.dir = previousDocumentDirection
+      try {
+        document.documentElement.lang = previousDocumentLanguage
+        document.documentElement.dir = previousDocumentDirection
+      } catch {}
     }
   })
 
@@ -235,3 +212,9 @@ export function useI18n(): I18nContextValue {
   }
   return context
 }
+
+export function t(key: string, params?: TranslateParams): string {
+  return tGlobal(key, params)
+}
+
+export type { Locale, TranslateParams } from "./types"

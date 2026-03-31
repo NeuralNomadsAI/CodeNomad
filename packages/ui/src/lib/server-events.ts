@@ -44,10 +44,12 @@ class ServerEvents {
           })
       },
     )
-    this.source.onopen = () => {
-      logSse("Events stream connected")
-      this.retryDelay = RETRY_BASE_DELAY
-      this.openHandlers.forEach((handler) => handler())
+    if (this.source) {
+      this.source.onopen = () => {
+        logSse("Events stream connected")
+        this.retryDelay = RETRY_BASE_DELAY
+        this.openHandlers.forEach((handler) => handler())
+      }
     }
   }
 
