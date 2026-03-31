@@ -412,6 +412,19 @@
   background-color: var(--surface-secondary);
 }
 
+.right-panel-accordion-header-row {
+  @apply flex items-center gap-2;
+}
+
+.right-panel-accordion-header-row .right-panel-accordion-trigger {
+  flex: 1 1 auto;
+}
+
+.right-panel-accordion-header-row .section-info-trigger {
+  flex: 0 0 auto;
+  margin-inline-end: 0.75rem;
+}
+
 .right-panel-accordion-trigger {
   @apply w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
   color: var(--text-secondary);
@@ -452,11 +465,19 @@
   @apply inline-flex items-center justify-center p-0.5 rounded transition-all duration-150;
   color: var(--text-muted);
   flex-shrink: 0;
+  border: none;
+  background-color: transparent;
 }
 
 .section-info-trigger:hover {
   color: var(--text-primary);
   background-color: var(--surface-hover);
+}
+
+.section-info-trigger:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
 }
 
 .section-label {

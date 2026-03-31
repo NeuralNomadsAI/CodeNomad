@@ -36,7 +36,7 @@ import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
+import { getPermissionQueue, getPermissionQueueLength, getQuestionQueueLength, sendPermissionResponse } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -57,6 +57,13 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
+import { getPermissionSessionId } from "../../types/permission"
+import {
+  canAutoRespondPermission,
+  finishAutoRespondPermission,
+  getPermissionAutoAcceptInFlightVersion,
+  isPermissionAutoAcceptEnabled,
+} from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
 
@@ -252,6 +259,33 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
+  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
+
+  createEffect(() => {
+    getPermissionAutoAcceptInFlightVersion()
+
+    for (const permission of permissionQueue()) {
+      const sessionId = getPermissionSessionId(permission)
+      if (!sessionId) continue
+      if (!permission?.id) continue
+      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
+
+      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
+        .catch((error) => {
+          log.error("Failed to auto-accept permission", error)
+        })
+        .finally(() => {
+          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
+        })
+    }
+  })
+
+  const yoloModeEnabled = createMemo(() => {
+    const session = activeSessionForInstance()
+    if (!session) return false
+    return isPermissionAutoAcceptEnabled(props.instance.id, session.id)
+  })
+
   const activeSessionStatusPill = createMemo(() => {
     const activeSessionId = activeSessionIdForInstance()
     if (!activeSessionId || activeSessionId === "info") return null
@@ -296,6 +330,32 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </span>
     )
   }
+
+  const renderYoloModePill = () => {
+    if (!yoloModeEnabled()) return null
+    return (
+      <span
+        class="status-indicator session-status session-status-list session-yolo-mode"
+        aria-label={t("instanceShell.yoloMode.badgeAriaLabel")}
+        title={t("instanceShell.yoloMode.badgeAriaLabel")}
+      >
+        <span class="status-dot" />
+        {t("instanceShell.yoloMode.badge")}
+      </span>
+    )
+  }
+
+  const renderSessionHeaderIndicators = () => (
+    <div class="flex items-center flex-wrap justify-center gap-2">
+      {renderYoloModePill()}
+      <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
+        <PermissionNotificationBanner
+          instanceId={props.instance.id}
+          onClick={() => setPermissionModalOpen(true)}
+        />
+      </Show>
+    </div>
+  )
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
@@ -622,12 +682,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </Show>
 
                     <div class="flex-1 flex items-center justify-center min-w-0">
-                      <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
-                        <PermissionNotificationBanner
-                          instanceId={props.instance.id}
-                          onClick={() => setPermissionModalOpen(true)}
-                        />
-                      </Show>
+                      {renderSessionHeaderIndicators()}
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-1">
@@ -719,12 +774,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </Show>
 
                 <div class="ml-auto flex items-center session-header-hints">
-                  <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
-                    <PermissionNotificationBanner
-                      instanceId={props.instance.id}
-                      onClick={() => setPermissionModalOpen(true)}
-                    />
-                  </Show>
+                  {renderSessionHeaderIndicators()}
                 </div>
               </div>
 

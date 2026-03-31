@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Сессии",
   "instanceShell.leftPanel.instanceInfo": "Информация об экземпляре",
-
   "instanceShell.leftDrawer.pin": "Закрепить левую панель",
   "instanceShell.leftDrawer.unpin": "Открепить левую панель",
   "instanceShell.leftDrawer.toggle.pinned": "Левая панель закреплена",
@@ -107,6 +106,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Отмена",
   "instanceShell.rightPanel.toast.saveSuccess": "Файл успешно сохранён",
   "instanceShell.rightPanel.toast.saveError": "Не удалось сохранить файл",
+  "instanceShell.rightPanel.sections.yoloMode": "Режим Yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Автоматически одобряет запросы разрешений для текущей сессии. Включайте только если доверяете запускаемым инструментам.",
   "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Файлы, измененные в текущей сессии. Показывает добавления и удаления для каждого файла.",
   "instanceShell.rightPanel.sections.plan": "План",
@@ -139,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Выберите сессию, чтобы настроить режим Yolo.",
+  "instanceShell.yoloMode.title": "Режим Yolo",
+  "instanceShell.yoloMode.description": "Автоматически одобряет запросы разрешений для этой сессии. По умолчанию выключен.",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Режим Yolo включен",
 
   "instanceShell.backgroundProcesses.empty": "Нет фоновых процессов.",
   "instanceShell.backgroundProcesses.status": "Статус: {status}",

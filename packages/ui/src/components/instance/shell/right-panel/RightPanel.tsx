@@ -89,6 +89,7 @@ interface RightPanelProps {
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
+    "yolo-mode",
     "plan",
     "background-processes",
     "mcp",
@@ -787,7 +788,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setRightPanelTab("changes")
   }
 
-  const statusSectionIds = ["session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const statusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
 
   createEffect(() => {
     const currentExpanded = new Set(rightPanelExpandedItems())
