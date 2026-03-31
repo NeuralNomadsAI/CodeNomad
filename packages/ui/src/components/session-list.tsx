@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getSessionStatus } from "../stores/session-status"
+import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -55,6 +55,13 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
+  const [now, setNow] = createSignal(Date.now())
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(timer))
+  })
 
   const normalizeSessionLabel = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
@@ -400,7 +407,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isActive = () => props.activeSessionId === rowProps.sessionId
     const title = () => session()?.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
+    const retry = () => getSessionRetry(props.instanceId, rowProps.sessionId)
     const statusLabel = () => {
+      const retryState = retry()
+      if (retryState) {
+        const seconds = getRetrySeconds(retryState.next, now())
+        return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
+      }
       switch (formatSessionStatus(status())) {
         case "working":
           return t("sessionList.status.working")
@@ -413,13 +426,21 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsPermission = () => Boolean(session()?.pendingPermission)
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
-    const statusClassName = () => (needsInput() ? "session-permission" : `session-${status()}`)
+    const statusClassName = () => (needsInput() ? "session-permission" : `session-${retry() ? "retrying" : status()}`)
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")
         : needsQuestion()
           ? t("sessionList.status.needsInput")
           : statusLabel()
+    const statusTooltip = () => {
+      const retryState = retry()
+      if (!retryState) return undefined
+      return t("sessionList.status.retryTooltip", {
+        message: retryState.message,
+        attempt: String(retryState.attempt),
+      })
+    }
  
     const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
 
@@ -499,7 +520,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
               </Show>
-              <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
+              <span class={`status-indicator session-status session-status-list ${statusClassName()}`} title={statusTooltip()}>
                 {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
                 {statusText()}
               </span>

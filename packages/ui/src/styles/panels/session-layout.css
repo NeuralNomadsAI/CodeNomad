@@ -394,6 +394,7 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .status-indicator.session-status.session-working,
+.status-indicator.session-status.session-retrying,
 .status-indicator.session-status.session-compacting,
 .status-indicator.session-status.session-idle {
   font-weight: var(--font-weight-medium);
@@ -402,6 +403,11 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-working {
   color: var(--session-status-working-fg);
   --session-status-dot: var(--session-status-working-fg);
+}
+
+.status-indicator.session-status.session-retrying {
+  color: var(--status-error);
+  --session-status-dot: var(--status-error);
 }
 
 .status-indicator.session-status.session-compacting {
@@ -430,6 +436,10 @@ session-sidebar-controls .selector-trigger-primary {
 
 .status-indicator.session-status.session-working.session-status-list {
   background-color: var(--session-status-working-bg);
+}
+
+.status-indicator.session-status.session-retrying.session-status-list {
+  background-color: var(--status-error-bg);
 }
 
 .status-indicator.session-status.session-compacting.session-status-list {

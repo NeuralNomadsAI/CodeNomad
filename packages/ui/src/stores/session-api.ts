@@ -1,4 +1,4 @@
-import { mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -149,12 +149,15 @@ async function fetchSessions(instanceId: string): Promise<void> {
       const existingStatus = existingSession?.status
 
       let status: SessionStatus
+      let retry = existingSession?.retry ?? null
       if (existingStatus === "compacting") {
         status = "compacting"
+        retry = null
       } else {
         const rawStatus = (apiSession as any)?.status ?? statusById[apiSession.id]
         const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
         status = hasType ? mapSdkSessionStatus(rawStatus) : existingStatus ?? "idle"
+        retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
       }
 
       sessionMap.set(apiSession.id, {
@@ -165,6 +168,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         agent: existingSession?.agent ?? "",
         model: existingSession?.model ?? { providerId: "", modelId: "" },
         status,
+        retry,
         version: apiSession.version,
         time: {
           ...apiSession.time,

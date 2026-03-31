@@ -353,6 +353,9 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
     if (session.status === status) return false
     const previous = session.status
     session.status = status
+    if (status !== "working") {
+      session.retry = null
+    }
 
     // If a child session starts working, auto-expand its parent thread once.
     // Users can still collapse it afterwards; we only expand on the transition.

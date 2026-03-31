@@ -41,7 +41,7 @@ import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
-import { getSessionStatus } from "../../stores/session-status"
+import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
 
 import type { LayoutMode } from "./shell/types"
@@ -97,6 +97,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
+  const [now, setNow] = createSignal(Date.now())
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -230,6 +231,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     window.localStorage.setItem(RIGHT_DRAWER_STORAGE_KEY, rightDrawerWidth().toString())
   })
 
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(timer))
+  })
+
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
     const status = connectionStatus()
@@ -272,17 +279,28 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
-    const text =
-      status === "working"
+    const retry = getSessionRetry(props.instance.id, activeSessionId)
+    const text = retry
+      ? (() => {
+          const seconds = getRetrySeconds(retry.next, now())
+          return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
+        })()
+      : status === "working"
         ? t("sessionList.status.working")
         : status === "compacting"
           ? t("sessionList.status.compacting")
           : t("sessionList.status.idle")
 
     return {
-      className: `session-${status}`,
+      className: `session-${retry ? "retrying" : status}`,
       text,
       showAlertIcon: false,
+      title: retry
+        ? t("sessionList.status.retryTooltip", {
+            message: retry.message,
+            attempt: String(retry.attempt),
+          })
+        : undefined,
     }
   })
 
@@ -290,7 +308,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const pill = activeSessionStatusPill()
     if (!pill) return null
     return (
-      <span class={`status-indicator session-status session-status-list ${pill.className}`}>
+      <span class={`status-indicator session-status session-status-list ${pill.className}`} title={pill.title}>
         {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
         {pill.text}
       </span>

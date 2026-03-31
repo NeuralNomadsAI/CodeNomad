@@ -17,6 +17,12 @@ export type {
 
 export type SessionStatus = "idle" | "working" | "compacting"
 
+export interface SessionRetryState {
+  attempt: number
+  message: string
+  next: number
+}
+
 export function mapSdkSessionStatus(status: SDKSessionStatus | null | undefined): SessionStatus {
   if (!status || status.type === "idle") {
     return "idle"
@@ -24,6 +30,18 @@ export function mapSdkSessionStatus(status: SDKSessionStatus | null | undefined)
 
   // "busy" and "retry" both mean there's active work.
   return "working"
+}
+
+export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined): SessionRetryState | null {
+  if (!status || status.type !== "retry") {
+    return null
+  }
+
+  return {
+    attempt: typeof status.attempt === "number" ? status.attempt : 1,
+    message: typeof status.message === "string" ? status.message : "",
+    next: typeof status.next === "number" ? status.next : Date.now(),
+  }
 }
 
 // Our client-specific Session interface extending SDK Session
@@ -40,6 +58,7 @@ export interface Session
   pendingPermission?: boolean // Indicates if session is waiting on user permission
   pendingQuestion?: boolean // Indicates if session is waiting on user input
   status: SessionStatus // Single source of truth for session status
+  retry?: SessionRetryState | null // Retry metadata for transient backoff states
   diff?: FileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 
