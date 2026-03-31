@@ -1,128 +1,162 @@
 # CodeNomad
 
-## A fast, multi-instance workspace for running OpenCode sessions.
+## The AI Coding Cockpit for OpenCode
 
-CodeNomad is built for people who live inside OpenCode for hours on end and need a cockpit, not a kiosk. It delivers a premium, low-latency workspace that favors speed, clarity, and direct control.
+CodeNomad transforms OpenCode from a terminal tool into a **premium desktop workspace** — built for developers who live inside AI coding sessions for hours and need control, speed, and clarity.
+
+> OpenCode gives you the engine. CodeNomad gives you the cockpit.
 
 ![Multi-instance workspace](docs/screenshots/newSession.png)
-_Manage multiple OpenCode sessions side-by-side._
 
-<details>
-<summary>📸 More Screenshots</summary>
+---
 
-![Command palette overlay](docs/screenshots/command-palette.png)
-_Global command palette for keyboard-first control._
+## Features
 
-![Image Previews](docs/screenshots/image-previews.png)
-_Rich media previews for images and assets._
+- **🚀 Multi-Instance Workspace**
+  
+  Juggle multiple projects side-by-side without losing context or switching terminals
 
-![Browser Support](docs/screenshots/browser-support.png)
-_Browser support via CodeNomad Server._
+- **🌐 Remote Access**
+  
+  Code from anywhere — connect from your phone, tablet, or another machine via browser
 
-</details>
+- **🧠 Session Management**
+  
+  Organize conversations by task, pick up right where you left off, and keep your workspace clean
+
+- **🎙️ Voice Input & Speech**
+  
+  Dictate prompts naturally and listen to responses while you review code or take a break
+
+- **🌳 Git Worktrees**
+  
+  Create and switch between branches in parallel without interrupting your current work
+
+- **💬 Rich Message Experience**
+  
+  Read AI responses with beautiful formatting, see code changes at a glance, and scroll through massive transcripts without lag
+
+- **⌨️ Command Palette**
+  
+  Navigate, configure, and control everything from your keyboard without ever reaching for the mouse
+
+- **📁 File System Browser**
+  
+  Explore and edit your project files without breaking focus or leaving the app
+
+- **🔐 Authentication & Security**
+  
+  Protect your workspace when exposing it to your network or running it remotely
+
+- **🔔 Notifications**
+  
+  Stay aware of your sessions without watching the screen — get alerted only when it matters
+
+- **🎨 Theming**
+  
+  Match your environment and reduce eye strain with automatic light and dark mode switching
+
+- **🌍 Internationalization**
+  
+  Work comfortably in your preferred language with full RTL support
+
+---
 
 ## Getting Started
 
-Choose the way that fits your workflow:
+### 🖥️ Desktop App
 
-### 🖥️ Desktop App (Recommended)
-The best experience. A native application (Electron-based) with global shortcuts, deeper system integration, and a dedicated window.
+Available as both Electron and Tauri builds — choose based on your preference.
 
-- **Download**: Grab the latest installer for macOS, Windows, or Linux from the [Releases Page](https://github.com/shantur/CodeNomad/releases).
-- **Run**: Install and launch like any other app.
+Download the latest installer for your platform from [Releases](https://github.com/shantur/CodeNomad/releases).
 
-### 🦀 Tauri App (Experimental)
-We are also working on a lightweight, high-performance version built with [Tauri](https://tauri.app). It is currently in active development.
-
-- **Download**: Experimental builds are available on the [Releases Page](https://github.com/shantur/CodeNomad/releases).
-- **Source**: Check out `packages/tauri-app` if you're interested in contributing.
+| Platform | Formats |
+|----------|---------|
+| macOS | DMG, ZIP (Universal: Intel + Apple Silicon) |
+| Windows | NSIS Installer, ZIP (x64, ARM64) |
+| Linux | AppImage, deb, tar.gz (x64, ARM64) |
 
 ### 💻 CodeNomad Server
-Run CodeNomad as a local server and access it via your web browser. Perfect for remote development (SSH/VPN) or running as a service.
+
+Run as a local server and access via browser. Perfect for remote development.
 
 ```bash
 npx @neuralnomads/codenomad --launch
 ```
 
-Full server/CLI documentation (flags + env vars, TLS, auth, remote access):
-- [packages/server/README.md](packages/server/README.md)
-
-To see all available options:
-
-```bash
-npx @neuralnomads/codenomad --help
-```
+See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and remote access.
 
 ### 🧪 Dev Releases
-Bleeding-edge builds are published as GitHub pre-releases and are generated automatically from the `dev` branch.
+
+Bleeding-edge builds from the `dev` branch:
 
 ```bash
 npx @neuralnomads/codenomad-dev --launch
 ```
 
-## Highlights
-
-- **Multi-Instance**: Juggle several OpenCode sessions side-by-side with tabs.
-- **Long-Session Native**: Scroll through massive transcripts without hitches.
-- **Command Palette**: A single global palette to jump tabs, launch tools, and control everything.
-- **Deep Task Awareness**: Monitor background tasks and child sessions without losing flow.
+---
 
 ## Requirements
 
-- **[OpenCode CLI](https://opencode.ai)**: Must be installed and available in your `PATH`.
-- **Node.js 18+**: Required if running the CLI server or building from source.
+- **[OpenCode CLI](https://opencode.ai)** — must be installed and in your `PATH`
+- **Node.js 18+** — for server mode or building from source
 
-## Troubleshooting
+---
 
-### macOS says the app is damaged
-If macOS reports that "CodeNomad.app is damaged and can't be opened," Gatekeeper flagged the download because the app is not yet notarized. You can clear the quarantine flag after moving CodeNomad into `/Applications`:
+## Development
 
-```bash
-xattr -l /Applications/CodeNomad.app
-xattr -dr com.apple.quarantine /Applications/CodeNomad.app
-```
-
-After removing the quarantine attribute, launch the app normally. On Intel Macs you may also need to approve CodeNomad from **System Settings → Privacy & Security** the first time you run it.
-
-### Linux (Wayland + NVIDIA): Tauri AppImage closes immediately
-On some Wayland compositor + NVIDIA driver setups, WebKitGTK can fail to initialize its DMA-BUF/GBM path and the Tauri build may exit right away.
-
-Try running with one of these environment variables:
-
-```bash
-# Most reliable workaround (can reduce rendering performance)
-WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad
-
-# Alternative for some Wayland setups
-__NV_DISABLE_EXPLICIT_SYNC=1 codenomad
-```
-
-If you're running the Tauri AppImage and want the workaround applied every time, create a tiny wrapper script on your `PATH`:
-
-```bash
-#!/bin/bash
-export WEBKIT_DISABLE_DMABUF_RENDERER=1
-exec ~/.local/share/bauh/appimage/installed/codenomad/CodeNomad-Tauri-0.4.0-linux-x64.AppImage "$@"
-```
-
-Upstream tracking: https://github.com/tauri-apps/tauri/issues/10702
-
-## Architecture & Development
-
-CodeNomad is a monorepo split into specialized packages. If you want to contribute or build from source, check out the individual package documentation:
+CodeNomad is a monorepo built with:
 
 | Package | Description |
 |---------|-------------|
-| **[packages/electron-app](packages/electron-app/README.md)** | The native desktop application shell. Wraps the UI and Server. |
-| **[packages/server](packages/server/README.md)** | The core logic and CLI. Manages workspaces, proxies OpenCode, and serves the API. |
-| **[packages/ui](packages/ui/README.md)** | The SolidJS-based frontend. Fast, reactive, and beautiful. |
+| **[packages/server](packages/server/README.md)** | Core logic & CLI — workspaces, OpenCode proxy, API, auth, speech |
+| **[packages/ui](packages/ui/README.md)** | SolidJS frontend — reactive, fast, beautiful |
+| **[packages/electron-app](packages/electron-app/README.md)** | Desktop shell — process management, IPC, native dialogs |
+| **[packages/tauri-app](packages/tauri-app)** | Tauri desktop shell (experimental) |
 
-### Quick Build
-To build the Desktop App from source:
+### Quick Start
 
-1.  Clone the repo.
-2.  Run `npm install` (requires pnpm or npm 7+ for workspaces).
-3.  Run `npm run build --workspace @neuralnomads/codenomad-electron-app`.
+```bash
+git clone https://github.com/NeuralNomadsAI/CodeNomad.git
+cd CodeNomad
+npm install
+npm run dev
+```
 
-[![Star History Chart](https://api.star-history.com/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.com/#NeuralNomadsAI/CodeNomad&Date)
+---
 
+## Troubleshooting
+
+<details>
+<summary><strong>macOS: "CodeNomad.app is damaged and can't be opened"</strong></summary>
+
+Gatekeeper flag due to missing notarization. Clear the quarantine attribute:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/CodeNomad.app
+```
+
+On Intel Macs, also check **System Settings → Privacy & Security** on first launch.
+</details>
+
+<details>
+<summary><strong>Linux (Wayland + NVIDIA): Tauri App closes immediately</strong></summary>
+
+WebKitGTK DMA-BUF/GBM issue. Run with:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 codenomad
+```
+
+See full workaround in the original README.
+</details>
+
+---
+
+## Community
+
+[![Star History](https://api.star-history.com/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.com/#NeuralNomadsAI/CodeNomad&Date)
+
+---
+
+**Built with ♥ by [Neural Nomads](https://github.com/NeuralNomadsAI)** · [MIT License](LICENSE)
