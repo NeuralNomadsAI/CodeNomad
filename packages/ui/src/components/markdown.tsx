@@ -123,7 +123,11 @@ export function Markdown(props: MarkdownProps) {
     version: () => resolved().version,
   })
 
-  const commitCacheEntry = (snapshot: ReturnType<typeof resolved>, renderedHtml: string) => {
+  const commitCacheEntry = (
+    snapshot: ReturnType<typeof resolved>,
+    renderedHtml: string,
+    options?: { cache?: boolean },
+  ) => {
     const cacheEntry: RenderCache = {
       text: snapshot.text,
       html: renderedHtml,
@@ -131,7 +135,9 @@ export function Markdown(props: MarkdownProps) {
       mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`,
     }
     setHtml(renderedHtml)
-    cacheHandle.set(cacheEntry)
+    if (options?.cache ?? true) {
+      cacheHandle.set(cacheEntry)
+    }
     notifyRendered()
   }
 
@@ -142,9 +148,10 @@ export function Markdown(props: MarkdownProps) {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
     })
+    const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
     if (latestRequestKey === snapshot.requestKey) {
-      commitCacheEntry(snapshot, rendered)
+      commitCacheEntry(snapshot, rendered, { cache: shouldCache })
     }
   }
 

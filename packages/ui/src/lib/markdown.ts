@@ -120,14 +120,7 @@ function resolveLanguage(token: string): { canonical: string | null; raw: string
   return { canonical: null, raw: normalized }
 }
 
-async function ensureLanguages(content: string) {
-  if (highlightSuppressed) {
-    return
-  }
-
-  // Extract code-fence language tokens via `marked` so we correctly handle code blocks
-  // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
-  // to miss these and prevent languages from loading.
+function collectCodeFenceLanguages(content: string): string[] {
   const foundLanguages = new Set<string>()
   try {
     const tokens = marked.lexer(content) as any
@@ -139,9 +132,43 @@ async function ensureLanguages(content: string) {
       }
     })
   } catch {
-    // If tokenization fails for any reason, skip language preloading.
+    return []
+  }
+
+  return [...foundLanguages]
+}
+
+export function hasPendingCodeHighlight(content: string): boolean {
+  const languages = collectCodeFenceLanguages(content)
+  for (const token of languages) {
+    const rawToken = normalizeLanguageToken(token)
+    if (!rawToken || rawToken === "text") {
+      continue
+    }
+
+    const { canonical, raw } = resolveLanguage(token)
+    const langKey = canonical || raw
+    if (langKey === "text" || raw === "text") {
+      continue
+    }
+
+    if (!highlighter || !loadedLanguages.has(langKey)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+async function ensureLanguages(content: string) {
+  if (highlightSuppressed) {
     return
   }
+
+  // Extract code-fence language tokens via `marked` so we correctly handle code blocks
+  // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
+  // to miss these and prevent languages from loading.
+  const foundLanguages = collectCodeFenceLanguages(content)
 
   // Queue language loading tasks
   for (const token of foundLanguages) {
