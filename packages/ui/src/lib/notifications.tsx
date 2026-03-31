@@ -102,9 +102,11 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
         </button>
         <div class="flex items-start gap-3 pr-6">
           <span class={`mt-1 inline-block h-2.5 w-2.5 rounded-full ${accent.badge}`} />
-          <div class="flex-1 text-sm leading-snug">
-            {payload.title && <p class={`font-semibold ${accent.headline}`}>{payload.title}</p>}
-            <p class={`${accent.body} ${payload.title ? "mt-1" : ""}`}>{payload.message}</p>
+          <div class="min-w-0 flex-1 text-sm leading-snug">
+            {payload.title && <p class={`break-words ${accent.headline} font-semibold`}>{payload.title}</p>}
+            <p class={`${accent.body} ${payload.title ? "mt-1" : ""} whitespace-pre-wrap break-words [overflow-wrap:anywhere]`}>
+              {payload.message}
+            </p>
             {payload.action && (
               <button
                 type="button"
