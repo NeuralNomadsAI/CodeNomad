@@ -81,6 +81,14 @@ export class FileSystemBrowser {
     return { path: relativePath, absolutePath }
   }
 
+  writeFile(relativePath: string, contents: string): void {
+    if (this.unrestricted) {
+      throw new Error("writeFile is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    fs.writeFileSync(resolved, contents, "utf-8")
+  }
+
   readFile(relativePath: string): string {
     if (this.unrestricted) {
       throw new Error("readFile is not available in unrestricted mode")

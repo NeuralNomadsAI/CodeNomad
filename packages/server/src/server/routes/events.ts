@@ -1,19 +1,32 @@
 import { FastifyInstance } from "fastify"
+import { z } from "zod"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
+import type { ClientConnectionManager } from "../../clients/connection-manager"
 import { Logger } from "../../logger"
 
 interface RouteDeps {
   eventBus: EventBus
   registerClient: (cleanup: () => void) => () => void
   logger: Logger
+  connectionManager: ClientConnectionManager
 }
 
 let nextClientId = 0
 
+const ConnectionQuerySchema = z.object({
+  clientId: z.string().trim().min(1),
+  connectionId: z.string().trim().min(1),
+})
+
+const PongBodySchema = ConnectionQuerySchema.extend({
+  pingTs: z.number().optional(),
+})
+
 export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
+    const connection = ConnectionQuerySchema.parse(request.query ?? {})
     deps.logger.debug({ clientId }, "SSE client connected")
 
     const origin = request.headers.origin ?? "*"
@@ -35,7 +48,8 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     const unsubscribe = deps.eventBus.onEvent(send)
     const heartbeat = setInterval(() => {
-      reply.raw.write(`:hb ${Date.now()}\n\n`)
+      const ping = { ts: Date.now() }
+      reply.raw.write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
     }, 15000)
 
     let closed = false
@@ -49,13 +63,27 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const unregister = deps.registerClient(close)
+    const unregisterConnection = deps.connectionManager.register({
+      ...connection,
+      close,
+    })
 
     const handleClose = () => {
       close()
       unregister()
+      unregisterConnection()
     }
 
     request.raw.on("close", handleClose)
     request.raw.on("error", handleClose)
+  })
+
+  app.post("/api/client-connections/pong", (request, reply) => {
+    const body = PongBodySchema.parse(request.body ?? {})
+    if (!deps.connectionManager.pong(body)) {
+      reply.code(404).send({ error: "Client connection not found" })
+      return
+    }
+    reply.code(204).send()
   })
 }

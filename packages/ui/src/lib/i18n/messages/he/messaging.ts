@@ -156,6 +156,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.transcribing.title": "מתמלל אודיו",
   "promptInput.voiceInput.error.title": "קלט קולי נכשל",
   "promptInput.voiceInput.error.permission": "נדרשת גישה למיקרופון כדי להקליט קלט קולי.",
+  "promptInput.voiceInput.error.permissionDenied": "הגישה למיקרופון נדחתה על ידי macOS.",
   "promptInput.voiceInput.error.unsupported": "קלט קולי אינו נתמך בדפדפן זה.",
   "promptInput.voiceInput.error.transcribe": "לא ניתן היה לתמלל את האודיו שהוקלט.",
 } as const

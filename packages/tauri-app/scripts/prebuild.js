@@ -56,11 +56,7 @@ async function ensureMonacoAssets() {
 function ensureServerBuild() {
   const distPath = path.join(serverRoot, "dist")
   const publicPath = path.join(serverRoot, "public")
-  if (fs.existsSync(distPath) && fs.existsSync(publicPath)) {
-    return
-  }
-
-  console.log("[prebuild] server build missing; running workspace build...")
+  console.log("[prebuild] rebuilding server workspace for desktop packaging...")
   execSync("npm --workspace @neuralnomads/codenomad run build", {
     cwd: workspaceRoot,
     stdio: "inherit",

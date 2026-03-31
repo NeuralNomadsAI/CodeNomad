@@ -1,0 +1,73 @@
+﻿
+> @codenomad/ui@0.13.1 test-ct
+> cross-env NODE_OPTIONS="--conditions=browser" playwright test -c playwright-ct.config.ts --reporter=line
+
+node.exe : Error: Cannot find module @rollup/rollup-win32-x64-msvc. npm has a bug r
+elated to optional dependencies (https://github.com/npm/cli/issues/4828). Please tr
+y `npm i` again after removing both package-lock.json and node_modules directory.
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Error: Cannot f...ules directory.:Str 
+   ing) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    at requireWithFriendlyError (C:\repos\codenomad\node_modules\rollup\dist\native
+.js:115:9)
+    at Object.<anonymous> (C:\repos\codenomad\node_modules\rollup\dist\native.js:12
+4:76)
+    ... 15 lines matching cause stack trace ...
+    at i.<anonymous> (C:\repos\codenomad\node_modules\playwright\lib\program.js:70:
+7) {
+  [cause]: Error: Cannot find module '@rollup/rollup-win32-x64-msvc'
+  Require stack:
+  - C:\repos\codenomad\node_modules\rollup\dist\native.js
+      at Module.<anonymous> (node:internal/modules/cjs/loader:1475:15)
+      at Module.resolveFilename [as _resolveFilename] (C:\repos\codenomad\node_modu
+les\playwright\lib\transform\transform.js:247:36)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1048:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1072:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1093:12)
+      at Module._load (node:internal/modules/cjs/loader:1261:25)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+      at Module.require (node:internal/modules/cjs/loader:1575:12)
+      at require (node:internal/modules/helpers:191:16)
+      at requireWithFriendlyError (C:\repos\codenomad\node_modules\rollup\dist\nati
+ve.js:97:10)
+      at Object.<anonymous> (C:\repos\codenomad\node_modules\rollup\dist\native.js:
+124:76)
+      at Module._compile (node:internal/modules/cjs/loader:1829:14)
+      at Object.<anonymous> (node:internal/modules/cjs/loader:1969:10)
+      at Object.newLoader2 [as .js] (C:\repos\codenomad\node_modules\playwright\lib
+\third_party\pirates.js:52:22)
+      at Module.load (node:internal/modules/cjs/loader:1552:32)
+      at Module._load (node:internal/modules/cjs/loader:1354:12)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+      at loadCJSModuleWithModuleLoad (node:internal/modules/esm/translators:325:3)
+      at ModuleWrap.<anonymous> (node:internal/modules/esm/translators:230:7)
+      at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+      at node:internal/modules/esm/loader:639:26
+      at requireOrImport (C:\repos\codenomad\node_modules\playwright\lib\transform\
+transform.js:223:12)
+      at loadUserConfig (C:\repos\codenomad\node_modules\playwright\lib\common\conf
+igLoader.js:107:46)
+      at loadConfig (C:\repos\codenomad\node_modules\playwright\lib\common\configLo
+ader.js:119:22)
+      at loadConfigFromFile (C:\repos\codenomad\node_modules\playwright\lib\common\
+configLoader.js:331:10)
+      at runTests (C:\repos\codenomad\node_modules\playwright\lib\program.js:197:18
+)
+      at i.<anonymous> (C:\repos\codenomad\node_modules\playwright\lib\program.js:7
+0:7) {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: [ 'C:\\repos\\codenomad\\node_modules\\rollup\\dist\\native.js' ]
+  }
+}
+npm error Lifecycle script `test-ct` failed with error:
+npm error code 1
+npm error path C:\repos\codenomad\packages\ui
+npm error workspace @codenomad/ui@0.13.1
+npm error location C:\repos\codenomad\packages\ui
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c cross-env NODE_OPTIONS="--co
+nditions=browser" playwright test -c playwright-ct.config.ts --reporter=line

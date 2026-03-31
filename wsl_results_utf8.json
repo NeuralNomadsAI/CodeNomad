@@ -1,0 +1,520 @@
+﻿Dev Server is already running at http://localhost:6789/, using it.
+
+{
+  "config": {
+    "configFile": "/mnt/c/repos/codenomad/packages/ui/playwright-ct.config.ts",
+    "rootDir": "/mnt/c/repos/codenomad/packages/ui/src",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/mnt/c/repos/codenomad/packages/ui/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/mnt/c/repos/codenomad/packages/ui/src",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 15000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 1,
+    "webServer": null,
+    "@playwright/test": {
+      "packageJSON": "/mnt/c/repos/codenomad/node_modules/@sand4rt/experimental-ct-solid/package.json",
+      "plugins": [
+        null
+      ],
+      "babelPlugins": [
+        [
+          "/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/tsxTransform.js"
+        ]
+      ]
+    },
+    "@playwright/experimental-ct-core": {
+      "registerSourceFile": "/mnt/c/repos/codenomad/node_modules/@sand4rt/experimental-ct-solid/registerSource.mjs"
+    }
+  },
+  "suites": [
+    {
+      "title": "components/message-timeline.spec.tsx",
+      "file": "components/message-timeline.spec.tsx",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "renders message timeline safely with empty segments",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 550,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24",
+                    "stack": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:13:27",
+                    "location": {
+                      "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                      "column": 11,
+                      "line": 5989
+                    }
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                        "column": 11,
+                        "line": 5989
+                      },
+                      "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:13:27"
+                    }
+                  ],
+                  "stdout": [
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] I18nProvider: isServer = false\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: [I18N_DEBUG] useI18n: Context is undefined in the browser!\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Current Context object: {id: Symbol(context), Provider: , defaultValue: undefined}\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Debug settings: undefined\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:14:39.842Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                    "column": 11,
+                    "line": 5989
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "78c21aace5204ff11848-bc0d8f92638889e5e493",
+          "file": "components/message-timeline.spec.tsx",
+          "line": 12,
+          "column": 1
+        },
+        {
+          "title": "renders a list of diverse timeline segments correctly",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 621,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24",
+                    "stack": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:61:27",
+                    "location": {
+                      "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                      "column": 11,
+                      "line": 5989
+                    }
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                        "column": 11,
+                        "line": 5989
+                      },
+                      "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:61:27"
+                    }
+                  ],
+                  "stdout": [
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] I18nProvider: isServer = false\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: [I18N_DEBUG] useI18n: Context is undefined in the browser!\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Current Context object: {id: Symbol(context), Provider: , defaultValue: undefined}\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Debug settings: undefined\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:14:57.505Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                    "column": 11,
+                    "line": 5989
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "78c21aace5204ff11848-f24039454b91ab294e2d",
+          "file": "components/message-timeline.spec.tsx",
+          "line": 23,
+          "column": 1
+        },
+        {
+          "title": "dispatches correct click events when a segment is selected",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 463,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24",
+                    "stack": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:100:27",
+                    "location": {
+                      "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                      "column": 11,
+                      "line": 5989
+                    }
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                        "column": 11,
+                        "line": 5989
+                      },
+                      "message": "Error: page._wrapApiCall: Error: useI18n must be used within I18nProvider\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at useI18n (http://localhost:6789/assets/index-CnjTkP3h.js:5989:11)\n    at MessageTimeline (http://localhost:6789/assets/message-timeline-Dg_uAH_F.js:45431:7)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at untrack (http://localhost:6789/assets/index-CnjTkP3h.js:567:58)\n    at createComponent (http://localhost:6789/assets/index-CnjTkP3h.js:1388:10)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:6388:24\n    at transformObject (http://localhost:6789/assets/index-CnjTkP3h.js:6317:18)\n    at __pwCreateComponent (http://localhost:6789/assets/index-CnjTkP3h.js:6380:17)\n    at App (http://localhost:6789/assets/index-CnjTkP3h.js:6399:19)\n    at http://localhost:6789/assets/index-CnjTkP3h.js:1388:24\n    at mount (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:45:35)\n    at /mnt/c/repos/codenomad/packages/ui/src/components/message-timeline.spec.tsx:100:27"
+                    }
+                  ],
+                  "stdout": [
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] I18nProvider: isServer = false\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: [I18N_DEBUG] useI18n: Context is undefined in the browser!\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Current Context object: {id: Symbol(context), Provider: , defaultValue: undefined}\n"
+                    },
+                    {
+                      "text": "[BROWSER] log: [I18N_DEBUG] useI18n: Debug settings: undefined\n"
+                    },
+                    {
+                      "text": "[BROWSER] error: Failed to load resource: the server responded with a status of 404 (Not Found)\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:15:12.349Z",
+                  "annotations": [],
+                  "attachments": [],
+                  "errorLocation": {
+                    "file": "http://localhost:6789/assets/index-CnjTkP3h.js",
+                    "column": 11,
+                    "line": 5989
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "78c21aace5204ff11848-8a920c196e96c597313b",
+          "file": "components/message-timeline.spec.tsx",
+          "line": 86,
+          "column": 1
+        },
+        {
+          "title": "high-fidelity HD screenshot of timeline with 1000 segments",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 3,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1462,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                  },
+                  "errors": [
+                    {
+                      "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:15:32.176Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "78c21aace5204ff11848-047e39fba25ab0a125da",
+          "file": "components/message-timeline.spec.tsx",
+          "line": 115,
+          "column": 1
+        },
+        {
+          "title": "efficiently renders 1000 timeline segments via virtualization",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 4,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1297,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                  },
+                  "errors": [
+                    {
+                      "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:15:54.403Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "78c21aace5204ff11848-4306779eca9f0dac556a",
+          "file": "components/message-timeline.spec.tsx",
+          "line": 150,
+          "column": 1
+        }
+      ]
+    },
+    {
+      "title": "components/session/session-view.spec.tsx",
+      "file": "components/session/session-view.spec.tsx",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "renders fallback when session is not found",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 5,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1450,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                  },
+                  "errors": [
+                    {
+                      "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:16:21.299Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "483cf69f4fec05e0ccf3-92bcdb3134b3f191bc43",
+          "file": "components/session/session-view.spec.tsx",
+          "line": 8,
+          "column": 1
+        },
+        {
+          "title": "renders session content when session is found",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 6,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1239,
+                  "error": {
+                    "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n",
+                    "stack": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                  },
+                  "errors": [
+                    {
+                      "message": "Error: page._wrapApiCall: net::ERR_CONNECTION_REFUSED at http://localhost:6789/\nCall log:\n\u001b[2m  - navigating to \"http://localhost:6789/\", waiting until \"load\"\u001b[22m\n\n    at Object.page (/mnt/c/repos/codenomad/node_modules/@playwright/experimental-ct-core/lib/mount.js:35:16)"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-03-29T11:16:46.985Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "483cf69f4fec05e0ccf3-c50f4b6a8a10135288e5",
+          "file": "components/session/session-view.spec.tsx",
+          "line": 22,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-03-29T11:14:21.634Z",
+    "duration": 157147.249,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 7,
+    "flaky": 0
+  }
+}

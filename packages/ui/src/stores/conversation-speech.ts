@@ -4,6 +4,7 @@ import { showToastNotification } from "../lib/notifications"
 import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
+import { serverEvents } from "../lib/server-events"
 import { serverSettings } from "./preferences"
 import { loadSpeechCapabilities, speechCapabilities } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
@@ -30,6 +31,7 @@ interface PlaybackHandle {
 
 const log = getLogger("actions")
 const [conversationModeInstances, setConversationModeInstances] = createSignal<Map<string, boolean>>(new Map())
+const LEADING_SPOKEN_BLOCK_REGEX = /^\s*```spoken[ \t]*\r?\n([\s\S]*?)\r?\n```(?:\r?\n|$)/i
 
 const queuedKeys = new Set<string>()
 const spokenKeysBySession = new Map<string, Set<string>>()
@@ -42,6 +44,10 @@ let currentPlayback:
   | null = null
 let queueRunner: Promise<void> | null = null
 let playbackErrorShown = false
+
+serverEvents.onOpen(() => {
+  void syncConversationModesToServer()
+})
 
 function getEntryKey(instanceId: string, sessionId: string, messageId: string, partId: string): string {
   return `${instanceId}:${sessionId}:${messageId}:${partId}`
@@ -107,6 +113,9 @@ export function canUseConversationMode(): boolean {
 }
 
 export function setConversationModeEnabled(instanceId: string, enabled: boolean): void {
+  const previous = isConversationModeEnabled(instanceId)
+  if (previous === enabled) return
+
   setConversationModeInstances((prev) => {
     const next = new Map(prev)
     if (enabled) {
@@ -120,6 +129,23 @@ export function setConversationModeEnabled(instanceId: string, enabled: boolean)
   if (!enabled) {
     clearConversationPlaybackForInstance(instanceId)
   }
+
+  void serverApi.updateVoiceMode(instanceId, enabled).catch((error) => {
+    log.error("Failed to update conversation mode", error)
+    setConversationModeInstances((prev) => {
+      const next = new Map(prev)
+      if (previous) {
+        next.set(instanceId, true)
+      } else {
+        next.delete(instanceId)
+      }
+      return next
+    })
+
+    if (!previous) {
+      clearConversationPlaybackForInstance(instanceId)
+    }
+  })
 }
 
 export function toggleConversationMode(instanceId: string): void {
@@ -188,7 +214,7 @@ export function handleConversationAssistantPartUpdated(instanceId: string, part:
   if (!isConversationModeEnabled(instanceId)) return
   if (!isSpeakableSession(instanceId, sessionId)) return
 
-  const text = resolveTextPartContent(part).trim()
+  const text = extractLeadingSpokenBlock(resolveTextPartContent(part))
   if (!text) return
 
   const key = getEntryKey(instanceId, sessionId, messageId, partId)
@@ -504,4 +530,19 @@ function createObjectUrlFromBase64(audioBase64: string, mimeType: string): strin
     bytes[index] = binary.charCodeAt(index)
   }
   return URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }))
+}
+
+function extractLeadingSpokenBlock(text: string): string {
+  const match = text.match(LEADING_SPOKEN_BLOCK_REGEX)
+  if (!match?.[1]) return ""
+  return match[1].trim()
+}
+
+async function syncConversationModesToServer(): Promise<void> {
+  const updates: Promise<unknown>[] = []
+  for (const [instanceId, enabled] of conversationModeInstances()) {
+    if (!enabled) continue
+    updates.push(serverApi.updateVoiceMode(instanceId, true))
+  }
+  await Promise.allSettled(updates)
 }

@@ -11,6 +11,7 @@ import type {
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   ServerMeta,
+  VoiceModeStateResponse,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -23,6 +24,7 @@ import type {
   WorktreeMap,
   WorktreeCreateRequest,
 } from "../../../server/src/api-types"
+import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? window.location?.origin : undefined
@@ -236,6 +238,16 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
+  writeWorkspaceFile(id: string, relativePath: string, contents: string): Promise<void> {
+    const params = new URLSearchParams({ path: relativePath })
+    return request(
+      `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ contents }),
+      },
+    )
+  },
 
   fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
@@ -340,6 +352,19 @@ export const serverApi = {
       { method: "POST" },
     )
   },
+  updateVoiceMode(instanceId: string, enabled: boolean): Promise<VoiceModeStateResponse> {
+    const identity = getClientIdentity()
+    return request<VoiceModeStateResponse>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/voice-mode`, {
+      method: "POST",
+      body: JSON.stringify({ ...identity, enabled }),
+    })
+  },
+  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }): Promise<void> {
+    return request<void>("/api/client-connections/pong", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
   fetchBackgroundProcessOutput(
     instanceId: string,
     processId: string,
@@ -364,13 +389,19 @@ export const serverApi = {
       `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
     )
   },
-  connectEvents(onEvent: (event: WorkspaceEventPayload) => void, onError?: () => void) {
+  connectEvents(
+    onEvent: (event: WorkspaceEventPayload) => void,
+    onError?: () => void,
+    onPing?: (payload: { ts?: number }) => void,
+  ) {
     if (typeof EventSource === "undefined") {
       sseLogger.warn("EventSource is not defined, returning dummy source")
       return { close: () => {}, onmessage: null, onerror: null, onopen: null } as any
     }
-    sseLogger.info(`Connecting to ${EVENTS_URL}`)
-    const source = new EventSource(EVENTS_URL, { withCredentials: true } as any)
+    const identity = getClientIdentity()
+    const url = buildClientEventsUrl(identity)
+    sseLogger.info(`Connecting to ${url}`)
+    const source = new EventSource(url, { withCredentials: true } as any)
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEventPayload
@@ -383,8 +414,26 @@ export const serverApi = {
       sseLogger.warn("EventSource error, closing stream")
       onError?.()
     }
+    source.addEventListener("codenomad.client.ping", (event: MessageEvent) => {
+      try {
+        const payload = event.data ? (JSON.parse(event.data) as { ts?: number }) : {}
+        onPing?.(payload)
+      } catch (error) {
+        sseLogger.error("Failed to parse ping event", error)
+      }
+    })
     return source
   },
+}
+
+function buildClientEventsUrl(identity: { clientId: string; connectionId: string }): string {
+  const url = new URL(EVENTS_URL, typeof window !== "undefined" ? window.location.origin : "http://localhost")
+  url.searchParams.set("clientId", identity.clientId)
+  url.searchParams.set("connectionId", identity.connectionId)
+  if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
+    return url.toString()
+  }
+  return `${url.pathname}${url.search}`
 }
 
 export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType }
