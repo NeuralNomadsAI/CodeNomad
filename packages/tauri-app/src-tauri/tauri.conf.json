@@ -1,16 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CodeNomad",
-  "version": "0.12.3",
+  "version": "0.13.3",
   "identifier": "ai.neuralnomads.codenomad.client",
   "build": {
     "beforeDevCommand": "npm run dev:bootstrap",
     "beforeBuildCommand": "npm run bundle:server",
     "frontendDist": "resources/ui-loading"
   },
-
- 
-
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -33,9 +30,13 @@
     ],
     "security": {
       "assetProtocol": {
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       },
-      "capabilities": ["main-window-native-dialogs"]
+      "capabilities": [
+        "main-window-native-dialogs"
+      ]
     }
   },
   "bundle": {
@@ -44,7 +45,17 @@
       "resources/server",
       "resources/ui-loading"
     ],
-    "icon": ["icon.icns", "icon.ico", "icon.png"],
-    "targets": ["app", "appimage", "deb", "rpm", "nsis"]
+    "icon": [
+      "icon.icns",
+      "icon.ico",
+      "icon.png"
+    ],
+    "targets": [
+      "app",
+      "appimage",
+      "deb",
+      "rpm",
+      "nsis"
+    ]
   }
 }
