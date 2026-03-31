@@ -28,7 +28,7 @@ import type { PermissionReplyEventPropertiesLike, PermissionRequestLike } from "
 import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
 import type { QuestionRequest } from "../types/question"
 import type { EventQuestionReplied, EventQuestionRejected } from "@opencode-ai/sdk/v2"
-import { showToastNotification, ToastVariant } from "../lib/notifications"
+import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
@@ -39,7 +39,14 @@ import {
   removeQuestionFromQueue,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
-import { createClientSession, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import {
+  createClientSession,
+  mapSdkSessionRetry,
+  mapSdkSessionStatus,
+  type Session,
+  type SessionRetryState,
+  type SessionStatus,
+} from "../types/session"
 import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -67,6 +74,15 @@ import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
+let activeRetryToast: ToastHandle | null = null
+
+function isSameRetryState(left: SessionRetryState | null | undefined, right: SessionRetryState | null | undefined): boolean {
+  const a = left ?? null
+  const b = right ?? null
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.attempt === b.attempt && a.message === b.message && a.next === b.next
+}
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -131,18 +147,20 @@ interface TuiToastEvent {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
-function applySessionStatus(instanceId: string, sessionId: string, status: SessionStatus) {
+function applySessionStatus(instanceId: string, sessionId: string, status: SessionStatus, retry?: SessionRetryState | null) {
   let parentToExpand: string | null = null
 
   withSession(instanceId, sessionId, (session) => {
     const current = session.status ?? "idle"
-    if (current === status) return false
+    const nextRetry = retry ?? null
+    if (current === status && isSameRetryState(session.retry, nextRetry)) return false
 
     if (current === "compacting" && status !== "compacting") {
       return false
     }
 
     session.status = status
+    session.retry = status === "working" ? nextRetry : null
 
     // Auto-expand the parent thread when a child session starts working.
     // Users can still collapse it; we only expand on the transition.
@@ -172,6 +190,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     )
 
     let fetchedStatus: SessionStatus = "idle"
+    let fetchedRetry: SessionRetryState | null = null
     try {
       let statuses: Record<string, any> = {}
       try {
@@ -187,11 +206,13 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       const rawStatus = (info as any)?.status ?? statuses?.[sessionId]
       const hasType = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
       fetchedStatus = hasType ? mapSdkSessionStatus(rawStatus) : "idle"
+      fetchedRetry = hasType ? mapSdkSessionRetry(rawStatus) : null
     } catch (error) {
       log.error("Failed to fetch session status", error)
     }
 
     const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
+    fetched.retry = fetchedRetry
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
@@ -205,6 +226,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         agent: existing?.agent ?? fetched.agent,
         model: existing?.model ?? fetched.model,
         status: existing?.status === "compacting" ? "compacting" : fetched.status,
+        retry: existing?.status === "compacting" ? null : fetched.retry,
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
       }
@@ -231,14 +253,20 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   }
 }
 
-function ensureSessionStatus(instanceId: string, sessionId: string, status: SessionStatus, directory?: string) {
+function ensureSessionStatus(
+  instanceId: string,
+  sessionId: string,
+  status: SessionStatus,
+  directory?: string,
+  retry?: SessionRetryState | null,
+) {
   const instanceSessions = sessions().get(instanceId)
   const existing = instanceSessions?.get(sessionId)
   if (existing) {
-    if ((existing.status ?? "idle") === status) {
+    if ((existing.status ?? "idle") === status && isSameRetryState(existing.retry, retry)) {
       return
     }
-    applySessionStatus(instanceId, sessionId, status)
+    applySessionStatus(instanceId, sessionId, status, retry)
     return
   }
 
@@ -250,7 +278,7 @@ function ensureSessionStatus(instanceId: string, sessionId: string, status: Sess
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    applySessionStatus(instanceId, sessionId, status)
+    applySessionStatus(instanceId, sessionId, status, retry)
   })()
 
   pendingSessionFetches.set(key, pending)
@@ -428,6 +456,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
         modelId: "",
       },
       status: "idle",
+      retry: null,
       version: info.version || "0",
       time: info.time
         ? { ...info.time }
@@ -461,6 +490,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       ...existingSession,
       title: info.title || existingSession.title,
       status: existingSession.status ?? "idle",
+      retry: existingSession.retry ?? null,
       time: mergedTime,
       revert: info.revert
         ? {
@@ -532,8 +562,29 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
-  const status = mapSdkSessionStatus(event.properties.status)
-  ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory)
+  const rawStatus = event.properties.status
+  const status = mapSdkSessionStatus(rawStatus)
+  const retry = mapSdkSessionRetry(rawStatus)
+  ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory, retry)
+  if (retry) {
+    const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
+    const countdown =
+      remainingSeconds > 0
+        ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
+        : tGlobal("sessionList.status.retrying")
+    const label = getSessionTitle(instanceId, sessionId)
+    activeRetryToast?.dismiss()
+    activeRetryToast = showToastNotification({
+      title: label || getInstanceDisplayName(instanceId),
+      message: tGlobal("sessionList.status.retryToast", {
+        countdown,
+        message: retry.message,
+        attempt: String(retry.attempt),
+      }),
+      variant: "error",
+      duration: 7000,
+    })
+  }
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
@@ -547,6 +598,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (existing) {
     withSession(instanceId, sessionID, (session) => {
       session.status = "working"
+      session.retry = null
     })
   } else {
     ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)

@@ -158,6 +158,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.transcribing.title": "正在转写音频",
   "promptInput.voiceInput.error.title": "语音输入失败",
   "promptInput.voiceInput.error.permission": "录制语音输入需要麦克风访问权限。",
+  "promptInput.voiceInput.error.permissionDenied": "macOS 已拒绝麦克风访问。",
   "promptInput.voiceInput.error.unsupported": "此浏览器不支持语音输入。",
   "promptInput.voiceInput.error.transcribe": "无法转写录制的音频。",
 } as const

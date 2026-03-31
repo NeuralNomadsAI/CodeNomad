@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Sessions",
   "instanceShell.leftPanel.instanceInfo": "Infos de l'instance",
-
   "instanceShell.leftDrawer.pin": "Épingler le tiroir gauche",
   "instanceShell.leftDrawer.unpin": "Désépingler le tiroir gauche",
   "instanceShell.leftDrawer.toggle.pinned": "Tiroir gauche épinglé",
@@ -94,6 +93,21 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.files": "Fichiers",
   "instanceShell.rightPanel.tabs.status": "Statut",
   "instanceShell.rightPanel.tabs.ariaLabel": "Onglets du panneau droit",
+  "instanceShell.rightPanel.actions.refresh": "Actualiser",
+  "instanceShell.rightPanel.actions.save": "Enregistrer (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "Voulez-vous enregistrer les modifications de \"{path}\" avant de changer ?",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "Enregistrer",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "Annuler les modifications",
+  "instanceShell.rightPanel.actions.conflict.message": "Le fichier a été modifié par l'agent. Écraser les modifications de l'agent ?",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "Écraser",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "Annuler",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "Le fichier a des modifications non enregistrées. Actualiser supprimera vos modifications. Continuer ?",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "Actualiser",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Annuler",
+  "instanceShell.rightPanel.toast.saveSuccess": "Fichier enregistré avec succès",
+  "instanceShell.rightPanel.toast.saveError": "Échec de l'enregistrement du fichier",
+  "instanceShell.rightPanel.sections.yoloMode": "Mode yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Approuve automatiquement les demandes d'autorisation pour la session actuelle. A utiliser seulement si vous faites confiance aux outils executes.",
   "instanceShell.rightPanel.sections.sessionChanges": "Changements de session",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Fichiers modifiés dans la session actuelle. Affiche les ajouts et suppressions pour chaque fichier.",
   "instanceShell.rightPanel.sections.plan": "Plan",
@@ -126,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Selectionnez une session pour configurer le mode yolo.",
+  "instanceShell.yoloMode.title": "Mode yolo",
+  "instanceShell.yoloMode.description": "Approuve automatiquement les demandes d'autorisation pour cette session. Desactive par defaut.",
+  "instanceShell.yoloMode.badge": "Mode yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Mode yolo active",
 
   "instanceShell.backgroundProcesses.empty": "Aucun processus en arrière-plan.",
   "instanceShell.backgroundProcesses.status": "Statut : {status}",

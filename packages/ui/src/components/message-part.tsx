@@ -146,6 +146,7 @@ export default function MessagePart(props: MessagePartProps) {
                 sessionId={props.sessionId}
                 isDark={isDark()}
                 size={isAssistantMessage() ? "tight" : "base"}
+                escapeRawHtml={props.messageType === "user"}
                 onRendered={props.onRendered}
               />
             </Show>

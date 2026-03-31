@@ -11,6 +11,7 @@ let highlighterPromise: Promise<Highlighter> | null = null
 let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
+let escapeRawHtmlEnabled = false
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
@@ -119,14 +120,7 @@ function resolveLanguage(token: string): { canonical: string | null; raw: string
   return { canonical: null, raw: normalized }
 }
 
-async function ensureLanguages(content: string) {
-  if (highlightSuppressed) {
-    return
-  }
-
-  // Extract code-fence language tokens via `marked` so we correctly handle code blocks
-  // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
-  // to miss these and prevent languages from loading.
+function collectCodeFenceLanguages(content: string): string[] {
   const foundLanguages = new Set<string>()
   try {
     const tokens = marked.lexer(content) as any
@@ -138,9 +132,43 @@ async function ensureLanguages(content: string) {
       }
     })
   } catch {
-    // If tokenization fails for any reason, skip language preloading.
+    return []
+  }
+
+  return [...foundLanguages]
+}
+
+export function hasPendingCodeHighlight(content: string): boolean {
+  const languages = collectCodeFenceLanguages(content)
+  for (const token of languages) {
+    const rawToken = normalizeLanguageToken(token)
+    if (!rawToken || rawToken === "text") {
+      continue
+    }
+
+    const { canonical, raw } = resolveLanguage(token)
+    const langKey = canonical || raw
+    if (langKey === "text" || raw === "text") {
+      continue
+    }
+
+    if (!highlighter || !loadedLanguages.has(langKey)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+async function ensureLanguages(content: string) {
+  if (highlightSuppressed) {
     return
   }
+
+  // Extract code-fence language tokens via `marked` so we correctly handle code blocks
+  // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
+  // to miss these and prevent languages from loading.
+  const foundLanguages = collectCodeFenceLanguages(content)
 
   // Queue language loading tasks
   for (const token of foundLanguages) {
@@ -285,6 +313,14 @@ function setupRenderer(isDark: boolean) {
     return `<code class="inline-code">${escapeHtml(decoded)}</code>`
   }
 
+  renderer.html = (html: string) => {
+    if (!escapeRawHtmlEnabled) {
+      return html
+    }
+
+    return escapeHtml(decodeHtmlEntities(html))
+  }
+
   marked.use({ renderer })
   rendererSetup = true
 }
@@ -308,6 +344,7 @@ export async function renderMarkdown(
   content: string,
   options?: {
     suppressHighlight?: boolean
+    escapeRawHtml?: boolean
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -316,6 +353,7 @@ export async function renderMarkdown(
   }
 
   const suppressHighlight = options?.suppressHighlight ?? false
+  const escapeRawHtml = options?.escapeRawHtml ?? false
   const decoded = decodeHtmlEntities(content)
 
   if (!suppressHighlight) {
@@ -324,13 +362,16 @@ export async function renderMarkdown(
   }
 
   const previousSuppressed = highlightSuppressed
+  const previousEscapeRawHtml = escapeRawHtmlEnabled
   highlightSuppressed = suppressHighlight
+  escapeRawHtmlEnabled = escapeRawHtml
 
   try {
     // Proceed to parse immediately - highlighting will be available on next render
     return marked.parse(decoded) as Promise<string>
   } finally {
     highlightSuppressed = previousSuppressed
+    escapeRawHtmlEnabled = previousEscapeRawHtml
   }
 }
 

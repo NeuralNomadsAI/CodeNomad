@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Sesiones",
   "instanceShell.leftPanel.instanceInfo": "Info de la instancia",
-
   "instanceShell.leftDrawer.pin": "Fijar panel izquierdo",
   "instanceShell.leftDrawer.unpin": "Desfijar panel izquierdo",
   "instanceShell.leftDrawer.toggle.pinned": "Panel izquierdo fijado",
@@ -94,6 +93,21 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.files": "Archivos",
   "instanceShell.rightPanel.tabs.status": "Estado",
   "instanceShell.rightPanel.tabs.ariaLabel": "Pestañas del panel derecho",
+  "instanceShell.rightPanel.actions.refresh": "Actualizar",
+  "instanceShell.rightPanel.actions.save": "Guardar (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "¿Deseas guardar los cambios en \"{path}\" antes de cambiar?",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "Guardar",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "Descartar cambios",
+  "instanceShell.rightPanel.actions.conflict.message": "El archivo fue modificado por el agente. ¿Sobrescribir los cambios del agente?",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "Sobrescribir",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "Cancelar",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "El archivo tiene cambios sin guardar. Actualizar discardará tus ediciones. ¿Continuar?",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "Actualizar",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Cancelar",
+  "instanceShell.rightPanel.toast.saveSuccess": "Archivo guardado exitosamente",
+  "instanceShell.rightPanel.toast.saveError": "Error al guardar el archivo",
+  "instanceShell.rightPanel.sections.yoloMode": "Modo yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Aprueba automaticamente las solicitudes de permiso de la sesion actual. Usalo solo si confias en las herramientas que se estan ejecutando.",
   "instanceShell.rightPanel.sections.sessionChanges": "Cambios de sesión",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Archivos modificados en la sesión actual. Muestra las adiciones y eliminaciones de cada archivo.",
   "instanceShell.rightPanel.sections.plan": "Plan",
@@ -126,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Selecciona una sesion para configurar el modo yolo.",
+  "instanceShell.yoloMode.title": "Modo yolo",
+  "instanceShell.yoloMode.description": "Aprueba automaticamente las solicitudes de permiso de esta sesion. Esta desactivado por defecto.",
+  "instanceShell.yoloMode.badge": "Modo yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Modo yolo activado",
 
   "instanceShell.backgroundProcesses.empty": "No hay procesos en segundo plano.",
   "instanceShell.backgroundProcesses.status": "Estado: {status}",

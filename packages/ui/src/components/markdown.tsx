@@ -83,6 +83,7 @@ interface MarkdownProps {
   isDark?: boolean
   size?: "base" | "sm" | "tight"
   disableHighlight?: boolean
+  escapeRawHtml?: boolean
   onRendered?: () => void
 }
 
@@ -103,11 +104,12 @@ export function Markdown(props: MarkdownProps) {
     const text = decodeHtmlEntitiesLocally(rawText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
+    const escapeRawHtml = Boolean(props.escapeRawHtml)
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${version}`
-    return { part, text, themeKey, highlightEnabled, partId, cacheId, version, requestKey }
+    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${version}`
+    return { part, text, themeKey, highlightEnabled, escapeRawHtml, partId, cacheId, version, requestKey }
   })
 
   const cacheHandle = useGlobalCache({
@@ -116,20 +118,26 @@ export function Markdown(props: MarkdownProps) {
     scope: "markdown",
     cacheId: () => {
       const { cacheId, themeKey, highlightEnabled } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}`
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${resolved().escapeRawHtml ? 1 : 0}`
     },
     version: () => resolved().version,
   })
 
-  const commitCacheEntry = (snapshot: ReturnType<typeof resolved>, renderedHtml: string) => {
+  const commitCacheEntry = (
+    snapshot: ReturnType<typeof resolved>,
+    renderedHtml: string,
+    options?: { cache?: boolean },
+  ) => {
     const cacheEntry: RenderCache = {
       text: snapshot.text,
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: snapshot.version,
+      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`,
     }
     setHtml(renderedHtml)
-    cacheHandle.set(cacheEntry)
+    if (options?.cache ?? true) {
+      cacheHandle.set(cacheEntry)
+    }
     notifyRendered()
   }
 
@@ -138,20 +146,23 @@ export function Markdown(props: MarkdownProps) {
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
+      escapeRawHtml: snapshot.escapeRawHtml,
     })
+    const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
     if (latestRequestKey === snapshot.requestKey) {
-      commitCacheEntry(snapshot, rendered)
+      commitCacheEntry(snapshot, rendered, { cache: shouldCache })
     }
   }
 
   createEffect(() => {
     const snapshot = resolved()
     latestRequestKey = snapshot.requestKey
+    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
-      return cache.theme === snapshot.themeKey && cache.mode === snapshot.version
+      return cache.theme === snapshot.themeKey && cache.mode === cacheMode
     }
 
     const localCache = snapshot.part.renderCache

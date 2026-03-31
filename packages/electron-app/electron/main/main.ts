@@ -6,6 +6,7 @@ import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
 import { setupCliIPC } from "./ipc"
+import { configureMediaPermissionHandlers } from "./permissions"
 import { CliProcessManager } from "./process-manager"
 
 const mainFilename = fileURLToPath(import.meta.url)
@@ -489,6 +490,7 @@ app.whenReady().then(() => {
 
   if (isMac) {
     session.defaultSession.setSpellCheckerEnabled(false)
+    configureMediaPermissionHandlers(getAllowedRendererOrigins)
     app.on("browser-window-created", (_, window) => {
       window.webContents.session.setSpellCheckerEnabled(false)
     })

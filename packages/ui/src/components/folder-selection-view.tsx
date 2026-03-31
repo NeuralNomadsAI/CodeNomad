@@ -443,7 +443,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 rel="noreferrer"
                 class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
                 aria-label={t("folderSelection.links.githubStars")}
-                title={t("folderSelection.links.githubStars")}
+                title={githubStars() !== null ? `${t("folderSelection.links.githubStars")}: ${githubStars()!.toLocaleString()}` : t("folderSelection.links.githubStars")}
                 onClick={(event) => {
                   event.preventDefault()
                   void openExternalUrl(GITHUB_URL, "folder-selection")

@@ -107,6 +107,28 @@
   @apply w-full;
 }
 
+.session-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0.75rem;
+  background: var(--surface-base);
+  min-height: 2rem;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.session-sidebar-toggle-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
 .session-sidebar-controls .selector-trigger,
 .session-sidebar-controls [data-model-selector-control],
 .session-sidebar-controls .selector-trigger-label,
@@ -394,6 +416,7 @@ session-sidebar-controls .selector-trigger-primary {
 }
 
 .status-indicator.session-status.session-working,
+.status-indicator.session-status.session-retrying,
 .status-indicator.session-status.session-compacting,
 .status-indicator.session-status.session-idle {
   font-weight: var(--font-weight-medium);
@@ -402,6 +425,11 @@ session-sidebar-controls .selector-trigger-primary {
 .status-indicator.session-status.session-working {
   color: var(--session-status-working-fg);
   --session-status-dot: var(--session-status-working-fg);
+}
+
+.status-indicator.session-status.session-retrying {
+  color: var(--status-error);
+  --session-status-dot: var(--status-error);
 }
 
 .status-indicator.session-status.session-compacting {
@@ -432,6 +460,10 @@ session-sidebar-controls .selector-trigger-primary {
   background-color: var(--session-status-working-bg);
 }
 
+.status-indicator.session-status.session-retrying.session-status-list {
+  background-color: var(--status-error-bg);
+}
+
 .status-indicator.session-status.session-compacting.session-status-list {
   background-color: var(--session-status-compacting-bg);
 }
@@ -456,6 +488,16 @@ session-sidebar-controls .selector-trigger-primary {
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
   border: 1px solid transparent;
+}
+
+.status-indicator.session-yolo-mode {
+  color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 14%, transparent);
+  border-color: color-mix(in oklab, var(--accent-primary) 28%, transparent);
+}
+
+.status-indicator.session-yolo-mode .status-dot {
+  background-color: var(--accent-primary);
 }
 
 @media (max-width: 768px) {

@@ -1,15 +1,19 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
+import type { VoiceModeStateResponse } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { PluginChannelManager } from "../../plugins/channel"
 import { buildPingEvent, handlePluginEvent } from "../../plugins/handlers"
+import { VoiceModeManager } from "../../plugins/voice-mode"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
   eventBus: EventBus
   logger: Logger
+  channel: PluginChannelManager
+  voiceModeManager: VoiceModeManager
 }
 
 const PluginEventSchema = z.object({
@@ -17,9 +21,13 @@ const PluginEventSchema = z.object({
   properties: z.record(z.unknown()).optional(),
 })
 
-export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const channel = new PluginChannelManager(deps.logger.child({ component: "plugin-channel" }))
+const VoiceModeStateSchema = z.object({
+  enabled: z.boolean(),
+  clientId: z.string().trim().min(1),
+  connectionId: z.string().trim().min(1),
+})
 
+export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/workspaces/:id/plugin/events", (request, reply) => {
     const workspace = deps.workspaceManager.get(request.params.id)
     if (!workspace) {
@@ -33,10 +41,11 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.raw.flushHeaders?.()
     reply.hijack()
 
-    const registration = channel.register(request.params.id, reply)
+    const registration = deps.channel.register(request.params.id, reply)
+    deps.voiceModeManager.syncInstance(request.params.id)
 
     const heartbeat = setInterval(() => {
-      channel.send(request.params.id, buildPingEvent())
+      deps.channel.send(request.params.id, buildPingEvent())
     }, 15000)
 
     const close = () => {
@@ -47,6 +56,22 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     request.raw.on("close", close)
     request.raw.on("error", close)
+  })
+
+  app.post<{ Params: { id: string }; Body: VoiceModeStateResponse }>("/workspaces/:id/plugin/voice-mode", (request, reply) => {
+    const workspace = deps.workspaceManager.get(request.params.id)
+    if (!workspace) {
+      reply.code(404).send({ error: "Workspace not found" })
+      return
+    }
+
+    const payload = VoiceModeStateSchema.parse(request.body ?? {})
+    deps.voiceModeManager.setEnabled(
+      request.params.id,
+      { clientId: payload.clientId, connectionId: payload.connectionId },
+      payload.enabled,
+    )
+    return { enabled: payload.enabled }
   })
 
   const handleWildcard = async (request: any, reply: any) => {

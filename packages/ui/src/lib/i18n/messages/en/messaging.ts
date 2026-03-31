@@ -156,6 +156,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.transcribing.title": "Transcribing audio",
   "promptInput.voiceInput.error.title": "Voice input failed",
   "promptInput.voiceInput.error.permission": "Microphone access is required to record voice input.",
+  "promptInput.voiceInput.error.permissionDenied": "Microphone access was denied by macOS.",
   "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
   "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
 } as const

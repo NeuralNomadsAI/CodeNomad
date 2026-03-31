@@ -147,19 +147,49 @@ export class OpenAICompatibleSpeechProvider {
     }
 
     const endpoint = new URL("audio/speech", ensureTrailingSlash(settings.baseUrl ?? "https://api.openai.com/v1"))
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${settings.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: settings.ttsModel,
-        voice: settings.ttsVoice,
-        input: text,
-        response_format: format,
-      }),
-    })
+    let response: Response
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${settings.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: settings.ttsModel,
+          voice: settings.ttsVoice,
+          input: text,
+          response_format: format,
+        }),
+      })
+    } catch (error) {
+      const detailedError = error as Error & {
+        cause?: unknown
+        code?: string
+        errno?: number | string
+        syscall?: string
+        address?: string
+        port?: number
+      }
+      this.options.logger.error(
+        {
+          err: error,
+          endpoint: endpoint.toString(),
+          baseUrl: settings.baseUrl,
+          model: settings.ttsModel,
+          voice: settings.ttsVoice,
+          format,
+          cause: detailedError.cause,
+          code: detailedError.code,
+          errno: detailedError.errno,
+          syscall: detailedError.syscall,
+          address: detailedError.address,
+          port: detailedError.port,
+        },
+        "speech.synthesize fetch failed",
+      )
+      throw error
+    }
 
     if (!response.ok) {
       const detail = await response.text()

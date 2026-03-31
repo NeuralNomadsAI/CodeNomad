@@ -19,7 +19,12 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
-import { canUseConversationMode, isConversationModeEnabled, toggleConversationMode } from "../stores/conversation-speech"
+import {
+  canUseConversationMode,
+  clearConversationPlaybackForInstance,
+  isConversationModeEnabled,
+  toggleConversationMode,
+} from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 
@@ -492,6 +497,8 @@ export default function PromptInput(props: PromptInputProps) {
   const beginVoicePress = (event?: PointerEvent | KeyboardEvent) => {
     if (voiceButtonPressed || props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput()) return
     voiceButtonPressed = true
+    // Treat a mic press as barge-in: stop any active assistant speech before listening.
+    clearConversationPlaybackForInstance(props.instanceId)
 
     if (event instanceof PointerEvent) {
       const target = event.currentTarget

@@ -1,5 +1,6 @@
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
+import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 
 const RETRY_BASE_DELAY = 1000
@@ -16,6 +17,7 @@ function logSse(message: string, context?: Record<string, unknown>) {
 
 class ServerEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
+  private openHandlers = new Set<() => void>()
   private source: EventSource | null = null
   private retryDelay = RETRY_BASE_DELAY
 
@@ -28,10 +30,24 @@ class ServerEvents {
       this.source.close()
     }
     logSse("Connecting to backend events stream")
-    this.source = serverApi.connectEvents((event) => this.dispatch(event), () => this.scheduleReconnect())
+    this.source = serverApi.connectEvents(
+      (event) => this.dispatch(event),
+      () => this.scheduleReconnect(),
+      (payload) => {
+        void serverApi
+          .sendClientConnectionPong({
+            ...getClientIdentity(),
+            pingTs: payload.ts,
+          })
+          .catch((error) => {
+            log.error("Failed to send client connection pong", error)
+          })
+      },
+    )
     this.source.onopen = () => {
       logSse("Events stream connected")
       this.retryDelay = RETRY_BASE_DELAY
+      this.openHandlers.forEach((handler) => handler())
     }
   }
 
@@ -60,6 +76,11 @@ class ServerEvents {
     const bucket = this.handlers.get(type)!
     bucket.add(handler)
     return () => bucket.delete(handler)
+  }
+
+  onOpen(handler: () => void): () => void {
+    this.openHandlers.add(handler)
+    return () => this.openHandlers.delete(handler)
   }
 }
 

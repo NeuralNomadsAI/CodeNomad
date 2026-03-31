@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Сессии",
   "instanceShell.leftPanel.instanceInfo": "Информация об экземпляре",
-
   "instanceShell.leftDrawer.pin": "Закрепить левую панель",
   "instanceShell.leftDrawer.unpin": "Открепить левую панель",
   "instanceShell.leftDrawer.toggle.pinned": "Левая панель закреплена",
@@ -94,6 +93,21 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.files": "Файлы",
   "instanceShell.rightPanel.tabs.status": "Статус",
   "instanceShell.rightPanel.tabs.ariaLabel": "Вкладки правой панели",
+  "instanceShell.rightPanel.actions.refresh": "Обновить",
+  "instanceShell.rightPanel.actions.save": "Сохранить (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "Сохранить изменения в \"{path}\" перед переключением?",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "Сохранить",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "Отменить изменения",
+  "instanceShell.rightPanel.actions.conflict.message": "Файл был изменён агентом. Перезаписать изменения агента?",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "Перезаписать",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "Отмена",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "Файл имеет несохранённые изменения. Обновление отменит ваши правки. Продолжить?",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "Обновить",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Отмена",
+  "instanceShell.rightPanel.toast.saveSuccess": "Файл успешно сохранён",
+  "instanceShell.rightPanel.toast.saveError": "Не удалось сохранить файл",
+  "instanceShell.rightPanel.sections.yoloMode": "Режим Yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Автоматически одобряет запросы разрешений для текущей сессии. Включайте только если доверяете запускаемым инструментам.",
   "instanceShell.rightPanel.sections.sessionChanges": "Изменения сессии",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Файлы, измененные в текущей сессии. Показывает добавления и удаления для каждого файла.",
   "instanceShell.rightPanel.sections.plan": "План",
@@ -126,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Выберите сессию, чтобы настроить режим Yolo.",
+  "instanceShell.yoloMode.title": "Режим Yolo",
+  "instanceShell.yoloMode.description": "Автоматически одобряет запросы разрешений для этой сессии. По умолчанию выключен.",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Режим Yolo включен",
 
   "instanceShell.backgroundProcesses.empty": "Нет фоновых процессов.",
   "instanceShell.backgroundProcesses.status": "Статус: {status}",

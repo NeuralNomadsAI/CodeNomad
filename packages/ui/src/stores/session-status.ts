@@ -1,4 +1,4 @@
-import type { Session, SessionStatus } from "../types/session"
+import type { Session, SessionRetryState, SessionStatus } from "../types/session"
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
 
 function getSession(instanceId: string, sessionId: string): Session | null {
@@ -12,6 +12,15 @@ export function getSessionStatus(instanceId: string, sessionId: string): Session
     return "idle"
   }
   return session.status ?? "idle"
+}
+
+export function getSessionRetry(instanceId: string, sessionId: string): SessionRetryState | null {
+  const session = getSession(instanceId, sessionId)
+  return session?.retry ?? null
+}
+
+export function getRetrySeconds(next: number, now = Date.now()): number {
+  return Math.max(0, Math.round((next - now) / 1000))
 }
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus

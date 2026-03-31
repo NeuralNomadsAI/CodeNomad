@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "セッション",
   "instanceShell.leftPanel.instanceInfo": "インスタンス情報",
-
   "instanceShell.leftDrawer.pin": "左ドロワーを固定",
   "instanceShell.leftDrawer.unpin": "左ドロワーの固定を解除",
   "instanceShell.leftDrawer.toggle.pinned": "左ドロワーを固定しました",
@@ -94,6 +93,21 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.files": "ファイル",
   "instanceShell.rightPanel.tabs.status": "ステータス",
   "instanceShell.rightPanel.tabs.ariaLabel": "右パネルのタブ",
+  "instanceShell.rightPanel.actions.refresh": "更新",
+  "instanceShell.rightPanel.actions.save": "保存 (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "「{path}」への変更を切り替え前に保存しますか？",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "保存",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "変更を破棄",
+  "instanceShell.rightPanel.actions.conflict.message": "ファイルはエージェントによって変更されました。上書きしますか？",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "上書き",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "キャンセル",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "ファイルには未保存の変更があります。更新すると編集が破棄されます。続行しますか？",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "更新",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "キャンセル",
+  "instanceShell.rightPanel.toast.saveSuccess": "ファイルを保存しました",
+  "instanceShell.rightPanel.toast.saveError": "ファイルの保存に失敗しました",
+  "instanceShell.rightPanel.sections.yoloMode": "Yoloモード",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "現在のセッションの権限リクエストを自動承認します。実行中のツールを信頼できる場合にのみ使用してください。",
   "instanceShell.rightPanel.sections.sessionChanges": "セッション変更",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "現在のセッションで変更されたファイル。各ファイルの追加と削除を表示します。",
   "instanceShell.rightPanel.sections.plan": "計画",
@@ -126,6 +140,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",
+
+  "instanceShell.yoloMode.noSessionSelected": "Yoloモードを設定するにはセッションを選択してください。",
+  "instanceShell.yoloMode.title": "Yoloモード",
+  "instanceShell.yoloMode.description": "このセッションの権限リクエストを自動承認します。デフォルトでは無効です。",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "Yoloモードが有効",
 
   "instanceShell.backgroundProcesses.empty": "バックグラウンドプロセスはありません。",
   "instanceShell.backgroundProcesses.status": "状態: {status}",

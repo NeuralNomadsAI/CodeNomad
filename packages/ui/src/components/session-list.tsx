@@ -1,8 +1,8 @@
 import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split } from "lucide-solid"
+import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../stores/session-status"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
@@ -14,6 +14,7 @@ import {
   ensureSessionParentExpanded,
   getVisibleSessionIds,
   isSessionParentExpanded,
+  loadMessages,
   loading,
   renameSession,
   sessions as sessionStateSessions,
@@ -53,6 +54,14 @@ const SessionList: Component<SessionListProps> = (props) => {
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
+  const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
+  const [now, setNow] = createSignal(Date.now())
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(timer))
+  })
 
   const normalizeSessionLabel = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
@@ -157,6 +166,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.delete.confirmLabel"),
         cancelLabel: t("sessionList.delete.cancelLabel"),
+        dismissible: false,
       },
     )
     if (!confirmed) return
@@ -210,6 +220,32 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!session) return
     const label = session.title && session.title.trim() ? session.title : sessionId
     setRenameTarget({ id: sessionId, title: session.title ?? "", label })
+  }
+
+  const isSessionReloading = (sessionId: string) => reloadingSessionIds().has(sessionId)
+
+  const handleReloadSession = async (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation()
+    if (isSessionReloading(sessionId)) return
+
+    setReloadingSessionIds((prev) => {
+      const next = new Set(prev)
+      next.add(sessionId)
+      return next
+    })
+
+    try {
+      await loadMessages(props.instanceId, sessionId, true)
+    } catch (error) {
+      log.error(`Failed to reload session ${sessionId}:`, error)
+      showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
+    } finally {
+      setReloadingSessionIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sessionId)
+        return next
+      })
+    }
   }
 
   const closeRenameDialog = () => {
@@ -285,6 +321,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "warning",
         confirmLabel: t("sessionList.bulkDelete.confirmLabel"),
         cancelLabel: t("sessionList.bulkDelete.cancelLabel"),
+        dismissible: false,
       },
     )
 
@@ -370,7 +407,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isActive = () => props.activeSessionId === rowProps.sessionId
     const title = () => session()?.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
+    const retry = () => getSessionRetry(props.instanceId, rowProps.sessionId)
     const statusLabel = () => {
+      const retryState = retry()
+      if (retryState) {
+        const seconds = getRetrySeconds(retryState.next, now())
+        return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
+      }
       switch (formatSessionStatus(status())) {
         case "working":
           return t("sessionList.status.working")
@@ -383,13 +426,21 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsPermission = () => Boolean(session()?.pendingPermission)
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
-    const statusClassName = () => (needsInput() ? "session-permission" : `session-${status()}`)
+    const statusClassName = () => (needsInput() ? "session-permission" : `session-${retry() ? "retrying" : status()}`)
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")
         : needsQuestion()
           ? t("sessionList.status.needsInput")
           : statusLabel()
+    const statusTooltip = () => {
+      const retryState = retry()
+      if (!retryState) return undefined
+      return t("sessionList.status.retryTooltip", {
+        message: retryState.message,
+        attempt: String(retryState.attempt),
+      })
+    }
  
     const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
 
@@ -469,7 +520,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
               </Show>
-              <span class={`status-indicator session-status session-status-list ${statusClassName()}`}>
+              <span class={`status-indicator session-status session-status-list ${statusClassName()}`} title={statusTooltip()}>
                 {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
                 {statusText()}
               </span>
@@ -490,6 +541,21 @@ const SessionList: Component<SessionListProps> = (props) => {
                 title={t("sessionList.actions.copyId.title")}
               >
                 <Copy class="w-3 h-3" />
+              </span>
+              <span
+                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
+                onClick={(event) => handleReloadSession(event, rowProps.sessionId)}
+                role="button"
+                tabIndex={0}
+                aria-label={t("sessionList.actions.reload.ariaLabel")}
+                title={t("sessionList.actions.reload.title")}
+              >
+                <Show
+                  when={!isSessionReloading(rowProps.sessionId)}
+                  fallback={<RotateCw class="w-3 h-3 animate-spin" />}
+                >
+                  <RotateCw class="w-3 h-3" />
+                </Show>
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}

@@ -44,6 +44,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       variant: "warning",
       confirmLabel: t("infoView.dispose.confirm.confirmLabel"),
       cancelLabel: t("infoView.dispose.confirm.cancelLabel"),
+      dismissible: false,
     })
 
     if (!confirmed) return

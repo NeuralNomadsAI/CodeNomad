@@ -24,6 +24,9 @@ import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } f
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
+import { serverApi } from "../../../../lib/api-client"
+import { showConfirmDialog } from "../../../../stores/alerts"
+import { showToastNotification } from "../../../../lib/notifications"
 import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
@@ -86,6 +89,7 @@ interface RightPanelProps {
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
+    "yolo-mode",
     "plan",
     "background-processes",
     "mcp",
@@ -102,6 +106,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [browserSelectedContent, setBrowserSelectedContent] = createSignal<string | null>(null)
   const [browserSelectedLoading, setBrowserSelectedLoading] = createSignal(false)
   const [browserSelectedError, setBrowserSelectedError] = createSignal<string | null>(null)
+  const [browserSelectedDirty, setBrowserSelectedDirty] = createSignal(false)
+  const [browserSelectedSaving, setBrowserSelectedSaving] = createSignal(false)
+  const [browserSelectedOriginalContent, setBrowserSelectedOriginalContent] = createSignal<string | null>(null)
 
   const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
@@ -539,6 +546,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(true)
     setBrowserSelectedError(null)
     setBrowserSelectedContent(null)
+    setBrowserSelectedDirty(false)
+    setBrowserSelectedOriginalContent(null)
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {
@@ -559,11 +568,101 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         throw new Error("Unsupported file type")
       }
       setBrowserSelectedContent(text)
+      setBrowserSelectedOriginalContent(text) // Track original content for conflict detection
     } catch (error) {
       setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
     } finally {
       setBrowserSelectedLoading(false)
     }
+  }
+
+  const saveBrowserFile = async (content: string): Promise<boolean> => {
+    const path = browserSelectedPath()
+    if (!path) return false
+
+    // Check for conflict: agent edited file while user was editing
+    const originalContent = browserSelectedOriginalContent()
+    if (originalContent !== null) {
+      try {
+        const currentDiskContent = await requestData<FileContent>(
+          browserClient().file.read({ path }),
+          "file.read",
+        )
+        const diskContent = (currentDiskContent as any)?.content
+
+        // If disk content differs from what we originally loaded (agent edit)
+        // AND differs from user's current edits, we have a conflict
+        if (diskContent !== originalContent && diskContent !== content) {
+          const confirmed = await showConfirmDialog(
+            props.t("instanceShell.rightPanel.actions.conflict.message", { path }),
+            {
+              variant: "warning",
+              confirmLabel: props.t("instanceShell.rightPanel.actions.conflict.confirmLabel"),
+              cancelLabel: props.t("instanceShell.rightPanel.actions.conflict.cancelLabel"),
+              dismissible: false,
+            },
+          )
+          if (!confirmed) {
+            return false
+          }
+          // User chose to overwrite, proceed with save
+        }
+      } catch {
+        // If we can't check for conflict, proceed with save
+      }
+    }
+
+    setBrowserSelectedSaving(true)
+    try {
+      await serverApi.writeWorkspaceFile(props.instanceId, path, content)
+      setBrowserSelectedContent(content)
+      setBrowserSelectedOriginalContent(content) // Update original to match saved
+      setBrowserSelectedDirty(false)
+      showToastNotification({
+        message: props.t("instanceShell.rightPanel.toast.saveSuccess"),
+        variant: "success",
+      })
+      return true
+    } catch (error) {
+      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to save file")
+      showToastNotification({
+        message: props.t("instanceShell.rightPanel.toast.saveError"),
+        variant: "error",
+      })
+      return false
+    } finally {
+      setBrowserSelectedSaving(false)
+    }
+  }
+
+  const handleBrowserFileChange = (content: string) => {
+    setBrowserSelectedContent(content)
+    setBrowserSelectedDirty(true)
+  }
+
+  const handleOpenBrowserFileRequest = async (path: string) => {
+    if (browserSelectedDirty()) {
+      const confirmed = await showConfirmDialog(
+        props.t("instanceShell.rightPanel.actions.saveConfirm.message", { path: browserSelectedPath() || "" }),
+        {
+          variant: "warning",
+          confirmLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.confirmLabel"),
+          cancelLabel: props.t("instanceShell.rightPanel.actions.saveConfirm.cancelLabel"),
+          dismissible: false,
+        },
+      )
+      if (confirmed) {
+        const saveSuccess = await saveBrowserFile(browserSelectedContent() || "")
+        if (!saveSuccess) {
+          // Save failed - stay on current file, error toast already shown
+          return
+        }
+      } else {
+        // User chose not to save - clear dirty state and discard edits
+        setBrowserSelectedDirty(false)
+      }
+    }
+    await openBrowserFile(path)
   }
 
   createEffect(() => {
@@ -578,6 +677,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
+    setBrowserSelectedDirty(false)
   })
 
   createEffect(() => {
@@ -630,6 +730,22 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   }
 
   const refreshFilesTab = async () => {
+    // Prompt for confirmation if file has unsaved changes
+    if (browserSelectedDirty()) {
+      const confirmed = await showConfirmDialog(
+        props.t("instanceShell.rightPanel.actions.refreshDirty.message"),
+        {
+          variant: "warning",
+          confirmLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.confirmLabel"),
+          cancelLabel: props.t("instanceShell.rightPanel.actions.refreshDirty.cancelLabel"),
+          dismissible: false,
+        },
+      )
+      if (!confirmed) {
+        return
+      }
+    }
+
     void loadBrowserEntries(browserPath())
     const selected = browserSelectedPath()
     if (selected) {
@@ -651,6 +767,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           throw new Error("Unsupported file type")
         }
         setBrowserSelectedContent(text)
+        setBrowserSelectedOriginalContent(text) // Update original content after refresh
+        setBrowserSelectedDirty(false) // Clear dirty after refresh
       } catch (error) {
         setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
       } finally {
@@ -670,7 +788,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setRightPanelTab("changes")
   }
 
-  const statusSectionIds = ["session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const statusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
 
   createEffect(() => {
     const currentExpanded = new Set(rightPanelExpandedItems())
@@ -830,11 +948,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedContent={browserSelectedContent}
               browserSelectedLoading={browserSelectedLoading}
               browserSelectedError={browserSelectedError}
+              browserSelectedDirty={browserSelectedDirty}
+              browserSelectedSaving={browserSelectedSaving}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
-              onOpenFile={(path: string) => void openBrowserFile(path)}
+              onRequestOpenFile={(path: string) => void handleOpenBrowserFileRequest(path)}
               onRefresh={() => void refreshFilesTab()}
+              onSave={(content: string) => void saveBrowserFile(content)}
+              onContentChange={(content: string) => handleBrowserFileChange(content)}
               listOpen={filesListOpen}
               onToggleList={toggleFilesList}
               splitWidth={filesSplitWidth}

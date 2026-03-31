@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "Sessions",
   "instanceShell.leftPanel.instanceInfo": "Instance Info",
-
   "instanceShell.leftDrawer.pin": "Pin left drawer",
   "instanceShell.leftDrawer.unpin": "Unpin left drawer",
   "instanceShell.leftDrawer.toggle.pinned": "Left drawer pinned",
@@ -95,6 +94,20 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.status": "Status",
   "instanceShell.rightPanel.tabs.ariaLabel": "Right panel tabs",
   "instanceShell.rightPanel.actions.refresh": "Refresh",
+  "instanceShell.rightPanel.actions.save": "Save (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "Do you want to save changes to \"{path}\" before switching?",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "Save",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "Discard Changes",
+  "instanceShell.rightPanel.actions.conflict.message": "File was modified by the agent. Overwrite agent's changes?",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "Overwrite",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "Cancel",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "File has unsaved changes. Refresh will discard your edits. Continue?",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "Refresh",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "Cancel",
+  "instanceShell.rightPanel.toast.saveSuccess": "File saved successfully",
+  "instanceShell.rightPanel.toast.saveError": "Failed to save file",
+  "instanceShell.rightPanel.sections.yoloMode": "Yolo Mode",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "Automatically approves permission requests for the current session. Use it only when you trust the tools being run.",
   "instanceShell.rightPanel.sections.sessionChanges": "Session Changes",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "Files modified in the current session. Shows additions and deletions for each file.",
   "instanceShell.rightPanel.sections.plan": "Plan",
@@ -137,6 +150,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "Select a session to view plan.",
   "instanceShell.plan.empty": "Nothing planned yet.",
+
+  "instanceShell.yoloMode.noSessionSelected": "Select a session to configure Yolo mode.",
+  "instanceShell.yoloMode.title": "Yolo mode",
+  "instanceShell.yoloMode.description": "Automatically approve permission requests for this session. Disabled by default.",
+  "instanceShell.yoloMode.badge": "Yolo mode",
+  "instanceShell.yoloMode.badgeAriaLabel": "Yolo mode enabled",
 
   "instanceShell.backgroundProcesses.empty": "No background processes.",
   "instanceShell.backgroundProcesses.status": "Status: {status}",

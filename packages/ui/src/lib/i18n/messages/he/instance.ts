@@ -26,7 +26,6 @@ export const instanceMessages = {
 
   "instanceShell.leftPanel.sessionsTitle": "סשנים",
   "instanceShell.leftPanel.instanceInfo": "מידע על המופע",
-
   "instanceShell.leftDrawer.pin": "נעץ מגירה שמאלית",
   "instanceShell.leftDrawer.unpin": "שחרר נעיצת מגירה שמאלית",
   "instanceShell.leftDrawer.toggle.pinned": "המגירה השמאלית נעוצה",
@@ -95,6 +94,20 @@ export const instanceMessages = {
   "instanceShell.rightPanel.tabs.status": "סטטוס",
   "instanceShell.rightPanel.tabs.ariaLabel": "לשוניות לוח ימני",
   "instanceShell.rightPanel.actions.refresh": "רענן",
+  "instanceShell.rightPanel.actions.save": "שמור (Ctrl+S)",
+  "instanceShell.rightPanel.actions.saveConfirm.message": "האם ברצונך לשמור את השינויים לפני המעבר?",
+  "instanceShell.rightPanel.actions.saveConfirm.confirmLabel": "שמור",
+  "instanceShell.rightPanel.actions.saveConfirm.cancelLabel": "בטל שינויים",
+  "instanceShell.rightPanel.actions.conflict.message": "הקובץ שונה על ידי הסוכן. לדרוס את שינויי הסוכן?",
+  "instanceShell.rightPanel.actions.conflict.confirmLabel": "דרוס",
+  "instanceShell.rightPanel.actions.conflict.cancelLabel": "בטל",
+  "instanceShell.rightPanel.actions.refreshDirty.message": "לקובץ יש שינויים שלא נשמרו. רענון יבטל את העריכות שלך. להמשיך?",
+  "instanceShell.rightPanel.actions.refreshDirty.confirmLabel": "רענן",
+  "instanceShell.rightPanel.actions.refreshDirty.cancelLabel": "בטל",
+  "instanceShell.rightPanel.toast.saveSuccess": "הקובץ נשמר בהצלחה",
+  "instanceShell.rightPanel.toast.saveError": "כשלון בשמירת הקובץ",
+  "instanceShell.rightPanel.sections.yoloMode": "מצב Yolo",
+  "instanceShell.rightPanel.sections.yoloMode.tooltip": "מאשר אוטומטית בקשות הרשאה עבור הסשן הנוכחי. השתמשו בזה רק אם אתם סומכים על הכלים שרצים.",
   "instanceShell.rightPanel.sections.sessionChanges": "שינויי סשן",
   "instanceShell.rightPanel.sections.sessionChanges.tooltip": "קבצים שהשתנו בסשן הנוכחי. מציג הוספות ומחיקות לכל קובץ.",
   "instanceShell.rightPanel.sections.plan": "תוכנית",
@@ -135,6 +148,12 @@ export const instanceMessages = {
 
   "instanceShell.plan.noSessionSelected": "בחר סשן לצפייה בתוכנית.",
   "instanceShell.plan.empty": "עדיין לא תוכנן דבר.",
+
+  "instanceShell.yoloMode.noSessionSelected": "בחרו סשן כדי להגדיר מצב Yolo.",
+  "instanceShell.yoloMode.title": "מצב Yolo",
+  "instanceShell.yoloMode.description": "מאשר אוטומטית בקשות הרשאה עבור הסשן הזה. כבוי כברירת מחדל.",
+  "instanceShell.yoloMode.badge": "Yolo",
+  "instanceShell.yoloMode.badgeAriaLabel": "מצב Yolo פעיל",
 
   "instanceShell.backgroundProcesses.empty": "אין תהליכי רקע.",
   "instanceShell.backgroundProcesses.status": "סטטוס: {status}",

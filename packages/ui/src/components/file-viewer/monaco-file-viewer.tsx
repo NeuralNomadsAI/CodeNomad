@@ -9,6 +9,8 @@ interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  onSave?: (content: string) => void
+  onContentChange?: (content: string) => void
 }
 
 export function MonacoFileViewer(props: MonacoFileViewerProps) {
@@ -33,6 +35,11 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
     editor = null
   }
 
+  const saveContent = () => {
+    if (!editor || !props.onSave) return
+    props.onSave(editor.getValue())
+  }
+
   onMount(() => {
     let cancelled = false
     void (async () => {
@@ -44,7 +51,7 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       editor = monaco.editor.create(host, {
         value: "",
         language: "plaintext",
-        readOnly: true,
+        readOnly: false,
         automaticLayout: true,
         lineNumbers: "on",
         minimap: { enabled: false },
@@ -52,6 +59,14 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
         wordWrap: "off",
         renderWhitespace: "selection",
         fontSize: 13,
+      })
+
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveContent)
+
+      editor.onDidChangeModelContent(() => {
+        if (props.onContentChange) {
+          props.onContentChange(editor.getValue())
+        }
       })
 
       setReady(true)
