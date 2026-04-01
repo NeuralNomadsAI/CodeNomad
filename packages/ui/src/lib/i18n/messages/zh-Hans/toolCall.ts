@@ -22,6 +22,7 @@ export const toolCallMessages = {
   "toolCall.diff.switchToUnified": "切换到统一视图",
   "toolCall.diff.enableWordWrap": "启用自动换行",
   "toolCall.diff.disableWordWrap": "禁用自动换行",
+  "toolCall.diff.copyPatch": "复制补丁",
 
   "toolCall.diagnostics.title": "诊断",
   "toolCall.diagnostics.ariaLabel": "诊断",

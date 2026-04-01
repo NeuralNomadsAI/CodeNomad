@@ -22,6 +22,7 @@ export const toolCallMessages = {
   "toolCall.diff.switchToUnified": "Switch to unified view",
   "toolCall.diff.enableWordWrap": "Enable word wrap",
   "toolCall.diff.disableWordWrap": "Disable word wrap",
+  "toolCall.diff.copyPatch": "Copy patch",
 
   "toolCall.diagnostics.title": "Diagnostics",
   "toolCall.diagnostics.ariaLabel": "Diagnostics",

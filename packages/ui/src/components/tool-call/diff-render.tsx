@@ -1,12 +1,13 @@
 import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import { AlignJustify, Split, WrapText } from "lucide-solid"
+import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
 import { getRelativePath } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
+import { copyToClipboard } from "../../lib/clipboard"
 
 const LazyToolCallDiffViewer = lazy(() =>
   import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
@@ -125,6 +126,7 @@ export function createDiffContentRenderer(params: {
       wordWrapEnabled()
         ? params.t("toolCall.diff.disableWordWrap")
         : params.t("toolCall.diff.enableWordWrap")
+    const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
 
     const handleDiffRendered = () => {
       if (!disableScrollTracking) {
@@ -143,6 +145,15 @@ export function createDiffContentRenderer(params: {
         <div class="tool-call-diff-toolbar" role="group" aria-label={params.t("toolCall.diff.viewMode.ariaLabel")}>
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
           <div class="file-viewer-toolbar">
+            <button
+              type="button"
+              class="file-viewer-toolbar-icon-button"
+              onClick={() => void copyToClipboard(payload.diffText)}
+              aria-label={copyPatchTitle()}
+              title={copyPatchTitle()}
+            >
+              <Copy class="h-4 w-4" aria-hidden="true" />
+            </button>
             <button
               type="button"
               class="file-viewer-toolbar-icon-button"

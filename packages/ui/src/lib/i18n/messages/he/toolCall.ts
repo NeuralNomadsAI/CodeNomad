@@ -22,6 +22,7 @@ export const toolCallMessages = {
   "toolCall.diff.switchToUnified": "עבור לתצוגה מאוחדת",
   "toolCall.diff.enableWordWrap": "הפעל גלישת מילים",
   "toolCall.diff.disableWordWrap": "כבה גלישת מילים",
+  "toolCall.diff.copyPatch": "העתק patch",
 
   "toolCall.diagnostics.title": "אבחון",
   "toolCall.diagnostics.ariaLabel": "אבחון",
