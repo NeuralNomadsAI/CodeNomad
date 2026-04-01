@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "別の端末から起動またはスキャンして操作を引き継ぎます。",
   "remoteAccess.addresses.loading": "アドレスを読み込み中…",
   "remoteAccess.addresses.none": "まだ利用可能なアドレスがありません。",
+  "remoteAccess.addresses.actions.showOther": "他の {count} 件のアドレスを表示",
+  "remoteAccess.addresses.actions.hideOther": "他のアドレスを隠す",
   "remoteAccess.address.scope.network": "ネットワーク",
   "remoteAccess.address.scope.loopback": "ループバック",
   "remoteAccess.address.scope.internal": "内部",

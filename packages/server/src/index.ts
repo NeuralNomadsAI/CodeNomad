@@ -21,7 +21,7 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
-import { resolveNetworkAddresses } from "./server/network-addresses"
+import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 
@@ -451,18 +451,22 @@ async function main() {
   // which can lead clients to talk to the wrong process.
   const localUrl = `${localProtocol}://127.0.0.1:${localStart.port}`
   let remoteUrl: string | undefined
+  let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
   if (remoteStart) {
     const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
     let remoteHost = options.host
     if (wantsAll) {
       if (options.host === "0.0.0.0") {
-        const candidates = resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteHost = candidates.find((addr) => addr.scope === "external")?.ip ?? "localhost"
+        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+        remoteAddresses = resolved.userVisible
+        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
       }
     } else {
       remoteHost = "localhost"
     }
-    remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    if (!remoteUrl) {
+      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    }
   }
 
   serverMeta.localUrl = localUrl
@@ -473,7 +477,9 @@ async function main() {
   serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
 
   if (serverMeta.remotePort && remoteUrl) {
-    serverMeta.addresses = resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+    serverMeta.addresses = remoteAddresses.length
+      ? remoteAddresses
+      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
   } else {
     serverMeta.addresses = []
   }
@@ -481,6 +487,16 @@ async function main() {
   console.log(`Local Connection URL : ${serverMeta.localUrl}`)
   if (serverMeta.remoteUrl) {
     console.log(`Remote Connection URL : ${serverMeta.remoteUrl}`)
+    const additionalRemoteUrls = serverMeta.addresses
+      .map((addr) => addr.remoteUrl)
+      .filter((url) => url !== serverMeta.remoteUrl)
+
+    if (additionalRemoteUrls.length > 0) {
+      console.log("Other Accessible URLs:")
+      for (const url of additionalRemoteUrls) {
+        console.log(`  - ${url}`)
+      }
+    }
   }
 
   if (options.launch) {

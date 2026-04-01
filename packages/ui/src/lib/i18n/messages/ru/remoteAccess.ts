@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "Откройте или отсканируйте с другой машины, чтобы передать управление.",
   "remoteAccess.addresses.loading": "Загрузка адресов…",
   "remoteAccess.addresses.none": "Пока нет доступных адресов.",
+  "remoteAccess.addresses.actions.showOther": "Показать еще {count} адресов",
+  "remoteAccess.addresses.actions.hideOther": "Скрыть остальные адреса",
   "remoteAccess.address.scope.network": "Сеть",
   "remoteAccess.address.scope.loopback": "Loopback",
   "remoteAccess.address.scope.internal": "Внутренний",
