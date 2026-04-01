@@ -57,13 +57,17 @@ function measureTextWidth(container: HTMLElement, text: string, source: HTMLElem
   return width
 }
 
-function computeCompactWidth(container: HTMLElement, entries: Array<{ text: string; source: HTMLElement }>) {
+function computeCompactWidth(
+  container: HTMLElement,
+  entries: Array<{ text: string; source: HTMLElement }>,
+  maxWidthPx = 40,
+) {
   const measuredLabelWidthPx = entries.reduce((max, entry) => {
     return Math.max(max, measureTextWidth(container, entry.text, entry.source))
   }, 0)
   const fallbackTextLength = entries.reduce((max, entry) => Math.max(max, entry.text.length), 1)
   const fallbackWidthPx = Math.round(fallbackTextLength * 7 + 4)
-  return Math.max(2, Math.min(40, measuredLabelWidthPx > 0 ? measuredLabelWidthPx + 2 : fallbackWidthPx))
+  return Math.max(2, Math.min(maxWidthPx, measuredLabelWidthPx > 0 ? measuredLabelWidthPx + 2 : fallbackWidthPx))
 }
 
 function applyCompactUnifiedGutter(container: HTMLElement) {
@@ -148,7 +152,11 @@ function applyCompactSplitGutter(container: HTMLElement) {
     .map((cell) => ({ cell, span: cell.querySelector<HTMLElement>("[data-line-num]") }))
     .filter((entry): entry is { cell: HTMLElement; span: HTMLElement } => Boolean(entry.span))
 
-  const gutterWidthPx = computeCompactWidth(container, numberSpans.map(({ span }) => ({ text: span.textContent?.trim() ?? "", source: span })))
+  const gutterWidthPx = computeCompactWidth(
+    container,
+    numberSpans.map(({ span }) => ({ text: span.textContent?.trim() ?? "", source: span })),
+    64,
+  )
   const gutterWidth = `${gutterWidthPx}px`
 
   ;[oldWrapper, newWrapper].forEach((wrapper) => {
@@ -164,6 +172,15 @@ function applyCompactSplitGutter(container: HTMLElement) {
     cell.style.paddingLeft = "2px"
     cell.style.paddingRight = "2px"
     cell.style.textAlign = "left"
+    cell.style.whiteSpace = "nowrap"
+    cell.style.overflowWrap = "normal"
+    cell.style.wordBreak = "normal"
+  })
+
+  numberSpans.forEach(({ span }) => {
+    span.style.whiteSpace = "nowrap"
+    span.style.overflowWrap = "normal"
+    span.style.wordBreak = "normal"
   })
 
   hunkActions.forEach((cell) => {

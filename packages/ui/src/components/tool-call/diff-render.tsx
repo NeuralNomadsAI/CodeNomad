@@ -1,4 +1,4 @@
-import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import { Suspense, createEffect, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { RenderCache } from "../../types/message"
@@ -45,6 +45,13 @@ export function createDiffContentRenderer(params: {
   onContentRendered?: () => void
 }) {
   const compactDiffQuery = useMediaQuery("(max-width: 640px)")
+  const [mobileModeOverride, setMobileModeOverride] = createSignal<DiffViewMode | undefined>(undefined)
+
+  createEffect(() => {
+    if (!compactDiffQuery()) {
+      setMobileModeOverride(undefined)
+    }
+  })
 
   const registerTracked = (element: HTMLDivElement | null) => {
     params.scrollHelpers.registerContainer(element)
@@ -62,7 +69,10 @@ export function createDiffContentRenderer(params: {
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
     const preferredMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
-    const effectiveMode = () => (compactDiffQuery() ? "unified" : preferredMode()) as DiffViewMode
+    const effectiveMode = () => {
+      if (!compactDiffQuery()) return preferredMode()
+      return mobileModeOverride() || "unified"
+    }
     const shouldWrap = () => compactDiffQuery() && effectiveMode() === "unified"
     const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
@@ -96,6 +106,9 @@ export function createDiffContentRenderer(params: {
     }
 
     const handleModeChange = (mode: DiffViewMode) => {
+      if (compactDiffQuery()) {
+        setMobileModeOverride(mode)
+      }
       params.setDiffViewMode(mode)
     }
 

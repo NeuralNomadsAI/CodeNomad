@@ -553,6 +553,15 @@
   text-align: left !important;
 }
 
+.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-old-num,
+.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-new-num,
+.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-old-num [data-line-num],
+.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-new-num [data-line-num] {
+  white-space: nowrap !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+}
+
 .tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-hunk-action {
   padding-top: 1px !important;
   padding-bottom: 1px !important;
