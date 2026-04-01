@@ -220,31 +220,35 @@ export const RemoteAccessSettingsSection: Component = () => {
           fallback={<div class="settings-card-message">{t("remoteAccess.authStatus.unavailable")}</div>}
         >
           <div class="settings-card-content">
-                <p class="settings-help-text">{t("remoteAccess.username", { username: authStatus()!.username ?? "codenomad" })}</p>
-                <p class="settings-help-text">
-                  {authStatus()!.passwordUserProvided
-                    ? t("remoteAccess.password.status.set")
-                    : t("remoteAccess.password.status.unset")}
-                </p>
+                <div class="settings-password-summary-row">
+                  <div class="settings-password-summary-copy">
+                 <p class="settings-help-text">{t("remoteAccess.username", { username: authStatus()!.username ?? "codenomad" })}</p>
+                 <p class="settings-help-text">
+                   {authStatus()!.passwordUserProvided
+                     ? t("remoteAccess.password.status.set")
+                     : t("remoteAccess.password.status.unset")}
+                 </p>
+                  </div>
 
-                <div class="settings-password-actions">
-                  <button
-                    class="settings-pill-button"
-                    type="button"
-                    onClick={() => {
-                      setPasswordFormOpen(!passwordFormOpen())
-                      setPasswordError(null)
-                    }}
-                  >
-                    {passwordFormOpen()
-                      ? t("remoteAccess.password.actions.cancel")
-                      : authStatus()!.passwordUserProvided
-                        ? t("remoteAccess.password.actions.change")
-                        : t("remoteAccess.password.actions.set")}
-                  </button>
+                  <div class="settings-password-actions">
+                    <button
+                      class="settings-pill-button"
+                      type="button"
+                      onClick={() => {
+                        setPasswordFormOpen(!passwordFormOpen())
+                        setPasswordError(null)
+                      }}
+                    >
+                      {passwordFormOpen()
+                        ? t("remoteAccess.password.actions.cancel")
+                        : authStatus()!.passwordUserProvided
+                          ? t("remoteAccess.password.actions.change")
+                          : t("remoteAccess.password.actions.set")}
+                    </button>
+                  </div>
                 </div>
 
-                <Show when={passwordFormOpen()}>
+                 <Show when={passwordFormOpen()}>
                   <div class="settings-form-group">
                     <label class="settings-form-label">{t("remoteAccess.password.form.newPassword")}</label>
                     <input

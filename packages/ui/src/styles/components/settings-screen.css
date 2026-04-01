@@ -279,10 +279,25 @@
   font-size: var(--font-size-sm);
 }
 
+.settings-password-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.settings-password-summary-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
 .settings-password-actions {
   display: flex;
-  justify-content: flex-start;
-  margin-top: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 0;
 }
 
 .settings-form-group {
