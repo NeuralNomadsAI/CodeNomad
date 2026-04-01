@@ -1,4 +1,4 @@
-import { createMemo, Show, createEffect, onCleanup } from "solid-js"
+import { createMemo, Show, createEffect } from "solid-js"
 import { DiffView, DiffModeEnum } from "@git-diff-view/solid"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 import { disableCache } from "@git-diff-view/core"
@@ -21,7 +21,6 @@ interface ToolCallDiffViewerProps {
   theme: "light" | "dark"
   mode: DiffViewMode
   wrap?: boolean
-  compactDiffLayout?: boolean
   onRendered?: () => void
   cachedHtml?: string
   cacheEntryParams?: CacheEntryParams
@@ -31,15 +30,6 @@ type DiffData = {
   oldFile?: { fileName?: string | null; fileLang?: string | null; content?: string | null }
   newFile?: { fileName?: string | null; fileLang?: string | null; content?: string | null }
   hunks: string[]
-}
-
-type CaptureContext = {
-  theme: ToolCallDiffViewerProps["theme"]
-  mode: DiffViewMode
-  wrap?: boolean
-  compactDiffLayout?: boolean
-  diffText: string
-  cacheEntryParams?: CacheEntryParams
 }
 
 function measureTextWidth(container: HTMLElement, text: string, source: HTMLElement) {
@@ -224,13 +214,13 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
   const contextKey = createMemo(() => {
     const data = diffData()
     if (!data) return ""
-    return `${props.theme}|${props.mode}|${props.wrap ? "wrap" : "nowrap"}|${props.compactDiffLayout ? "compact" : "regular"}|${props.diffText}`
+    return `${props.theme}|${props.mode}|${props.wrap ? "wrap" : "nowrap"}|${props.diffText}`
   })
  
   createEffect(() => {
     const cachedHtml = props.cachedHtml
     if (cachedHtml) {
-      if (props.compactDiffLayout && diffContainerRef) {
+      if (diffContainerRef) {
         applyCompactDiffLayout(diffContainerRef, props.mode)
       }
       // When we are given cached HTML, we rely on the caller's cache
@@ -246,9 +236,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
 
     requestAnimationFrame(() => {
       if (!diffContainerRef) return
-      if (props.compactDiffLayout) {
-        applyCompactDiffLayout(diffContainerRef, props.mode)
-      }
+      applyCompactDiffLayout(diffContainerRef, props.mode)
       const markup = diffContainerRef.innerHTML
       if (!markup) return
       lastCapturedKey = key
@@ -259,7 +247,6 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
           theme: props.theme,
           mode: props.mode,
           wrap: props.wrap,
-          compactDiffLayout: props.compactDiffLayout,
         })
       }
       props.onRendered?.()
