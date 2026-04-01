@@ -14,6 +14,7 @@ const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
+const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
 
 type CliState = "starting" | "ready" | "error" | "stopped"
 type ListeningMode = "local" | "all"
@@ -129,6 +130,7 @@ export class CliProcessManager extends EventEmitter {
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private bootstrapToken: string | null = null
+  private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
 
   async start(options: StartOptions): Promise<CliStatus> {
@@ -139,6 +141,7 @@ export class CliProcessManager extends EventEmitter {
     this.stdoutBuffer = ""
     this.stderrBuffer = ""
     this.bootstrapToken = null
+    this.authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
     this.requestedStop = false
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
@@ -436,6 +439,10 @@ export class CliProcessManager extends EventEmitter {
     return { ...this.status }
   }
 
+  getAuthCookieName(): string {
+    return this.authCookieName
+  }
+
   private resolveListeningMode(): ListeningMode {
     return readListeningModeFromConfig()
   }
@@ -532,7 +539,7 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCliArgs(options: StartOptions, host: string): string[] {
-    const args = ["serve", "--host", host, "--generate-token"]
+    const args = ["serve", "--host", host, "--generate-token", "--auth-cookie-name", this.authCookieName]
 
     if (options.dev) {
       // Dev: run plain HTTP + Vite dev server proxy.

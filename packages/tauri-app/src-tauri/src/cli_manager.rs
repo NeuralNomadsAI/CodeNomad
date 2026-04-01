@@ -16,7 +16,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
 #[cfg(windows)]
@@ -48,7 +48,7 @@ fn workspace_root() -> Option<PathBuf> {
     })
 }
 
-const SESSION_COOKIE_NAME: &str = "codenomad_session";
+const SESSION_COOKIE_NAME_PREFIX: &str = "codenomad_session";
 
 const CLI_STOP_GRACE_SECS: u64 = 30;
 #[cfg(windows)]
@@ -124,7 +124,11 @@ fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
     Some(value.to_string())
 }
 
-fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Option<String>> {
+fn exchange_bootstrap_token(
+    base_url: &str,
+    token: &str,
+    cookie_name: &str,
+) -> anyhow::Result<Option<String>> {
     let parsed = Url::parse(base_url)?;
     let host = parsed.host_str().unwrap_or("127.0.0.1");
     let port = parsed.port_or_known_default().unwrap_or(80);
@@ -159,11 +163,11 @@ fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Optio
     for line in lines {
         // handle case-insensitive header name
         if let Some(value) = line.strip_prefix("Set-Cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
                 return Ok(Some(session_id));
             }
         } else if let Some(value) = line.strip_prefix("set-cookie:") {
-            if let Some(session_id) = extract_cookie_value(value.trim(), SESSION_COOKIE_NAME) {
+            if let Some(session_id) = extract_cookie_value(value.trim(), cookie_name) {
                 return Ok(Some(session_id));
             }
         }
@@ -172,11 +176,16 @@ fn exchange_bootstrap_token(base_url: &str, token: &str) -> anyhow::Result<Optio
     Ok(None)
 }
 
-fn set_session_cookie(app: &AppHandle, base_url: &str, session_id: &str) -> anyhow::Result<()> {
+fn set_session_cookie(
+    app: &AppHandle,
+    base_url: &str,
+    cookie_name: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
     let parsed = Url::parse(base_url)?;
     let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
 
-    let cookie = Cookie::build((SESSION_COOKIE_NAME, session_id))
+    let cookie = Cookie::build((cookie_name.to_string(), session_id.to_string()))
         .domain(domain)
         .path("/")
         .http_only(true)
@@ -188,6 +197,16 @@ fn set_session_cookie(app: &AppHandle, base_url: &str, session_id: &str) -> anyh
     }
 
     Ok(())
+}
+
+fn generate_auth_cookie_name() -> String {
+    let pid = std::process::id();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+
+    format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
@@ -503,7 +522,8 @@ impl CliProcessManager {
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
         ));
-        let args = resolution.build_args(dev, &host);
+        let auth_cookie_name = Arc::new(generate_auth_cookie_name());
+        let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
             log_line("development mode: will prefer tsx + source if present");
@@ -584,6 +604,7 @@ impl CliProcessManager {
         let app_clone = app.clone();
         let ready_clone = ready.clone();
         let token_clone = bootstrap_token.clone();
+        let auth_cookie_name_clone = auth_cookie_name.clone();
 
         thread::spawn(move || {
             let stdout = child_clone
@@ -605,6 +626,7 @@ impl CliProcessManager {
                     &status_clone,
                     &ready_clone,
                     &token_clone,
+                    auth_cookie_name_clone.as_str(),
                 );
             }
             if let Some(reader) = stderr {
@@ -615,6 +637,7 @@ impl CliProcessManager {
                     &status_clone,
                     &ready_clone,
                     &token_clone,
+                    auth_cookie_name_clone.as_str(),
                 );
             }
         });
@@ -731,6 +754,7 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
         let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)").ok();
@@ -766,7 +790,14 @@ impl CliProcessManager {
                             .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
                             .map(|m| m.as_str().to_string())
                         {
-                            Self::mark_ready(app, status, ready, bootstrap_token, url);
+                            Self::mark_ready(
+                                app,
+                                status,
+                                ready,
+                                bootstrap_token,
+                                auth_cookie_name,
+                                url,
+                            );
                             continue;
                         }
 
@@ -781,6 +812,7 @@ impl CliProcessManager {
                                     status,
                                     ready,
                                     bootstrap_token,
+                                    auth_cookie_name,
                                     format!("http://localhost:{port}"),
                                 );
                                 continue;
@@ -793,6 +825,7 @@ impl CliProcessManager {
                                         status,
                                         ready,
                                         bootstrap_token,
+                                        auth_cookie_name,
                                         format!("http://localhost:{}", port),
                                     );
                                     continue;
@@ -811,6 +844,7 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        auth_cookie_name: &str,
         base_url: String,
     ) {
         ready.store(true, Ordering::SeqCst);
@@ -834,9 +868,11 @@ impl CliProcessManager {
             if scheme.as_deref() != Some("http") {
                 navigate_main(app, &base_url);
             } else {
-                match exchange_bootstrap_token(&base_url, &token) {
+                match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
                     Ok(Some(session_id)) => {
-                        if let Err(err) = set_session_cookie(app, &base_url, &session_id) {
+                        if let Err(err) =
+                            set_session_cookie(app, &base_url, &auth_cookie_name, &session_id)
+                        {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(app, &format!("{base_url}/login"));
                         } else {
@@ -932,11 +968,13 @@ impl CliEntry {
         ))
     }
 
-    fn build_args(&self, dev: bool, host: &str) -> Vec<String> {
+    fn build_args(&self, dev: bool, host: &str, auth_cookie_name: &str) -> Vec<String> {
         let mut args = vec![
             "serve".to_string(),
             "--host".to_string(),
             host.to_string(),
+            "--auth-cookie-name".to_string(),
+            auth_cookie_name.to_string(),
             "--generate-token".to_string(),
         ];
 
