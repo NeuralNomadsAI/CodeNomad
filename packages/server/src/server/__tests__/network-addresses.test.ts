@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import os from "node:os"
 import { describe, it } from "node:test"
 
-import { isAdvertisableRemoteAddress, resolveNetworkAddresses } from "../network-addresses"
+import { resolveNetworkAddresses, resolveRemoteAddresses } from "../network-addresses"
 
 describe("resolveNetworkAddresses", () => {
-  it("keeps RFC1918 addresses grouped without preferring one private range over another", () => {
+  it("preserves interface order among external addresses", () => {
     const addresses = [
       { address: "172.24.0.1", family: "IPv4", internal: false },
       { address: "192.168.1.128", family: "IPv4", internal: false },
@@ -23,24 +23,24 @@ describe("resolveNetworkAddresses", () => {
       )
     })
   })
+})
 
-  it("marks link-local addresses as non-advertisable for terminal output", () => {
-    assert.equal(isAdvertisableRemoteAddress({ ip: "169.254.10.20", scope: "external" }), false)
-    assert.equal(isAdvertisableRemoteAddress({ ip: "192.168.1.128", scope: "external" }), true)
-    assert.equal(isAdvertisableRemoteAddress({ ip: "127.0.0.1", scope: "loopback" }), false)
-  })
-
-  it("keeps a usable LAN address advertisable when a link-local address is discovered first", () => {
+describe("resolveRemoteAddresses", () => {
+  it("keeps all external addresses user-visible while preferring non-link-local addresses for the primary URL", () => {
     const addresses = [
       { address: "169.254.10.20", family: "IPv4", internal: false },
       { address: "192.168.1.128", family: "IPv4", internal: false },
+      { address: "172.24.0.1", family: "IPv4", internal: false },
     ]
 
     usingMockedNetworkInterfaces(addresses, () => {
-      const result = resolveNetworkAddresses({ host: "0.0.0.0", protocol: "https", port: 9898 })
-      const primaryAdvertisable = result.find((entry) => isAdvertisableRemoteAddress(entry))
+      const result = resolveRemoteAddresses({ host: "0.0.0.0", protocol: "https", port: 9898 })
 
-      assert.equal(primaryAdvertisable?.ip, "192.168.1.128")
+      assert.deepEqual(
+        result.userVisible.map((entry) => entry.ip),
+        ["192.168.1.128", "172.24.0.1", "169.254.10.20"],
+      )
+      assert.equal(result.primaryRemoteUrl, "https://192.168.1.128:9898")
     })
   })
 })

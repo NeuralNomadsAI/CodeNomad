@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "Lancez ou scannez depuis une autre machine pour passer le contrôle.",
   "remoteAccess.addresses.loading": "Chargement des adresses…",
   "remoteAccess.addresses.none": "Aucune adresse disponible pour le moment.",
+  "remoteAccess.addresses.actions.showOther": "Afficher {count} autres adresses",
+  "remoteAccess.addresses.actions.hideOther": "Masquer les autres adresses",
   "remoteAccess.address.scope.network": "Réseau",
   "remoteAccess.address.scope.loopback": "Boucle locale",
   "remoteAccess.address.scope.internal": "Interne",

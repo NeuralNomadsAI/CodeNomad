@@ -9,6 +9,7 @@ import { serverSettings, setListeningMode } from "../../stores/preferences"
 import { showConfirmDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useI18n } from "../../lib/i18n"
+import { splitRemoteAddresses, type RemoteAddressGroups } from "../../lib/remote-access-addresses"
 
 const log = getLogger("actions")
 
@@ -30,14 +31,15 @@ export const RemoteAccessSettingsSection: Component = () => {
   const [passwordConfirm, setPasswordConfirm] = createSignal("")
   const [passwordError, setPasswordError] = createSignal<string | null>(null)
   const [savingPassword, setSavingPassword] = createSignal(false)
+  const [showAllAddresses, setShowAllAddresses] = createSignal(false)
 
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
   const currentMode = createMemo(() => meta()?.listeningMode ?? serverSettings().listeningMode)
   const allowExternalConnections = createMemo(() => currentMode() === "all")
-  const displayAddresses = createMemo(() => {
+  const displayAddresses = createMemo<RemoteAddressGroups>(() => {
     const list = addresses()
-    if (!allowExternalConnections()) return []
-    return list.filter((address) => address.scope !== "loopback")
+    if (!allowExternalConnections()) return { recommended: null, hidden: [] }
+    return splitRemoteAddresses(list)
   })
 
   const refreshMeta = async () => {
@@ -48,6 +50,7 @@ export const RemoteAccessSettingsSection: Component = () => {
       const [metaResult, authResult] = await Promise.all([serverApi.fetchServerMeta(), serverApi.fetchAuthStatus()])
       setMeta(metaResult)
       setAuthStatus(authResult)
+      setShowAllAddresses(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -291,7 +294,7 @@ export const RemoteAccessSettingsSection: Component = () => {
         <Show when={!loading()} fallback={<div class="remote-card">{t("remoteAccess.addresses.loading")}</div>}>
           <Show when={!error()} fallback={<div class="remote-error">{error()}</div>}>
             <Show
-              when={displayAddresses().length > 0 || meta()?.localUrl}
+              when={Boolean(displayAddresses().recommended) || meta()?.localUrl}
               fallback={<div class="remote-card">{t("remoteAccess.addresses.none")}</div>}
             >
               <div class="remote-address-list">
@@ -341,7 +344,74 @@ export const RemoteAccessSettingsSection: Component = () => {
                   }}
                 </Show>
 
-                <For each={displayAddresses()}>
+                <Show when={displayAddresses().recommended}>
+                  {(addressAccessor) => {
+                    const address = addressAccessor()
+                    const url = address.remoteUrl
+                    const expandedState = () => expandedUrl() === url
+                    const qr = () => qrCodes()[url]
+                    const scopeLabel = () =>
+                      address.scope === "external"
+                        ? t("remoteAccess.address.scope.network")
+                        : address.scope === "loopback"
+                          ? t("remoteAccess.address.scope.loopback")
+                          : t("remoteAccess.address.scope.internal")
+
+                    return (
+                      <div class="remote-address">
+                        <div class="remote-address-main">
+                          <div>
+                            <p class="remote-address-url">{url}</p>
+                            <p class="remote-address-meta">
+                              {address.family.toUpperCase()} - {scopeLabel()} - {address.ip}
+                            </p>
+                          </div>
+                          <div class="remote-actions">
+                            <button class="remote-pill" type="button" onClick={() => handleOpenUrl(url)}>
+                              <ExternalLink class="remote-icon" />
+                              {t("remoteAccess.address.open")}
+                            </button>
+                            <button
+                              class="remote-pill"
+                              type="button"
+                              onClick={() => void toggleExpanded(url)}
+                              aria-expanded={expandedState()}
+                            >
+                              <Link2 class="remote-icon" />
+                              {expandedState() ? t("remoteAccess.address.hideQr") : t("remoteAccess.address.showQr")}
+                            </button>
+                          </div>
+                        </div>
+                        <Show when={expandedState()}>
+                          <div class="remote-qr">
+                            <Show when={qr()} fallback={<Loader2 class="remote-icon remote-spin" aria-hidden="true" />}>
+                              {(dataUrl) => (
+                                <img
+                                  src={dataUrl()}
+                                  alt={t("remoteAccess.address.qrAlt", { url })}
+                                  class="remote-qr-img"
+                                />
+                              )}
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
+                    )
+                  }}
+                </Show>
+
+                <Show when={displayAddresses().hidden.length > 0}>
+                  <div class="remote-actions" style={{ "justify-content": "flex-start" }}>
+                    <button class="remote-pill" type="button" onClick={() => setShowAllAddresses(!showAllAddresses())}>
+                      {showAllAddresses()
+                        ? t("remoteAccess.addresses.actions.hideOther")
+                        : t("remoteAccess.addresses.actions.showOther", { count: String(displayAddresses().hidden.length) })}
+                    </button>
+                  </div>
+                </Show>
+
+                <Show when={showAllAddresses()}>
+                  <For each={displayAddresses().hidden}>
                   {(address) => {
                     const url = address.remoteUrl
                     const expandedState = () => expandedUrl() === url
@@ -390,7 +460,8 @@ export const RemoteAccessSettingsSection: Component = () => {
                       </div>
                     )
                   }}
-                </For>
+                  </For>
+                </Show>
               </div>
             </Show>
           </Show>

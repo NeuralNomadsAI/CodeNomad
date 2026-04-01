@@ -1,6 +1,12 @@
 import os from "os"
 import type { NetworkAddress } from "../api-types"
 
+export interface ResolvedRemoteAddresses {
+  all: NetworkAddress[]
+  userVisible: NetworkAddress[]
+  primaryRemoteUrl?: string
+}
+
 export function resolveNetworkAddresses(args: {
   host: string
   protocol: "http" | "https"
@@ -59,34 +65,30 @@ export function resolveNetworkAddresses(args: {
     const scopeDelta = scopeWeight[a.scope] - scopeWeight[b.scope]
     if (scopeDelta !== 0) return scopeDelta
 
-    const addressDelta = compareAddressPriority(a.ip, b.ip)
-    if (addressDelta !== 0) return addressDelta
-
     return 0
   })
 }
 
-export function isAdvertisableRemoteAddress(address: Pick<NetworkAddress, "ip" | "scope">): boolean {
-  if (address.scope !== "external") return false
-  return !isLinkLocalIPv4(address.ip)
+export function resolveRemoteAddresses(args: {
+  host: string
+  protocol: "http" | "https"
+  port: number
+}): ResolvedRemoteAddresses {
+  const all = resolveNetworkAddresses(args)
+  const userVisible = sortUserVisibleAddresses(all.filter((address) => address.scope === "external"))
+  return {
+    all,
+    userVisible,
+    primaryRemoteUrl: userVisible[0]?.remoteUrl,
+  }
 }
 
-function compareAddressPriority(left: string, right: string): number {
-  return getAddressPriority(left) - getAddressPriority(right)
+function sortUserVisibleAddresses(addresses: NetworkAddress[]): NetworkAddress[] {
+  return [...addresses].sort((left, right) => getUserVisiblePriority(left.ip) - getUserVisiblePriority(right.ip))
 }
 
-function getAddressPriority(ip: string): number {
-  const octets = parseIPv4(ip)
-  if (!octets) return 100
-
-  const [first, second] = octets
-
-  if (isLinkLocalIPv4(ip)) return 90
-  if (first === 172 && second >= 16 && second <= 31) return 10
-  if (first === 10) return 10
-  if (first === 192 && second === 168) return 10
-
-  return 50
+function getUserVisiblePriority(ip: string): number {
+  return isLinkLocalIPv4(ip) ? 1 : 0
 }
 
 function isLinkLocalIPv4(ip: string): boolean {

@@ -21,7 +21,7 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
-import { isAdvertisableRemoteAddress, resolveNetworkAddresses } from "./server/network-addresses"
+import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 
@@ -457,13 +457,16 @@ async function main() {
     let remoteHost = options.host
     if (wantsAll) {
       if (options.host === "0.0.0.0") {
-        remoteAddresses = resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteHost = remoteAddresses.find((addr) => isAdvertisableRemoteAddress(addr))?.ip ?? "localhost"
+        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+        remoteAddresses = resolved.userVisible
+        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
       }
     } else {
       remoteHost = "localhost"
     }
-    remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    if (!remoteUrl) {
+      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    }
   }
 
   serverMeta.localUrl = localUrl
@@ -485,7 +488,6 @@ async function main() {
   if (serverMeta.remoteUrl) {
     console.log(`Remote Connection URL : ${serverMeta.remoteUrl}`)
     const additionalRemoteUrls = serverMeta.addresses
-      .filter((addr) => isAdvertisableRemoteAddress(addr))
       .map((addr) => addr.remoteUrl)
       .filter((url) => url !== serverMeta.remoteUrl)
 

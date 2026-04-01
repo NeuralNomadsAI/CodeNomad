@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "Abre o escanea desde otra máquina para transferir el control.",
   "remoteAccess.addresses.loading": "Cargando direcciones…",
   "remoteAccess.addresses.none": "Aún no hay direcciones disponibles.",
+  "remoteAccess.addresses.actions.showOther": "Mostrar {count} direcciones más",
+  "remoteAccess.addresses.actions.hideOther": "Ocultar otras direcciones",
   "remoteAccess.address.scope.network": "Red",
   "remoteAccess.address.scope.loopback": "Loopback",
   "remoteAccess.address.scope.internal": "Interna",
