@@ -41,6 +41,8 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.addresses.help": "הפעל או סרוק ממכונה אחרת להעברת שליטה.",
   "remoteAccess.addresses.loading": "טוען כתובות…",
   "remoteAccess.addresses.none": "אין כתובות זמינות עדיין.",
+  "remoteAccess.addresses.actions.showOther": "הצג עוד {count} כתובות",
+  "remoteAccess.addresses.actions.hideOther": "הסתר כתובות נוספות",
   "remoteAccess.address.scope.network": "רשת",
   "remoteAccess.address.scope.loopback": "לולאה מקומית",
   "remoteAccess.address.scope.internal": "פנימי",

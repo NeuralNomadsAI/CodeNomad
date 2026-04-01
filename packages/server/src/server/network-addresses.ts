@@ -1,6 +1,12 @@
 import os from "os"
 import type { NetworkAddress } from "../api-types"
 
+export interface ResolvedRemoteAddresses {
+  all: NetworkAddress[]
+  userVisible: NetworkAddress[]
+  primaryRemoteUrl?: string
+}
+
 export function resolveNetworkAddresses(args: {
   host: string
   protocol: "http" | "https"
@@ -58,8 +64,55 @@ export function resolveNetworkAddresses(args: {
   return results.sort((a, b) => {
     const scopeDelta = scopeWeight[a.scope] - scopeWeight[b.scope]
     if (scopeDelta !== 0) return scopeDelta
-    return a.ip.localeCompare(b.ip)
+
+    return 0
   })
+}
+
+export function resolveRemoteAddresses(args: {
+  host: string
+  protocol: "http" | "https"
+  port: number
+}): ResolvedRemoteAddresses {
+  const all = resolveNetworkAddresses(args)
+  const userVisible = sortUserVisibleAddresses(all.filter((address) => address.scope === "external"))
+  return {
+    all,
+    userVisible,
+    primaryRemoteUrl: userVisible[0]?.remoteUrl,
+  }
+}
+
+function sortUserVisibleAddresses(addresses: NetworkAddress[]): NetworkAddress[] {
+  return [...addresses].sort((left, right) => getUserVisiblePriority(left.ip) - getUserVisiblePriority(right.ip))
+}
+
+function getUserVisiblePriority(ip: string): number {
+  if (isPrivateIPv4(ip)) return 0
+  if (isLinkLocalIPv4(ip)) return 2
+  return 1
+}
+
+function isLinkLocalIPv4(ip: string): boolean {
+  const octets = parseIPv4(ip)
+  if (!octets) return false
+  const [first, second] = octets
+  return first === 169 && second === 254
+}
+
+function isPrivateIPv4(ip: string): boolean {
+  const octets = parseIPv4(ip)
+  if (!octets) return false
+  const [first, second] = octets
+
+  if (first === 10) return true
+  if (first === 192 && second === 168) return true
+  return first === 172 && second >= 16 && second <= 31
+}
+
+function parseIPv4(value: string): number[] | null {
+  if (!isIPv4Address(value)) return null
+  return value.split(".").map((part) => Number(part))
 }
 
 function isIPv4Address(value: string | undefined): value is string {

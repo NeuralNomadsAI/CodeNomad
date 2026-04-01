@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Switch } from "@kobalte/core/switch"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import { toDataURL } from "qrcode"
-import { ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
+import { ChevronDown, ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
 import type { NetworkAddress, ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { restartCli } from "../lib/native/cli"
@@ -10,6 +10,7 @@ import { serverSettings, setListeningMode } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { getLogger } from "../lib/logger"
 import { useI18n } from "../lib/i18n"
+import { splitRemoteAddresses, type RemoteAddressGroups } from "../lib/remote-access-addresses"
 const log = getLogger("actions")
 
 
@@ -32,17 +33,17 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
   const [passwordConfirm, setPasswordConfirm] = createSignal("")
   const [passwordError, setPasswordError] = createSignal<string | null>(null)
   const [savingPassword, setSavingPassword] = createSignal(false)
+  const [showAllAddresses, setShowAllAddresses] = createSignal(false)
 
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
   const currentMode = createMemo(() => meta()?.listeningMode ?? serverSettings().listeningMode)
   const allowExternalConnections = createMemo(() => currentMode() === "all")
-  const displayAddresses = createMemo(() => {
+  const displayAddresses = createMemo<RemoteAddressGroups>(() => {
     const list = addresses()
     if (!allowExternalConnections()) {
-      return []
+      return { recommended: null, hidden: [] }
     }
-    // Local URL is displayed separately; list only remote-friendly addresses.
-    return list.filter((address) => address.scope !== "loopback")
+    return splitRemoteAddresses(list)
   })
 
   const refreshMeta = async () => {
@@ -53,6 +54,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
       const [metaResult, authResult] = await Promise.all([serverApi.fetchServerMeta(), serverApi.fetchAuthStatus()])
       setMeta(metaResult)
       setAuthStatus(authResult)
+      setShowAllAddresses(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -326,7 +328,7 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
 
                 <Show when={!loading()} fallback={<div class="remote-card">{t("remoteAccess.addresses.loading")}</div>}>
                   <Show when={!error()} fallback={<div class="remote-error">{error()}</div>}>
-                    <Show when={displayAddresses().length > 0} fallback={<div class="remote-card">{t("remoteAccess.addresses.none")}</div>}>
+                    <Show when={displayAddresses().recommended || meta()?.localUrl} fallback={<div class="remote-card">{t("remoteAccess.addresses.none")}</div>}>
                       <div class="remote-address-list">
                         <Show when={meta()?.localUrl}>
                           {(url) => {
@@ -373,8 +375,9 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                             )
                           }}
                         </Show>
-                        <For each={displayAddresses()}>
-                          {(address) => {
+                        <Show when={displayAddresses().recommended}>
+                          {(addressAccessor) => {
+                            const address = addressAccessor()
                             const url = address.remoteUrl
                             const expandedState = () => expandedUrl() === url
                             const qr = () => qrCodes()[url]
@@ -384,13 +387,14 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                                 : address.scope === "loopback"
                                   ? t("remoteAccess.address.scope.loopback")
                                   : t("remoteAccess.address.scope.internal")
+
                             return (
                               <div class="remote-address">
                                 <div class="remote-address-main">
                                   <div>
                                     <p class="remote-address-url">{url}</p>
                                     <p class="remote-address-meta">
-                                      {address.family.toUpperCase()} • {scopeLabel()} • {address.ip}
+                                      {address.family.toUpperCase()} - {scopeLabel()} - {address.ip}
                                     </p>
                                   </div>
                                   <div class="remote-actions">
@@ -425,7 +429,83 @@ export function RemoteAccessOverlay(props: RemoteAccessOverlayProps) {
                               </div>
                             )
                           }}
-                        </For>
+                        </Show>
+
+                        <Show when={displayAddresses().hidden.length > 0}>
+                          <div class="remote-address-disclosure" data-expanded={showAllAddresses()}>
+                            <button
+                              class="remote-address-disclosure-trigger"
+                              type="button"
+                              onClick={() => setShowAllAddresses(!showAllAddresses())}
+                              aria-expanded={showAllAddresses()}
+                            >
+                              <span class="remote-address-disclosure-label">
+                                {showAllAddresses()
+                                  ? t("remoteAccess.addresses.actions.hideOther")
+                                  : t("remoteAccess.addresses.actions.showOther", { count: String(displayAddresses().hidden.length) })}
+                              </span>
+                              <ChevronDown class={`remote-address-disclosure-chevron ${showAllAddresses() ? "is-expanded" : ""}`} />
+                            </button>
+
+                            <Show when={showAllAddresses()}>
+                              <div class="remote-address-disclosure-content">
+                                <For each={displayAddresses().hidden}>
+                                {(address) => {
+                                  const url = address.remoteUrl
+                                  const expandedState = () => expandedUrl() === url
+                                  const qr = () => qrCodes()[url]
+                                  const scopeLabel = () =>
+                                    address.scope === "external"
+                                      ? t("remoteAccess.address.scope.network")
+                                      : address.scope === "loopback"
+                                        ? t("remoteAccess.address.scope.loopback")
+                                        : t("remoteAccess.address.scope.internal")
+                                  return (
+                                    <div class="remote-address">
+                                      <div class="remote-address-main">
+                                        <div>
+                                          <p class="remote-address-url">{url}</p>
+                                          <p class="remote-address-meta">
+                                            {address.family.toUpperCase()} • {scopeLabel()} • {address.ip}
+                                          </p>
+                                        </div>
+                                        <div class="remote-actions">
+                                          <button class="remote-pill" type="button" onClick={() => handleOpenUrl(url)}>
+                                            <ExternalLink class="remote-icon" />
+                                            {t("remoteAccess.address.open")}
+                                          </button>
+                                          <button
+                                            class="remote-pill"
+                                            type="button"
+                                            onClick={() => void toggleExpanded(url)}
+                                            aria-expanded={expandedState()}
+                                          >
+                                            <Link2 class="remote-icon" />
+                                            {expandedState() ? t("remoteAccess.address.hideQr") : t("remoteAccess.address.showQr")}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <Show when={expandedState()}>
+                                        <div class="remote-qr">
+                                          <Show when={qr()} fallback={<Loader2 class="remote-icon remote-spin" aria-hidden="true" />}>
+                                            {(dataUrl) => (
+                                              <img
+                                                src={dataUrl()}
+                                                alt={t("remoteAccess.address.qrAlt", { url })}
+                                                class="remote-qr-img"
+                                              />
+                                            )}
+                                          </Show>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  )
+                                }}
+                                </For>
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
                       </div>
                     </Show>
                   </Show>
