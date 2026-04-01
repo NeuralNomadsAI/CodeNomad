@@ -4,6 +4,7 @@ on:
   pull_request_target:
     types:
       - opened
+      - edited
       - reopened
       - synchronize
 
@@ -17,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
-      ACTOR: ${{ github.actor }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
     steps:
@@ -27,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           normalized=",${ALLOWED_ACTORS},"
-          if [[ "$normalized" == *",${ACTOR},"* ]]; then
+          if [[ "$normalized" == *",${PR_AUTHOR},"* ]]; then
             echo "authorized=true" >> "$GITHUB_OUTPUT"
           else
             echo "authorized=false" >> "$GITHUB_OUTPUT"
@@ -50,5 +51,5 @@ jobs:
       - name: Fail unauthorized PR
         if: ${{ steps.auth.outputs.authorized != 'true' }}
         run: |
-          echo "Actor $ACTOR is not allowed to open PRs targeting $BASE_REF" >&2
+          echo "PR author $PR_AUTHOR is not allowed to open PRs targeting $BASE_REF" >&2
           exit 1

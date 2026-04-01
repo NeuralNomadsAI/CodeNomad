@@ -4,6 +4,7 @@ on:
   pull_request:
     types:
       - opened
+      - edited
       - synchronize
       - reopened
       - ready_for_review
@@ -23,7 +24,7 @@ jobs:
       allowed: ${{ steps.auth.outputs.allowed }}
     env:
       ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
-      ACTOR: ${{ github.actor }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Check PR authorization
@@ -37,11 +38,11 @@ jobs:
           fi
 
           normalized=",${ALLOWED_ACTORS},"
-          if [[ "$normalized" == *",${ACTOR},"* ]]; then
+          if [[ "$normalized" == *",${PR_AUTHOR},"* ]]; then
             echo "allowed=true" >> "$GITHUB_OUTPUT"
           else
             echo "allowed=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping builds for unauthorized PR targeting $BASE_REF" >&2
+            echo "Skipping builds for PR by unauthorized author targeting $BASE_REF" >&2
           fi
 
   build:

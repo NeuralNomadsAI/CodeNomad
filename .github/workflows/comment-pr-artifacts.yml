@@ -4,6 +4,7 @@ on:
   pull_request_target:
     types:
       - opened
+      - edited
       - synchronize
       - reopened
       - ready_for_review
@@ -19,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
-      ACTOR: ${{ github.actor }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       IS_DRAFT: ${{ github.event.pull_request.draft }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -37,7 +38,7 @@ jobs:
           fi
 
           normalized=",${ALLOWED_ACTORS},"
-          if [[ "$normalized" == *",${ACTOR},"* ]]; then
+          if [[ "$normalized" == *",${PR_AUTHOR},"* ]]; then
             echo "allowed=true" >> "$GITHUB_OUTPUT"
           else
             echo "allowed=false" >> "$GITHUB_OUTPUT"
