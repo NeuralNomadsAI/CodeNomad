@@ -1,11 +1,12 @@
 .settings-screen-frame {
-  @apply fixed inset-0 z-50 flex items-center justify-center p-4;
+  @apply fixed inset-0 z-50 flex items-center justify-center px-4;
+  padding-block: 5dvh;
 }
 
 /* Override .modal-surface (defined later in panels.css). */
 .modal-surface.settings-screen-shell {
   width: min(1120px, 100%);
-  height: min(88vh, 920px);
+  height: 100%;
   max-height: none;
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
