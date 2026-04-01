@@ -18,6 +18,10 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "Режим просмотра diff",
   "toolCall.diff.viewMode.split": "Раздельный",
   "toolCall.diff.viewMode.unified": "Единый",
+  "toolCall.diff.switchToSplit": "Переключить на раздельный вид",
+  "toolCall.diff.switchToUnified": "Переключить на единый вид",
+  "toolCall.diff.enableWordWrap": "Включить перенос слов",
+  "toolCall.diff.disableWordWrap": "Выключить перенос слов",
 
   "toolCall.diagnostics.title": "Диагностика",
   "toolCall.diagnostics.ariaLabel": "Диагностика",

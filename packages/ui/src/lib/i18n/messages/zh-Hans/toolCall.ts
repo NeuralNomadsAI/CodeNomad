@@ -18,6 +18,10 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "Diff 视图模式",
   "toolCall.diff.viewMode.split": "分栏",
   "toolCall.diff.viewMode.unified": "统一",
+  "toolCall.diff.switchToSplit": "切换到分栏视图",
+  "toolCall.diff.switchToUnified": "切换到统一视图",
+  "toolCall.diff.enableWordWrap": "启用自动换行",
+  "toolCall.diff.disableWordWrap": "禁用自动换行",
 
   "toolCall.diagnostics.title": "诊断",
   "toolCall.diagnostics.ariaLabel": "诊断",

@@ -1,6 +1,7 @@
 import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import useMediaQuery from "@suid/material/useMediaQuery"
+import { AlignJustify, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
@@ -46,6 +47,7 @@ export function createDiffContentRenderer(params: {
 }) {
   const compactDiffQuery = useMediaQuery("(max-width: 640px)")
   const [mobileModeOverride, setMobileModeOverride] = createSignal<DiffViewMode | undefined>(undefined)
+  const [wordWrapEnabled, setWordWrapEnabled] = createSignal(true)
 
   createEffect(() => {
     if (!compactDiffQuery()) {
@@ -73,7 +75,7 @@ export function createDiffContentRenderer(params: {
       if (!compactDiffQuery()) return preferredMode()
       return mobileModeOverride() || "unified"
     }
-    const shouldWrap = () => compactDiffQuery() && effectiveMode() === "unified"
+    const shouldWrap = () => wordWrapEnabled()
     const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
     const disableScrollTracking = Boolean(
@@ -114,6 +116,16 @@ export function createDiffContentRenderer(params: {
       params.setDiffViewMode(mode)
     }
 
+    const nextViewMode = (): DiffViewMode => (currentMode() === "split" ? "unified" : "split")
+    const viewModeTitle = () =>
+      nextViewMode() === "split"
+        ? params.t("toolCall.diff.switchToSplit")
+        : params.t("toolCall.diff.switchToUnified")
+    const wordWrapTitle = () =>
+      wordWrapEnabled()
+        ? params.t("toolCall.diff.disableWordWrap")
+        : params.t("toolCall.diff.enableWordWrap")
+
     const handleDiffRendered = () => {
       if (!disableScrollTracking) {
         params.handleScrollRendered()
@@ -130,22 +142,24 @@ export function createDiffContentRenderer(params: {
         >
         <div class="tool-call-diff-toolbar" role="group" aria-label={params.t("toolCall.diff.viewMode.ariaLabel")}>
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
-          <div class="tool-call-diff-toggle">
+          <div class="file-viewer-toolbar">
             <button
               type="button"
-              class={`tool-call-diff-mode-button${currentMode() === "split" ? " active" : ""}`}
-              aria-pressed={currentMode() === "split"}
-              onClick={() => handleModeChange("split")}
+              class="file-viewer-toolbar-icon-button"
+              onClick={() => handleModeChange(nextViewMode())}
+              aria-label={viewModeTitle()}
+              title={viewModeTitle()}
             >
-              {params.t("toolCall.diff.viewMode.split")}
+              {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
             </button>
             <button
               type="button"
-              class={`tool-call-diff-mode-button${currentMode() === "unified" ? " active" : ""}`}
-              aria-pressed={currentMode() === "unified"}
-              onClick={() => handleModeChange("unified")}
+              class={`file-viewer-toolbar-icon-button${wordWrapEnabled() ? " active" : ""}`}
+              onClick={() => setWordWrapEnabled((enabled) => !enabled)}
+              aria-label={wordWrapTitle()}
+              title={wordWrapTitle()}
             >
-              {params.t("toolCall.diff.viewMode.unified")}
+              <WrapText class="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>

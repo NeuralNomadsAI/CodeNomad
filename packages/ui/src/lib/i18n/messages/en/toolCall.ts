@@ -18,6 +18,10 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "Diff view mode",
   "toolCall.diff.viewMode.split": "Split",
   "toolCall.diff.viewMode.unified": "Unified",
+  "toolCall.diff.switchToSplit": "Switch to split view",
+  "toolCall.diff.switchToUnified": "Switch to unified view",
+  "toolCall.diff.enableWordWrap": "Enable word wrap",
+  "toolCall.diff.disableWordWrap": "Disable word wrap",
 
   "toolCall.diagnostics.title": "Diagnostics",
   "toolCall.diagnostics.ariaLabel": "Diagnostics",

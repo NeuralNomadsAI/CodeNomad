@@ -18,6 +18,10 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "מצב תצוגת diff",
   "toolCall.diff.viewMode.split": "מפוצל",
   "toolCall.diff.viewMode.unified": "מאוחד",
+  "toolCall.diff.switchToSplit": "עבור לתצוגה מפוצלת",
+  "toolCall.diff.switchToUnified": "עבור לתצוגה מאוחדת",
+  "toolCall.diff.enableWordWrap": "הפעל גלישת מילים",
+  "toolCall.diff.disableWordWrap": "כבה גלישת מילים",
 
   "toolCall.diagnostics.title": "אבחון",
   "toolCall.diagnostics.ariaLabel": "אבחון",
