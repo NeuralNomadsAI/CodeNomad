@@ -1,10 +1,13 @@
-import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
+import useMediaQuery from "@suid/material/useMediaQuery"
+import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
 import { getRelativePath } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
+import { copyToClipboard } from "../../lib/clipboard"
 
 const LazyToolCallDiffViewer = lazy(() =>
   import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
@@ -43,6 +46,16 @@ export function createDiffContentRenderer(params: {
   handleScrollRendered: () => void
   onContentRendered?: () => void
 }) {
+  const compactDiffQuery = useMediaQuery("(max-width: 640px)")
+  const [mobileModeOverride, setMobileModeOverride] = createSignal<DiffViewMode | undefined>(undefined)
+  const [wordWrapEnabled, setWordWrapEnabled] = createSignal(true)
+
+  createEffect(() => {
+    if (!compactDiffQuery()) {
+      setMobileModeOverride(undefined)
+    }
+  })
+
   const registerTracked = (element: HTMLDivElement | null) => {
     params.scrollHelpers.registerContainer(element)
   }
@@ -58,7 +71,12 @@ export function createDiffContentRenderer(params: {
       : params.t("toolCall.diff.label"))
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
-    const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
+    const preferredMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
+    const effectiveMode = () => {
+      if (!compactDiffQuery()) return preferredMode()
+      return mobileModeOverride() || "unified"
+    }
+    const shouldWrap = () => wordWrapEnabled()
     const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
     const disableScrollTracking = Boolean(
@@ -76,16 +94,39 @@ export function createDiffContentRenderer(params: {
       }
     })()
 
-    let cachedHtml: string | undefined
-    const cached = getCacheEntry<RenderCache>(cacheEntryParams)
-    const currentMode = diffMode()
-    if (cached && cached.text === payload.diffText && cached.theme === themeKey && cached.mode === currentMode) {
-      cachedHtml = cached.html
-    }
+    const currentMode = createMemo(() => effectiveMode())
+    const currentWrap = createMemo(() => shouldWrap())
+    const cachedHtml = createMemo(() => {
+      const cached = getCacheEntry<RenderCache>(cacheEntryParams)
+      if (
+        cached
+        && cached.text === payload.diffText
+        && cached.theme === themeKey
+        && cached.mode === currentMode()
+        && cached.wrap === currentWrap()
+      ) {
+        return cached.html
+      }
+      return undefined
+    })
 
     const handleModeChange = (mode: DiffViewMode) => {
+      if (compactDiffQuery()) {
+        setMobileModeOverride(mode)
+      }
       params.setDiffViewMode(mode)
     }
+
+    const nextViewMode = (): DiffViewMode => (currentMode() === "split" ? "unified" : "split")
+    const viewModeTitle = () =>
+      nextViewMode() === "split"
+        ? params.t("toolCall.diff.switchToSplit")
+        : params.t("toolCall.diff.switchToUnified")
+    const wordWrapTitle = () =>
+      wordWrapEnabled()
+        ? params.t("toolCall.diff.disableWordWrap")
+        : params.t("toolCall.diff.enableWordWrap")
+    const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
 
     const handleDiffRendered = () => {
       if (!disableScrollTracking) {
@@ -95,41 +136,54 @@ export function createDiffContentRenderer(params: {
     }
 
     return (
-      <div
-        class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
-        ref={registerRef}
-        onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
-      >
+        <div
+          class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
+          data-diff-mode={currentMode()}
+          ref={registerRef}
+          onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
+        >
         <div class="tool-call-diff-toolbar" role="group" aria-label={params.t("toolCall.diff.viewMode.ariaLabel")}>
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
-          <div class="tool-call-diff-toggle">
+          <div class="file-viewer-toolbar">
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "split" ? " active" : ""}`}
-              aria-pressed={diffMode() === "split"}
-              onClick={() => handleModeChange("split")}
+              class="file-viewer-toolbar-icon-button"
+              onClick={() => void copyToClipboard(payload.diffText)}
+              aria-label={copyPatchTitle()}
+              title={copyPatchTitle()}
             >
-              {params.t("toolCall.diff.viewMode.split")}
+              <Copy class="h-4 w-4" aria-hidden="true" />
             </button>
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "unified" ? " active" : ""}`}
-              aria-pressed={diffMode() === "unified"}
-              onClick={() => handleModeChange("unified")}
+              class="file-viewer-toolbar-icon-button"
+              onClick={() => handleModeChange(nextViewMode())}
+              aria-label={viewModeTitle()}
+              title={viewModeTitle()}
             >
-              {params.t("toolCall.diff.viewMode.unified")}
+              {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
+            </button>
+            <button
+              type="button"
+              class={`file-viewer-toolbar-icon-button${wordWrapEnabled() ? " active" : ""}`}
+              onClick={() => setWordWrapEnabled((enabled) => !enabled)}
+              aria-label={wordWrapTitle()}
+              title={wordWrapTitle()}
+            >
+              <WrapText class="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>
-        {cachedHtml ? (
-          <CachedDiffMarkup html={cachedHtml} onRendered={handleDiffRendered} />
+        {cachedHtml() ? (
+          <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
         ) : (
           <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
             <LazyToolCallDiffViewer
               diffText={payload.diffText}
               filePath={payload.filePath}
               theme={themeKey}
-              mode={diffMode()}
+              mode={currentMode()}
+              wrap={currentWrap()}
               cacheEntryParams={cacheEntryParams as any}
               onRendered={handleDiffRendered}
             />
