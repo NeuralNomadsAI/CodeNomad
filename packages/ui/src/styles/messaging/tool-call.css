@@ -558,11 +558,11 @@
   padding-bottom: 1px !important;
 }
 
-.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-content-item {
+.tool-call-diff-shell .tool-call-diff-viewer .diff-line-content-item {
   padding-left: 1.1em !important;
 }
 
-.tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-content-operator {
+.tool-call-diff-shell .tool-call-diff-viewer .diff-line-content-operator {
   margin-left: -1.1em !important;
   width: 0.9em !important;
   min-width: 0.9em !important;
@@ -574,13 +574,11 @@
     --diff-aside-width: 18px;
   }
 
-  .tool-call-diff-shell[data-diff-mode="unified"] .tool-call-diff-viewer .diff-line-content-item,
-  .tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-content-item {
+  .tool-call-diff-shell .tool-call-diff-viewer .diff-line-content-item {
     padding-left: 1.5em !important;
   }
 
-  .tool-call-diff-shell[data-diff-mode="unified"] .tool-call-diff-viewer .diff-line-content-operator,
-  .tool-call-diff-shell[data-diff-mode="split"] .tool-call-diff-viewer .diff-line-content-operator {
+  .tool-call-diff-shell .tool-call-diff-viewer .diff-line-content-operator {
     margin-left: -1.5em !important;
     width: 1.1em !important;
     min-width: 1.1em !important;
