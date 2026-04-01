@@ -43,6 +43,38 @@ describe("resolveRemoteAddresses", () => {
       assert.equal(result.primaryRemoteUrl, "https://192.168.1.128:9898")
     })
   })
+
+  it("prefers private LAN addresses over public addresses", () => {
+    const addresses = [
+      { address: "203.0.113.40", family: "IPv4", internal: false },
+      { address: "192.168.1.128", family: "IPv4", internal: false },
+      { address: "8.8.8.8", family: "IPv4", internal: false },
+    ]
+
+    usingMockedNetworkInterfaces(addresses, () => {
+      const result = resolveRemoteAddresses({ host: "0.0.0.0", protocol: "https", port: 9898 })
+
+      assert.deepEqual(
+        result.userVisible.map((entry) => entry.ip),
+        ["192.168.1.128", "203.0.113.40", "8.8.8.8"],
+      )
+      assert.equal(result.primaryRemoteUrl, "https://192.168.1.128:9898")
+    })
+  })
+
+  it("uses a public address when no private LAN address is available", () => {
+    const addresses = [
+      { address: "169.254.10.20", family: "IPv4", internal: false },
+      { address: "203.0.113.40", family: "IPv4", internal: false },
+    ]
+
+    usingMockedNetworkInterfaces(addresses, () => {
+      const result = resolveRemoteAddresses({ host: "0.0.0.0", protocol: "https", port: 9898 })
+
+      assert.deepEqual(result.userVisible.map((entry) => entry.ip), ["203.0.113.40", "169.254.10.20"])
+      assert.equal(result.primaryRemoteUrl, "https://203.0.113.40:9898")
+    })
+  })
 })
 
 function usingMockedNetworkInterfaces(

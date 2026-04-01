@@ -88,7 +88,9 @@ function sortUserVisibleAddresses(addresses: NetworkAddress[]): NetworkAddress[]
 }
 
 function getUserVisiblePriority(ip: string): number {
-  return isLinkLocalIPv4(ip) ? 1 : 0
+  if (isPrivateIPv4(ip)) return 0
+  if (isLinkLocalIPv4(ip)) return 2
+  return 1
 }
 
 function isLinkLocalIPv4(ip: string): boolean {
@@ -96,6 +98,16 @@ function isLinkLocalIPv4(ip: string): boolean {
   if (!octets) return false
   const [first, second] = octets
   return first === 169 && second === 254
+}
+
+function isPrivateIPv4(ip: string): boolean {
+  const octets = parseIPv4(ip)
+  if (!octets) return false
+  const [first, second] = octets
+
+  if (first === 10) return true
+  if (first === 192 && second === 168) return true
+  return first === 172 && second >= 16 && second <= 31
 }
 
 function parseIPv4(value: string): number[] | null {
