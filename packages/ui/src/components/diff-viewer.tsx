@@ -70,7 +70,7 @@ function computeCompactWidth(
   return Math.max(2, Math.min(maxWidthPx, measuredLabelWidthPx > 0 ? measuredLabelWidthPx + 2 : fallbackWidthPx))
 }
 
-function applyCompactUnifiedGutter(container: HTMLElement) {
+function applyCompactUnifiedGutter(container: HTMLElement, wrap: boolean) {
   const tableWrapper = container.querySelector<HTMLElement>(".unified-diff-table-wrapper")
   const table = container.querySelector<HTMLTableElement>(".unified-diff-table")
   const numberCol = container.querySelector<HTMLTableColElement>(".unified-diff-table-num-col")
@@ -79,8 +79,17 @@ function applyCompactUnifiedGutter(container: HTMLElement) {
   const entries: Array<{ gutter: HTMLElement; label: HTMLElement; text: string }> = []
 
   if (table) {
-    table.classList.add("table-fixed")
-    table.style.tableLayout = "fixed"
+    if (wrap) {
+      table.classList.add("table-fixed")
+      table.style.tableLayout = "fixed"
+      table.style.width = "100%"
+      table.style.minWidth = "100%"
+    } else {
+      table.classList.remove("table-fixed")
+      table.style.tableLayout = "auto"
+      table.style.width = "max-content"
+      table.style.minWidth = "100%"
+    }
   }
 
   gutterRows.forEach((gutter) => {
@@ -192,9 +201,9 @@ function applyCompactSplitGutter(container: HTMLElement) {
   })
 }
 
-function applyCompactDiffLayout(container: HTMLElement, mode: DiffViewMode) {
+function applyCompactDiffLayout(container: HTMLElement, mode: DiffViewMode, wrap = false) {
   if (mode === "unified") {
-    applyCompactUnifiedGutter(container)
+    applyCompactUnifiedGutter(container, wrap)
     return
   }
   if (mode === "split") {
@@ -238,7 +247,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
     const cachedHtml = props.cachedHtml
     if (cachedHtml) {
       if (diffContainerRef) {
-        applyCompactDiffLayout(diffContainerRef, props.mode)
+        applyCompactDiffLayout(diffContainerRef, props.mode, Boolean(props.wrap))
       }
       // When we are given cached HTML, we rely on the caller's cache
       // and simply notify once rendered.
@@ -253,7 +262,7 @@ export function ToolCallDiffViewer(props: ToolCallDiffViewerProps) {
 
     requestAnimationFrame(() => {
       if (!diffContainerRef) return
-      applyCompactDiffLayout(diffContainerRef, props.mode)
+      applyCompactDiffLayout(diffContainerRef, props.mode, Boolean(props.wrap))
       const markup = diffContainerRef.innerHTML
       if (!markup) return
       lastCapturedKey = key
