@@ -1,5 +1,6 @@
 import { Suspense, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
+import useMediaQuery from "@suid/material/useMediaQuery"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
@@ -43,6 +44,8 @@ export function createDiffContentRenderer(params: {
   handleScrollRendered: () => void
   onContentRendered?: () => void
 }) {
+  const compactDiffQuery = useMediaQuery("(max-width: 640px)")
+
   const registerTracked = (element: HTMLDivElement | null) => {
     params.scrollHelpers.registerContainer(element)
   }
@@ -58,7 +61,10 @@ export function createDiffContentRenderer(params: {
       : params.t("toolCall.diff.label"))
     const selectedVariant = options?.variant === "permission-diff" ? "permission-diff" : "diff"
     const cacheHandle = selectedVariant === "permission-diff" ? params.permissionDiffCache : params.diffCache
-    const diffMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
+    const preferredMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
+    const effectiveMode = () => (compactDiffQuery() ? "unified" : preferredMode()) as DiffViewMode
+    const shouldWrap = () => compactDiffQuery() && effectiveMode() === "unified"
+    const compactDiffLayout = () => true
     const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
     const disableScrollTracking = Boolean(
@@ -78,8 +84,16 @@ export function createDiffContentRenderer(params: {
 
     let cachedHtml: string | undefined
     const cached = getCacheEntry<RenderCache>(cacheEntryParams)
-    const currentMode = diffMode()
-    if (cached && cached.text === payload.diffText && cached.theme === themeKey && cached.mode === currentMode) {
+    const currentMode = effectiveMode()
+    const currentWrap = shouldWrap()
+    if (
+      cached
+      && cached.text === payload.diffText
+      && cached.theme === themeKey
+      && cached.mode === currentMode
+      && cached.wrap === currentWrap
+      && cached.compactDiffLayout === compactDiffLayout()
+    ) {
       cachedHtml = cached.html
     }
 
@@ -97,6 +111,7 @@ export function createDiffContentRenderer(params: {
     return (
       <div
         class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
+        data-diff-mode={effectiveMode()}
         ref={registerRef}
         onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
       >
@@ -105,16 +120,16 @@ export function createDiffContentRenderer(params: {
           <div class="tool-call-diff-toggle">
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "split" ? " active" : ""}`}
-              aria-pressed={diffMode() === "split"}
+              class={`tool-call-diff-mode-button${effectiveMode() === "split" ? " active" : ""}`}
+              aria-pressed={effectiveMode() === "split"}
               onClick={() => handleModeChange("split")}
             >
               {params.t("toolCall.diff.viewMode.split")}
             </button>
             <button
               type="button"
-              class={`tool-call-diff-mode-button${diffMode() === "unified" ? " active" : ""}`}
-              aria-pressed={diffMode() === "unified"}
+              class={`tool-call-diff-mode-button${effectiveMode() === "unified" ? " active" : ""}`}
+              aria-pressed={effectiveMode() === "unified"}
               onClick={() => handleModeChange("unified")}
             >
               {params.t("toolCall.diff.viewMode.unified")}
@@ -129,7 +144,9 @@ export function createDiffContentRenderer(params: {
               diffText={payload.diffText}
               filePath={payload.filePath}
               theme={themeKey}
-              mode={diffMode()}
+              mode={effectiveMode()}
+              wrap={shouldWrap()}
+              compactDiffLayout={compactDiffLayout()}
               cacheEntryParams={cacheEntryParams as any}
               onRendered={handleDiffRendered}
             />

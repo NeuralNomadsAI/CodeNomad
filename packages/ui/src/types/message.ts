@@ -40,6 +40,8 @@ export interface RenderCache {
   html: string
   theme?: string
   mode?: string
+  wrap?: boolean
+  compactDiffLayout?: boolean
 }
 
 export interface PendingPermissionState {
