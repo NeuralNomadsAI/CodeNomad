@@ -1,4 +1,4 @@
-import { Suspense, createEffect, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { RenderCache } from "../../types/message"
@@ -91,19 +91,21 @@ export function createDiffContentRenderer(params: {
       }
     })()
 
-    let cachedHtml: string | undefined
-    const cached = getCacheEntry<RenderCache>(cacheEntryParams)
-    const currentMode = effectiveMode()
-    const currentWrap = shouldWrap()
-    if (
-      cached
-      && cached.text === payload.diffText
-      && cached.theme === themeKey
-      && cached.mode === currentMode
-      && cached.wrap === currentWrap
-    ) {
-      cachedHtml = cached.html
-    }
+    const currentMode = createMemo(() => effectiveMode())
+    const currentWrap = createMemo(() => shouldWrap())
+    const cachedHtml = createMemo(() => {
+      const cached = getCacheEntry<RenderCache>(cacheEntryParams)
+      if (
+        cached
+        && cached.text === payload.diffText
+        && cached.theme === themeKey
+        && cached.mode === currentMode()
+        && cached.wrap === currentWrap()
+      ) {
+        return cached.html
+      }
+      return undefined
+    })
 
     const handleModeChange = (mode: DiffViewMode) => {
       if (compactDiffQuery()) {
@@ -120,43 +122,43 @@ export function createDiffContentRenderer(params: {
     }
 
     return (
-      <div
-        class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
-        data-diff-mode={effectiveMode()}
-        ref={registerRef}
-        onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
-      >
+        <div
+          class="message-text tool-call-markdown tool-call-markdown-large tool-call-diff-shell"
+          data-diff-mode={currentMode()}
+          ref={registerRef}
+          onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
+        >
         <div class="tool-call-diff-toolbar" role="group" aria-label={params.t("toolCall.diff.viewMode.ariaLabel")}>
           <span class="tool-call-diff-toolbar-label">{toolbarLabel}</span>
           <div class="tool-call-diff-toggle">
             <button
               type="button"
-              class={`tool-call-diff-mode-button${effectiveMode() === "split" ? " active" : ""}`}
-              aria-pressed={effectiveMode() === "split"}
+              class={`tool-call-diff-mode-button${currentMode() === "split" ? " active" : ""}`}
+              aria-pressed={currentMode() === "split"}
               onClick={() => handleModeChange("split")}
             >
               {params.t("toolCall.diff.viewMode.split")}
             </button>
             <button
               type="button"
-              class={`tool-call-diff-mode-button${effectiveMode() === "unified" ? " active" : ""}`}
-              aria-pressed={effectiveMode() === "unified"}
+              class={`tool-call-diff-mode-button${currentMode() === "unified" ? " active" : ""}`}
+              aria-pressed={currentMode() === "unified"}
               onClick={() => handleModeChange("unified")}
             >
               {params.t("toolCall.diff.viewMode.unified")}
             </button>
           </div>
         </div>
-        {cachedHtml ? (
-          <CachedDiffMarkup html={cachedHtml} onRendered={handleDiffRendered} />
+        {cachedHtml() ? (
+          <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
         ) : (
           <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
             <LazyToolCallDiffViewer
               diffText={payload.diffText}
               filePath={payload.filePath}
               theme={themeKey}
-              mode={effectiveMode()}
-              wrap={shouldWrap()}
+              mode={currentMode()}
+              wrap={currentWrap()}
               cacheEntryParams={cacheEntryParams as any}
               onRendered={handleDiffRendered}
             />
