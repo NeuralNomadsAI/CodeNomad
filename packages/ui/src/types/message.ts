@@ -41,7 +41,6 @@ export interface RenderCache {
   theme?: string
   mode?: string
   wrap?: boolean
-  compactDiffLayout?: boolean
 }
 
 export interface PendingPermissionState {

@@ -64,7 +64,6 @@ export function createDiffContentRenderer(params: {
     const preferredMode = () => (params.preferences().diffViewMode || "split") as DiffViewMode
     const effectiveMode = () => (compactDiffQuery() ? "unified" : preferredMode()) as DiffViewMode
     const shouldWrap = () => compactDiffQuery() && effectiveMode() === "unified"
-    const compactDiffLayout = () => true
     const themeKey = params.isDark() ? "dark" : "light"
     const state = params.toolState()
     const disableScrollTracking = Boolean(
@@ -92,7 +91,6 @@ export function createDiffContentRenderer(params: {
       && cached.theme === themeKey
       && cached.mode === currentMode
       && cached.wrap === currentWrap
-      && cached.compactDiffLayout === compactDiffLayout()
     ) {
       cachedHtml = cached.html
     }
@@ -146,7 +144,6 @@ export function createDiffContentRenderer(params: {
               theme={themeKey}
               mode={effectiveMode()}
               wrap={shouldWrap()}
-              compactDiffLayout={compactDiffLayout()}
               cacheEntryParams={cacheEntryParams as any}
               onRendered={handleDiffRendered}
             />
