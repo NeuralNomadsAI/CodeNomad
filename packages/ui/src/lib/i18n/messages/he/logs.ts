@@ -2,10 +2,13 @@ export const logMessages = {
   "logsView.title": "לוגי שרת",
   "logsView.actions.show": "הצג לוגי שרת",
   "logsView.actions.hide": "הסתר לוגי שרת",
+  "logsView.actions.clear": "נקה לוגים",
+  "logsView.actions.back": "חזור לשיחה",
   "logsView.envVars.title": "משתני סביבה ({count})",
   "logsView.paused.title": "לוגי השרת מושהים",
   "logsView.paused.description": "הפעל זרימה לצפייה בפעילות שרת OpenCode שלך.",
   "logsView.empty.waiting": "ממתין לפלט שרת...",
+  "logsView.scrollToTop": "גלול למעלה",
   "logsView.scrollToBottom": "גלול למטה",
 
   "infoView.logs.title": "לוגי שרת",

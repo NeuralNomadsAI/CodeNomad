@@ -2,10 +2,13 @@ export const logMessages = {
   "logsView.title": "Server Logs",
   "logsView.actions.show": "Show server logs",
   "logsView.actions.hide": "Hide server logs",
+  "logsView.actions.clear": "Clear logs",
+  "logsView.actions.back": "Back to conversation",
   "logsView.envVars.title": "Environment Variables ({count})",
   "logsView.paused.title": "Server logs are paused",
   "logsView.paused.description": "Enable streaming to watch your OpenCode server activity.",
   "logsView.empty.waiting": "Waiting for server output...",
+  "logsView.scrollToTop": "Scroll to top",
   "logsView.scrollToBottom": "Scroll to bottom",
 
   "infoView.logs.title": "Server Logs",
