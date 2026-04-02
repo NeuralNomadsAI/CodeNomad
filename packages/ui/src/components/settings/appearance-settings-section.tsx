@@ -1,6 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, type Component } from "solid-js"
-import { Check, ChevronDown, Laptop, Moon, Sun } from "lucide-solid"
+import { Check, ChevronDown, Laptop, Moon, Sun, Type } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { useTheme, type ThemeMode } from "../../lib/theme"
 import { useConfig } from "../../stores/preferences"
@@ -30,6 +30,8 @@ export const AppearanceSettingsSection: Component = () => {
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
+    setFontFamilySans,
+    setFontFamilyMono,
   } = useConfig()
 
   const behaviorSettings = createMemo(() =>
@@ -48,6 +50,8 @@ export const AppearanceSettingsSection: Component = () => {
       setDiagnosticsExpansion,
       setThinkingBlocksExpansion,
       setToolInputsVisibility,
+      setFontFamilySans,
+      setFontFamilyMono,
     }),
   )
 
@@ -59,6 +63,17 @@ export const AppearanceSettingsSection: Component = () => {
       next.set(id, value)
       return next
     })
+  }
+
+  // Font settings state
+  const [sansFont, setSansFont] = createSignal<string>(preferences().fontFamilySans || "")
+  const [monoFont, setMonoFont] = createSignal<string>(preferences().fontFamilyMono || "")
+
+  // Save font settings
+  const saveFontSettings = () => {
+    // Pass the raw values to the setter functions, they will normalize them
+    setFontFamilySans(sansFont())
+    setFontFamilyMono(monoFont())
   }
 
   createEffect(() => {
@@ -265,6 +280,48 @@ export const AppearanceSettingsSection: Component = () => {
 
         <div class="settings-stack">
           <For each={behaviorSettings()}>{(setting) => <BehaviorRow setting={setting} />}</For>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.appearance.fonts.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.appearance.fonts.subtitle")}</p>
+          </div>
+          <span class="settings-scope-badge">{t("settings.scope.device")}</span>
+        </div>
+
+        <div class="settings-stack">
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">{t("settings.appearance.fonts.sans.title")}</div>
+              <div class="settings-toggle-caption">{t("settings.appearance.fonts.sans.subtitle")}</div>
+            </div>
+            <input
+              type="text"
+              class="settings-text-input"
+              value={sansFont()}
+              onInput={(e) => setSansFont(e.currentTarget.value)}
+              onBlur={saveFontSettings}
+              placeholder={t("settings.appearance.fonts.sans.placeholder")}
+            />
+          </div>
+
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">{t("settings.appearance.fonts.mono.title")}</div>
+              <div class="settings-toggle-caption">{t("settings.appearance.fonts.mono.subtitle")}</div>
+            </div>
+            <input
+              type="text"
+              class="settings-text-input"
+              value={monoFont()}
+              onInput={(e) => setMonoFont(e.currentTarget.value)}
+              onBlur={saveFontSettings}
+              placeholder={t("settings.appearance.fonts.mono.placeholder")}
+            />
+          </div>
         </div>
       </div>
     </div>

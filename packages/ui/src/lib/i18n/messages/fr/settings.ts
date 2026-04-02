@@ -194,4 +194,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Enregistré",
   "settings.speech.save.unsaved": "Modifications non enregistrées",
   "settings.speech.save.error": "Échec de l'enregistrement",
+
+  "settings.appearance.fonts.title": "Polices",
+  "settings.appearance.fonts.subtitle": "Personnaliser les polices sans-serif et monospaced pour l'interface.",
+  "settings.appearance.fonts.sans.title": "Police sans-serif",
+  "settings.appearance.fonts.sans.subtitle": "Police principale pour le texte de l'interface. Laisser vide pour utiliser la police par défaut.",
+  "settings.appearance.fonts.sans.placeholder": "par ex. 'Inter', 'Helvetica Neue', Arial",
+  "settings.appearance.fonts.mono.title": "Police monospace",
+  "settings.appearance.fonts.mono.subtitle": "Police pour le code et le texte monospace. Laisser vide pour utiliser la police par défaut.",
+  "settings.appearance.fonts.mono.placeholder": "par ex. 'Fira Code', 'JetBrains Mono', Consolas",
 } as const

@@ -195,4 +195,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Saved",
   "settings.speech.save.unsaved": "Unsaved changes",
   "settings.speech.save.error": "Save failed",
+
+  "settings.appearance.fonts.title": "Fonts",
+  "settings.appearance.fonts.subtitle": "Customize UI fonts for sans-serif and monospace text.",
+  "settings.appearance.fonts.sans.title": "Sans-serif font",
+  "settings.appearance.fonts.sans.subtitle": "Primary font for UI text. Leave empty to use default.",
+  "settings.appearance.fonts.sans.placeholder": "e.g. 'Inter', 'Helvetica Neue', Arial",
+  "settings.appearance.fonts.mono.title": "Monospace font",
+  "settings.appearance.fonts.mono.subtitle": "Font for code and monospace text. Leave empty to use default.",
+  "settings.appearance.fonts.mono.placeholder": "e.g. 'Fira Code', 'JetBrains Mono', Consolas",
 } as const

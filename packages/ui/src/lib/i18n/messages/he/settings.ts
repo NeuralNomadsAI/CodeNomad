@@ -193,4 +193,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "נשמר",
   "settings.speech.save.unsaved": "יש שינויים שלא נשמרו",
   "settings.speech.save.error": "השמירה נכשלה",
+
+  "settings.appearance.fonts.title": "גופנים",
+  "settings.appearance.fonts.subtitle": "התאמת גופנים ללא סריף ועם רוחב אחיד לממשק.",
+  "settings.appearance.fonts.sans.title": "גופן ללא סריף",
+  "settings.appearance.fonts.sans.subtitle": "גופן ראשי לטקסט הממשק. השאר ריק כדי להשתמש בברירת מחדל.",
+  "settings.appearance.fonts.sans.placeholder": "למשל 'Inter', 'Helvetica Neue', Arial",
+  "settings.appearance.fonts.mono.title": "גופן עם רוחב אחיד",
+  "settings.appearance.fonts.mono.subtitle": "גופן לקוד וטקסט עם רוחב אחיד. השאר ריק כדי להשתמש בברירת מחדל.",
+  "settings.appearance.fonts.mono.placeholder": "למשל 'Fira Code', 'JetBrains Mono', Consolas",
 } as const

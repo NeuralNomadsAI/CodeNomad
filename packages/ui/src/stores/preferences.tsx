@@ -1,4 +1,4 @@
-import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
 import {
@@ -69,6 +69,10 @@ export interface UiSettings {
   osNotificationsAllowWhenVisible: boolean
   notifyOnNeedsInput: boolean
   notifyOnIdle: boolean
+
+  // UI font settings
+  fontFamilySans?: string
+  fontFamilyMono?: string
 }
 
 // Backwards-compatible alias for older imports.
@@ -143,6 +147,10 @@ const defaultUiSettings: UiSettings = {
   osNotificationsAllowWhenVisible: false,
   notifyOnNeedsInput: true,
   notifyOnIdle: true,
+
+  // Font settings
+  fontFamilySans: undefined,
+  fontFamilyMono: undefined,
 }
 
 const defaultSpeechSettings: SpeechSettings = {
@@ -180,7 +188,29 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
     notifyOnNeedsInput: sanitized.notifyOnNeedsInput ?? defaultUiSettings.notifyOnNeedsInput,
     notifyOnIdle: sanitized.notifyOnIdle ?? defaultUiSettings.notifyOnIdle,
+    fontFamilySans: normalizeFontFamily(sanitized.fontFamilySans),
+    fontFamilyMono: normalizeFontFamily(sanitized.fontFamilyMono),
   }
+}
+
+/**
+ * 標準化字體設定字符串
+ * 確保字符串經過 trim 並且不為空，否則返回 undefined
+ * 
+ * @param value - 輸入的字符串值
+ * @returns 標準化後的字體字符串，如果無效則返回 undefined
+ */
+function normalizeFontFamily(value: unknown): string | undefined {
+  // 檢查是否為字符串類型
+  if (typeof value !== "string") return undefined
+  
+  // 去除首尾空白
+  const trimmed = value.trim()
+  
+  // 檢查是否為空字符串
+  if (trimmed.length === 0) return undefined
+  
+  return trimmed
 }
 
 function normalizeRecord(value: unknown): Record<string, string> {
@@ -555,6 +585,16 @@ function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   updateUiSettings({ thinkingBlocksExpansion: mode })
 }
 
+function setFontFamilySans(fontFamily: string | undefined): void {
+  const normalized = normalizeFontFamily(fontFamily)
+  updateUiSettings({ fontFamilySans: normalized })
+}
+
+function setFontFamilyMono(fontFamily: string | undefined): void {
+  const normalized = normalizeFontFamily(fontFamily)
+  updateUiSettings({ fontFamilyMono: normalized })
+}
+
 function toggleShowThinkingBlocks(): void {
   updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
@@ -656,6 +696,10 @@ interface ConfigContextValue {
   setThinkingBlocksExpansion: typeof setThinkingBlocksExpansion
   setToolInputsVisibility: typeof setToolInputsVisibility
 
+  // font settings
+  setFontFamilySans: typeof setFontFamilySans
+  setFontFamilyMono: typeof setFontFamilyMono
+
   // instance scoped
   setAgentModelPreference: typeof setAgentModelPreference
   getAgentModelPreference: typeof getAgentModelPreference
@@ -702,6 +746,8 @@ const configContextValue: ConfigContextValue = {
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
   setToolInputsVisibility,
+  setFontFamilySans,
+  setFontFamilyMono,
   setAgentModelPreference,
   getAgentModelPreference,
 }
@@ -731,6 +777,34 @@ export const ConfigProvider: ParentComponent = (props) => {
       unsubUi()
       unsubServer()
       unsubStateUi()
+    }
+  })
+
+  // Update CSS variables when font settings change
+  createEffect(() => {
+    const sansFont = preferences().fontFamilySans
+    const monoFont = preferences().fontFamilyMono
+    
+    const root = document.documentElement
+    
+    // Update sans-serif font variable
+    if (sansFont) {
+      // Use the user-specified font as the primary font
+      // 已经通过 normalizeFontFamily 标准化，确保是有效的非空字符串
+      root.style.setProperty('--font-family-sans-user', `"${sansFont}"`)
+    } else {
+      // Reset to default
+      root.style.setProperty('--font-family-sans-user', '-apple-system')
+    }
+    
+    // Update monospace font variable
+    if (monoFont) {
+      // Use the user-specified font as the primary font
+      // 已经通过 normalizeFontFamily 标准化，确保是有效的非空字符串
+      root.style.setProperty('--font-family-mono-user', `"${monoFont}"`)
+    } else {
+      // Reset to default
+      root.style.setProperty('--font-family-mono-user', 'ui-monospace')
     }
   })
 
@@ -782,6 +856,8 @@ export {
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
+  setFontFamilySans,
+  setFontFamilyMono,
   setAgentModelPreference,
   getAgentModelPreference,
 }

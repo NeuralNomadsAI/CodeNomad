@@ -28,12 +28,16 @@ const PreferencesSchema = z
   listeningMode: z.enum(["local", "all"]).default("local"),
   logLevel: z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).default("DEBUG"),
 
-  // OS notifications
-  osNotificationsEnabled: z.boolean().default(false),
-  osNotificationsAllowWhenVisible: z.boolean().default(false),
-  notifyOnNeedsInput: z.boolean().default(true),
-  notifyOnIdle: z.boolean().default(true),
-  })
+   // OS notifications
+   osNotificationsEnabled: z.boolean().default(false),
+   osNotificationsAllowWhenVisible: z.boolean().default(false),
+   notifyOnNeedsInput: z.boolean().default(true),
+   notifyOnIdle: z.boolean().default(true),
+
+   // UI font settings
+   fontFamilySans: z.string().optional(),
+   fontFamilyMono: z.string().optional(),
+   })
   // Preserve unknown preference keys so newer configs survive older binaries.
   .passthrough()
 

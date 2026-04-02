@@ -555,3 +555,31 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Font input styles */
+.settings-text-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  outline: none;
+}
+
+.settings-text-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 20%, transparent);
+}
+
+.settings-text-input::placeholder {
+  color: var(--text-muted);
+}
+
+.settings-text-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

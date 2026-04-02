@@ -48,6 +48,8 @@ export type BehaviorRegistryActions = {
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
+  setFontFamilySans: (fontFamily: string | undefined) => void
+  setFontFamilyMono: (fontFamily: string | undefined) => void
 }
 
 function splitKeywords(key: string): string[] {
