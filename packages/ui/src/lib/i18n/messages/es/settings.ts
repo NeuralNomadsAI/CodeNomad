@@ -194,4 +194,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Guardado",
   "settings.speech.save.unsaved": "Cambios sin guardar",
   "settings.speech.save.error": "Error al guardar",
+
+  "settings.appearance.fonts.title": "Fuentes",
+  "settings.appearance.fonts.subtitle": "Personalizar fuentes sans-serif y monoespaciadas para la interfaz.",
+  "settings.appearance.fonts.sans.title": "Fuente sans-serif",
+  "settings.appearance.fonts.sans.subtitle": "Fuente principal para el texto de la interfaz. Dejar vacío para usar la fuente predeterminada.",
+  "settings.appearance.fonts.sans.placeholder": "ej. 'Inter', 'Helvetica Neue', Arial",
+  "settings.appearance.fonts.mono.title": "Fuente monoespaciada",
+  "settings.appearance.fonts.mono.subtitle": "Fuente para código y texto monoespaciado. Dejar vacío para usar la fuente predeterminada.",
+  "settings.appearance.fonts.mono.placeholder": "ej. 'Fira Code', 'JetBrains Mono', Consolas",
 } as const

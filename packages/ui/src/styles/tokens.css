@@ -151,8 +151,10 @@
   --pill-radius: 9999px;
   
   /* Typography tokens */
-  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-family-sans-user: "-apple-system";
+  --font-family-mono-user: "ui-monospace";
+  --font-family-sans: var(--font-family-sans-user), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-mono: var(--font-family-mono-user), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   
   /* Font weights */
   --font-weight-regular: 400;
@@ -320,8 +322,10 @@
     --pill-radius: 9999px;
     
     /* Typography tokens (same as light theme) */
-    --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-family-sans-user: "-apple-system";
+    --font-family-mono-user: "ui-monospace";
+    --font-family-sans: var(--font-family-sans-user), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-family-mono: var(--font-family-mono-user), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
     /* Font weights */
     --font-weight-regular: 400;
@@ -482,8 +486,10 @@
   --pill-radius: 9999px;
   
   /* Typography tokens (same as light theme) */
-  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-family-sans-user: "-apple-system";
+  --font-family-mono-user: "ui-monospace";
+  --font-family-sans: var(--font-family-sans-user), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-mono: var(--font-family-mono-user), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   /* Font weights */
   --font-weight-regular: 400;

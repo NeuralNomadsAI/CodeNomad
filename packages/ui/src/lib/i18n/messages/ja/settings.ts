@@ -194,4 +194,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "保存済み",
   "settings.speech.save.unsaved": "未保存の変更",
   "settings.speech.save.error": "保存に失敗しました",
+
+  "settings.appearance.fonts.title": "フォント",
+  "settings.appearance.fonts.subtitle": "サンセリフと等幅フォントをカスタマイズ。",
+  "settings.appearance.fonts.sans.title": "サンセリフフォント",
+  "settings.appearance.fonts.sans.subtitle": "UI テキストのメインフォント。空欄ならデフォルトを使用。",
+  "settings.appearance.fonts.sans.placeholder": "例: 'Inter'、'Helvetica Neue'、Arial",
+  "settings.appearance.fonts.mono.title": "等幅フォント",
+  "settings.appearance.fonts.mono.subtitle": "コードと等幅テキストのフォント。空欄ならデフォルトを使用。",
+  "settings.appearance.fonts.mono.placeholder": "例: 'Fira Code'、'JetBrains Mono'、Consolas",
 } as const

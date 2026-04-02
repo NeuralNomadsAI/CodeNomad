@@ -194,4 +194,13 @@ export const settingsMessages = {
   "settings.speech.save.saved": "已保存",
   "settings.speech.save.unsaved": "有未保存的更改",
   "settings.speech.save.error": "保存失败",
+
+  "settings.appearance.fonts.title": "字体",
+  "settings.appearance.fonts.subtitle": "自定义无衬线和等宽字体。",
+  "settings.appearance.fonts.sans.title": "无衬线字体",
+  "settings.appearance.fonts.sans.subtitle": "界面文本的主要字体。留空则使用默认字体。",
+  "settings.appearance.fonts.sans.placeholder": "例如 'Inter'、'Helvetica Neue'、Arial",
+  "settings.appearance.fonts.mono.title": "等宽字体",
+  "settings.appearance.fonts.mono.subtitle": "代码和等宽文本的字体。留空则使用默认字体。",
+  "settings.appearance.fonts.mono.placeholder": "例如 'Fira Code'、'JetBrains Mono'、Consolas",
 } as const
