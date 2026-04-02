@@ -22,7 +22,7 @@ let pendingBootstrapToken: string | null = null
 let showingLoadingScreen = false
 let preloadingView: BrowserView | null = null
 const remoteWindowOrigins = new Map<number, Set<string>>()
-const allowedInsecureOrigins = new Set<string>()
+const insecureWindowOrigins = new Map<number, Set<string>>()
 
 if (isMac) {
   app.commandLine.appendSwitch("disable-spell-checking")
@@ -163,6 +163,34 @@ function clearWindowAllowedOrigin(window: BrowserWindow) {
   remoteWindowOrigins.delete(window.id)
 }
 
+function addWindowInsecureOrigin(window: BrowserWindow, url: string) {
+  try {
+    const origin = new URL(url).origin
+    insecureWindowOrigins.set(window.id, new Set([origin]))
+  } catch (error) {
+    console.warn("[cli] failed to store insecure origin", url, error)
+  }
+}
+
+function clearWindowInsecureOrigin(window: BrowserWindow) {
+  insecureWindowOrigins.delete(window.id)
+}
+
+function isInsecureOriginAllowed(url: string) {
+  try {
+    const targetOrigin = new URL(url).origin
+    for (const origins of insecureWindowOrigins.values()) {
+      if (origins.has(targetOrigin)) {
+        return true
+      }
+    }
+  } catch {
+    return false
+  }
+
+  return false
+}
+
 let cachedPreloadPath: string | null = null
 function getPreloadPath() {
   if (cachedPreloadPath && existsSync(cachedPreloadPath)) {
@@ -250,6 +278,7 @@ function createWindow() {
   window.on("closed", () => {
     destroyPreloadingView()
     clearWindowAllowedOrigin(window)
+    clearWindowInsecureOrigin(window)
     mainWindow = null
     currentCliUrl = null
     pendingCliUrl = null
@@ -391,12 +420,13 @@ async function openRemoteWindow(payload: { id: string; name: string; baseUrl: st
 
   setWindowAllowedOrigin(window, targetUrl.toString())
   if (payload.skipTlsVerify) {
-    allowedInsecureOrigins.add(targetUrl.origin)
+    addWindowInsecureOrigin(window, targetUrl.toString())
   }
 
   setupNavigationGuards(window)
   window.on("closed", () => {
     clearWindowAllowedOrigin(window)
+    clearWindowInsecureOrigin(window)
   })
 
   try {
@@ -586,16 +616,11 @@ app.whenReady().then(() => {
   ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
 
   app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
-    try {
-      const origin = new URL(url).origin
-      if (allowedInsecureOrigins.has(origin)) {
-        event.preventDefault()
-        console.warn("[cli] allowing insecure remote certificate for", origin, error)
-        callback(true)
-        return
-      }
-    } catch {
-      // ignore
+    if (isInsecureOriginAllowed(url)) {
+      event.preventDefault()
+      console.warn("[cli] allowing insecure remote certificate for", url, error)
+      callback(true)
+      return
     }
     callback(false)
   })
