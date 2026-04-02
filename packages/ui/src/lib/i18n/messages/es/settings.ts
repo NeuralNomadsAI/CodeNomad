@@ -194,6 +194,7 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Guardado",
   "settings.speech.save.unsaved": "Cambios sin guardar",
   "settings.speech.save.error": "Error al guardar",
+<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",
@@ -230,4 +231,23 @@ export const settingsMessages = {
   "sidecars.refresh": "Refresh",
   "sidecars.path": "Path",
   "sidecars.go": "Go",
+
+  // Toast History Panel
+  "toastHistory.title": "Historial de notificaciones",
+  "toastHistory.empty": "Sin notificaciones",
+  "toastHistory.clearAll": "Borrar todo",
+  "toastHistory.markAllRead": "Marcar todo como leído",
+  "toastHistory.filter.label": "Filtrar notificaciones",
+  "toastHistory.filter.all": "Todo",
+  "toastHistory.filter.info": "Info",
+  "toastHistory.filter.success": "Éxito",
+  "toastHistory.filter.warning": "Advertencia",
+  "toastHistory.filter.error": "Error",
+  "toastHistory.today": "Hoy",
+  "toastHistory.yesterday": "Ayer",
+  "toastHistory.earlier": "Anterior",
+  "toastHistory.unread": "{count} sin leer",
+  "toastHistory.viewSettings": "Configuración",
+  "toastHistory.close": "Cerrar",
+  "toastHistory.deleteItem": "Eliminar notificación",
 } as const
