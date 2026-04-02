@@ -22,6 +22,7 @@ import { registerPluginRoutes } from "./routes/plugin"
 import { registerBackgroundProcessRoutes } from "./routes/background-processes"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
+import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -270,6 +271,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
+  registerRemoteServerRoutes(app, { logger: apiLogger })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerPluginRoutes(app, {
     workspaceManager: deps.workspaceManager,

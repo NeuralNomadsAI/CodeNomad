@@ -11,6 +11,8 @@ import type {
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   ServerMeta,
+  RemoteServerProbeRequest,
+  RemoteServerProbeResponse,
   VoiceModeStateResponse,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
@@ -193,6 +195,12 @@ export const serverApi = {
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+    return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")

@@ -1,6 +1,7 @@
+import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2 } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
@@ -14,10 +15,14 @@ import { useI18n, type Locale } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
+import { serverApi } from "../lib/api-client"
+import { openRemoteServerWindow } from "../lib/native/remote-window"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
+
+type HomeTab = "local" | "servers"
 
 
 interface FolderSelectionViewProps {
@@ -27,12 +32,30 @@ interface FolderSelectionViewProps {
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const { recentFolders, removeRecentFolder, preferences, updatePreferences, serverSettings } = useConfig()
+  const {
+    recentFolders,
+    removeRecentFolder,
+    preferences,
+    updatePreferences,
+    serverSettings,
+    remoteServers,
+    saveRemoteServerProfile,
+    markRemoteServerConnected,
+    removeRemoteServerProfile,
+  } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
+  const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
+  const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
+  const [serverName, setServerName] = createSignal("")
+  const [serverUrl, setServerUrl] = createSignal("")
+  const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
+  const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
+  const [isSavingServer, setIsSavingServer] = createSignal(false)
+  const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
   const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
 
@@ -49,9 +72,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
- 
+  
   const folders = () => recentFolders()
+  const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
+
+  function getActiveListLength() {
+    return activeTab() === "local" ? folders().length : serverList().length
+  }
 
   // Update selected binary when preferences change
   createEffect(() => {
@@ -64,7 +92,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function scrollToIndex(index: number) {
     const container = recentListRef
     if (!container) return
-    const element = container.querySelector(`[data-folder-index="${index}"]`) as HTMLElement | null
+    const element = container.querySelector(`[data-list-index="${index}"]`) as HTMLElement | null
     if (!element) return
 
     const containerRect = container.getBoundingClientRect()
@@ -113,19 +141,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       return
     }
 
-    const folderList = folders()
-
     if (isBrowseShortcut) {
       e.preventDefault()
       void handleBrowse()
       return
     }
 
-    if (folderList.length === 0) return
+    const listLength = getActiveListLength()
+    if (listLength === 0) return
 
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      const newIndex = Math.min(selectedIndex() + 1, folderList.length - 1)
+      const newIndex = Math.min(selectedIndex() + 1, listLength - 1)
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -138,7 +165,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } else if (e.key === "PageDown") {
       e.preventDefault()
       const pageSize = 5
-      const newIndex = Math.min(selectedIndex() + pageSize, folderList.length - 1)
+      const newIndex = Math.min(selectedIndex() + pageSize, listLength - 1)
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -156,7 +183,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       scrollToIndex(0)
     } else if (e.key === "End") {
       e.preventDefault()
-      const newIndex = folderList.length - 1
+      const newIndex = listLength - 1
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -165,10 +192,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       handleEnterKey()
     } else if (e.key === "Backspace" || e.key === "Delete") {
       e.preventDefault()
-      if (folderList.length > 0 && focusMode() === "recent") {
-        const folder = folderList[selectedIndex()]
-        if (folder) {
-          handleRemove(folder.path)
+      if (listLength > 0 && focusMode() === "recent") {
+        if (activeTab() === "local") {
+          const folder = folders()[selectedIndex()]
+          if (folder) {
+            handleRemove(folder.path)
+          }
+        } else {
+          const server = serverList()[selectedIndex()]
+          if (server) {
+            removeRemoteServerProfile(server.id)
+          }
         }
       }
     }
@@ -177,14 +211,39 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   function handleEnterKey() {
     if (isLoading()) return
-    const folderList = folders()
     const index = selectedIndex()
 
-    const folder = folderList[index]
-    if (folder) {
-      handleFolderSelect(folder.path)
+    if (activeTab() === "local") {
+      const folder = folders()[index]
+      if (folder) {
+        handleFolderSelect(folder.path)
+      }
+      return
+    }
+
+    const server = serverList()[index]
+    if (server) {
+      void handleConnectSavedServer(server.id)
     }
   }
+
+  createEffect(() => {
+    activeTab()
+    setSelectedIndex(0)
+    setFocusMode("recent")
+  })
+
+  createEffect(() => {
+    const length = getActiveListLength()
+    if (length === 0) {
+      setSelectedIndex(0)
+      return
+    }
+
+    if (selectedIndex() >= length) {
+      setSelectedIndex(length - 1)
+    }
+  })
 
 
   onMount(() => {
@@ -234,6 +293,87 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function handleFolderSelect(path: string) {
     if (isLoading()) return
     props.onSelectFolder(path, selectedBinary())
+  }
+
+  function resetServerDialog() {
+    setServerName("")
+    setServerUrl("")
+    setSkipTlsVerify(false)
+    setServerDialogError(null)
+  }
+
+  function openServerDialog() {
+    resetServerDialog()
+    setIsServerDialogOpen(true)
+  }
+
+  async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
+    const trimmedName = input.name.trim()
+    const trimmedUrl = input.baseUrl.trim()
+    if (!trimmedName || !trimmedUrl) {
+      throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+    }
+
+    const probe = await serverApi.probeRemoteServer({
+      baseUrl: trimmedUrl,
+      skipTlsVerify: input.skipTlsVerify,
+    })
+
+    if (!probe.ok) {
+      throw new Error(probe.error || t("folderSelection.servers.dialog.errorConnect"))
+    }
+
+    const profile = await saveRemoteServerProfile({
+      id: input.id,
+      name: trimmedName,
+      baseUrl: probe.normalizedUrl,
+      skipTlsVerify: input.skipTlsVerify,
+    })
+
+    if (openWindow) {
+      await openRemoteServerWindow(profile)
+      await markRemoteServerConnected(profile.id)
+    }
+
+    return profile
+  }
+
+  async function handleSaveServer(openWindow: boolean) {
+    if (isSavingServer()) return
+    setIsSavingServer(true)
+    setServerDialogError(null)
+    try {
+      await probeAndOpenServer(
+        {
+          name: serverName(),
+          baseUrl: serverUrl(),
+          skipTlsVerify: skipTlsVerify(),
+        },
+        openWindow,
+      )
+      setIsServerDialogOpen(false)
+      resetServerDialog()
+    } catch (error) {
+      setServerDialogError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsSavingServer(false)
+    }
+  }
+
+  async function handleConnectSavedServer(id: string) {
+    const target = remoteServers().find((entry) => entry.id === id)
+    if (!target || connectingServerId()) return
+    setConnectingServerId(id)
+    try {
+      await probeAndOpenServer(target, true)
+    } catch (error) {
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("folderSelection.servers.errorTitle"),
+        variant: "warning",
+      })
+    } finally {
+      setConnectingServerId(null)
+    }
   }
 
   async function handleBrowse() {
@@ -476,90 +616,223 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             <div class="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row gap-4">
               {/* Right column: recent folders */}
               <div class="order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
-              <Show
-                when={folders().length > 0}
-                fallback={
-                  <div class="panel panel-empty-state flex-1">
-                    <div class="panel-empty-state-icon">
-                      <Clock class="w-12 h-12 mx-auto" />
-                    </div>
-                    <p class="panel-empty-state-title">{t("folderSelection.empty.title")}</p>
-                    <p class="panel-empty-state-description">{t("folderSelection.empty.description")}</p>
-                  </div>
-                }
-              >
                 <div class="panel flex flex-col flex-1 min-h-0">
-                  <div class="panel-header">
-                    <h2 class="panel-title">{t("folderSelection.recent.title")}</h2>
-                    <p class="panel-subtitle">
-                      {t(
-                        folders().length === 1
-                          ? "folderSelection.recent.subtitle.one"
-                          : "folderSelection.recent.subtitle.other",
-                        { count: folders().length },
-                      )}
-                    </p>
-                  </div>
-                  <div
-                    class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
-                    ref={(el) => (recentListRef = el)}
-                  >
-                    <For each={folders()}>
-                      {(folder, index) => (
+                  <div class="panel-header !gap-0 !p-0">
+                    <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none">
+                      <button
+                        type="button"
+                        class="border-r border-base px-4 py-3 text-left transition-colors"
+                        classList={{
+                          "text-primary": activeTab() === "local",
+                          "text-muted hover:text-secondary": activeTab() !== "local",
+                        }}
+                        style={{
+                          "background-color": "var(--surface-secondary)",
+                        }}
+                        onClick={() => setActiveTab("local")}
+                      >
                         <div
-                          class="panel-list-item"
-                          classList={{
-                            "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
-                            "panel-list-item-disabled": isLoading(),
+                          class="panel-title text-base"
+                          style={{
+                            color: activeTab() === "local" ? "var(--text-primary)" : "var(--text-secondary)",
                           }}
                         >
-                          <div class="flex items-center gap-2 w-full px-1">
+                          {t("folderSelection.recent.title")}
+                        </div>
+                        <p
+                          class="panel-subtitle mt-1"
+                          style={{
+                            color: activeTab() === "local" ? "var(--text-muted)" : "var(--text-secondary)",
+                          }}
+                        >
+                          {t(
+                            folders().length === 1
+                              ? "folderSelection.recent.subtitle.one"
+                              : "folderSelection.recent.subtitle.other",
+                            { count: folders().length },
+                          )}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        class="px-4 py-3 text-left transition-colors"
+                        classList={{
+                          "text-primary": activeTab() === "servers",
+                          "text-muted hover:text-secondary": activeTab() !== "servers",
+                        }}
+                        style={{
+                          "background-color": "var(--surface-secondary)",
+                        }}
+                        onClick={() => setActiveTab("servers")}
+                      >
+                        <div
+                          class="panel-title text-base"
+                          style={{
+                            color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
+                          }}
+                        >
+                          {t("folderSelection.tabs.servers")}
+                        </div>
+                        <p
+                          class="panel-subtitle mt-1"
+                          style={{
+                            color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
+                          }}
+                        >
+                          {t("folderSelection.servers.count", { count: remoteServers().length })}
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <Show
+                    when={activeTab() === "local"}
+                    fallback={
+                      <Show
+                        when={remoteServers().length > 0}
+                        fallback={
+                          <div class="panel-empty-state flex-1">
+                            <div class="panel-empty-state-icon">
+                              <Globe class="w-12 h-12 mx-auto" />
+                            </div>
+                            <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
+                            <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
                             <button
-                              data-folder-index={index()}
-                              class="panel-list-item-content flex-1"
-                              disabled={isLoading()}
-                              onClick={() => handleFolderSelect(folder.path)}
-                              onMouseEnter={() => {
-                                if (isLoading()) return
-                                setFocusMode("recent")
-                                setSelectedIndex(index())
-                              }}
+                              type="button"
+                              class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
+                              onClick={openServerDialog}
                             >
-                              <div class="flex items-center justify-between gap-3 w-full">
-                                <div class="flex-1 min-w-0">
-                                  <div class="flex items-center gap-2 mb-1">
-                                    <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
-                                    <span class="text-sm font-medium truncate text-primary">
-                                      {splitFolderPath(folder.path).baseName}
-                                    </span>
-                                  </div>
-                                  <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
-                                    <span class="font-mono truncate-start flex-1 min-w-0">
-                                      {getDisplayPath(folder.path)}
-                                    </span>
-                                    <span class="flex-shrink-0">{formatRelativeTime(folder.lastAccessed)}</span>
-                                  </div>
-                                </div>
-                                <Show when={focusMode() === "recent" && selectedIndex() === index()}>
-                                  <kbd class="kbd">↵</kbd>
-                                </Show>
-                              </div>
-                            </button>
-                            <button
-                              onClick={(e) => handleRemove(folder.path, e)}
-                              disabled={isLoading()}
-                              class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
-                              title={t("folderSelection.recent.remove")}
-                            >
-                              <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
+                              <Globe class="w-4 h-4" />
+                              <span>{t("folderSelection.actions.connectButton")}</span>
                             </button>
                           </div>
+                        }
+                      >
+                        <div
+                          class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
+                          ref={(el) => (recentListRef = el)}
+                        >
+                          <For each={remoteServers()}>
+                            {(server, index) => (
+                              <div
+                                class="panel-list-item"
+                                classList={{
+                                  "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
+                                }}
+                              >
+                                <div class="flex items-center gap-2 w-full px-1">
+                                  <button
+                                    data-list-index={index()}
+                                    class="panel-list-item-content flex-1"
+                                    onClick={() => void handleConnectSavedServer(server.id)}
+                                    onMouseEnter={() => {
+                                      setFocusMode("recent")
+                                      setSelectedIndex(index())
+                                    }}
+                                  >
+                                    <div class="flex items-center justify-between gap-3 w-full">
+                                      <div class="flex-1 min-w-0 text-left">
+                                        <div class="flex items-center gap-2 mb-1">
+                                          <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                          <span class="text-sm font-medium truncate text-primary">{server.name}</span>
+                                        </div>
+                                        <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
+                                          <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
+                                        </div>
+                                      </div>
+                                      <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
+                                        <Loader2 class="w-4 h-4 animate-spin icon-muted" />
+                                      </Show>
+                                    </div>
+                                  </button>
+                                  <button
+                                    onClick={() => removeRemoteServerProfile(server.id)}
+                                    class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
+                                    title={t("folderSelection.servers.remove")}
+                                  >
+                                    <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </For>
                         </div>
-                      )}
-                    </For>
-                  </div>
+                      </Show>
+                    }
+                  >
+                    <Show
+                      when={folders().length > 0}
+                      fallback={
+                        <div class="panel-empty-state flex-1">
+                          <div class="panel-empty-state-icon">
+                            <Clock class="w-12 h-12 mx-auto" />
+                          </div>
+                          <p class="panel-empty-state-title">{t("folderSelection.empty.title")}</p>
+                          <p class="panel-empty-state-description">{t("folderSelection.empty.description")}</p>
+                        </div>
+                      }
+                    >
+                      <div
+                        class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
+                        ref={(el) => (recentListRef = el)}
+                      >
+                        <For each={folders()}>
+                          {(folder, index) => (
+                            <div
+                              class="panel-list-item"
+                              classList={{
+                                "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
+                                "panel-list-item-disabled": isLoading(),
+                              }}
+                            >
+                              <div class="flex items-center gap-2 w-full px-1">
+                                <button
+                                  data-list-index={index()}
+                                  class="panel-list-item-content flex-1"
+                                  disabled={isLoading()}
+                                  onClick={() => handleFolderSelect(folder.path)}
+                                  onMouseEnter={() => {
+                                    if (isLoading()) return
+                                    setFocusMode("recent")
+                                    setSelectedIndex(index())
+                                  }}
+                                >
+                                  <div class="flex items-center justify-between gap-3 w-full">
+                                    <div class="flex-1 min-w-0">
+                                      <div class="flex items-center gap-2 mb-1">
+                                        <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                        <span class="text-sm font-medium truncate text-primary">
+                                          {splitFolderPath(folder.path).baseName}
+                                        </span>
+                                      </div>
+                                      <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
+                                        <span class="font-mono truncate-start flex-1 min-w-0">
+                                          {getDisplayPath(folder.path)}
+                                        </span>
+                                        <span class="flex-shrink-0">{formatRelativeTime(folder.lastAccessed)}</span>
+                                      </div>
+                                    </div>
+                                    <Show when={focusMode() === "recent" && selectedIndex() === index()}>
+                                      <kbd class="kbd">↵</kbd>
+                                    </Show>
+                                  </div>
+                                </button>
+                                <button
+                                  onClick={(e) => handleRemove(folder.path, e)}
+                                  disabled={isLoading()}
+                                  class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
+                                  title={t("folderSelection.recent.remove")}
+                                >
+                                  <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </Show>
                 </div>
-              </Show>
 
               </div>
 
@@ -567,27 +840,37 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0">
               <div class="panel shrink-0">
                 <div class="panel-header hidden sm:block">
-                  <h2 class="panel-title">{t("folderSelection.browse.title")}</h2>
-                  <p class="panel-subtitle">{t("folderSelection.browse.subtitle")}</p>
+                  <h2 class="panel-title">{t("folderSelection.actions.title")}</h2>
+                  <p class="panel-subtitle">{t("folderSelection.actions.subtitle")}</p>
                 </div>
 
-                <div class="panel-body">
-                  <button
-                    onClick={() => void handleBrowse()}
-                    disabled={props.isLoading}
-                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                    onMouseEnter={() => setFocusMode("new")}
-                  >
-                    <div class="flex items-center gap-2">
-                      <FolderPlus class="w-4 h-4" />
-                      <span>
-                        {props.isLoading
-                          ? t("folderSelection.browse.buttonOpening")
-                          : t("folderSelection.browse.button")}
-                      </span>
-                    </div>
-                    <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
-                  </button>
+                <div class="panel-body flex flex-col gap-3">
+                    <button
+                      onClick={() => void handleBrowse()}
+                      disabled={props.isLoading}
+                      class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                      onMouseEnter={() => setFocusMode("new")}
+                    >
+                      <div class="flex items-center gap-2">
+                        <FolderPlus class="w-4 h-4" />
+                        <span>
+                          {props.isLoading
+                            ? t("folderSelection.browse.buttonOpening")
+                            : t("folderSelection.browse.button")}
+                        </span>
+                      </div>
+                      <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
+                    </button>
+
+                    <button
+                      onClick={openServerDialog}
+                      class="button-primary w-full flex items-center justify-center text-sm"
+                    >
+                      <div class="flex items-center gap-2">
+                        <Globe class="w-4 h-4" />
+                        <span>{t("folderSelection.actions.connectButton")}</span>
+                      </div>
+                    </button>
                 </div>
 
                 {/* OpenCode settings section */}
@@ -663,6 +946,82 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
       />
+
+      <Dialog open={isServerDialogOpen()} onOpenChange={(open) => !open && setIsServerDialogOpen(false)}>
+        <Dialog.Portal>
+          <Dialog.Overlay class="modal-overlay" />
+          <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
+            <Dialog.Content class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5" tabIndex={-1}>
+              <div>
+                <Dialog.Title class="text-xl font-semibold text-primary">
+                  {t("folderSelection.servers.dialog.title")}
+                </Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-2">
+                  {t("folderSelection.servers.dialog.description")}
+                </Dialog.Description>
+              </div>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.servers.dialog.name")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={serverName()}
+                  onInput={(event) => setServerName(event.currentTarget.value)}
+                  placeholder={t("folderSelection.servers.dialog.namePlaceholder")}
+                />
+              </label>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.servers.dialog.url")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={serverUrl()}
+                  onInput={(event) => setServerUrl(event.currentTarget.value)}
+                  placeholder={t("folderSelection.servers.dialog.urlPlaceholder")}
+                />
+              </label>
+
+              <label class="flex items-start gap-3 text-sm text-secondary">
+                <input
+                  type="checkbox"
+                  checked={skipTlsVerify()}
+                  onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)}
+                />
+                <span>{t("folderSelection.servers.dialog.skipTls")}</span>
+              </label>
+
+              <Show when={serverDialogError()}>
+                {(message) => <p class="text-sm text-red-500 break-words">{message()}</p>}
+              </Show>
+
+              <div class="flex items-center justify-end gap-3">
+                <button class="selector-button selector-button-secondary w-auto px-4" onClick={() => setIsServerDialogOpen(false)}>
+                  {t("folderSelection.servers.dialog.cancel")}
+                </button>
+                <button
+                  class="selector-button selector-button-secondary w-auto px-4"
+                  disabled={isSavingServer()}
+                  onClick={() => void handleSaveServer(false)}
+                >
+                  {t("folderSelection.servers.dialog.save")}
+                </button>
+                <button
+                  class="selector-button selector-button-secondary w-auto px-4"
+                  disabled={isSavingServer()}
+                  onClick={() => void handleSaveServer(true)}
+                >
+                  <Show when={isSavingServer()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
+                    <span class="inline-flex items-center gap-2">
+                      <Loader2 class="w-4 h-4 animate-spin" />
+                      {t("folderSelection.servers.dialog.connecting")}
+                    </span>
+                  </Show>
+                </button>
+              </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog>
     </>
   )
 }

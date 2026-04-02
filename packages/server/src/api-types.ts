@@ -244,6 +244,32 @@ export interface VoiceModeStateResponse {
   enabled: boolean
 }
 
+export interface RemoteServerProfile {
+  id: string
+  name: string
+  baseUrl: string
+  skipTlsVerify: boolean
+  createdAt: string
+  updatedAt: string
+  lastConnectedAt?: string
+}
+
+export interface RemoteServerProbeRequest {
+  baseUrl: string
+  skipTlsVerify?: boolean
+}
+
+export interface RemoteServerProbeResponse {
+  ok: boolean
+  reachable: boolean
+  normalizedUrl: string
+  skipTlsVerify: boolean
+  requiresAuth: boolean
+  authenticated: boolean
+  error?: string
+  errorCode?: string
+}
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"

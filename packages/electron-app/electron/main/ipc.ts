@@ -118,6 +118,28 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
   )
 
   ipcMain.handle(
+    "remote:openWindow",
+    async (
+      _event,
+      payload: { id: string; name: string; baseUrl: string; skipTlsVerify: boolean },
+    ): Promise<{ ok: boolean }> => {
+      const opener = (mainWindow as BrowserWindow & {
+        __codenomadOpenRemoteWindow?: (payload: {
+          id: string
+          name: string
+          baseUrl: string
+          skipTlsVerify: boolean
+        }) => Promise<void>
+      }).__codenomadOpenRemoteWindow
+      if (!opener) {
+        throw new Error("Remote window opening is not available")
+      }
+      await opener(payload)
+      return { ok: true }
+    },
+  )
+
+  ipcMain.handle(
     "notifications:show",
     async (_event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
       if (!Notification.isSupported()) {

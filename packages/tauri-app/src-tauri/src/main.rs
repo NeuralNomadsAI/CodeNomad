@@ -6,13 +6,14 @@ use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
-use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent, Wry};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -41,6 +42,16 @@ pub struct AppState {
     pub manager: CliProcessManager,
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
+    pub remote_origins: Mutex<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteWindowPayload {
+    id: String,
+    name: String,
+    base_url: String,
+    skip_tls_verify: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,8 +129,25 @@ fn should_allow_internal(url: &Url) -> bool {
     }
 }
 
-fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
+fn should_allow_window_origin<R: Runtime>(app_handle: &AppHandle<R>, window_label: &str, url: &Url) -> bool {
     if should_allow_internal(url) {
+        return true;
+    }
+
+    let state = app_handle.state::<AppState>();
+    let Ok(allowed) = state.remote_origins.lock() else {
+        return false;
+    };
+    if let Some(origin) = allowed.get(window_label) {
+        return origin == &url.origin().ascii_serialization();
+    }
+
+    false
+}
+
+fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
+    let window_label = webview.label().to_string();
+    if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
         return true;
     }
 
@@ -131,6 +159,53 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         eprintln!("[tauri] failed to open external link {}: {}", url, err);
     }
     false
+}
+
+#[tauri::command]
+fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
+    if payload.skip_tls_verify && payload.base_url.starts_with("https://") {
+        return Err(
+            "Tauri cannot bypass self-signed HTTPS certificates automatically yet. Trust the certificate in your OS first, then reconnect, or use the CodeNomad Electron app."
+                .to_string(),
+        );
+    }
+
+    let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
+    let label = format!("remote-{}", payload.id);
+    let title = format!("{} - {}", payload.name, parsed.host_str().unwrap_or(payload.base_url.as_str()));
+
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.navigate(parsed.clone());
+        let _ = existing.set_title(&title);
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    app.state::<AppState>()
+        .remote_origins
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), parsed.origin().ascii_serialization());
+
+    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
+        .title(title)
+        .inner_size(1400.0, 900.0)
+        .min_inner_size(800.0, 600.0)
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    let app_handle = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
+                origins.remove(&label);
+            }
+        }
+    });
+
+    Ok(())
 }
 
 fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -286,6 +361,7 @@ fn main() {
             manager: CliProcessManager::new(),
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
+            remote_origins: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             set_windows_app_user_model_id();
@@ -323,7 +399,8 @@ fn main() {
             cli_get_status,
             cli_restart,
             wake_lock_start,
-            wake_lock_stop
+            wake_lock_stop,
+            open_remote_window
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
@@ -455,11 +532,24 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
-                // Ensure we have time to stop the CLI process before the app exits.
+                // Let windows close normally. App shutdown is handled only after the
+                // last window is actually gone so remote windows can outlive `main`.
+                let _ = api;
+            }
+            tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } => {
+                if !app_handle.webview_windows().is_empty() {
+                    return;
+                }
+
+                // Stop the CLI only when the final window is gone and the app is
+                // truly exiting.
                 if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
                     return;
                 }
-                api.prevent_close();
+
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Some(state) = app.try_state::<AppState>() {
