@@ -174,6 +174,15 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
     let label = format!("remote-{}", payload.id);
     let title = format!("{} - {}", payload.name, parsed.host_str().unwrap_or(payload.base_url.as_str()));
 
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.navigate(parsed.clone());
+        let _ = existing.set_title(&title);
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
     app.state::<AppState>()
         .remote_origins
         .lock()

@@ -72,9 +72,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
- 
+  
   const folders = () => recentFolders()
+  const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
+
+  function getActiveListLength() {
+    return activeTab() === "local" ? folders().length : serverList().length
+  }
 
   // Update selected binary when preferences change
   createEffect(() => {
@@ -87,7 +92,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function scrollToIndex(index: number) {
     const container = recentListRef
     if (!container) return
-    const element = container.querySelector(`[data-folder-index="${index}"]`) as HTMLElement | null
+    const element = container.querySelector(`[data-list-index="${index}"]`) as HTMLElement | null
     if (!element) return
 
     const containerRect = container.getBoundingClientRect()
@@ -136,19 +141,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       return
     }
 
-    const folderList = folders()
-
     if (isBrowseShortcut) {
       e.preventDefault()
       void handleBrowse()
       return
     }
 
-    if (folderList.length === 0) return
+    const listLength = getActiveListLength()
+    if (listLength === 0) return
 
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      const newIndex = Math.min(selectedIndex() + 1, folderList.length - 1)
+      const newIndex = Math.min(selectedIndex() + 1, listLength - 1)
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -161,7 +165,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } else if (e.key === "PageDown") {
       e.preventDefault()
       const pageSize = 5
-      const newIndex = Math.min(selectedIndex() + pageSize, folderList.length - 1)
+      const newIndex = Math.min(selectedIndex() + pageSize, listLength - 1)
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -179,7 +183,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       scrollToIndex(0)
     } else if (e.key === "End") {
       e.preventDefault()
-      const newIndex = folderList.length - 1
+      const newIndex = listLength - 1
       setSelectedIndex(newIndex)
       setFocusMode("recent")
       scrollToIndex(newIndex)
@@ -188,10 +192,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       handleEnterKey()
     } else if (e.key === "Backspace" || e.key === "Delete") {
       e.preventDefault()
-      if (folderList.length > 0 && focusMode() === "recent") {
-        const folder = folderList[selectedIndex()]
-        if (folder) {
-          handleRemove(folder.path)
+      if (listLength > 0 && focusMode() === "recent") {
+        if (activeTab() === "local") {
+          const folder = folders()[selectedIndex()]
+          if (folder) {
+            handleRemove(folder.path)
+          }
+        } else {
+          const server = serverList()[selectedIndex()]
+          if (server) {
+            removeRemoteServerProfile(server.id)
+          }
         }
       }
     }
@@ -200,14 +211,39 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   function handleEnterKey() {
     if (isLoading()) return
-    const folderList = folders()
     const index = selectedIndex()
 
-    const folder = folderList[index]
-    if (folder) {
-      handleFolderSelect(folder.path)
+    if (activeTab() === "local") {
+      const folder = folders()[index]
+      if (folder) {
+        handleFolderSelect(folder.path)
+      }
+      return
+    }
+
+    const server = serverList()[index]
+    if (server) {
+      void handleConnectSavedServer(server.id)
     }
   }
+
+  createEffect(() => {
+    activeTab()
+    setSelectedIndex(0)
+    setFocusMode("recent")
+  })
+
+  createEffect(() => {
+    const length = getActiveListLength()
+    if (length === 0) {
+      setSelectedIndex(0)
+      return
+    }
+
+    if (selectedIndex() >= length) {
+      setSelectedIndex(length - 1)
+    }
+  })
 
 
   onMount(() => {
@@ -672,12 +708,28 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           </div>
                         }
                       >
-                        <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto">
+                        <div
+                          class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
+                          ref={(el) => (recentListRef = el)}
+                        >
                           <For each={remoteServers()}>
-                            {(server) => (
-                              <div class="panel-list-item">
+                            {(server, index) => (
+                              <div
+                                class="panel-list-item"
+                                classList={{
+                                  "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
+                                }}
+                              >
                                 <div class="flex items-center gap-2 w-full px-1">
-                                  <button class="panel-list-item-content flex-1" onClick={() => void handleConnectSavedServer(server.id)}>
+                                  <button
+                                    data-list-index={index()}
+                                    class="panel-list-item-content flex-1"
+                                    onClick={() => void handleConnectSavedServer(server.id)}
+                                    onMouseEnter={() => {
+                                      setFocusMode("recent")
+                                      setSelectedIndex(index())
+                                    }}
+                                  >
                                     <div class="flex items-center justify-between gap-3 w-full">
                                       <div class="flex-1 min-w-0 text-left">
                                         <div class="flex items-center gap-2 mb-1">
@@ -688,7 +740,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                           <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
                                         </div>
                                       </div>
-                                      <Show when={connectingServerId() === server.id} fallback={<kbd class="kbd">↵</kbd>}>
+                                      <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
                                         <Loader2 class="w-4 h-4 animate-spin icon-muted" />
                                       </Show>
                                     </div>
@@ -735,7 +787,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             >
                               <div class="flex items-center gap-2 w-full px-1">
                                 <button
-                                  data-folder-index={index()}
+                                  data-list-index={index()}
                                   class="panel-list-item-content flex-1"
                                   disabled={isLoading()}
                                   onClick={() => handleFolderSelect(folder.path)}
