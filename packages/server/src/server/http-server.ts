@@ -1132,14 +1132,11 @@ function rewriteSideCarResponseHeaders(
   targetOrigin: string,
   prefixMode: "strip" | "preserve",
 ) {
-  const next = { ...headers }
-  delete next["set-cookie"]
-  delete next["Set-Cookie"]
-
   if (prefixMode === "preserve") {
-    return next
+    return headers
   }
 
+  const next = { ...headers }
   const locationHeader = next.location
   const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
   if (!location) {
@@ -1186,7 +1183,6 @@ function getBlockedSideCarRequestHeaders(): Set<string> {
   return new Set([
     "host",
     "authorization",
-    "cookie",
     "proxy-authorization",
     "forwarded",
     "x-forwarded-for",
