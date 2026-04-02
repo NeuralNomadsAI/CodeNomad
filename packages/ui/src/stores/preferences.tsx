@@ -409,6 +409,11 @@ function updateLastUsedBinary(path: string): void {
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to update binary list", error))
 }
 
+function updateLogLevel(level: string): void {
+  const target = level && level.trim().length > 0 ? level.toUpperCase() : "DEBUG"
+  void patchConfigOwner("server", { preferences: { logLevel: target } }).catch((error) => log.error("Failed to set log level", error))
+}
+
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
   const apiKeyPatch = updates.apiKey
   const { apiKey: _apiKey, ...restUpdates } = updates
@@ -612,8 +617,9 @@ interface ConfigContextValue {
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
-  updateLastUsedBinary: typeof updateLastUsedBinary
-  updateSpeechSettings: typeof updateSpeechSettings
+    updateLastUsedBinary: typeof updateLastUsedBinary
+    updateLogLevel: typeof updateLogLevel
+    updateSpeechSettings: typeof updateSpeechSettings
 
   // ui-owned state
   recentFolders: typeof recentFolders
@@ -663,6 +669,7 @@ const configContextValue: ConfigContextValue = {
   addEnvironmentVariable,
   removeEnvironmentVariable,
   updateLastUsedBinary,
+  updateLogLevel,
   updateSpeechSettings,
   recentFolders,
   opencodeBinaries,
@@ -746,6 +753,7 @@ export {
   addEnvironmentVariable,
   removeEnvironmentVariable,
   updateLastUsedBinary,
+  updateLogLevel,
   updateSpeechSettings,
   addRecentFolder,
   removeRecentFolder,

@@ -116,6 +116,7 @@ interface LaunchOptions {
   folder: string
   binaryPath: string
   environment?: Record<string, string>
+  logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
 }
 
@@ -139,7 +140,8 @@ export class WorkspaceRuntime {
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
 
-    const args = ["serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"]
+    const logLevel = (options.logLevel ?? "DEBUG").toUpperCase()
+    const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null
