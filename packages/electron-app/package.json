@@ -43,23 +43,23 @@
     "package:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "@codenomad/ui": "file:../ui",
     "@neuralnomads/codenomad": "file:../server",
-    "yaml": "^2.8.3"
+    "@codenomad/ui": "file:../ui",
+    "yaml": "^2.4.2"
   },
   "devDependencies": {
     "7zip-bin": "^5.2.0",
     "app-builder-bin": "^4.2.0",
-    "cross-env": "^10.1.0",
-    "electron": "^41.1.0",
-    "electron-builder": "^26.8.1",
-    "electron-vite": "^5.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "39.0.0",
+    "electron-builder": "^24.0.0",
+    "electron-vite": "4.0.1",
     "png2icons": "^2.0.1",
     "pngjs": "^7.0.0",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
-    "vite": "^7.3.1",
-    "vite-plugin-solid": "^2.11.11"
+    "tsx": "^4.20.6",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0",
+    "vite-plugin-solid": "^2.10.0"
   },
   "build": {
     "appId": "ai.opencode.client",
