@@ -283,6 +283,7 @@ export const settingsMessages = {
   "settings.speech.save.saved": "נשמר",
   "settings.speech.save.unsaved": "יש שינויים שלא נשמרו",
   "settings.speech.save.error": "השמירה נכשלה",
+<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",
@@ -320,6 +321,26 @@ export const settingsMessages = {
   "sidecars.path": "Path",
   "sidecars.go": "Go",
 
+  // Toast History Panel
+  "toastHistory.title": "היסטוריית התראות",
+  "toastHistory.empty": "אין התראות",
+  "toastHistory.clearAll": "נקה הכל",
+  "toastHistory.markAllRead": "סמן הכל כנקרא",
+  "toastHistory.filter.label": "סינון התראות",
+  "toastHistory.filter.all": "הכל",
+  "toastHistory.filter.info": "מידע",
+  "toastHistory.filter.success": "הצלחה",
+  "toastHistory.filter.warning": "אזהרה",
+  "toastHistory.filter.error": "שגיאה",
+  "toastHistory.today": "היום",
+  "toastHistory.yesterday": "אתמול",
+  "toastHistory.earlier": "קודם",
+  "toastHistory.unread": "{count} לא נקראו",
+  "toastHistory.viewSettings": "הגדרות",
+  "toastHistory.close": "סגור",
+  "toastHistory.deleteItem": "מחק התראה",
+
+  // Info Section
   "settings.section.info.title": "About",
   "settings.section.info.subtitle": "View version, runtime, and gather diagnostic information.",
   "settings.info.version.server": "Server version",
