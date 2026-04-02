@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "Open folder picker to create new instance",
   "commands.newInstance.keywords": "folder, project, workspace",
 
-  "commands.closeInstance.label": "Close Instance",
-  "commands.closeInstance.description": "Stop current instance's server",
-  "commands.closeInstance.keywords": "stop, quit, close",
+  "commands.closeInstance.label": "Close Tab",
+  "commands.closeInstance.description": "Close the current top-level tab",
+  "commands.closeInstance.keywords": "stop, quit, close, tab",
 
-  "commands.nextInstance.label": "Next Instance",
-  "commands.nextInstance.description": "Cycle to next instance tab",
-  "commands.nextInstance.keywords": "switch, navigate",
+  "commands.nextInstance.label": "Next Tab",
+  "commands.nextInstance.description": "Cycle to the next top-level tab",
+  "commands.nextInstance.keywords": "switch, navigate, tab",
 
-  "commands.previousInstance.label": "Previous Instance",
-  "commands.previousInstance.description": "Cycle to previous instance tab",
-  "commands.previousInstance.keywords": "switch, navigate",
+  "commands.previousInstance.label": "Previous Tab",
+  "commands.previousInstance.description": "Cycle to the previous top-level tab",
+  "commands.previousInstance.keywords": "switch, navigate, tab",
 
   "commands.newSession.label": "New Session",
   "commands.newSession.description": "Create a new parent session",

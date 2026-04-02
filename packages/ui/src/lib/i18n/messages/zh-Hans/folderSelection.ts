@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "连接中...",
   "folderSelection.servers.dialog.errorRequired": "服务器名称和 URL 为必填项。",
   "folderSelection.servers.dialog.errorConnect": "无法连接到远程服务器。",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

@@ -2,23 +2,23 @@ export const folderSelectionMessages = {
   "folderSelection.language.ariaLabel": "Idioma",
 
   "folderSelection.logoAlt": "Logo de CodeNomad",
-  "folderSelection.tagline": "Selecciona una carpeta para empezar a programar con IA",
+  "folderSelection.tagline": "Selecciona una carpeta para empezar a programar con AI",
 
   "folderSelection.links.github": "GitHub de CodeNomad",
-  "folderSelection.links.githubStars": "Estrellas de CodeNomad en GitHub",
+  "folderSelection.links.githubStars": "Estrellas de GitHub de CodeNomad",
   "folderSelection.links.discord": "Discord de CodeNomad",
 
   "folderSelection.empty.title": "No hay carpetas recientes",
-  "folderSelection.empty.description": "Explora una carpeta para comenzar",
+  "folderSelection.empty.description": "Busca una carpeta para comenzar",
 
   "folderSelection.recent.title": "Carpetas recientes",
   "folderSelection.recent.subtitle.one": "{count} carpeta disponible",
   "folderSelection.recent.subtitle.other": "{count} carpetas disponibles",
-  "folderSelection.recent.remove": "Quitar de recientes",
+  "folderSelection.recent.remove": "Eliminar de recientes",
 
-  "folderSelection.browse.title": "Explorar carpetas",
+  "folderSelection.browse.title": "Buscar carpeta",
   "folderSelection.browse.subtitle": "Selecciona cualquier carpeta en tu ordenador",
-  "folderSelection.browse.button": "Explorar carpetas",
+  "folderSelection.browse.button": "Buscar carpetas",
   "folderSelection.browse.buttonOpening": "Abriendo...",
   "folderSelection.actions.title": "Abrir carpeta o conectar servidor",
   "folderSelection.actions.subtitle": "Abre una carpeta local o conéctate a un servidor de CodeNomad",
@@ -29,11 +29,11 @@ export const folderSelectionMessages = {
 
   "folderSelection.hints.navigate": "Navegar",
   "folderSelection.hints.select": "Seleccionar",
-  "folderSelection.hints.remove": "Quitar",
-  "folderSelection.hints.browse": "Explorar",
+  "folderSelection.hints.remove": "Eliminar",
+  "folderSelection.hints.browse": "Buscar",
 
   "folderSelection.loading.title": "Iniciando instancia...",
-  "folderSelection.loading.subtitle": "Espera un momento mientras preparamos tu workspace.",
+  "folderSelection.loading.subtitle": "Espera mientras preparamos tu espacio de trabajo.",
 
   "folderSelection.drop.title": "Suelta una carpeta para abrirla",
   "folderSelection.drop.subtitle": "Inicia una nueva instancia en la carpeta soltada.",
@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Conectando...",
   "folderSelection.servers.dialog.errorRequired": "El nombre y la URL del servidor son obligatorios.",
   "folderSelection.servers.dialog.errorConnect": "No se pudo conectar al servidor remoto.",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

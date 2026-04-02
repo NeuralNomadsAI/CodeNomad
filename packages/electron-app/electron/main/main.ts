@@ -1,7 +1,7 @@
 import { app, BrowserView, BrowserWindow, nativeImage, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { existsSync } from "fs"
+import { existsSync, mkdirSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
@@ -13,6 +13,31 @@ const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = dirname(mainFilename)
 
 const isMac = process.platform === "darwin"
+
+function configureDevStoragePaths() {
+  if (app.isPackaged) {
+    return
+  }
+
+  const appName = "CodeNomad"
+
+  try {
+    app.setName(appName)
+
+    const userDataPath = join(app.getPath("appData"), appName)
+    const sessionDataPath = join(userDataPath, "session-data")
+
+    mkdirSync(userDataPath, { recursive: true })
+    mkdirSync(sessionDataPath, { recursive: true })
+
+    app.setPath("userData", userDataPath)
+    app.setPath("sessionData", sessionDataPath)
+  } catch (error) {
+    console.warn("[cli] failed to configure dev storage paths", error)
+  }
+}
+
+configureDevStoragePaths()
 
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null

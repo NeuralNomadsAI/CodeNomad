@@ -69,4 +69,5 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "接続中...",
   "folderSelection.servers.dialog.errorRequired": "サーバー名と URL は必須です。",
   "folderSelection.servers.dialog.errorConnect": "リモートサーバーに接続できませんでした。",
+  "folderSelection.sidecars.button": "Open SideCar",
 } as const

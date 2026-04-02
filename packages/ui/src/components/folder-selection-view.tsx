@@ -27,6 +27,7 @@ type HomeTab = "local" | "servers"
 
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string, binaryPath?: string) => void
+  onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
 }
@@ -845,32 +846,43 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 </div>
 
                 <div class="panel-body flex flex-col gap-3">
-                    <button
-                      onClick={() => void handleBrowse()}
-                      disabled={props.isLoading}
-                      class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                      onMouseEnter={() => setFocusMode("new")}
-                    >
-                      <div class="flex items-center gap-2">
-                        <FolderPlus class="w-4 h-4" />
-                        <span>
-                          {props.isLoading
-                            ? t("folderSelection.browse.buttonOpening")
-                            : t("folderSelection.browse.button")}
-                        </span>
-                      </div>
-                      <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
-                    </button>
+                  <button
+                    onClick={() => void handleBrowse()}
+                    disabled={props.isLoading}
+                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                    onMouseEnter={() => setFocusMode("new")}
+                  >
+                    <div class="flex items-center gap-2">
+                      <FolderPlus class="w-4 h-4" />
+                      <span>
+                        {props.isLoading
+                          ? t("folderSelection.browse.buttonOpening")
+                          : t("folderSelection.browse.button")}
+                      </span>
+                    </div>
+                    <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
+                  </button>
 
-                    <button
-                      onClick={openServerDialog}
-                      class="button-primary w-full flex items-center justify-center text-sm"
-                    >
-                      <div class="flex items-center gap-2">
-                        <Globe class="w-4 h-4" />
-                        <span>{t("folderSelection.actions.connectButton")}</span>
-                      </div>
-                    </button>
+                  <button
+                    type="button"
+                    onClick={() => props.onOpenSidecar?.()}
+                    class="button-primary mt-3 w-full flex items-center justify-center text-sm"
+                  >
+                    <div class="flex items-center gap-2">
+                      <MonitorUp class="w-4 h-4" />
+                      <span>{t("folderSelection.sidecars.button")}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={openServerDialog}
+                    class="button-primary w-full flex items-center justify-center text-sm"
+                  >
+                    <div class="flex items-center gap-2">
+                      <Globe class="w-4 h-4" />
+                      <span>{t("folderSelection.actions.connectButton")}</span>
+                    </div>
+                  </button>
                 </div>
 
                 {/* OpenCode settings section */}
