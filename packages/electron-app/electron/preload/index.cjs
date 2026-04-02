@@ -23,6 +23,7 @@ const electronAPI = {
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
 }
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI)
