@@ -939,6 +939,8 @@ async function proxySideCarRequest(args: {
   args.logger.debug({ sidecarId: sidecar.id, targetUrl, pathname, prefixMode: sidecar.prefixMode }, "Proxying request to SideCar")
 
   await args.reply.from(targetUrl, {
+    rewriteRequestHeaders: (_originalRequest, headers) =>
+      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, targetOrigin),
     rewriteHeaders: (headers) => rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode),
     onError: (reply, { error }) => {
       args.logger.error({ sidecarId: sidecar.id, err: error, targetUrl }, "Failed to proxy SideCar request")
@@ -1084,13 +1086,14 @@ function buildSideCarWebSocketRequest(request: import("http").IncomingMessage, t
   const requestLine = `${request.method ?? "GET"} ${pathWithQuery} HTTP/${request.httpVersion}\r\n`
   const headerLines: string[] = []
   const rawHeaders = request.rawHeaders ?? []
+  const blockedHeaders = getBlockedSideCarRequestHeaders()
 
   for (let index = 0; index < rawHeaders.length; index += 2) {
     const key = rawHeaders[index]
     const value = rawHeaders[index + 1]
     if (!key || value === undefined) continue
     const lower = key.toLowerCase()
-    if (lower === "host") continue
+    if (blockedHeaders.has(lower)) continue
     if (lower === "origin") {
       headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
       continue
@@ -1129,11 +1132,14 @@ function rewriteSideCarResponseHeaders(
   targetOrigin: string,
   prefixMode: "strip" | "preserve",
 ) {
+  const next = { ...headers }
+  delete next["set-cookie"]
+  delete next["Set-Cookie"]
+
   if (prefixMode === "preserve") {
-    return headers
+    return next
   }
 
-  const next = { ...headers }
   const locationHeader = next.location
   const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
   if (!location) {
@@ -1157,4 +1163,35 @@ function rewriteSideCarResponseHeaders(
   }
 
   return next
+}
+
+function sanitizeSideCarProxyRequestHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  targetOrigin: string,
+): Record<string, string | string[] | undefined> {
+  const blockedHeaders = getBlockedSideCarRequestHeaders()
+  const next: Record<string, string | string[] | undefined> = {}
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (!value) continue
+    if (blockedHeaders.has(key.toLowerCase())) continue
+    next[key] = value
+  }
+
+  next.origin = targetOrigin
+  return next
+}
+
+function getBlockedSideCarRequestHeaders(): Set<string> {
+  return new Set([
+    "host",
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+  ])
 }

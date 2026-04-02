@@ -36,6 +36,7 @@ import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
+import { activeSidecarToken } from "./sidecars"
 
 const log = getLogger("api")
 
@@ -109,6 +110,8 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instanc
 }
 
 function ensureActiveInstanceSelected(): void {
+  if (activeSidecarToken()) return
+
   const current = activeInstanceId()
   const instanceMap = instances()
   if (current && instanceMap.has(current)) return

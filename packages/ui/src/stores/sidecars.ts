@@ -52,7 +52,20 @@ function upsertSidecar(sidecar: SideCar) {
     return next
   })
 
-  setSidecarTabs((prev) => prev.map((tab) => (tab.sidecarId === sidecar.id ? { ...tab, name: sidecar.name } : tab)))
+  setSidecarTabs((prev) =>
+    prev.map((tab) =>
+      tab.sidecarId === sidecar.id
+        ? {
+            ...tab,
+            name: sidecar.name,
+            port: sidecar.port,
+            prefixMode: sidecar.prefixMode,
+            proxyBasePath: buildSidecarShellUrl(sidecar.id).replace(/\/$/, ""),
+            shellUrl: buildSidecarShellUrl(sidecar.id),
+          }
+        : tab,
+    ),
+  )
 }
 
 function removeSidecar(sidecarId: string) {

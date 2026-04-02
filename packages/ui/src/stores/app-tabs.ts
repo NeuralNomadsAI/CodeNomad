@@ -100,6 +100,7 @@ function selectAppTab(tabId: string | null) {
     return
   }
 
+  setActiveInstanceId(null)
   setActiveSidecarToken(tab.sidecarTab.token)
 }
 
