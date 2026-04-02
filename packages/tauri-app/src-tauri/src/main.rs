@@ -523,11 +523,24 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
-                // Ensure we have time to stop the CLI process before the app exits.
+                // Let windows close normally. App shutdown is handled only after the
+                // last window is actually gone so remote windows can outlive `main`.
+                let _ = api;
+            }
+            tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } => {
+                if !app_handle.webview_windows().is_empty() {
+                    return;
+                }
+
+                // Stop the CLI only when the final window is gone and the app is
+                // truly exiting.
                 if QUIT_REQUESTED.swap(true, Ordering::SeqCst) {
                     return;
                 }
-                api.prevent_close();
+
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Some(state) = app.try_state::<AppState>() {
