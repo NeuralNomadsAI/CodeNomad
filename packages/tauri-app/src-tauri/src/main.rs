@@ -165,7 +165,7 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
 fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
     if payload.skip_tls_verify && payload.base_url.starts_with("https://") {
         return Err(
-            "Tauri cannot bypass self-signed HTTPS certificates automatically yet. Trust the certificate in your OS first, then reconnect."
+            "Tauri cannot bypass self-signed HTTPS certificates automatically yet. Trust the certificate in your OS first, then reconnect, or use the CodeNomad Electron app."
                 .to_string(),
         );
     }
