@@ -142,7 +142,7 @@ export class WorkspaceManager {
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
-    const logLevel = (serverConfig as any)?.preferences?.logLevel
+    const logLevel = (serverConfig as any)?.logLevel
 
     try {
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({

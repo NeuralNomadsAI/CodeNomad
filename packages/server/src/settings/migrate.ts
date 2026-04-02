@@ -107,6 +107,10 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
     if (typeof listeningMode === "string") {
       serverConfig.listeningMode = listeningMode
     }
+    const logLevel = preferences.logLevel
+    if (typeof logLevel === "string") {
+      serverConfig.logLevel = logLevel
+    }
     const lastUsedBinary = preferences.lastUsedBinary
     if (typeof lastUsedBinary === "string") {
       serverConfig.opencodeBinary = lastUsedBinary
@@ -135,6 +139,7 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
     const moved = new Set([
       "environmentVariables",
       "listeningMode",
+      "logLevel",
       "lastUsedBinary",
       "modelRecents",
       "modelFavorites",

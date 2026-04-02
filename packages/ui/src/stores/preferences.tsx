@@ -28,6 +28,7 @@ export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
+export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
 export type SpeechPlaybackMode = "streaming" | "buffered"
 export type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
@@ -94,6 +95,7 @@ interface UiConfigBucket {
 
 interface ServerConfigBucket {
   listeningMode?: ListeningMode
+  logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
@@ -272,13 +274,17 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
+  const logLevel =
+    source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
+      ? source.logLevel
+      : "DEBUG"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, opencodeBinary, environmentVariables, speech }
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, speech }
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -409,9 +415,9 @@ function updateLastUsedBinary(path: string): void {
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to update binary list", error))
 }
 
-function updateLogLevel(level: string): void {
-  const target = level && level.trim().length > 0 ? level.toUpperCase() : "DEBUG"
-  void patchConfigOwner("server", { preferences: { logLevel: target } }).catch((error) => log.error("Failed to set log level", error))
+function updateLogLevel(level: ServerLogLevel): void {
+  const target = level ?? "DEBUG"
+  void patchConfigOwner("server", { logLevel: target }).catch((error) => log.error("Failed to set log level", error))
 }
 
 async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void> {
