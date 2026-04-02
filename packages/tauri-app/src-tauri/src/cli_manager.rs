@@ -534,7 +534,9 @@ impl CliProcessManager {
             log_line(&format!("using cwd={}", c.display()));
         }
 
-        let command_info = if supports_user_shell() {
+        let use_user_shell = supports_user_shell();
+
+        let command_info = if use_user_shell {
             log_line("spawning via user shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
         } else {
@@ -545,7 +547,7 @@ impl CliProcessManager {
             })
         };
 
-        if !supports_user_shell() {
+        if !use_user_shell {
             if which::which(&resolution.node_binary).is_err() {
                 return Err(anyhow::anyhow!(
                     "Node binary not found. Make sure Node.js is installed."
@@ -559,6 +561,8 @@ impl CliProcessManager {
                 let mut c = Command::new(&cmd.shell);
                 c.args(&cmd.args)
                     .env("ELECTRON_RUN_AS_NODE", "1")
+                    .env_remove("npm_config_prefix")
+                    .env_remove("NPM_CONFIG_PREFIX")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
                 configure_spawn(&mut c);
@@ -619,26 +623,41 @@ impl CliProcessManager {
                 .map(BufReader::new);
 
             if let Some(reader) = stdout {
-                Self::process_stream(
-                    reader,
-                    "stdout",
-                    &app_clone,
-                    &status_clone,
-                    &ready_clone,
-                    &token_clone,
-                    auth_cookie_name_clone.as_str(),
-                );
+                let app = app_clone.clone();
+                let status = status_clone.clone();
+                let ready = ready_clone.clone();
+                let token = token_clone.clone();
+                let auth_cookie_name = auth_cookie_name_clone.clone();
+                thread::spawn(move || {
+                    Self::process_stream(
+                        reader,
+                        "stdout",
+                        &app,
+                        &status,
+                        &ready,
+                        &token,
+                        auth_cookie_name.as_str(),
+                    );
+                });
             }
+
             if let Some(reader) = stderr {
-                Self::process_stream(
-                    reader,
-                    "stderr",
-                    &app_clone,
-                    &status_clone,
-                    &ready_clone,
-                    &token_clone,
-                    auth_cookie_name_clone.as_str(),
-                );
+                let app = app_clone.clone();
+                let status = status_clone.clone();
+                let ready = ready_clone.clone();
+                let token = token_clone.clone();
+                let auth_cookie_name = auth_cookie_name_clone.clone();
+                thread::spawn(move || {
+                    Self::process_stream(
+                        reader,
+                        "stderr",
+                        &app,
+                        &status,
+                        &ready,
+                        &token,
+                        auth_cookie_name.as_str(),
+                    );
+                });
             }
         });
 
@@ -757,8 +776,7 @@ impl CliProcessManager {
         auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
-        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)").ok();
-        let http_regex = Regex::new(r":(\d{2,5})(?!.*:\d)").ok();
+        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
@@ -801,37 +819,6 @@ impl CliProcessManager {
                             continue;
                         }
 
-                        if line.to_lowercase().contains("http server listening") {
-                            if let Some(port) = http_regex
-                                .as_ref()
-                                .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
-                                .and_then(|m| m.as_str().parse::<u16>().ok())
-                            {
-                                Self::mark_ready(
-                                    app,
-                                    status,
-                                    ready,
-                                    bootstrap_token,
-                                    auth_cookie_name,
-                                    format!("http://localhost:{port}"),
-                                );
-                                continue;
-                            }
-
-                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                                if let Some(port) = value.get("port").and_then(|p| p.as_u64()) {
-                                    Self::mark_ready(
-                                        app,
-                                        status,
-                                        ready,
-                                        bootstrap_token,
-                                        auth_cookie_name,
-                                        format!("http://localhost:{}", port),
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
                     }
                 }
                 Err(_) => break,
@@ -1153,11 +1140,8 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    if shell_name.contains("zsh") {
-        vec!["-l".into(), "-i".into(), "-c".into(), command.into()]
-    } else {
-        vec!["-l".into(), "-c".into(), command.into()]
-    }
+    let _ = shell_name;
+    vec!["-l".into(), "-c".into(), command.into()]
 }
 
 fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
