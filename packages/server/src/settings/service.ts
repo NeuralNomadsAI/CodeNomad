@@ -36,6 +36,8 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   const parsedLogLevel = CanonicalLogLevelSchema.safeParse(next.logLevel)
   if (parsedLogLevel.success) {
     next.logLevel = parsedLogLevel.data
+  } else if (typeof next.logLevel === "string") {
+    next.logLevel = "DEBUG"
   }
   return next
 }
