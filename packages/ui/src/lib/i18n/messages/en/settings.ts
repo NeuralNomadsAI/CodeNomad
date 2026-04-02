@@ -113,6 +113,15 @@ export const settingsMessages = {
   "settings.section.opencode.subtitle": "Choose the OpenCode binary and environment used for new instances.",
   "settings.opencode.runtime.title": "Runtime",
   "settings.opencode.runtime.subtitle": "Configure which OpenCode binary new instances launch with.",
+  "settings.opencode.logLevel.title": "OpenCode Log Level",
+  "settings.opencode.logLevel.subtitle": "Control the log verbosity used when launching new OpenCode instances.",
+  "settings.opencode.logLevel.selector.title": "Default log level",
+  "settings.opencode.logLevel.selector.subtitle": "Choose how verbose new OpenCode instances should be.",
+  "settings.opencode.logLevel.option.debug": "Debug",
+  "settings.opencode.logLevel.option.info": "Info",
+  "settings.opencode.logLevel.option.warn": "Warn",
+  "settings.opencode.logLevel.option.error": "Error",
+
 
   "settings.appearance.behavior.title": "Interaction",
   "settings.appearance.behavior.subtitle": "Message, diff, and input defaults.",
