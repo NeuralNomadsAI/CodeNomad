@@ -140,7 +140,7 @@ export class WorkspaceRuntime {
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
 
-    const logLevel = (options.logLevel ?? "DEBUG").toUpperCase()
+    const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
     const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
