@@ -129,13 +129,15 @@ fn should_allow_internal(url: &Url) -> bool {
     }
 }
 
-fn should_allow_window_origin(app_handle: &AppHandle, window_label: &str, url: &Url) -> bool {
+fn should_allow_window_origin<R: Runtime>(app_handle: &AppHandle<R>, window_label: &str, url: &Url) -> bool {
     if should_allow_internal(url) {
         return true;
     }
 
     let state = app_handle.state::<AppState>();
-    let allowed = state.remote_origins.lock();
+    let Ok(allowed) = state.remote_origins.lock() else {
+        return false;
+    };
     if let Some(origin) = allowed.get(window_label) {
         return origin == &url.origin().ascii_serialization();
     }
@@ -175,6 +177,7 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
     app.state::<AppState>()
         .remote_origins
         .lock()
+        .map_err(|err| err.to_string())?
         .insert(label.clone(), parsed.origin().ascii_serialization());
 
     let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
@@ -187,11 +190,9 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
     let app_handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
-            app_handle
-                .state::<AppState>()
-                .remote_origins
-                .lock()
-                .remove(&label);
+            if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
+                origins.remove(&label);
+            }
         }
     });
 

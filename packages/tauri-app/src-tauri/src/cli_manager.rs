@@ -1018,27 +1018,50 @@ impl CliEntry {
 }
 
 fn resolve_tsx(_app: &AppHandle) -> Option<String> {
-    let candidates = vec![
-        std::env::current_dir()
-            .ok()
+    let cwd = std::env::current_dir().ok();
+    let workspace = workspace_root();
+    let mut candidates = vec![
+        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.js")),
+        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
+        workspace
+            .as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        workspace
+            .as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        workspace
+            .as_ref()
             .map(|p| p.join("node_modules/tsx/dist/cli.js")),
-        std::env::current_exe().ok().and_then(|ex| {
-            ex.parent()
-                .map(|p| p.join("../node_modules/tsx/dist/cli.js"))
-        }),
     ];
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.mjs")));
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.cjs")));
+            candidates.push(Some(dir.join("../node_modules/tsx/dist/cli.js")));
+        }
+    }
 
     first_existing(candidates)
 }
 
 fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
+    let cwd = std::env::current_dir().ok();
+    let workspace = workspace_root();
     let candidates = vec![
-        std::env::current_dir()
-            .ok()
+        workspace
+            .as_ref()
             .map(|p| p.join("packages/server/src/index.ts")),
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.join("../server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("packages/server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("../server/src/index.ts")),
+        cwd.as_ref().map(|p| p.join("../../server/src/index.ts")),
     ];
 
     first_existing(candidates)
