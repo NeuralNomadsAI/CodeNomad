@@ -509,3 +509,12 @@ session-sidebar-controls .selector-trigger-primary {
     @apply px-2 py-2;
   }
 }
+
+/* Monaco Editor Font Customization */
+.monaco-editor {
+  --monaco-monospace-font: var(--font-family-mono-user), "SF Mono", Monaco, Menlo, Consolas, "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace;
+}
+
+.monaco-editor, .monaco-editor * {
+  font-family: var(--monaco-monospace-font);
+}
