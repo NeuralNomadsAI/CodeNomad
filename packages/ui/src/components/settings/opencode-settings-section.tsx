@@ -7,7 +7,7 @@ import { useI18n } from "../../lib/i18n"
 
 export const OpenCodeSettingsSection: Component = () => {
   const { t } = useI18n()
-  const { serverSettings, updateLastUsedBinary } = useConfig()
+  const { serverSettings, updateLastUsedBinary, updateLogLevel } = useConfig()
   const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
 
   createEffect(() => {
@@ -35,6 +35,31 @@ export const OpenCodeSettingsSection: Component = () => {
         </div>
 
         <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.opencode.logLevel.subtitle")}</p>
+          </div>
+          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
+        </div>
+        <div class="settings-card-body">
+          <select
+            class="settings-select"
+            value={serverSettings().preferences?.logLevel ?? "DEBUG"}
+            onChange={(e) => {
+              const newLogLevel = e.currentTarget.value
+              updateLogLevel(newLogLevel)
+            }}
+          >
+            <option value="DEBUG">{`DEBUG`}</option>
+            <option value="INFO">{`INFO`}</option>
+            <option value="WARN">{`WARN`}</option>
+            <option value="ERROR">{`ERROR`}</option>
+          </select>
+        </div>
       </div>
 
       <div class="settings-card">

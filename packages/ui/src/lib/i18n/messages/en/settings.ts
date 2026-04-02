@@ -113,6 +113,9 @@ export const settingsMessages = {
   "settings.section.opencode.subtitle": "Choose the OpenCode binary and environment used for new instances.",
   "settings.opencode.runtime.title": "Runtime",
   "settings.opencode.runtime.subtitle": "Configure which OpenCode binary new instances launch with.",
+  "settings.opencode.logLevel.title": "Log level",
+  "settings.opencode.logLevel.subtitle": "Set the log level for OpenCode instances (debug, info, warn, error).",
+
 
   "settings.appearance.behavior.title": "Interaction",
   "settings.appearance.behavior.subtitle": "Message, diff, and input defaults.",
