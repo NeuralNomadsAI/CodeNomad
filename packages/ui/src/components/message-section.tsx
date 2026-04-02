@@ -315,10 +315,15 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const lastAssistantIndex = createMemo(() => {
+    // Subscribe to messageIds (for length/order changes) and sessionRevision
+    // (for role changes after compaction or hydration), but read individual
+    // message records inside untrack() to avoid O(n) subscriptions that would
+    // fire on every part-level update in any message.
     const ids = messageIds()
-    const resolvedStore = store()
+    sessionRevision()
+    const resolvedStore = untrack(store)
     for (let index = ids.length - 1; index >= 0; index--) {
-      const record = resolvedStore.getMessage(ids[index])
+      const record = untrack(() => resolvedStore.getMessage(ids[index]))
       if (record?.role === "assistant") {
         return index
       }
@@ -734,88 +739,93 @@ export default function MessageSection(props: MessageSectionProps) {
     const loading = Boolean(props.loading)
     const ids = messageIds()
 
-    if (loading) {
-      handleClearTimelineSelection()
-      previousTimelineIds = []
-      setTimelineSegments([])
-      seenTimelineMessageIds.clear()
-      seenTimelineSegmentKeys.clear()
-      timelinePartCountsByMessageId.clear()
-      pendingTimelineMessagePartUpdates.clear()
-      if (pendingTimelinePartUpdateFrame !== null) {
-        cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-        pendingTimelinePartUpdateFrame = null
-      }
-      return
-    }
-
-    if (previousTimelineIds.length === 0 && ids.length > 0) {
-      seedTimeline()
-      previousTimelineIds = ids.slice()
-      return
-    }
-
-    if (ids.length < previousTimelineIds.length) {
-      seedTimeline()
-      previousTimelineIds = ids.slice()
-      return
-    }
-
-    if (ids.length === previousTimelineIds.length) {
-      let changedIndex = -1
-      let changeCount = 0
-      for (let index = 0; index < ids.length; index++) {
-        if (ids[index] !== previousTimelineIds[index]) {
-          changedIndex = index
-          changeCount += 1
-          if (changeCount > 1) break
+    // Wrap all iteration of the store-proxied `ids` array in untrack()
+    // to prevent O(n) per-element reactive subscriptions.  The effect
+    // only needs to re-run when `messageIds` (memo) changes.
+    untrack(() => {
+      if (loading) {
+        handleClearTimelineSelection()
+        previousTimelineIds = []
+        setTimelineSegments([])
+        seenTimelineMessageIds.clear()
+        seenTimelineSegmentKeys.clear()
+        timelinePartCountsByMessageId.clear()
+        pendingTimelineMessagePartUpdates.clear()
+        if (pendingTimelinePartUpdateFrame !== null) {
+          cancelAnimationFrame(pendingTimelinePartUpdateFrame)
+          pendingTimelinePartUpdateFrame = null
         }
+        return
       }
-      if (changeCount === 1 && changedIndex >= 0) {
-        const oldId = previousTimelineIds[changedIndex]
-        const newId = ids[changedIndex]
-        if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
-          seenTimelineMessageIds.delete(oldId)
-          seenTimelineMessageIds.add(newId)
-          setTimelineSegments((prev) => {
-            const next = prev.map((segment) => {
-              if (segment.messageId !== oldId) return segment
-              const updatedId = segment.id.replace(oldId, newId)
-              return { ...segment, messageId: newId, id: updatedId }
-            })
-            seenTimelineSegmentKeys.clear()
-            next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-            return next
-          })
 
-          // Keep part count tracking in sync with id replacement.
-          const existingPartCount = timelinePartCountsByMessageId.get(oldId)
-          if (existingPartCount !== undefined) {
-            timelinePartCountsByMessageId.delete(oldId)
-            timelinePartCountsByMessageId.set(newId, existingPartCount)
+      if (previousTimelineIds.length === 0 && ids.length > 0) {
+        seedTimeline()
+        previousTimelineIds = [...ids]
+        return
+      }
+
+      if (ids.length < previousTimelineIds.length) {
+        seedTimeline()
+        previousTimelineIds = [...ids]
+        return
+      }
+
+      if (ids.length === previousTimelineIds.length) {
+        let changedIndex = -1
+        let changeCount = 0
+        for (let index = 0; index < ids.length; index++) {
+          if (ids[index] !== previousTimelineIds[index]) {
+            changedIndex = index
+            changeCount += 1
+            if (changeCount > 1) break
           }
+        }
+        if (changeCount === 1 && changedIndex >= 0) {
+          const oldId = previousTimelineIds[changedIndex]
+          const newId = ids[changedIndex]
+          if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
+            seenTimelineMessageIds.delete(oldId)
+            seenTimelineMessageIds.add(newId)
+            setTimelineSegments((prev) => {
+              const next = prev.map((segment) => {
+                if (segment.messageId !== oldId) return segment
+                const updatedId = segment.id.replace(oldId, newId)
+                return { ...segment, messageId: newId, id: updatedId }
+              })
+              seenTimelineSegmentKeys.clear()
+              next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
+              return next
+            })
 
-          previousTimelineIds = ids.slice()
-          return
+            // Keep part count tracking in sync with id replacement.
+            const existingPartCount = timelinePartCountsByMessageId.get(oldId)
+            if (existingPartCount !== undefined) {
+              timelinePartCountsByMessageId.delete(oldId)
+              timelinePartCountsByMessageId.set(newId, existingPartCount)
+            }
+
+            previousTimelineIds = [...ids]
+            return
+          }
         }
       }
-    }
 
-    const newIds: string[] = []
-    ids.forEach((id) => {
-      if (!seenTimelineMessageIds.has(id)) {
-        newIds.push(id)
-      }
-    })
-
-    if (newIds.length > 0) {
-      newIds.forEach((id) => {
-        seenTimelineMessageIds.add(id)
-        appendTimelineForMessage(id)
+      const newIds: string[] = []
+      ids.forEach((id) => {
+        if (!seenTimelineMessageIds.has(id)) {
+          newIds.push(id)
+        }
       })
-    }
 
-    previousTimelineIds = ids.slice()
+      if (newIds.length > 0) {
+        newIds.forEach((id) => {
+          seenTimelineMessageIds.add(id)
+          appendTimelineForMessage(id)
+        })
+      }
+
+      previousTimelineIds = [...ids]
+    })
   })
 
   function clearPendingTimelinePartUpdateFrame() {
@@ -886,36 +896,49 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (props.loading) return
     const ids = messageIds()
-    const resolvedStore = store()
+    // Also re-run when sessionRevision bumps (covers part additions within
+    // existing messages) but read individual records inside untrack() to
+    // avoid creating O(n) fine-grained subscriptions.
+    sessionRevision()
 
-    let hasChanges = false
-    for (const messageId of ids) {
-      const record = resolvedStore.getMessage(messageId)
-      const partCount = record?.partIds.length ?? 0
-      const previousCount = timelinePartCountsByMessageId.get(messageId)
+    // Wrap the iteration in untrack() so that accessing individual elements
+    // of the store-proxied `ids` array does not create O(n) per-element
+    // reactive subscriptions.  We only need to re-run when the memo
+    // (messageIds) or sessionRevision changes — not per-element.
+    untrack(() => {
+      const resolvedStore = store()
+      const idsSet = new Set(ids)
+      let hasChanges = false
 
-      if (previousCount === undefined) {
-        timelinePartCountsByMessageId.set(messageId, partCount)
-        continue
+      for (const messageId of ids) {
+        const record = resolvedStore.getMessage(messageId)
+        const partCount = record?.partIds.length ?? 0
+        const previousCount = timelinePartCountsByMessageId.get(messageId)
+
+        if (previousCount === undefined) {
+          timelinePartCountsByMessageId.set(messageId, partCount)
+          continue
+        }
+
+        if (previousCount !== partCount) {
+          timelinePartCountsByMessageId.set(messageId, partCount)
+          pendingTimelineMessagePartUpdates.add(messageId)
+          hasChanges = true
+        }
       }
 
-      if (previousCount !== partCount) {
-        timelinePartCountsByMessageId.set(messageId, partCount)
-        pendingTimelineMessagePartUpdates.add(messageId)
-        hasChanges = true
+      // Drop tracking for ids that are no longer present.
+      // Use the Set for O(1) lookups instead of ids.includes() which is O(n).
+      for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
+        if (!idsSet.has(trackedId)) {
+          timelinePartCountsByMessageId.delete(trackedId)
+        }
       }
-    }
 
-    // Drop tracking for ids that are no longer present.
-    for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
-      if (!ids.includes(trackedId)) {
-        timelinePartCountsByMessageId.delete(trackedId)
+      if (hasChanges) {
+        scheduleTimelinePartUpdateFlush()
       }
-    }
-
-    if (hasChanges) {
-      scheduleTimelinePartUpdateFlush()
-    }
+    })
   })
 
   createEffect(() => {
