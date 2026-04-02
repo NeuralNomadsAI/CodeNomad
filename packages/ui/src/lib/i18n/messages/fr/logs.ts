@@ -2,10 +2,13 @@ export const logMessages = {
   "logsView.title": "Journaux du serveur",
   "logsView.actions.show": "Afficher les journaux du serveur",
   "logsView.actions.hide": "Masquer les journaux du serveur",
+  "logsView.actions.clear": "Effacer les journaux",
+  "logsView.actions.back": "Retour à la conversation",
   "logsView.envVars.title": "Variables d'environnement ({count})",
   "logsView.paused.title": "Les journaux du serveur sont en pause",
   "logsView.paused.description": "Activez le streaming pour suivre l'activité de votre serveur OpenCode.",
   "logsView.empty.waiting": "En attente de la sortie du serveur...",
+  "logsView.scrollToTop": "Aller en haut",
   "logsView.scrollToBottom": "Aller en bas",
 
   "infoView.logs.title": "Journaux du serveur",

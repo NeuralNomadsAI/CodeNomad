@@ -1,29 +1,53 @@
+/**
+ * Server Logs 視圖
+ * Server Logs View
+ *
+ * 顯示實例的伺服器日誌
+ * Displays server logs for an instance
+ */
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
-import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
-import { ChevronDown } from "lucide-solid"
+import {
+  instances,
+  getInstanceLogs,
+  isInstanceLogStreaming,
+  setInstanceLogStreaming,
+  clearLogs,
+} from "../stores/instances"
+import { ChevronDown, ChevronUp, ArrowLeft, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 interface LogsViewProps {
-  instanceId: string
+  /** 實例 ID / Instance ID */
+  instanceId: string;
+  /** 返回對話回調（可選）/ Back to conversation callback (optional) */
+  onBackToConversation?: () => void;
 }
 
+/** 滾動狀態緩存 / Scroll state cache */
 const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean }>()
 
 const LogsView: Component<LogsViewProps> = (props) => {
   const { t } = useI18n()
   let scrollRef: HTMLDivElement | undefined
   const savedState = logsScrollState.get(props.instanceId)
-  const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? false)
+  const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? true)
+  const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
+  const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
 
   const instance = () => instances().get(props.instanceId)
   const logs = createMemo(() => getInstanceLogs(props.instanceId))
   const streamingEnabled = createMemo(() => isInstanceLogStreaming(props.instanceId))
 
+  /** 處理啟用日誌 / Handle enable logs */
   const handleEnableLogs = () => setInstanceLogStreaming(props.instanceId, true)
-  const handleDisableLogs = () => setInstanceLogStreaming(props.instanceId, false)
- 
-  onMount(() => {
 
+  /** 處理停用日誌 / Handle disable logs */
+  const handleDisableLogs = () => setInstanceLogStreaming(props.instanceId, false)
+
+  /** 處理清除日誌 / Handle clear logs */
+  const handleClearLogs = () => clearLogs(props.instanceId)
+
+  onMount(() => {
     if (scrollRef && savedState) {
       scrollRef.scrollTop = savedState.scrollTop
     }
@@ -44,14 +68,33 @@ const LogsView: Component<LogsViewProps> = (props) => {
     }
   })
 
+  /** 更新滾動按鈕顯示狀態 / Update scroll button visibility */
+  const updateScrollButtons = () => {
+    if (!scrollRef) return
+
+    const scrollTop = scrollRef.scrollTop
+    const scrollHeight = scrollRef.scrollHeight
+    const clientHeight = scrollRef.clientHeight
+    const hasItems = logs().length > 0
+
+    const atBottom = scrollHeight - (scrollTop + clientHeight) <= 50
+    const atTop = scrollTop <= 50
+
+    setShowScrollBottomButton(hasItems && !atBottom)
+    setShowScrollTopButton(hasItems && !atTop)
+  }
+
+  /** 處理滾動 / Handle scroll */
   const handleScroll = () => {
     if (!scrollRef) return
 
     const isAtBottom = scrollRef.scrollHeight - scrollRef.scrollTop <= scrollRef.clientHeight + 50
 
     setAutoScroll(isAtBottom)
+    updateScrollButtons()
   }
 
+  /** 滾動至底部 / Scroll to bottom */
   const scrollToBottom = () => {
     if (scrollRef) {
       scrollRef.scrollTop = scrollRef.scrollHeight
@@ -59,6 +102,15 @@ const LogsView: Component<LogsViewProps> = (props) => {
     }
   }
 
+  /** 滾動至頂部 / Scroll to top */
+  const scrollToTop = () => {
+    if (scrollRef) {
+      scrollRef.scrollTop = 0
+      setAutoScroll(false)
+    }
+  }
+
+  /** 格式化時間 / Format time */
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp)
     return date.toLocaleTimeString("en-US", {
@@ -69,6 +121,7 @@ const LogsView: Component<LogsViewProps> = (props) => {
     })
   }
 
+  /** 獲取級別顏色 / Get level color */
   const getLevelColor = (level: string) => {
     switch (level) {
       case "error":
@@ -82,11 +135,39 @@ const LogsView: Component<LogsViewProps> = (props) => {
     }
   }
 
+  /** 是否顯示滾動按鈕 / Whether to show scroll buttons */
+  const showScrollButtons = createMemo(() => {
+    return streamingEnabled() && (showScrollTopButton() || showScrollBottomButton())
+  })
+
   return (
     <div class="log-container">
       <div class="log-header">
-        <h3 class="text-sm font-medium" style="color: var(--text-secondary)">{t("logsView.title")}</h3>
         <div class="flex items-center gap-2">
+          {/* 返回對話按鈕 / Back to conversation button */}
+          <Show when={props.onBackToConversation}>
+            <button
+              type="button"
+              class="button-tertiary"
+              onClick={props.onBackToConversation}
+              title={t("logsView.actions.back")}
+            >
+              <ArrowLeft class="w-4 h-4" />
+            </button>
+          </Show>
+          <h3 class="text-sm font-medium" style="color: var(--text-secondary)">{t("logsView.title")}</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <Show when={logs().length > 0}>
+            <button
+              type="button"
+              class="button-tertiary"
+              onClick={handleClearLogs}
+              title={t("logsView.actions.clear")}
+            >
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </Show>
           <Show
             when={streamingEnabled()}
             fallback={
@@ -155,18 +236,39 @@ const LogsView: Component<LogsViewProps> = (props) => {
           </Show>
         </Show>
       </div>
- 
-      <Show when={!autoScroll() && streamingEnabled()}>
-        <button
-          onClick={scrollToBottom}
-          class="scroll-to-bottom"
-        >
-          <ChevronDown class="w-4 h-4" />
-          {t("logsView.scrollToBottom")}
-        </button>
+
+      {/* 浮動滾動按鈕 / Floating scroll buttons */}
+      <Show when={showScrollButtons()}>
+        <div class="message-scroll-button-wrapper">
+          <Show when={showScrollTopButton()}>
+            <button
+              type="button"
+              class="message-scroll-button"
+              onClick={scrollToTop}
+              aria-label={t("logsView.scrollToTop")}
+              title={t("logsView.scrollToTop")}
+            >
+              <span class="message-scroll-icon" aria-hidden="true">
+                ↑
+              </span>
+            </button>
+          </Show>
+          <Show when={showScrollBottomButton()}>
+            <button
+              type="button"
+              class="message-scroll-button"
+              onClick={scrollToBottom}
+              aria-label={t("logsView.scrollToBottom")}
+              title={t("logsView.scrollToBottom")}
+            >
+              <span class="message-scroll-icon" aria-hidden="true">
+                ↓
+              </span>
+            </button>
+          </Show>
+        </div>
       </Show>
     </div>
-
   )
 }
 
