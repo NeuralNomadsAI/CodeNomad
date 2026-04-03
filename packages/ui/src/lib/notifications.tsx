@@ -68,7 +68,7 @@ type ToastHistoryCallback = (items: IToastHistoryItem[]) => void;
 // ==================== Toast History Store ====================
 
 /** 最大歷史記錄數量 / Maximum history records */
-const MAX_HISTORY_ITEMS = 100;
+const MAX_HISTORY_ITEMS = 50;
 
 /** 歷史記錄（模組級別私有狀態）/ History records (module-level private state) */
 let _historyItems: IToastHistoryItem[] = [];
