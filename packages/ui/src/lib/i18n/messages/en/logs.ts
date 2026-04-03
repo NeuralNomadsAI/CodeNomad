@@ -14,9 +14,11 @@ export const logMessages = {
   "infoView.logs.title": "Server Logs",
   "infoView.logs.actions.show": "Show server logs",
   "infoView.logs.actions.hide": "Hide server logs",
+  "infoView.logs.actions.clear": "Clear logs",
   "infoView.logs.paused.title": "Server logs are paused",
   "infoView.logs.paused.description": "Enable streaming to watch your OpenCode server activity.",
   "infoView.logs.empty.waiting": "Waiting for server output...",
+  "infoView.logs.scrollToTop": "Scroll to top",
   "infoView.logs.scrollToBottom": "Scroll to bottom",
 
   "infoView.dispose.actions.dispose": "Dispose instance",
