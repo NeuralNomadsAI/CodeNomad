@@ -1,4 +1,5 @@
 import toast from "solid-toast"
+import { createSignal } from "solid-js"
 import { isTauriHost } from "./runtime-env"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
@@ -75,6 +76,30 @@ let _historyItems: IToastHistoryItem[] = [];
 /** 訂閱者列表 / Subscribers list */
 const _subscribers = new Set<ToastHistoryCallback>();
 
+/** 未讀數量響應式信號 / Reactive signal for unread count */
+const [_unreadCount, _setUnreadCount] = createSignal(0);
+
+/**
+ * 獲取未讀數量的響應式信號
+ * Get reactive signal for unread count
+ *
+ * 用於組件中直接訪問，以確保響應性
+ * Used in components for direct access to ensure reactivity
+ *
+ * @returns 未讀數量信號 / Unread count signal
+ */
+export function getUnreadToastCountSignal() {
+  return _unreadCount;
+}
+
+/**
+ * 更新未讀計數信號
+ * Update unread count signal
+ */
+function _updateUnreadCount(): void {
+  _setUnreadCount(_historyItems.filter((item) => !item.read).length);
+}
+
 /**
  * 通知所有訂閱者
  * Notify all subscribers
@@ -101,11 +126,14 @@ function _generateId(): string {
 /**
  * 修剪歷史記錄至最大數量
  * Trim history to max items
+ *
+ * 注意：陣列是 newest-first 排列（unshift），所以 slice(0, N) 保留最新的 N 筆
+ * Note: Array is newest-first (unshift), so slice(0, N) keeps newest N items
  */
 function _trimHistory(): void {
   if (_historyItems.length > MAX_HISTORY_ITEMS) {
-    // 保留最新的記錄
-    _historyItems = _historyItems.slice(-MAX_HISTORY_ITEMS);
+    // 保留最新的記錄（取前 MAX_HISTORY_ITEMS 筆，即最新的）
+    _historyItems = _historyItems.slice(0, MAX_HISTORY_ITEMS);
   }
 }
 
@@ -134,6 +162,9 @@ export function addToToastHistory(
   // 修剪至最大數量
   _trimHistory();
 
+  // 更新未讀計數
+  _updateUnreadCount();
+
   // 通知訂閱者
   _notifySubscribers();
 
@@ -146,6 +177,7 @@ export function addToToastHistory(
  */
 export function clearToastHistory(): void {
   _historyItems = [];
+  _updateUnreadCount();
   _notifySubscribers();
 }
 
@@ -159,6 +191,7 @@ export function markToastHistoryAsRead(id: string): void {
   const item = _historyItems.find((i) => i.id === id);
   if (item && !item.read) {
     item.read = true;
+    _updateUnreadCount();
     _notifySubscribers();
   }
 }
@@ -176,6 +209,7 @@ export function markAllToastHistoryAsRead(): void {
     }
   });
   if (changed) {
+    _updateUnreadCount();
     _notifySubscribers();
   }
 }
@@ -190,6 +224,7 @@ export function deleteToastHistoryItem(id: string): void {
   const index = _historyItems.findIndex((i) => i.id === id);
   if (index !== -1) {
     _historyItems.splice(index, 1);
+    _updateUnreadCount();
     _notifySubscribers();
   }
 }
@@ -332,7 +367,7 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
   const duration = payload.duration ?? 10000
 
   // 添加到歷史記錄（不阻塞 UI）
-  const historyId = addToToastHistory({
+  addToToastHistory({
     title: payload.title,
     message: payload.message,
     variant: payload.variant,
