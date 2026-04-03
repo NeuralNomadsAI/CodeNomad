@@ -1,11 +1,12 @@
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
 import { getInstanceLogs, instances, isInstanceLogStreaming, setInstanceLogStreaming, clearLogs } from "../stores/instances"
-import { Trash2 } from "lucide-solid"
+import { ArrowLeft, Trash2 } from "lucide-solid"
 import InstanceInfo from "./instance-info"
 import { useI18n } from "../lib/i18n"
 
 interface InfoViewProps {
   instanceId: string
+  onBackToConversation?: () => void
 }
 
 const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean }>()
@@ -140,6 +141,29 @@ const InfoView: Component<InfoViewProps> = (props) => {
           <div class="log-header">
             <h2 class="panel-title">{t("infoView.logs.title")}</h2>
             <div class="flex items-center gap-2">
+              <Show when={props.onBackToConversation}>
+                {(onBack) => (
+                  <button
+                    type="button"
+                    class="button-tertiary"
+                    onClick={onBack}
+                    title={t("infoView.logs.actions.back")}
+                  >
+                    <ArrowLeft class="w-4 h-4" />
+                  </button>
+                )}
+              </Show>
+              <Show when={logs().length > 0}>
+                <button
+                    type="button"
+                    class="button-tertiary"
+                    onClick={onBack}
+                    title={t("infoView.logs.actions.back")}
+                  >
+                    <ArrowLeft class="w-4 h-4" />
+                  </button>
+                )}
+              </Show>
               <Show when={logs().length > 0}>
                 <button
                   type="button"

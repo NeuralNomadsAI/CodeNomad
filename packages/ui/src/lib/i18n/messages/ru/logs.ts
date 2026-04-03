@@ -15,6 +15,7 @@ export const logMessages = {
   "infoView.logs.actions.show": "Показать логи сервера",
   "infoView.logs.actions.hide": "Скрыть логи сервера",
   "infoView.logs.actions.clear": "Очистить логи",
+  "infoView.logs.actions.back": "Вернуться к разговору",
   "infoView.logs.paused.title": "Логи сервера приостановлены",
   "infoView.logs.paused.description": "Включите стриминг, чтобы наблюдать за активностью сервера OpenCode.",
   "infoView.logs.empty.waiting": "Ожидание вывода сервера…",
