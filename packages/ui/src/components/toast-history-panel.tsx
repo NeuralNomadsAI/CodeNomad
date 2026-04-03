@@ -21,11 +21,9 @@ import {
   type ToastVariant,
   clearToastHistory,
   deleteToastHistoryItem,
-  getToastHistory,
   markAllToastHistoryAsRead,
   markToastHistoryAsRead,
   subscribeToastHistory,
-  getToastVariantClasses,
 } from "../lib/notifications"
 import { isTauriHost } from "../lib/runtime-env"
 
