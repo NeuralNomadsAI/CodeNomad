@@ -963,6 +963,7 @@ impl CliEntry {
             "--auth-cookie-name".to_string(),
             auth_cookie_name.to_string(),
             "--generate-token".to_string(),
+            "--unrestricted-root".to_string(),
         ];
 
         if dev {
