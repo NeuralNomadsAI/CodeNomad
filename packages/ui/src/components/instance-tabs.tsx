@@ -71,6 +71,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                       </div>
                     )}
                 </For>
+                <button
+                  class="new-tab-button"
+                  onClick={props.onNew}
+                  title={t("instanceTabs.new.title")}
+                  aria-label={t("instanceTabs.new.ariaLabel")}
+                >
+                  <Plus class="w-4 h-4" />
+                </button>
               </div>
               <div class="tab-strip-spacer" />
               <Show when={props.tabs.length > 1}>

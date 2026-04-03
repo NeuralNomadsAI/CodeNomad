@@ -1,6 +1,6 @@
 import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, createMemo } from "solid-js"
 import { getInstanceLogs, instances, isInstanceLogStreaming, setInstanceLogStreaming, clearLogs } from "../stores/instances"
-import { ChevronDown, Trash2 } from "lucide-solid"
+import { Trash2 } from "lucide-solid"
 import InstanceInfo from "./instance-info"
 import { useI18n } from "../lib/i18n"
 
@@ -24,7 +24,10 @@ const InfoView: Component<InfoViewProps> = (props) => {
 
   const handleEnableLogs = () => setInstanceLogStreaming(props.instanceId, true)
   const handleDisableLogs = () => setInstanceLogStreaming(props.instanceId, false)
-  const handleClearLogs = () => clearLogs(props.instanceId)
+  const handleClearLogs = () => {
+    clearLogs(props.instanceId)
+    updateScrollButtons()
+  }
  
   onMount(() => {
 
@@ -50,6 +53,12 @@ const InfoView: Component<InfoViewProps> = (props) => {
     }
   })
 
+  // 監聽日誌變化並更新滾動按鈕 / Listen for log changes and update scroll buttons
+  createEffect(() => {
+    logs()  // 追蹤 logs 變化
+    updateScrollButtons()
+  })
+
   /** 更新滾動按鈕顯示狀態 / Update scroll button visibility */
   const updateScrollButtons = () => {
     if (!scrollRef) return
@@ -71,6 +80,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
     if (scrollRef) {
       scrollRef.scrollTop = 0
       setAutoScroll(false)
+      updateScrollButtons()
     }
   }
 
@@ -87,6 +97,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
     if (scrollRef) {
       scrollRef.scrollTop = scrollRef.scrollHeight
       setAutoScroll(true)
+      updateScrollButtons()
     }
   }
 
@@ -188,16 +199,6 @@ const InfoView: Component<InfoViewProps> = (props) => {
               </Show>
             </Show>
           </div>
- 
-          <Show when={!autoScroll() && streamingEnabled() && logs().length > 0}>
-            <button
-              onClick={scrollToBottom}
-              class="scroll-to-bottom"
-            >
-              <ChevronDown class="w-4 h-4" />
-              {t("infoView.logs.scrollToBottom")}
-            </button>
-          </Show>
 
           {/* 浮動滾動按鈕 / Floating scroll buttons */}
           <Show when={showScrollButtons()}>
