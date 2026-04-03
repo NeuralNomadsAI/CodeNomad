@@ -113,6 +113,7 @@ export interface InstanceMessageState {
   sessions: Record<string, SessionRecord>
   sessionOrder: string[]
   messages: Record<string, MessageRecord>
+  lastAssistantMessageIds: Record<string, string | undefined>
   messageInfoVersion: Record<string, number>
   pendingParts: Record<string, PendingPartEntry[]>
   sessionRevisions: Record<string, number>

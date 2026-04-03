@@ -129,6 +129,8 @@ export default function MessageSection(props: MessageSectionProps) {
     return map
   })
 
+  const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
+
   const lastCompactionIndex = createMemo(() => {
     // Depend on a single session revision signal (not every message/part read)
     // to keep reactive overhead small.
@@ -315,20 +317,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const lastAssistantIndex = createMemo(() => {
-    // Subscribe to messageIds (for length/order changes) and sessionRevision
-    // (for role changes after compaction or hydration), but read individual
-    // message records inside untrack() to avoid O(n) subscriptions that would
-    // fire on every part-level update in any message.
-    const ids = messageIds()
-    sessionRevision()
-    const resolvedStore = untrack(store)
-    for (let index = ids.length - 1; index >= 0; index--) {
-      const record = untrack(() => resolvedStore.getMessage(ids[index]))
-      if (record?.role === "assistant") {
-        return index
-      }
-    }
-    return -1
+    const messageId = lastAssistantMessageId()
+    if (!messageId) return -1
+    return messageIndexById().get(messageId) ?? -1
   })
  
   const [timelineSegments, setTimelineSegments] = createSignal<TimelineSegment[]>([])
