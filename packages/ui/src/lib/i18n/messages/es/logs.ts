@@ -15,6 +15,7 @@ export const logMessages = {
   "infoView.logs.actions.show": "Mostrar registros del servidor",
   "infoView.logs.actions.hide": "Ocultar registros del servidor",
   "infoView.logs.actions.clear": "Borrar registros",
+  "infoView.logs.actions.back": "Volver a la conversación",
   "infoView.logs.paused.title": "Los registros del servidor están en pausa",
   "infoView.logs.paused.description": "Activa el streaming para ver la actividad de tu servidor de OpenCode.",
   "infoView.logs.empty.waiting": "Esperando la salida del servidor...",
