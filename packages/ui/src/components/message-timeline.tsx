@@ -35,9 +35,6 @@ interface MessageTimelineProps {
   onClearSelection?: () => void
   selectedIds?: Accessor<Set<string>>
   expandedMessageIds?: Accessor<Set<string>>
-  // Optional: restrict histogram/xray overlay to only show for these message ids.
-  // Used to hide ribs for messages before the last compaction.
-  deletableMessageIds?: Accessor<Set<string>>
   activeSegmentId?: string | null
   instanceId: string
   sessionId: string
@@ -321,12 +318,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const showTools = () => props.showToolSegments ?? true
   const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
 
-  const isHistogramEligible = (segment: TimelineSegment): boolean => {
-    const allowed = props.deletableMessageIds?.()
-    if (!allowed) return true
-    return allowed.has(segment.messageId)
-  }
-
   const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
     if (element) {
       buttonRefs.set(segmentId, element)
@@ -404,12 +395,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   // --- Selection & histogram rib state ---
   const isSelectionActive = createMemo(() => (props.selectedIds?.().size ?? 0) > 0)
 
-  // Segments eligible for xray ribs. We intentionally exclude messages before
-  // the last compaction (when provided by the parent) to avoid misleading token
-  // weights for content that's no longer in context.
+  // Segments eligible for xray ribs.
   const xraySegments = createMemo(() => {
     if (!isSelectionActive()) return [] as TimelineSegment[]
-    return props.segments.filter((segment) => isHistogramEligible(segment))
+    return props.segments
   })
 
   // Stable layout offsets per badge (relative to scroll content), recomputed only
