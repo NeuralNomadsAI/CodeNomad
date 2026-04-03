@@ -194,7 +194,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Enregistré",
   "settings.speech.save.unsaved": "Modifications non enregistrées",
   "settings.speech.save.error": "Échec de l'enregistrement",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

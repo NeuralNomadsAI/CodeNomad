@@ -195,7 +195,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Saved",
   "settings.speech.save.unsaved": "Unsaved changes",
   "settings.speech.save.error": "Save failed",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

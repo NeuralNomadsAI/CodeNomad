@@ -194,7 +194,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Guardado",
   "settings.speech.save.unsaved": "Cambios sin guardar",
   "settings.speech.save.error": "Error al guardar",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

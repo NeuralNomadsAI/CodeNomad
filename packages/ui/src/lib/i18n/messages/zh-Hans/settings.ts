@@ -194,7 +194,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "已保存",
   "settings.speech.save.unsaved": "有未保存的更改",
   "settings.speech.save.error": "保存失败",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

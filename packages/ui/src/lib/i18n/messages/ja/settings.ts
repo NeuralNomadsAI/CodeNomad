@@ -194,7 +194,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "保存済み",
   "settings.speech.save.unsaved": "未保存の変更",
   "settings.speech.save.error": "保存に失敗しました",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

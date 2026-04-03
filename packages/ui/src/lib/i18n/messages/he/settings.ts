@@ -193,7 +193,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "נשמר",
   "settings.speech.save.unsaved": "יש שינויים שלא נשמרו",
   "settings.speech.save.error": "השמירה נכשלה",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",

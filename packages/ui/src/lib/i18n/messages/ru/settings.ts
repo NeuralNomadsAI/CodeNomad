@@ -194,7 +194,6 @@ export const settingsMessages = {
   "settings.speech.save.saved": "Сохранено",
   "settings.speech.save.unsaved": "Есть несохранённые изменения",
   "settings.speech.save.error": "Не удалось сохранить",
-<<<<<<< HEAD
   "settings.nav.sidecars": "SideCars",
   "settings.section.sidecars.eyebrow": "Server services",
   "settings.section.sidecars.title": "SideCars",
