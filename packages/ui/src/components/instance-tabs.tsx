@@ -16,7 +16,7 @@ import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { getUnreadToastCount } from "../lib/notifications"
+import { getUnreadToastCountSignal } from "../lib/notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
@@ -101,8 +101,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     return notificationsEnabled() ? Bell : BellOff
   })
 
-  /** 未讀通知數量 / Unread notification count */
-  const unreadCount = createMemo(() => getUnreadToastCount())
+  /** 未讀通知數量（響應式信號）/ Unread notification count (reactive signal) */
+  const unreadCount = getUnreadToastCountSignal()
 
   const notificationTitle = createMemo(() => {
     if (!notificationsSupported()) return t("settings.notifications.status.unsupported")
