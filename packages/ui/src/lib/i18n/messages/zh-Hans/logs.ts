@@ -14,9 +14,11 @@ export const logMessages = {
   "infoView.logs.title": "服务器日志",
   "infoView.logs.actions.show": "显示服务器日志",
   "infoView.logs.actions.hide": "隐藏服务器日志",
+  "infoView.logs.actions.clear": "清除日志",
   "infoView.logs.paused.title": "服务器日志已暂停",
   "infoView.logs.paused.description": "启用流式输出以查看 OpenCode 服务器活动。",
   "infoView.logs.empty.waiting": "正在等待服务器输出...",
+  "infoView.logs.scrollToTop": "滚动到顶部",
   "infoView.logs.scrollToBottom": "滚动到底部",
 
   "infoView.dispose.actions.dispose": "释放实例",
