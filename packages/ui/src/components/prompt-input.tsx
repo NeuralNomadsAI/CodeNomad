@@ -540,6 +540,10 @@ export default function PromptInput(props: PromptInputProps) {
               mode={pickerMode()}
               onClose={handlePickerClose}
               onSelect={handlePickerSelect}
+              onSubmitWithoutSelection={() => {
+                handlePickerClose()
+                void handleSend()
+              }}
               agents={instanceAgents()}
               commands={getCommands(props.instanceId)}
               instanceClient={instance()!.client}
