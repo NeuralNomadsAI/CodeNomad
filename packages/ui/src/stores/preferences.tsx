@@ -98,6 +98,7 @@ interface ServerConfigBucket {
   listeningMode?: ListeningMode
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
+  secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
 }
@@ -300,7 +301,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -309,8 +310,19 @@ function normalizeServerConfig(
       : "DEBUG"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
+  const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, speech }
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+}
+
+function normalizeSecureEnvVars(input?: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  return input.filter((item): item is string => typeof item === "string" && item.length > 0)
+}
+
+function normalizeSecureEnvVars(input?: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  return input.filter((item): item is string => typeof item === "string" && item.length > 0)
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -468,6 +480,42 @@ function removeEnvironmentVariable(key: string): void {
   const current = serverSettings().environmentVariables
   const { [key]: removed, ...rest } = current
   updateEnvironmentVariables(rest)
+  // Also remove from secure list if present
+  toggleSecureEnvVar(key)
+}
+
+function isSecureEnvVar(key: string): boolean {
+  const secureList = serverSettings().secureEnvVars
+  return secureList.some((name) => name.toUpperCase() === key.toUpperCase())
+}
+
+function toggleSecureEnvVar(key: string): void {
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+  const next = exists
+    ? secureList.filter((name) => name.toUpperCase() !== upperKey)
+    : [...secureList, key]
+  void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+    log.error("Failed to update secure env vars", error),
+  )
+}
+
+function isSecureEnvVar(key: string): boolean {
+  const secureList = serverSettings().secureEnvVars
+  return secureList.some((name) => name.toUpperCase() === key.toUpperCase())
+}
+
+function toggleSecureEnvVar(key: string): void {
+  const secureList = serverSettings().secureEnvVars
+  const upperKey = key.toUpperCase()
+  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+  const next = exists
+    ? secureList.filter((name) => name.toUpperCase() !== upperKey)
+    : [...secureList, key]
+  void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+    log.error("Failed to update secure env vars", error),
+  )
 }
 
 function updateLastUsedBinary(path: string): void {
@@ -710,6 +758,8 @@ interface ConfigContextValue {
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
+  isSecureEnvVar: typeof isSecureEnvVar
+  toggleSecureEnvVar: typeof toggleSecureEnvVar
     updateLastUsedBinary: typeof updateLastUsedBinary
     updateLogLevel: typeof updateLogLevel
     updateSpeechSettings: typeof updateSpeechSettings
@@ -765,6 +815,8 @@ const configContextValue: ConfigContextValue = {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
@@ -853,6 +905,8 @@ export {
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
+  isSecureEnvVar,
+  toggleSecureEnvVar,
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
