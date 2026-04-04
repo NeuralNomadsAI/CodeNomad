@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
@@ -145,7 +145,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t }) {
+  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
     const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
 
@@ -360,6 +360,14 @@ export const taskRenderer: ToolRenderer = {
       })
     })
 
+    createEffect(() => {
+      const childCount = childToolKeys().length
+      const legacyCount = legacyItems().length
+      if (childCount === 0 && legacyCount === 0) return
+      scrollHelpers?.restoreAfterRender()
+      onContentRendered?.()
+    })
+
     return (
       <div class="tool-call-task-sections">
         <Show when={promptContent()}>
@@ -443,12 +451,12 @@ export const taskRenderer: ToolRenderer = {
                   }
                 >
                     <div class="tool-call-task-summary">
-                    <For each={childToolKeys()}>
+                    <Index each={childToolKeys()}>
                       {(key) => (
                         <Show when={renderToolCall}>
                           {(render) => (
                             <TaskToolCallRow
-                              toolKey={key}
+                              toolKey={key()}
                               store={store}
                               sessionId={childSessionId()}
                               renderToolCall={render()}
@@ -456,7 +464,7 @@ export const taskRenderer: ToolRenderer = {
                           )}
                         </Show>
                       )}
-                    </For>
+                    </Index>
                   </div>
                   {scrollHelpers?.renderSentinel?.()}
                 </div>
