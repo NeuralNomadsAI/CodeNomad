@@ -137,6 +137,10 @@
   flex-direction: column;
   gap: 2px;
   margin-bottom: 2px;
+  /* Layout/style containment per message block — isolates reflows.
+     Avoid `paint` (clips overflow like delete-hover overlay) and
+     `size` (collapses height when children size the block). */
+  contain: layout style;
 }
 
 .message-step-start {

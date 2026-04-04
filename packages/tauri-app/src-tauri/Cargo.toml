@@ -26,6 +26,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 url = "2"
 tauri-plugin-notification = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }

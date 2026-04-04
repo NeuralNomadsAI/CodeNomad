@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js"
+import type { AssistantStreamChunkEvent } from "./event-transport-contract"
 import {
   MessageUpdateEvent,
   MessageRemovedEvent,
@@ -67,6 +68,7 @@ type SSEEvent =
   | MessagePartUpdatedEvent
   | MessagePartRemovedEvent
   | MessagePartDeltaEvent
+  | AssistantStreamChunkEvent
   | EventSessionUpdated
   | EventSessionCompacted
   | EventSessionDiff
@@ -119,8 +121,6 @@ class SSEManager {
       return
     }
 
-    log.info("Received event", { type: event.type, event })
-
     switch (event.type) {
       case "message.updated":
         this.onMessageUpdate?.(instanceId, event as MessageUpdateEvent)
@@ -130,6 +130,9 @@ class SSEManager {
         break
       case "message.part.delta":
         this.onMessagePartDelta?.(instanceId, event as MessagePartDeltaEvent)
+        break
+      case "assistant.stream.chunk":
+        this.onAssistantStreamChunk?.(instanceId, event as AssistantStreamChunkEvent)
         break
       case "message.removed":
         this.onMessageRemoved?.(instanceId, event as MessageRemovedEvent)
@@ -201,6 +204,7 @@ class SSEManager {
   onMessageRemoved?: (instanceId: string, event: MessageRemovedEvent) => void
   onMessagePartUpdated?: (instanceId: string, event: MessagePartUpdatedEvent) => void
   onMessagePartDelta?: (instanceId: string, event: MessagePartDeltaEvent) => void
+  onAssistantStreamChunk?: (instanceId: string, event: AssistantStreamChunkEvent) => void
   onMessagePartRemoved?: (instanceId: string, event: MessagePartRemovedEvent) => void
   onSessionUpdate?: (instanceId: string, event: EventSessionUpdated) => void
   onSessionCompacted?: (instanceId: string, event: EventSessionCompacted) => void

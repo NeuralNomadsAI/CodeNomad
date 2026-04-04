@@ -145,6 +145,31 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
 
+  // PERF: Coalescing rAF wrapper for scrollToBottom.
+  // Multiple reactive effects (followToken, notifyContentRendered) can trigger
+  // scrollToBottom synchronously within the same microtask. Each call forces a
+  // synchronous layout reflow (setting scrollTop reads back computed layout).
+  // In WebView2 this reflow is extremely expensive (~4.9s).
+  // By deferring to a single requestAnimationFrame, we batch all scroll requests
+  // and pay the reflow cost only once, after the DOM has settled.
+  let pendingAutoScrollRaf: number | undefined
+  function scheduleAutoScroll() {
+    if (pendingAutoScrollRaf !== undefined) return
+    pendingAutoScrollRaf = requestAnimationFrame(() => {
+      pendingAutoScrollRaf = undefined
+      if (autoScroll()) {
+        scrollToBottom(true)
+      }
+    })
+  }
+
+  onCleanup(() => {
+    if (pendingAutoScrollRaf !== undefined) {
+      cancelAnimationFrame(pendingAutoScrollRaf)
+      pendingAutoScrollRaf = undefined
+    }
+  })
+
   const state: VirtualFollowListState = {
     autoScroll,
     showScrollTopButton,
@@ -282,7 +307,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     },
     notifyContentRendered: () => {
       if (autoScroll()) {
-        scrollToBottom(true)
+        scheduleAutoScroll()
       }
     },
     setAutoScroll: (enabled) => setAutoScroll(Boolean(enabled)),
@@ -305,7 +330,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // Handle followToken change
   createEffect(on(() => props.followToken?.(), () => {
     if (autoScroll()) {
-      scrollToBottom(true)
+      scheduleAutoScroll()
     }
   }, { defer: true }))
 

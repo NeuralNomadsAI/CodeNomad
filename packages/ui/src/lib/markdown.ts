@@ -22,6 +22,9 @@ const queuedLanguages = new Set<string>()
 const languageLoadQueue: Array<() => Promise<void>> = []
 let isQueueRunning = false
 
+// Cache for ensureLanguages to avoid redundant marked.lexer() calls
+let lastEnsuredContent = ""
+
 // Pub/sub mechanism for language loading notifications
 const languageListeners: Array<() => void> = []
 
@@ -165,6 +168,24 @@ async function ensureLanguages(content: string) {
     return
   }
 
+  if (content === lastEnsuredContent) {
+    return
+  }
+
+  if (
+    lastEnsuredContent.length > 0 &&
+    content.length > lastEnsuredContent.length &&
+    content.startsWith(lastEnsuredContent)
+  ) {
+    const newPortion = content.slice(lastEnsuredContent.length)
+    if (!newPortion.includes("```")) {
+      lastEnsuredContent = content
+      return
+    }
+  }
+
+  lastEnsuredContent = content
+
   // Extract code-fence language tokens via `marked` so we correctly handle code blocks
   // that contain backticks (e.g. JS template literals). Regex-based fence scans tend
   // to miss these and prevent languages from loading.
@@ -227,10 +248,11 @@ async function runLanguageLoadQueue() {
   isQueueRunning = true
 
   while (languageLoadQueue.length > 0) {
-    const task = languageLoadQueue.shift()
-    if (task) {
-      await task()
-    }
+    // Drain the current queue and run all pending loads concurrently.
+    // New languages queued while this batch runs will be picked up by
+    // the outer while-loop on the next iteration.
+    const batch = languageLoadQueue.splice(0)
+    await Promise.allSettled(batch.map((task) => task()))
   }
 
   isQueueRunning = false

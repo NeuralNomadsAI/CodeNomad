@@ -11,6 +11,7 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { clearAssistantStreamSession } from "./assistant-stream"
 
 const log = getLogger("actions")
 
@@ -168,21 +169,7 @@ async function sendMessage(
 
   clearConversationPlaybackForSession(instanceId, sessionId)
 
-  store.upsertMessage({
-    id: messageId,
-    sessionId,
-    role: "user",
-    status: "sending",
-    parts: optimisticParts,
-    createdAt,
-    updatedAt: createdAt,
-    isEphemeral: true,
-  })
-
-  withSession(instanceId, sessionId, () => {
-    /* trigger reactivity for legacy session data */
-  })
-
+  // Build request body BEFORE any store mutations to avoid blocking the thread.
   const requestBody = {
     parts: requestParts,
     ...(session.agent && { agent: session.agent }),
@@ -201,14 +188,36 @@ async function sendMessage(
       })()),
   }
 
-  log.info("sendMessage", {
-    instanceId,
-    sessionId,
-    requestBody,
-  })
-
   try {
-    log.info("session.promptAsync", { instanceId, sessionId, requestBody })
+    // PERF: Yield to the event loop so the keydown handler returns immediately.
+    // The upsertMessage batch flush triggers a synchronous reactive cascade
+    // (SolidJS effects + DOM updates) that takes ~4.7s in WebView2.  Moving it
+    // to a timer task prevents the browser from reporting a multi-second
+    // "keydown handler" violation and frees the input thread sooner.
+    // The HTTP fetch starts AFTER upsertMessage, so SSE events cannot race
+    // ahead of the optimistic insert.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    // Insert optimistic message BEFORE the fetch so SSE events can find
+    // and replace the synthetic record when the server responds.
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "sending",
+      parts: optimisticParts,
+      createdAt,
+      updatedAt: createdAt,
+      isEphemeral: true,
+    })
+
+    withSession(instanceId, sessionId, () => {
+      /* trigger reactivity for legacy session data */
+    })
+
+    // PERF: Fire the HTTP fetch AFTER the optimistic insert.
+    // The requestBody was already prepared above the store mutation
+    // to minimize synchronous work before the insert.
     await requestData(
       client.session.promptAsync({
         sessionID: sessionId,
@@ -216,6 +225,24 @@ async function sendMessage(
       }),
       "session.promptAsync",
     )
+
+    // Transition the optimistic message from "sending" to "sent" so it stays
+    // visible until the real SSE events arrive and replace it.
+    const pendingId = store.getPendingSyntheticMessageId(sessionId, "user")
+    if (pendingId) {
+      const record = store.getMessage(pendingId)
+      if (record?.isEphemeral && record.status === "sending") {
+        store.upsertMessage({
+          id: pendingId,
+          sessionId,
+          role: "user",
+          status: "sent",
+          createdAt: record.createdAt,
+          updatedAt: Date.now(),
+          isEphemeral: true,
+        })
+      }
+    }
   } catch (error) {
     log.error("Failed to send prompt", error)
     throw error
@@ -319,6 +346,17 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
       "session.abort",
     )
     log.info("abortSession complete", { instanceId, sessionId })
+
+    // Optimistically mark the session idle so the UI reacts immediately
+    // instead of waiting for the SSE session.idle event (which can be
+    // delayed or blocked by the compacting guard).
+    withSession(instanceId, sessionId, (session) => {
+      session.status = "idle"
+    })
+
+    // Also clear any ephemeral stream preview so it doesn't linger until
+    // the SSE session.idle event arrives.
+    clearAssistantStreamSession(instanceId, sessionId)
   } catch (error) {
     log.error("Failed to abort session", error)
     throw error

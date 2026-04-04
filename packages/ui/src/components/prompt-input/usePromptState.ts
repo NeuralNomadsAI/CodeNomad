@@ -40,7 +40,6 @@ type PromptState = {
 }
 
 const HISTORY_LIMIT = 100
-
 export function usePromptState(options: PromptStateOptions): PromptState {
   const [prompt, setPromptInternal] = createSignal("")
   const [history, setHistory] = createSignal<string[]>([])

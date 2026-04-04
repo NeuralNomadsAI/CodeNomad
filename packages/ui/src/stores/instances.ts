@@ -32,6 +32,7 @@ import { setSessionPendingPermission, setSessionPendingQuestion } from "./sessio
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import { clearAssistantStreamInstance } from "./assistant-stream"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -1048,6 +1049,8 @@ sseManager.onConnectionLost = (instanceId, reason) => {
     return
   }
 
+  clearAssistantStreamInstance(instanceId)
+
   setDisconnectedInstance({
     id: instanceId,
     folder: instance.folder,
@@ -1083,11 +1086,13 @@ sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
   }
 
   if (matchingInstanceIds.length === 0) {
+    clearAssistantStreamInstance(sourceInstanceId)
     void rehydrateInstance(sourceInstanceId, { reason: "disposed" })
     return
   }
 
   for (const instanceId of matchingInstanceIds) {
+    clearAssistantStreamInstance(instanceId)
     void rehydrateInstance(instanceId, { reason: "disposed" })
   }
 }

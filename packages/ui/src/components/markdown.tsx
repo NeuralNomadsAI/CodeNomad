@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
@@ -87,12 +87,17 @@ interface MarkdownProps {
   onRendered?: () => void
 }
 
+/** Default throttle delay for expensive Shiki re-renders (ms). */
+const MARKDOWN_RENDER_THROTTLE_MS = 120
+
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
   const [html, setHtml] = createSignal("")
   let containerRef: HTMLDivElement | undefined
   let latestRequestKey = ""
   let cleanupLanguageListener: (() => void) | undefined
+  let renderTimer: ReturnType<typeof setTimeout> | undefined
+  let hasRenderedOnce = false
 
   const notifyRendered = () => {
     Promise.resolve().then(() => props.onRendered?.())
@@ -155,6 +160,45 @@ export function Markdown(props: MarkdownProps) {
     }
   }
 
+  /** Schedule a Shiki render, throttled after the first paint. */
+  let pendingRenderSnapshot: ReturnType<typeof resolved> | undefined
+
+  const scheduleRender = (snapshot: ReturnType<typeof resolved>) => {
+    const doRender = (snap: ReturnType<typeof resolved>) => {
+      latestRequestKey = snap.requestKey
+      void renderSnapshot(snap).catch((error) => {
+        log.error("Failed to render markdown:", error)
+        if (latestRequestKey === snap.requestKey) {
+          commitCacheEntry(snap, renderFallbackHtml(snap.text))
+        }
+      })
+    }
+
+    // First render is always immediate to avoid a prolonged fallback flash.
+    if (!hasRenderedOnce) {
+      hasRenderedOnce = true
+      doRender(snapshot)
+      return
+    }
+
+    // Subsequent renders are throttled: the timer fires at a fixed cadence
+    // and always uses the latest pending snapshot.  Unlike a debounce, the
+    // timer is NOT reset when new snapshots arrive, so Shiki re-renders
+    // periodically (~every MARKDOWN_RENDER_THROTTLE_MS) even during
+    // continuous streaming — preventing the raw↔markdown flash.
+    pendingRenderSnapshot = snapshot
+    if (!renderTimer) {
+      renderTimer = setTimeout(() => {
+        renderTimer = undefined
+        const snap = pendingRenderSnapshot
+        if (snap) {
+          pendingRenderSnapshot = undefined
+          doRender(snap)
+        }
+      }, MARKDOWN_RENDER_THROTTLE_MS)
+    }
+  }
+
   createEffect(() => {
     const snapshot = resolved()
     latestRequestKey = snapshot.requestKey
@@ -179,15 +223,15 @@ export function Markdown(props: MarkdownProps) {
       return
     }
 
-    setHtml(renderFallbackHtml(snapshot.text))
+    // Keep the previous rendered markdown visible while Shiki re-renders.
+    // Only fall back to escaped plain text on the initial render (no prior
+    // content).  This eliminates the raw↔markdown flash during streaming.
+    if (!untrack(html)) {
+      setHtml(renderFallbackHtml(snapshot.text))
+    }
     notifyRendered()
 
-    void renderSnapshot(snapshot).catch((error) => {
-      log.error("Failed to render markdown:", error)
-      if (latestRequestKey === snapshot.requestKey) {
-        commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
-      }
-    })
+    scheduleRender(snapshot)
   })
 
   onMount(() => {
@@ -234,9 +278,7 @@ export function Markdown(props: MarkdownProps) {
           }
 
           latestRequestKey = snapshot.requestKey
-          void renderSnapshot(snapshot).catch((error) => {
-            log.error("Failed to re-render markdown after language load:", error)
-          })
+          scheduleRender(snapshot)
         })
       })
       .catch((error) => {
@@ -245,6 +287,9 @@ export function Markdown(props: MarkdownProps) {
 
     onCleanup(() => {
       disposed = true
+      if (renderTimer) clearTimeout(renderTimer)
+      renderTimer = undefined
+      pendingRenderSnapshot = undefined
       containerRef?.removeEventListener("click", handleClick)
       cleanupLanguageListener?.()
       cleanupLanguageListener = undefined

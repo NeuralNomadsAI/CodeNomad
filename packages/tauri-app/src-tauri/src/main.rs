@@ -1,8 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cli_manager;
+mod desktop_event_transport;
 
 use cli_manager::{CliProcessManager, CliStatus};
+use desktop_event_transport::{
+    ActiveSessionTarget, DesktopEventTransportManager, DesktopEventsStartRequest,
+    DesktopEventsStartResult,
+};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
@@ -40,6 +45,7 @@ const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
 
 pub struct AppState {
     pub manager: CliProcessManager,
+    pub desktop_events: DesktopEventTransportManager,
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
@@ -70,12 +76,49 @@ fn cli_get_status(state: tauri::State<AppState>) -> CliStatus {
 #[tauri::command]
 fn cli_restart(app: AppHandle, state: tauri::State<AppState>) -> Result<CliStatus, String> {
     let dev_mode = is_dev_mode();
+    state.desktop_events.stop();
     state.manager.stop().map_err(|e| e.to_string())?;
     state
         .manager
         .start(app, dev_mode)
         .map_err(|e| e.to_string())?;
     Ok(state.manager.status())
+}
+
+#[tauri::command]
+fn desktop_events_start(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    request: Option<DesktopEventsStartRequest>,
+) -> DesktopEventsStartResult {
+    let config = state.manager.desktop_event_stream_config();
+    state.desktop_events.start(app, config, request)
+}
+
+#[tauri::command]
+fn desktop_events_stop(state: tauri::State<AppState>) {
+    state.desktop_events.stop();
+}
+
+#[tauri::command]
+fn desktop_events_set_active_session(
+    state: tauri::State<AppState>,
+    instance_id: Option<String>,
+    session_id: Option<String>,
+) {
+    let target = match (instance_id, session_id) {
+        (Some(instance_id), Some(session_id))
+            if !instance_id.trim().is_empty() && !session_id.trim().is_empty() =>
+        {
+            Some(ActiveSessionTarget {
+                instance_id,
+                session_id,
+            })
+        }
+        _ => None,
+    };
+
+    state.desktop_events.set_active_session_target(target);
 }
 
 #[tauri::command]
@@ -359,6 +402,7 @@ fn main() {
         .plugin(navigation_guard)
         .manage(AppState {
             manager: CliProcessManager::new(),
+            desktop_events: DesktopEventTransportManager::new(),
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
@@ -398,6 +442,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             cli_get_status,
             cli_restart,
+            desktop_events_start,
+            desktop_events_stop,
+            desktop_events_set_active_session,
             wake_lock_start,
             wake_lock_stop,
             open_remote_window
@@ -502,6 +549,7 @@ fn main() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Some(state) = app.try_state::<AppState>() {
+                        state.desktop_events.stop();
                         let _ = state.manager.stop();
                     }
                     app.exit(0);
@@ -553,6 +601,7 @@ fn main() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     if let Some(state) = app.try_state::<AppState>() {
+                        state.desktop_events.stop();
                         let _ = state.manager.stop();
                     }
                     app.exit(0);

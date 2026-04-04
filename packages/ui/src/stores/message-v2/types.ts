@@ -51,6 +51,8 @@ export interface PermissionEntry {
   permission: PermissionRequestLike
   messageId?: string
   partId?: string
+  sessionId?: string
+  callId?: string
   enqueuedAt: number
 }
 
@@ -64,6 +66,8 @@ export interface QuestionEntry {
   request: QuestionRequest
   messageId?: string
   partId?: string
+  sessionId?: string
+  callId?: string
   enqueuedAt: number
 }
 

@@ -5,6 +5,7 @@
   min-height: 0;
   position: relative;
   width: 100%;
+  contain: layout style;
 }
 
 .message-stream {
@@ -24,7 +25,7 @@
 
   /* Prevent browser scroll anchoring fighting our virtualization compensation. */
   overflow-anchor: none;
-  
+
   /* Scrollbar styling */
   scrollbar-gutter: stable;
 }

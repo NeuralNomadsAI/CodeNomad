@@ -1,3 +1,4 @@
+import { batch } from "solid-js"
 import type {
   MessageInfo,
   MessagePartRemovedEvent,
@@ -51,6 +52,15 @@ import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSession
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
+import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import {
+  appendAssistantStreamChunk,
+  clearAssistantStreamMessage,
+  clearAssistantStreamPart,
+  clearAssistantStreamSession,
+  getAssistantStreamPreviewText,
+} from "./assistant-stream"
+import type { AssistantStreamChunkEvent } from "../lib/event-transport-contract"
 
 import { loadMessages } from "./session-api"
 import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
@@ -70,7 +80,6 @@ import {
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
-import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -82,6 +91,147 @@ function isSameRetryState(left: SessionRetryState | null | undefined, right: Ses
   if (a === b) return true
   if (!a || !b) return false
   return a.attempt === b.attempt && a.message === b.message && a.next === b.next
+}
+
+const pendingSessionInfoUpdates = new Set<string>()
+let sessionInfoFlushQueued = false
+const pendingPartDeltas = new Map<string, {
+  instanceId: string
+  messageId: string
+  partId: string
+  field: string
+  delta: string
+}>()
+let partDeltaFlushTask: number | null = null
+
+function flushPendingSessionInfoUpdates() {
+  sessionInfoFlushQueued = false
+  if (pendingSessionInfoUpdates.size === 0) {
+    return
+  }
+
+  const pending = Array.from(pendingSessionInfoUpdates)
+  pendingSessionInfoUpdates.clear()
+
+  batch(() => {
+    for (const entry of pending) {
+      const [instanceId, sessionId] = entry.split(":")
+      if (!instanceId || !sessionId) continue
+      updateSessionInfo(instanceId, sessionId)
+    }
+  })
+}
+
+function scheduleSessionInfoUpdate(instanceId: string, sessionId: string) {
+  if (!instanceId || !sessionId) {
+    return
+  }
+
+  pendingSessionInfoUpdates.add(`${instanceId}:${sessionId}`)
+  if (sessionInfoFlushQueued) {
+    return
+  }
+
+  sessionInfoFlushQueued = true
+  queueMicrotask(flushPendingSessionInfoUpdates)
+}
+
+function makeQueuedPartDeltaKey(instanceId: string, messageId: string, partId: string, field: string) {
+  return `${instanceId}:${messageId}:${partId}:${field}`
+}
+
+function clearScheduledPartDeltaFlush() {
+  if (partDeltaFlushTask === null) {
+    return
+  }
+
+  window.clearTimeout(partDeltaFlushTask)
+  partDeltaFlushTask = null
+}
+
+function flushQueuedPartDeltas(
+  predicate?: (entry: { instanceId: string; messageId: string; partId: string; field: string; delta: string }) => boolean,
+) {
+  if (pendingPartDeltas.size === 0) {
+    return
+  }
+
+  const entries: Array<{ instanceId: string; messageId: string; partId: string; field: string; delta: string }> = []
+
+  for (const [key, entry] of pendingPartDeltas) {
+    if (predicate && !predicate(entry)) {
+      continue
+    }
+    entries.push(entry)
+    pendingPartDeltas.delete(key)
+  }
+
+  if (entries.length === 0) {
+    return
+  }
+
+  if (pendingPartDeltas.size === 0) {
+    clearScheduledPartDeltaFlush()
+  }
+
+  batch(() => {
+    for (const entry of entries) {
+      applyPartDeltaV2(entry.instanceId, {
+        messageId: entry.messageId,
+        partId: entry.partId,
+        field: entry.field,
+        delta: entry.delta,
+      })
+    }
+  })
+}
+
+function flushQueuedPartDeltasForMessage(instanceId: string, messageId: string) {
+  flushQueuedPartDeltas((entry) => entry.instanceId === instanceId && entry.messageId === messageId)
+}
+
+function flushQueuedPartDeltasForPart(instanceId: string, messageId: string, partId: string) {
+  flushQueuedPartDeltas((entry) => entry.instanceId === instanceId && entry.messageId === messageId && entry.partId === partId)
+}
+
+/** Cadence for flushing coalesced deltas to the store (ms).
+ * 48ms (~3 frames) keeps heavy store-driven re-renders (Markdown, block
+ * layout) throttled while still delivering timely updates. */
+const DELTA_FLUSH_INTERVAL_MS = 48
+
+function scheduleQueuedPartDeltaFlush() {
+  if (partDeltaFlushTask !== null) {
+    return
+  }
+
+  partDeltaFlushTask = window.setTimeout(() => {
+    partDeltaFlushTask = null
+    flushQueuedPartDeltas()
+  }, DELTA_FLUSH_INTERVAL_MS)
+}
+
+function queueMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent) {
+  const props = event.properties
+  if (!props) return
+
+  const { messageID, partID, field, delta } = props
+  if (!messageID || !partID || !field || typeof delta !== "string" || delta.length === 0) return
+
+  const key = makeQueuedPartDeltaKey(instanceId, messageID, partID, field)
+  const existing = pendingPartDeltas.get(key)
+  if (existing) {
+    existing.delta += delta
+  } else {
+    pendingPartDeltas.set(key, {
+      instanceId,
+      messageId: messageID,
+      partId: partID,
+      field,
+      delta,
+    })
+  }
+
+  scheduleQueuedPartDeltaFlush()
 }
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
@@ -155,7 +305,10 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
     const nextRetry = retry ?? null
     if (current === status && isSameRetryState(session.retry, nextRetry)) return false
 
-    if (current === "compacting" && status !== "compacting") {
+    // While compacting, only allow transitions to "idle" (abort / session end)
+    // or staying in "compacting".  Block "compacting -> working" so the
+    // compaction UI isn't prematurely replaced by the normal busy indicator.
+    if (current === "compacting" && status !== "compacting" && status !== "idle") {
       return false
     }
 
@@ -225,8 +378,8 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         ...fetched,
         agent: existing?.agent ?? fetched.agent,
         model: existing?.model ?? fetched.model,
-        status: existing?.status === "compacting" ? "compacting" : fetched.status,
-        retry: existing?.status === "compacting" ? null : fetched.retry,
+        status: existing?.status === "compacting" && fetched.status !== "idle" ? "compacting" : fetched.status,
+        retry: existing?.status === "compacting" && fetched.status !== "idle" ? null : fetched.retry,
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
       }
@@ -297,17 +450,7 @@ function findPendingSyntheticMessageId(
   sessionId: string,
   role: MessageRole,
 ): string | undefined {
-  const messageIds = store.getSessionMessageIds(sessionId)
-  for (const messageId of messageIds) {
-    const record = store.getMessage(messageId)
-    if (!record) continue
-    if (record.sessionId !== sessionId) continue
-    if (record.role !== role) continue
-    if (record.status !== "sending") continue
-    if (!record.isEphemeral) continue
-    return record.id
-  }
-  return undefined
+  return store.getPendingSyntheticMessageId(sessionId, role)
 }
 
 function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
@@ -326,6 +469,11 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
+    if (typeof part.id === "string" && part.id.length > 0) {
+      flushQueuedPartDeltasForPart(instanceId, messageId, part.id)
+    } else {
+      flushQueuedPartDeltasForMessage(instanceId, messageId)
+    }
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
     }
@@ -333,42 +481,98 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const store = messageStoreBus.getOrCreate(instanceId)
     const role: MessageRole = resolveMessageRole(messageInfo)
     const createdAt = typeof messageInfo?.time?.created === "number" ? messageInfo.time.created : Date.now()
+    const previousText =
+      role === "assistant" && part.type === "text"
+        ? (() => {
+            const existingRecord = store.getMessage(messageId)
+            const existingPart = existingRecord?.parts[part.id]?.data as { text?: unknown } | undefined
+            return typeof existingPart?.text === "string" ? existingPart.text : ""
+          })()
+        : ""
+    const previousPreviewText =
+      role === "assistant" && part.type === "text"
+        ? getAssistantStreamPreviewText(instanceId, sessionId, messageId, part.id) ?? ""
+        : ""
+    const previousVisibleText =
+      previousPreviewText.length > previousText.length ? previousPreviewText : previousText
 
 
-    let record = store.getMessage(messageId)
-    if (!record) {
-      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
-      if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
-        record = store.getMessage(messageId)
+    batch(() => {
+      let record = store.getMessage(messageId)
+      if (!record) {
+        const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
+        if (pendingId && pendingId !== messageId) {
+          // PERF: Never clear parts during ID swap. The synthetic (optimistic) parts
+          // stay visible until the server parts arrive via applyPartUpdateV2.
+          // Clearing them causes a visible flash in WebView2 because the ID change
+          // forces a component re-mount, and empty parts render as blank.
+          replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: false })
+          record = store.getMessage(messageId)
+        }
       }
-    }
 
-    if (!record) {
-      store.upsertMessage({
-        id: messageId,
-        sessionId,
-        role,
-        status: "streaming",
-        createdAt,
-        updatedAt: createdAt,
-        isEphemeral: true,
-      })
-    }
+      if (!record) {
+        store.upsertMessage({
+          id: messageId,
+          sessionId,
+          role,
+          status: "streaming",
+          createdAt,
+          updatedAt: createdAt,
+          isEphemeral: true,
+        })
+      }
 
-    if (messageInfo) {
-      upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
-    }
-  
-    applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
-    handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
+      if (messageInfo) {
+        upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
+      }
 
-    if (part.type === "tool" && part.tool === "question") {
-      // Questions can arrive before their tool part exists; re-link now.
-      reconcilePendingQuestionsV2(instanceId, sessionId)
-    }
+      applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
+      handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
-    updateSessionInfo(instanceId, sessionId)
+       if (
+        role === "assistant" &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.length > previousVisibleText.length &&
+        part.text.startsWith(previousVisibleText)
+      ) {
+        appendAssistantStreamChunk(instanceId, {
+          type: "assistant.stream.chunk",
+          properties: {
+            sessionID: sessionId,
+            messageID: messageId,
+            partID: part.id,
+            field: "text",
+            delta: part.text.slice(previousVisibleText.length),
+          },
+        })
+      } else if (
+        role === "assistant" &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        previousPreviewText.length > 0 &&
+        part.text.length >= previousPreviewText.length &&
+        part.text.startsWith(previousPreviewText)
+      ) {
+        clearAssistantStreamPart(instanceId, sessionId, messageId, part.id)
+      } else if (
+        role === "assistant" &&
+        part.type === "text" &&
+        previousPreviewText.length > 0
+      ) {
+        // Server sent a correction/replacement that diverges from the preview.
+        // Clear stale preview so the canonical text takes over.
+        clearAssistantStreamPart(instanceId, sessionId, messageId, part.id)
+      }
+
+      if (part.type === "tool" && part.tool === "question") {
+        // Questions can arrive before their tool part exists; re-link now.
+        reconcilePendingQuestionsV2(instanceId, sessionId)
+      }
+
+      scheduleSessionInfoUpdate(instanceId, sessionId)
+    })
   } else if (event.type === "message.updated") {
     const info = event.properties?.info
     if (!info) return
@@ -376,6 +580,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
+    flushQueuedPartDeltasForMessage(instanceId, messageId)
+    // Defer preview clear to after the current synchronous batch completes.
+    // Using queueMicrotask (not requestAnimationFrame) so the clear runs within
+    // the same JS task — avoiding a one-frame flicker where preview text could
+    // reappear between the rAF callback and the next paint.
+    queueMicrotask(() => clearAssistantStreamMessage(instanceId, sessionId, messageId))
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
@@ -387,52 +597,101 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
             ? timeInfo.created
             : Date.now()
 
-    withSession(instanceId, sessionId, (session) => {
-      const currentUpdated = session.time?.updated ?? 0
-      if (nextUpdated <= currentUpdated) return false
-      session.time = { ...(session.time ?? {}), updated: nextUpdated }
-    })
-
-    const store = messageStoreBus.getOrCreate(instanceId)
-
-    const role: MessageRole = info.role === "user" ? "user" : "assistant"
-    const hasError = Boolean((info as any).error)
-    const status: MessageStatus = hasError ? "error" : "complete"
-
-    let record = store.getMessage(messageId)
-    if (!record) {
-      const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
-      if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
-        record = store.getMessage(messageId)
-      }
-    }
-
-    if (!record) {
-      const createdAt = info.time?.created ?? Date.now()
-      const endAt = (info.time as { end?: number } | undefined)?.end
-      store.upsertMessage({
-        id: messageId,
-        sessionId,
-        role,
-        status,
-        createdAt,
-        updatedAt: endAt ?? createdAt,
+    batch(() => {
+      withSession(instanceId, sessionId, (session) => {
+        const currentUpdated = session.time?.updated ?? 0
+        if (nextUpdated <= currentUpdated) return false
+        session.time = { ...(session.time ?? {}), updated: nextUpdated }
       })
-    }
 
-    upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
+      const store = messageStoreBus.getOrCreate(instanceId)
 
-    updateSessionInfo(instanceId, sessionId)
+      const role: MessageRole = info.role === "user" ? "user" : "assistant"
+      const hasError = Boolean((info as any).error)
+      const status: MessageStatus = hasError ? "error" : "complete"
+
+      let record = store.getMessage(messageId)
+      if (!record) {
+        const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
+        if (pendingId && pendingId !== messageId) {
+          replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: false })
+          record = store.getMessage(messageId)
+        }
+      }
+
+      if (!record) {
+        const createdAt = info.time?.created ?? Date.now()
+        const endAt = (info.time as { end?: number } | undefined)?.end
+        store.upsertMessage({
+          id: messageId,
+          sessionId,
+          role,
+          status,
+          createdAt,
+          updatedAt: endAt ?? createdAt,
+        })
+      }
+
+      upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true, isEphemeral: false })
+
+      scheduleSessionInfoUpdate(instanceId, sessionId)
+    })
   }
 }
 
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
+  queueMessagePartDelta(instanceId, event)
+}
+
+function handleAssistantStreamChunk(instanceId: string, event: AssistantStreamChunkEvent): void {
   const props = event.properties
-  if (!props) return
-  const { messageID, partID, field, delta } = props
-  if (!messageID || !partID || !field || typeof delta !== "string") return
-  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+  if (!props?.sessionID || !props.messageID || !props.partID) {
+    return
+  }
+
+  // Guard: ignore chunks for sessions that don't exist or are already idle
+  // (a stale/delayed chunk could otherwise create ghost ephemeral messages).
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(props.sessionID)
+  if (!session || session.status === "idle") {
+    return
+  }
+
+  const store = messageStoreBus.getOrCreate(instanceId)
+  let record = store.getMessage(props.messageID)
+
+  // When the message/part doesn't exist yet, create lightweight ephemeral
+  // placeholders.  Wrap both mutations in a batch so SolidJS flushes them
+  // atomically — avoiding separate reactive cascades for each mutation.
+  if (!record || !record.parts[props.partID]) {
+    batch(() => {
+      if (!record) {
+        store.upsertMessage({
+          id: props.messageID,
+          sessionId: props.sessionID,
+          role: "assistant",
+          status: "streaming",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          isEphemeral: true,
+          bumpRevision: false,
+        })
+        record = store.getMessage(props.messageID)
+      }
+
+      if (record && !record.parts[props.partID]) {
+        applyPartUpdateV2(instanceId, {
+          id: props.partID,
+          type: "text",
+          text: "",
+          sessionID: props.sessionID,
+          messageID: props.messageID,
+        } as any)
+      }
+    })
+  }
+
+  appendAssistantStreamChunk(instanceId, event)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
@@ -555,6 +814,28 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+
+  // Clean up any lingering assistant-stream preview entries for this session.
+  // On Tauri this also happens on session switch (App.tsx), but on browser
+  // hosts this is the only cleanup path.
+  clearAssistantStreamSession(instanceId, sessionId)
+
+  // Safety net: if any ephemeral "sending"/"sent" messages still exist for
+  // this session they are orphans (the real server messages never arrived or
+  // replaced them).  Reload the full message list so the UI reflects reality.
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const messageIds = store.getSessionMessageIds(sessionId) ?? []
+  const hasOrphanedEphemeral = messageIds.some((id) => {
+    const record = store.getMessage(id)
+    return record?.isEphemeral && (record.status === "sending" || record.status === "sent")
+  })
+  if (hasOrphanedEphemeral) {
+    log.info(`[SSE] Session idle with orphaned ephemeral messages, reloading: ${sessionId}`)
+    loadMessages(instanceId, sessionId, true).catch((error) =>
+      log.error("Failed to reload messages after idle with orphaned ephemerals", error),
+    )
+  }
+
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
@@ -646,8 +927,10 @@ function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): v
   if (!sessionID || !messageID) return
 
   log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
+  flushQueuedPartDeltasForMessage(instanceId, messageID)
+  clearAssistantStreamMessage(instanceId, sessionID, messageID)
   removeMessageV2(instanceId, messageID)
-  updateSessionInfo(instanceId, sessionID)
+  scheduleSessionInfoUpdate(instanceId, sessionID)
 }
 
 function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
@@ -655,8 +938,10 @@ function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedE
   if (!sessionID || !messageID || !partID) return
 
   log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
+  flushQueuedPartDeltasForPart(instanceId, messageID, partID)
+  clearAssistantStreamPart(instanceId, sessionID, messageID, partID)
   removeMessagePartV2(instanceId, messageID, partID)
-  updateSessionInfo(instanceId, sessionID)
+  scheduleSessionInfoUpdate(instanceId, sessionID)
 }
 
 function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
@@ -736,6 +1021,7 @@ function handleQuestionAnswered(
 }
 
 export {
+  handleAssistantStreamChunk,
   handleMessagePartRemoved,
   handleMessageRemoved,
   handleMessagePartDelta,
