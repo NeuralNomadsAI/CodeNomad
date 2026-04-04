@@ -166,7 +166,6 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   }
 
   const registerContainer = (element: HTMLDivElement | null | undefined, config?: { disableTracking?: boolean }) => {
-    if (config?.disableTracking) return
     const next = element || undefined
     if (next === scrollContainerRef) {
       return
