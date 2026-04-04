@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cert_manager;
 mod cli_manager;
+mod remote_proxy;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
+use remote_proxy::{start_remote_proxy, ProxyTlsConfig, RemoteProxyHandle};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -13,7 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -43,6 +48,7 @@ pub struct AppState {
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
+    pub remote_proxies: Mutex<HashMap<String, RemoteProxyHandle>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,7 +123,7 @@ fn is_dev_mode() -> bool {
 
 fn should_allow_internal(url: &Url) -> bool {
     match url.scheme() {
-        "tauri" | "asset" | "file" => true,
+        "tauri" | "asset" | "file" | "about" => true,
         // On Windows/WebView2, Tauri serves the app assets from `tauri.localhost`.
         // This must be treated as an internal origin or the navigation guard will
         // redirect it to the system browser and the app will appear blank.
@@ -129,7 +135,11 @@ fn should_allow_internal(url: &Url) -> bool {
     }
 }
 
-fn should_allow_window_origin<R: Runtime>(app_handle: &AppHandle<R>, window_label: &str, url: &Url) -> bool {
+fn should_allow_window_origin<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    window_label: &str,
+    url: &Url,
+) -> bool {
     if should_allow_internal(url) {
         return true;
     }
@@ -161,21 +171,54 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     false
 }
 
-#[tauri::command]
-fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
-    if payload.skip_tls_verify && payload.base_url.starts_with("https://") {
-        return Err(
-            "Tauri cannot bypass self-signed HTTPS certificates automatically yet. Trust the certificate in your OS first, then reconnect, or use the CodeNomad Electron app."
-                .to_string(),
-        );
-    }
-
+async fn open_remote_window_impl(
+    app: AppHandle,
+    payload: RemoteWindowPayload,
+    tls_config: Option<ProxyTlsConfig>,
+) -> Result<(), String> {
     let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
-    let title = format!("{} - {}", payload.name, parsed.host_str().unwrap_or(payload.base_url.as_str()));
+    let title = format!(
+        "{} - {}",
+        payload.name,
+        parsed.host_str().unwrap_or(payload.base_url.as_str())
+    );
+
+    let state = app.state::<AppState>();
+    let reuses_existing_proxy = {
+        let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+        proxies
+            .get(&label)
+            .map(|existing| existing.matches(&parsed, payload.skip_tls_verify))
+            .unwrap_or(false)
+    };
+
+    let local_url = if reuses_existing_proxy {
+        let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+        proxies
+            .get(&label)
+            .map(|handle| handle.local_base_url().clone())
+            .ok_or_else(|| "Remote proxy disappeared before reuse".to_string())?
+    } else {
+        let new_proxy =
+            start_remote_proxy(parsed.clone(), payload.skip_tls_verify, tls_config).await?;
+        let local_url = new_proxy.local_base_url().clone();
+        let mut proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+        if let Some(existing) = proxies.remove(&label) {
+            existing.shutdown();
+        }
+        proxies.insert(label.clone(), new_proxy);
+        local_url
+    };
+
+    app.state::<AppState>()
+        .remote_origins
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), local_url.origin().ascii_serialization());
 
     if let Some(existing) = app.get_webview_window(&label) {
-        let _ = existing.navigate(parsed.clone());
+        let _ = existing.navigate(local_url.clone());
         let _ = existing.set_title(&title);
         let _ = existing.show();
         let _ = existing.unminimize();
@@ -183,13 +226,7 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
         return Ok(());
     }
 
-    app.state::<AppState>()
-        .remote_origins
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(label.clone(), parsed.origin().ascii_serialization());
-
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
+    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(local_url))
         .title(title)
         .inner_size(1400.0, 900.0)
         .min_inner_size(800.0, 600.0)
@@ -197,15 +234,42 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
         .map_err(|err| err.to_string())?;
 
     let app_handle = app.clone();
+    let label_for_cleanup = label.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
-                origins.remove(&label);
+                origins.remove(&label_for_cleanup);
+            }
+            if let Ok(mut proxies) = app_handle.state::<AppState>().remote_proxies.lock() {
+                if let Some(handle) = proxies.remove(&label_for_cleanup) {
+                    handle.shutdown();
+                }
             }
         }
     });
 
     Ok(())
+}
+
+#[tauri::command]
+async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
+    let tls_config = match cert_manager::ensure_local_cert() {
+        Ok(local_cert) => {
+            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.cert_der) {
+                eprintln!("[tauri] failed to trust proxy cert: {err}");
+            }
+            Some(ProxyTlsConfig {
+                cert_pem: local_cert.cert_pem,
+                key_pem: local_cert.key_pem,
+            })
+        }
+        Err(err) => {
+            eprintln!("[tauri] failed to generate proxy cert, falling back to HTTP: {err}");
+            None
+        }
+    };
+
+    open_remote_window_impl(app, payload, tls_config).await
 }
 
 fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -335,6 +399,8 @@ fn set_windows_app_user_model_id() {
 fn set_windows_app_user_model_id() {}
 
 fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
         .build();
@@ -362,6 +428,7 @@ fn main() {
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
+            remote_proxies: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             set_windows_app_user_model_id();
