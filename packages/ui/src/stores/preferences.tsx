@@ -480,8 +480,6 @@ function removeEnvironmentVariable(key: string): void {
   const current = serverSettings().environmentVariables
   const { [key]: removed, ...rest } = current
   updateEnvironmentVariables(rest)
-  // Also remove from secure list if present
-  toggleSecureEnvVar(key)
 }
 
 function isSecureEnvVar(key: string): boolean {
