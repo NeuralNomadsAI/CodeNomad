@@ -155,17 +155,6 @@ const InfoView: Component<InfoViewProps> = (props) => {
               </Show>
               <Show when={logs().length > 0}>
                 <button
-                    type="button"
-                    class="button-tertiary"
-                    onClick={onBack}
-                    title={t("infoView.logs.actions.back")}
-                  >
-                    <ArrowLeft class="w-4 h-4" />
-                  </button>
-                )}
-              </Show>
-              <Show when={logs().length > 0}>
-                <button
                   type="button"
                   class="button-tertiary"
                   onClick={handleClearLogs}
