@@ -432,8 +432,10 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
  *
  * @param variant - 變體類型 / Variant type
  * @returns 顯示名稱 / Display name
+ *
+ * @note 目前未使用，保留供未來擴展 / Currently unused, kept for future extension
  */
-export function getToastVariantLabel(variant: ToastVariant): string {
+function getToastVariantLabel(variant: ToastVariant): string {
   const labels: Record<ToastVariant, string> = {
     info: "Info",
     success: "Success",
@@ -450,8 +452,10 @@ export function getToastVariantLabel(variant: ToastVariant): string {
  * @param variant - 變體類型 / Variant type
  * @param type - 獲取的類型 / Type of class to get
  * @returns CSS 類名 / CSS class name
+ *
+ * @note 目前未使用，保留供未來擴展 / Currently unused, kept for future extension
  */
-export function getToastVariantClasses(
+function getToastVariantClasses(
   variant: ToastVariant,
   type: "badge" | "container" | "headline" | "body"
 ): string {
