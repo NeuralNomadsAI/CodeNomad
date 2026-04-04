@@ -320,11 +320,6 @@ function normalizeSecureEnvVars(input?: unknown): string[] {
   return input.filter((item): item is string => typeof item === "string" && item.length > 0)
 }
 
-function normalizeSecureEnvVars(input?: unknown): string[] {
-  if (!Array.isArray(input)) return []
-  return input.filter((item): item is string => typeof item === "string" && item.length > 0)
-}
-
 function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
@@ -480,23 +475,6 @@ function removeEnvironmentVariable(key: string): void {
   const current = serverSettings().environmentVariables
   const { [key]: removed, ...rest } = current
   updateEnvironmentVariables(rest)
-}
-
-function isSecureEnvVar(key: string): boolean {
-  const secureList = serverSettings().secureEnvVars
-  return secureList.some((name) => name.toUpperCase() === key.toUpperCase())
-}
-
-function toggleSecureEnvVar(key: string): void {
-  const secureList = serverSettings().secureEnvVars
-  const upperKey = key.toUpperCase()
-  const exists = secureList.some((name) => name.toUpperCase() === upperKey)
-  const next = exists
-    ? secureList.filter((name) => name.toUpperCase() !== upperKey)
-    : [...secureList, key]
-  void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
-    log.error("Failed to update secure env vars", error),
-  )
 }
 
 function isSecureEnvVar(key: string): boolean {

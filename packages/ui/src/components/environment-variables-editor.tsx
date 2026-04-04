@@ -87,7 +87,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     title={t("envEditor.fields.name.readOnlyTitle")}
                   />
                   <input
-                    type="text"
+                    type={isSecureEnvVar(key) ? "password" : "text"}
                     value={value}
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
