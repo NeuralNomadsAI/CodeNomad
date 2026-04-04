@@ -19,6 +19,7 @@ futures-util = "0.3"
 rcgen = "0.13"
 rustls = { version = "0.23", features = ["ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["http2", "charset", "json", "stream", "rustls-tls"] }
+rand = "0.8"
 regex = "1"
 once_cell = "1"
 parking_lot = "0.12"

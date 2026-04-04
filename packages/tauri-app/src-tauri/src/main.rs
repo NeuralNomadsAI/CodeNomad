@@ -197,12 +197,12 @@ async fn open_remote_window_impl(
         let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
         proxies
             .get(&label)
-            .map(|handle| handle.local_base_url().clone())
+            .map(|handle| handle.entry_url().clone())
             .ok_or_else(|| "Remote proxy disappeared before reuse".to_string())?
     } else {
         let new_proxy =
             start_remote_proxy(parsed.clone(), payload.skip_tls_verify, tls_config).await?;
-        let local_url = new_proxy.local_base_url().clone();
+        let local_url = new_proxy.entry_url().clone();
         let mut proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
         if let Some(existing) = proxies.remove(&label) {
             existing.shutdown();

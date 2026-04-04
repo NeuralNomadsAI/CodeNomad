@@ -6,17 +6,22 @@ use axum::routing::any;
 use axum::Router;
 use axum_server::tls_rustls::RustlsConfig;
 use futures_util::TryStreamExt;
+use rand::RngCore;
 use reqwest::redirect::Policy;
 use reqwest::Client;
 use std::collections::HashSet;
 use std::sync::Arc;
 use url::Url;
 
+const PROXY_COOKIE_NAME: &str = "codenomad_remote_proxy";
+const PROXY_TOKEN_QUERY: &str = "proxy_token";
+
 #[derive(Clone)]
 struct ProxyState {
     client: Client,
     target_base_url: Url,
     local_base_url: Url,
+    session_token: String,
 }
 
 /// TLS configuration for the local HTTPS proxy.
@@ -27,6 +32,7 @@ pub struct ProxyTlsConfig {
 
 pub struct RemoteProxyHandle {
     local_base_url: Url,
+    entry_url: Url,
     target_base_url: Url,
     skip_tls_verify: bool,
     server_handle: axum_server::Handle,
@@ -35,6 +41,10 @@ pub struct RemoteProxyHandle {
 impl RemoteProxyHandle {
     pub fn local_base_url(&self) -> &Url {
         &self.local_base_url
+    }
+
+    pub fn entry_url(&self) -> &Url {
+        &self.entry_url
     }
 
     pub fn matches(&self, target_base_url: &Url, skip_tls_verify: bool) -> bool {
@@ -71,11 +81,15 @@ pub async fn start_remote_proxy(
     let scheme = if tls_config.is_some() { "https" } else { "http" };
     let local_base_url =
         Url::parse(&format!("{scheme}://{address}")).map_err(|err| err.to_string())?;
+    let session_token = generate_session_token();
+    let mut entry_url = local_base_url.clone();
+    entry_url.set_query(Some(&format!("{PROXY_TOKEN_QUERY}={session_token}")));
 
     let state = Arc::new(ProxyState {
         client,
         target_base_url: target_base_url.clone(),
         local_base_url: local_base_url.clone(),
+        session_token,
     });
 
     let app = Router::new()
@@ -115,6 +129,7 @@ pub async fn start_remote_proxy(
 
     Ok(RemoteProxyHandle {
         local_base_url,
+        entry_url,
         target_base_url,
         skip_tls_verify,
         server_handle,
@@ -125,6 +140,13 @@ async fn proxy_request(
     State(state): State<Arc<ProxyState>>,
     request: Request,
 ) -> Result<Response<Body>, StatusCode> {
+    if !request_is_authorized(&request, &state.session_token) {
+        if request_bootstraps_session(&request, &state.session_token) {
+            return Ok(build_bootstrap_response(request.uri(), &state.session_token)?);
+        }
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let upstream_url = build_upstream_url(&state.target_base_url, request.uri())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -162,8 +184,76 @@ async fn proxy_request(
 
 fn build_upstream_url(base_url: &Url, uri: &Uri) -> Result<Url, url::ParseError> {
     let mut url = base_url.join(uri.path().trim_start_matches('/'))?;
-    url.set_query(uri.query());
+    url.set_query(strip_proxy_token_query(uri.query()).as_deref());
     Ok(url)
+}
+
+fn generate_session_token() -> String {
+    let mut bytes = [0_u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn request_is_authorized(request: &Request, session_token: &str) -> bool {
+    request
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .map(|cookie_header| {
+            cookie_header
+                .split(';')
+                .map(str::trim)
+                .filter_map(|part| part.split_once('='))
+                .any(|(name, value)| name == PROXY_COOKIE_NAME && value == session_token)
+        })
+        .unwrap_or(false)
+}
+
+fn request_bootstraps_session(request: &Request, session_token: &str) -> bool {
+    request.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(name, value)| name == PROXY_TOKEN_QUERY && value == session_token)
+    })
+}
+
+fn build_bootstrap_response(uri: &Uri, session_token: &str) -> Result<Response<Body>, StatusCode> {
+    let redirect_target = sanitized_request_target(uri);
+    let cookie = format!(
+        "{PROXY_COOKIE_NAME}={session_token}; Path=/; HttpOnly; SameSite=Strict; Secure"
+    );
+
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(axum::http::header::LOCATION, redirect_target)
+        .header(axum::http::header::SET_COOKIE, cookie)
+        .body(Body::empty())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn sanitized_request_target(uri: &Uri) -> String {
+    let path = if uri.path().is_empty() { "/" } else { uri.path() };
+    match strip_proxy_token_query(uri.query()) {
+        Some(query) if !query.is_empty() => format!("{path}?{query}"),
+        _ => path.to_string(),
+    }
+}
+
+fn strip_proxy_token_query(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    let filtered: Vec<(std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)> =
+        url::form_urlencoded::parse(query.as_bytes())
+            .filter(|(name, _)| name != PROXY_TOKEN_QUERY)
+            .collect();
+
+    if filtered.is_empty() {
+        return None;
+    }
+
+    Some(
+        url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(filtered)
+            .finish(),
+    )
 }
 
 fn filter_request_headers(
