@@ -16,6 +16,7 @@ import { useI18n } from "../lib/i18n"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
+import { createFollowScroll } from "../lib/follow-scroll"
 
 function DeleteUpToIcon() {
   return (
@@ -30,8 +31,6 @@ const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
 const REASONING_SCROLL_SENTINEL_MARGIN_PX = 48
-const REASONING_SCROLL_INTENT_WINDOW_MS = 600
-const REASONING_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -1301,19 +1300,17 @@ function ReasoningCard(props: ReasoningCardProps) {
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
-  const [scrollContainer, setScrollContainer] = createSignal<HTMLDivElement | undefined>()
-  const [bottomSentinel, setBottomSentinel] = createSignal<HTMLDivElement | null>(null)
-  const [autoScroll, setAutoScroll] = createSignal(true)
-  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
   const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
   let pendingRenderNotificationFrame: number | null = null
-  let pendingScrollFrame: number | null = null
-  let pendingAnchorScroll: number | null = null
-  let scrollContainerRef: HTMLDivElement | undefined
-  let detachScrollIntentListeners: (() => void) | undefined
-  let userScrollIntentUntil = 0
-  let lastKnownScrollTop = 0
+  let reasoningTextRef: HTMLPreElement | undefined
+
+  const followScroll = createFollowScroll({
+    getScrollTopSnapshot: scrollTopSnapshot,
+    setScrollTopSnapshot,
+    sentinelMarginPx: REASONING_SCROLL_SENTINEL_MARGIN_PX,
+    sentinelClassName: "reasoning-scroll-sentinel",
+  })
 
   const notifyContentRendered = () => {
     if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
@@ -1331,166 +1328,10 @@ function ReasoningCard(props: ReasoningCardProps) {
       cancelAnimationFrame(pendingRenderNotificationFrame)
       pendingRenderNotificationFrame = null
     }
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-      pendingScrollFrame = null
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
-    }
   })
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
-  })
-
-  function restoreScrollPosition(forceBottom = false) {
-    const container = scrollContainerRef
-    if (!container) return
-    if (forceBottom) {
-      container.scrollTop = container.scrollHeight
-      lastKnownScrollTop = container.scrollTop
-      setScrollTopSnapshot(lastKnownScrollTop)
-    } else {
-      container.scrollTop = lastKnownScrollTop
-    }
-  }
-
-  function persistScrollSnapshot(element?: HTMLElement | null) {
-    if (!element) return
-    lastKnownScrollTop = element.scrollTop
-    setScrollTopSnapshot(lastKnownScrollTop)
-  }
-
-  function markUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    userScrollIntentUntil = now + REASONING_SCROLL_INTENT_WINDOW_MS
-  }
-
-  function hasUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    return now <= userScrollIntentUntil
-  }
-
-  function attachScrollIntentListeners(element: HTMLDivElement) {
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
-    }
-
-    const handlePointerIntent = () => markUserScrollIntent()
-    const handleKeyIntent = (event: KeyboardEvent) => {
-      if (REASONING_SCROLL_INTENT_KEYS.has(event.key)) {
-        markUserScrollIntent()
-      }
-    }
-
-    element.addEventListener("wheel", handlePointerIntent, { passive: true })
-    element.addEventListener("pointerdown", handlePointerIntent)
-    element.addEventListener("touchstart", handlePointerIntent, { passive: true })
-    element.addEventListener("keydown", handleKeyIntent)
-
-    detachScrollIntentListeners = () => {
-      element.removeEventListener("wheel", handlePointerIntent)
-      element.removeEventListener("pointerdown", handlePointerIntent)
-      element.removeEventListener("touchstart", handlePointerIntent)
-      element.removeEventListener("keydown", handleKeyIntent)
-    }
-  }
-
-  function scheduleAnchorScroll(immediate = false) {
-    if (!autoScroll()) return
-    const sentinel = bottomSentinel()
-    const container = scrollContainerRef
-    if (!sentinel || !container) return
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    pendingAnchorScroll = requestAnimationFrame(() => {
-      pendingAnchorScroll = null
-      const containerRect = container.getBoundingClientRect()
-      const sentinelRect = sentinel.getBoundingClientRect()
-      const delta = sentinelRect.bottom - containerRect.bottom + REASONING_SCROLL_SENTINEL_MARGIN_PX
-      if (Math.abs(delta) > 1) {
-        container.scrollBy({ top: delta, behavior: immediate ? "auto" : "smooth" })
-      }
-      lastKnownScrollTop = container.scrollTop
-      setScrollTopSnapshot(lastKnownScrollTop)
-    })
-  }
-
-  function handleScroll() {
-    const container = scrollContainer()
-    if (!container) return
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-    }
-    const isUserScroll = hasUserScrollIntent()
-    pendingScrollFrame = requestAnimationFrame(() => {
-      pendingScrollFrame = null
-      const atBottom = bottomSentinelVisible()
-      if (isUserScroll) {
-        if (atBottom) {
-          if (!autoScroll()) setAutoScroll(true)
-        } else if (autoScroll()) {
-          setAutoScroll(false)
-        }
-      }
-    })
-  }
-
-  const handleScrollEvent = (event: Event & { currentTarget: HTMLDivElement }) => {
-    handleScroll()
-    persistScrollSnapshot(event.currentTarget)
-  }
-
-  const initializeScrollContainer = (element: HTMLDivElement | null | undefined) => {
-    const next = element || undefined
-    if (next === scrollContainerRef) {
-      return
-    }
-    scrollContainerRef = next
-    setScrollContainer(scrollContainerRef)
-    if (scrollContainerRef) {
-      lastKnownScrollTop = scrollTopSnapshot()
-      restoreScrollPosition(autoScroll())
-    }
-  }
-
-  createEffect(() => {
-    const container = scrollContainer()
-    if (!container) return
-    attachScrollIntentListeners(container)
-    onCleanup(() => {
-      if (detachScrollIntentListeners) {
-        detachScrollIntentListeners()
-        detachScrollIntentListeners = undefined
-      }
-    })
-  })
-
-  createEffect(() => {
-    const container = scrollContainer()
-    const sentinel = bottomSentinel()
-    if (!container || !sentinel) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.target === sentinel) {
-            setBottomSentinelVisible(entry.isIntersecting)
-          }
-        })
-      },
-      { root: container, threshold: 0, rootMargin: `0px 0px ${REASONING_SCROLL_SENTINEL_MARGIN_PX}px 0px` },
-    )
-    observer.observe(sentinel)
-    onCleanup(() => observer.disconnect())
   })
 
   const timestamp = () => {
@@ -1565,27 +1406,18 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   createEffect(() => {
     if (!expanded()) return
-    reasoningText()
-    requestAnimationFrame(() => {
-      restoreScrollPosition(autoScroll())
-      if (autoScroll()) {
-        scheduleAnchorScroll(true)
-      }
-      notifyContentRendered()
-    })
+    const nextText = reasoningText()
+    if (reasoningTextRef && reasoningTextRef.textContent !== nextText) {
+      reasoningTextRef.textContent = nextText
+    }
+    followScroll.restoreAfterRender()
+    notifyContentRendered()
   })
 
   createEffect(() => {
     if (!expanded()) return
-    const container = scrollContainer()
-    if (!container) return
-    const shouldFollow = autoScroll()
-    requestAnimationFrame(() => {
-      restoreScrollPosition(shouldFollow)
-      if (shouldFollow) {
-        scheduleAnchorScroll(true)
-      }
-    })
+    if (!followScroll.autoScroll()) return
+    followScroll.restoreAfterRender({ forceBottom: true })
   })
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
@@ -1743,14 +1575,23 @@ function ReasoningCard(props: ReasoningCardProps) {
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
             <div
-              ref={initializeScrollContainer}
+              ref={followScroll.registerContainer}
               class="message-reasoning-output"
               role="region"
               aria-label={t("messageBlock.reasoning.detailsAriaLabel")}
-              onScroll={handleScrollEvent}
+              onScroll={followScroll.handleScroll}
             >
-              <pre class="message-reasoning-text" dir="auto">{reasoningText() || ""}</pre>
-              <div ref={setBottomSentinel} aria-hidden="true" class="reasoning-scroll-sentinel" style={{ height: "1px" }} />
+              <pre
+                ref={(element) => {
+                  reasoningTextRef = element || undefined
+                  if (reasoningTextRef) {
+                    reasoningTextRef.textContent = reasoningText() || ""
+                  }
+                }}
+                class="message-reasoning-text"
+                dir="auto"
+              />
+              {followScroll.renderSentinel()}
             </div>
           </div>
         </div>
