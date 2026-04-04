@@ -199,6 +199,7 @@ function ToolCallDetails(props: {
     },
     handleScroll: followScroll.handleScroll,
     renderSentinel: followScroll.renderSentinel,
+    restoreAfterRender: followScroll.restoreAfterRender,
   }
 
   const handleScrollRendered = () => {
@@ -434,6 +435,7 @@ function ToolCallDetails(props: {
       )
     },
     scrollHelpers,
+    onContentRendered: props.onContentRendered,
   }
 
   let previousPartVersion: number | undefined

@@ -145,7 +145,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input)
   },
-  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t }) {
+  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
     const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
 
@@ -358,6 +358,14 @@ export const taskRenderer: ToolRenderer = {
         const title = typeof entry?.title === "string" ? entry.title : undefined
         return { id, tool, input: fallbackInput, metadata: metadataFromEntry, state: stateValue, status: statusValue, title }
       })
+    })
+
+    createEffect(() => {
+      const childCount = childToolKeys().length
+      const legacyCount = legacyItems().length
+      if (childCount === 0 && legacyCount === 0) return
+      scrollHelpers?.restoreAfterRender()
+      onContentRendered?.()
     })
 
     return (
