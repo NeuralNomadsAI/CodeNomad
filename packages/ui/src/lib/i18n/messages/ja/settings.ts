@@ -230,4 +230,23 @@ export const settingsMessages = {
   "sidecars.refresh": "Refresh",
   "sidecars.path": "Path",
   "sidecars.go": "Go",
+
+  // Toast History Panel
+  "toastHistory.title": "通知履歴",
+  "toastHistory.empty": "通知はありません",
+  "toastHistory.clearAll": "すべてクリア",
+  "toastHistory.markAllRead": "すべて既読",
+  "toastHistory.filter.label": "通知をフィルター",
+  "toastHistory.filter.all": "すべて",
+  "toastHistory.filter.info": "情報",
+  "toastHistory.filter.success": "成功",
+  "toastHistory.filter.warning": "警告",
+  "toastHistory.filter.error": "エラー",
+  "toastHistory.today": "今日",
+  "toastHistory.yesterday": "昨日",
+  "toastHistory.earlier": "それ以前",
+  "toastHistory.unread": "{count}件の未読",
+  "toastHistory.viewSettings": "設定",
+  "toastHistory.close": "閉じる",
+  "toastHistory.deleteItem": "通知を削除",
 } as const

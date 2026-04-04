@@ -230,4 +230,23 @@ export const settingsMessages = {
   "sidecars.refresh": "Refresh",
   "sidecars.path": "Path",
   "sidecars.go": "Go",
+
+  // Toast History Panel
+  "toastHistory.title": "通知历史",
+  "toastHistory.empty": "暂无通知",
+  "toastHistory.clearAll": "清除全部",
+  "toastHistory.markAllRead": "全部已读",
+  "toastHistory.filter.label": "筛选通知",
+  "toastHistory.filter.all": "全部",
+  "toastHistory.filter.info": "信息",
+  "toastHistory.filter.success": "成功",
+  "toastHistory.filter.warning": "警告",
+  "toastHistory.filter.error": "错误",
+  "toastHistory.today": "今天",
+  "toastHistory.yesterday": "昨天",
+  "toastHistory.earlier": "更早",
+  "toastHistory.unread": "{count} 条未读",
+  "toastHistory.viewSettings": "设置",
+  "toastHistory.close": "关闭",
+  "toastHistory.deleteItem": "删除通知",
 } as const

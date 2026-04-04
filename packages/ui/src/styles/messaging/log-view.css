@@ -1,6 +1,6 @@
 /* Log view utilities */
 .log-container {
-  @apply flex flex-col h-full;
+  @apply relative flex flex-col h-full;
   background-color: var(--surface-base);
 }
 
@@ -71,4 +71,42 @@
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   max-width: 320px;
+}
+
+/* Scroll button wrapper - same as message-section */
+.log-container .message-scroll-button-wrapper {
+  position: absolute;
+  inset-inline-end: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.log-container .message-scroll-button {
+  @apply inline-flex items-center justify-center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-base);
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+  box-shadow: var(--scroll-elevation-shadow);
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.log-container .message-scroll-button:hover {
+  background-color: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.log-container .message-scroll-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+}
+
+.log-container .message-scroll-icon {
+  font-size: var(--font-size-lg);
+  color: var(--accent-primary);
 }

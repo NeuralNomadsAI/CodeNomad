@@ -1,0 +1,252 @@
+/**
+ * Toast 歷史記錄面板樣式
+ * Toast History Panel Styles
+ *
+ * 僅保留無法用 Tailwind utility 表達的樣式：
+ * - @keyframes 動畫
+ * - color-mix() 動態混合
+ * - 巢狀選擇器（如 :hover 子元素）
+ * - focus-visible 配合 CSS 變數
+ * - @media 響應式
+ *
+ * 其餘 layout/spacing/color 已移至 TSX 的 Tailwind class。
+ * Only keeps styles that cannot be expressed with Tailwind utilities:
+ * - @keyframes animations
+ * - color-mix() dynamic mixing
+ * - Nested selectors (e.g. :hover child elements)
+ * - focus-visible with CSS variables
+ * - @media responsive
+ *
+ * Other layout/spacing/color moved to Tailwind classes in TSX.
+ */
+
+/* ==================== Backdrop ==================== */
+
+.toast-history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: var(--space-lg);
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(4px);
+}
+
+/* ==================== Panel ==================== */
+
+.toast-history-panel {
+  box-shadow: var(--panel-shadow-strong);
+  animation: toast-history-slide-in 0.2s ease-out;
+}
+
+@keyframes toast-history-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ==================== Action Buttons ==================== */
+
+.toast-history-action-btn {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.toast-history-action-btn:hover {
+  background: var(--surface-hover);
+}
+
+.toast-history-action-btn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.toast-history-action-btn-danger {
+  color: var(--color-danger);
+}
+
+.toast-history-action-btn-danger:hover {
+  background: color-mix(in srgb, var(--color-danger) 10%, var(--surface-secondary));
+  border-color: var(--color-danger);
+}
+
+.toast-history-close-btn {
+  transition: background-color 0.15s ease;
+}
+
+.toast-history-close-btn:hover {
+  background: var(--surface-hover);
+}
+
+.toast-history-close-btn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ==================== Filter ==================== */
+
+.toast-history-filter-btn {
+  transition: all 0.15s ease;
+}
+
+.toast-history-filter-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toast-history-filter-btn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.toast-history-filter-btn-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.toast-history-filter-btn-active:hover {
+  background: color-mix(in srgb, var(--color-primary) 85%, white);
+  color: var(--color-on-primary);
+}
+
+/* Filter variant colors */
+.toast-history-filter-btn-info.toast-history-filter-btn-active {
+  background: var(--color-info, #0ea5e9);
+  border-color: var(--color-info, #0ea5e9);
+}
+
+.toast-history-filter-btn-success.toast-history-filter-btn-active {
+  background: var(--color-success, #10b981);
+  border-color: var(--color-success, #10b981);
+}
+
+.toast-history-filter-btn-warning.toast-history-filter-btn-active {
+  background: var(--color-warning, #f59e0b);
+  border-color: var(--color-warning, #f59e0b);
+}
+
+.toast-history-filter-btn-error.toast-history-filter-btn-active {
+  background: var(--color-error, #ef4444);
+  border-color: var(--color-error, #ef4444);
+}
+
+/* ==================== Item ==================== */
+
+.toast-history-item {
+  transition: background-color 0.15s ease;
+}
+
+.toast-history-item:hover {
+  background: var(--surface-hover);
+}
+
+.toast-history-item:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.toast-history-item-unread {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--surface-secondary));
+}
+
+.toast-history-item-unread:hover {
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--surface-secondary));
+}
+
+/* ==================== Indicator ==================== */
+
+.toast-history-indicator-info {
+  background: var(--color-info, #0ea5e9);
+}
+
+.toast-history-indicator-success {
+  background: var(--color-success, #10b981);
+}
+
+.toast-history-indicator-warning {
+  background: var(--color-warning, #f59e0b);
+}
+
+.toast-history-indicator-error {
+  background: var(--color-error, #ef4444);
+}
+
+/* ==================== Item Action ==================== */
+
+.toast-history-item-action {
+  color: var(--color-primary);
+  transition: color 0.15s ease;
+}
+
+.toast-history-item-action:hover {
+  color: color-mix(in srgb, var(--color-primary) 80%, black);
+  text-decoration: underline;
+}
+
+.toast-history-item-action:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ==================== Item Delete ==================== */
+
+.toast-history-item-delete {
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+/** 巢狀選擇器：hover 項目時顯示刪除按鈕 / Nested selector: show delete on item hover */
+.toast-history-item:hover .toast-history-item-delete {
+  opacity: 1;
+}
+
+.toast-history-item-delete:hover {
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  color: var(--color-danger);
+}
+
+.toast-history-item-delete:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ==================== Unread Dot ==================== */
+
+.toast-history-item-unread-dot {
+  background: var(--color-primary);
+}
+
+/* ==================== Responsive ==================== */
+
+@media (max-width: 720px) {
+  .toast-history-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .toast-history-panel {
+    width: 100vw;
+    max-height: 80vh;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    animation: toast-history-slide-up 0.2s ease-out;
+  }
+
+  @keyframes toast-history-slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
