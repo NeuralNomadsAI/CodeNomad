@@ -1,4 +1,4 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, type Accessor, untrack } from "solid-js"
+import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
@@ -79,45 +79,6 @@ function TaskToolCallRow(props: {
   })
 
   return <>{rendered()}</>
-}
-
-function TaskChildToolRows(props: {
-  toolKeys: Accessor<string[]>
-  store: ReturnType<typeof messageStoreBus.getOrCreate>
-  sessionId: Accessor<string>
-  renderToolCall: NonNullable<import("../types").ToolRendererContext["renderToolCall"]>
-  scrollHelpers?: import("../types").ToolScrollHelpers
-  onContentRendered?: () => void
-}) {
-  createEffect(() => {
-    if (props.toolKeys().length === 0) return
-    props.scrollHelpers?.restoreAfterRender()
-    props.onContentRendered?.()
-  })
-
-  return (
-    <div
-      class="message-text tool-call-markdown tool-call-task-container"
-      ref={props.scrollHelpers?.registerContainer}
-      onScroll={
-        props.scrollHelpers ? (event) => props.scrollHelpers!.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
-      }
-    >
-      <div class="tool-call-task-summary">
-        <Index each={props.toolKeys()}>
-          {(key) => (
-            <TaskToolCallRow
-              toolKey={key()}
-              store={props.store}
-              sessionId={props.sessionId()}
-              renderToolCall={props.renderToolCall}
-            />
-          )}
-        </Index>
-      </div>
-      {props.scrollHelpers?.renderSentinel?.()}
-    </div>
-  )
 }
 
 function normalizeStatus(status?: string | null): ToolState["status"] | undefined {
@@ -400,8 +361,9 @@ export const taskRenderer: ToolRenderer = {
     })
 
     createEffect(() => {
+      const childCount = childToolKeys().length
       const legacyCount = legacyItems().length
-      if (childToolKeys().length > 0 || legacyCount === 0) return
+      if (childCount === 0 && legacyCount === 0) return
       scrollHelpers?.restoreAfterRender()
       onContentRendered?.()
     })
@@ -481,18 +443,31 @@ export const taskRenderer: ToolRenderer = {
                   </div>
                 }
               >
-                <Show when={renderToolCall}>
-                  {(render) => (
-                    <TaskChildToolRows
-                      toolKeys={childToolKeys}
-                      store={store}
-                      sessionId={childSessionId}
-                      renderToolCall={render()}
-                      scrollHelpers={scrollHelpers}
-                      onContentRendered={onContentRendered}
-                    />
-                  )}
-                </Show>
+                <div
+                  class="message-text tool-call-markdown tool-call-task-container"
+                  ref={scrollHelpers?.registerContainer}
+                  onScroll={
+                    scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
+                  }
+                >
+                    <div class="tool-call-task-summary">
+                    <Index each={childToolKeys()}>
+                      {(key) => (
+                        <Show when={renderToolCall}>
+                          {(render) => (
+                            <TaskToolCallRow
+                              toolKey={key()}
+                              store={store}
+                              sessionId={childSessionId()}
+                              renderToolCall={render()}
+                            />
+                          )}
+                        </Show>
+                      )}
+                    </Index>
+                  </div>
+                  {scrollHelpers?.renderSentinel?.()}
+                </div>
               </Show>
             </div>
           </section>

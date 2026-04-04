@@ -3,71 +3,25 @@ import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer, ToolScrollHelpers } from "../types"
 import { ensureMarkdownContent, formatUnknown, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
-import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../../lib/ansi"
-import { escapeHtml } from "../../../lib/text-render-utils"
+import { createStableAnsiStreamUpdater } from "../ansi-render"
+import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
 
 function RunningBashOutput(props: {
   content: Accessor<string>
   scrollHelpers?: ToolScrollHelpers
 }) {
   let preRef: HTMLPreElement | undefined
-  const streamRenderer = createAnsiStreamRenderer()
-  let previousContent = ""
-  let ansiActive = false
+  const updater = createStableAnsiStreamUpdater()
 
   createEffect(() => {
-    const nextContent = props.content()
     const element = preRef
     if (!element) return
-
-    const resetStreaming = !previousContent || !nextContent.startsWith(previousContent)
-
-    if (resetStreaming) {
-      ansiActive = hasAnsi(nextContent)
-      if (ansiActive) {
-        streamRenderer.reset()
-        element.innerHTML = streamRenderer.render(nextContent)
-      } else {
-        streamRenderer.reset()
-        element.innerHTML = escapeHtml(nextContent)
-      }
-      previousContent = nextContent
-      return
-    }
-
-    const delta = nextContent.slice(previousContent.length)
-    if (delta.length === 0) {
-      return
-    }
-
-    if (!ansiActive && hasAnsi(delta)) {
-      ansiActive = true
-      streamRenderer.reset()
-      element.innerHTML = streamRenderer.render(nextContent)
-      previousContent = nextContent
-      return
-    }
-
-    if (ansiActive) {
-      const htmlChunk = streamRenderer.render(delta)
-      if (htmlChunk.length > 0) {
-        element.insertAdjacentHTML("beforeend", htmlChunk)
-      }
-    } else {
-      const escapedDelta = escapeHtml(delta)
-      if (escapedDelta.length > 0) {
-        element.insertAdjacentHTML("beforeend", escapedDelta)
-      }
-    }
-
-    previousContent = nextContent
+    updater.update(element, props.content())
   })
 
   onCleanup(() => {
     preRef = undefined
-    previousContent = ""
-    ansiActive = false
-    streamRenderer.reset()
+    updater.reset()
   })
 
   return (

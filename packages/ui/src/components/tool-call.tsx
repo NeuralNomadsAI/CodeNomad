@@ -203,7 +203,7 @@ function ToolCallDetails(props: {
   }
 
   const handleScrollRendered = () => {
-    followScroll.restoreAfterRender()
+    scrollHelpers.restoreAfterRender()
   }
 
   createEffect(() => {
@@ -430,6 +430,7 @@ function ToolCallDetails(props: {
           partVersion={options.partVersion}
           instanceId={props.instanceId}
           sessionId={options.sessionId}
+          onContentRendered={props.onContentRendered}
           forceCollapsed={options.forceCollapsed}
         />
       )
@@ -448,12 +449,12 @@ function ToolCallDetails(props: {
       return
     }
     previousPartVersion = version
-    followScroll.restoreAfterRender()
+    scrollHelpers.restoreAfterRender()
   })
 
   createEffect(() => {
     if (followScroll.autoScroll()) {
-      followScroll.restoreAfterRender({ forceBottom: true })
+      scrollHelpers.restoreAfterRender({ forceBottom: true })
     }
   })
 
@@ -500,6 +501,7 @@ function ToolCallDetails(props: {
       onDismiss={() => void handleQuestionDismiss()}
     />
   )
+
   return (
     <div class="tool-call-details">
       <Show
@@ -701,8 +703,6 @@ export default function ToolCall(props: ToolCallProps) {
       return !current
     })
   }
-
-
   const statusClass = () => {
     const status = toolState()?.status || "pending"
     return `tool-call-status-${status}`
