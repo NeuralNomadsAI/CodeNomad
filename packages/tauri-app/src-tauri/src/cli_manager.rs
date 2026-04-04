@@ -29,6 +29,38 @@ fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
 }
 
+fn emit_perf_startup(app: &AppHandle, stage: &str, detail: serde_json::Value) {
+    let _ = app.emit(
+        "perf:startup",
+        json!({
+            "stage": stage,
+            "detail": detail,
+        }),
+    );
+}
+
+fn record_startup_event(
+    status: &Arc<Mutex<CliStatus>>,
+    app: &AppHandle,
+    stage: &str,
+    detail: serde_json::Value,
+) {
+    let payload = StartupPerfEvent {
+        stage: stage.to_string(),
+        detail: detail.clone(),
+    };
+    status.lock().startup_events.push(payload);
+    emit_perf_startup(app, stage, detail);
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupPerfEvent {
+    pub stage: String,
+    #[serde(default)]
+    pub detail: serde_json::Value,
+}
+
 #[cfg(windows)]
 fn configure_spawn(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
@@ -339,12 +371,14 @@ pub enum CliState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliStatus {
     pub state: CliState,
     pub pid: Option<u32>,
     pub port: Option<u16>,
     pub url: Option<String>,
     pub error: Option<String>,
+    pub startup_events: Vec<StartupPerfEvent>,
 }
 
 impl Default for CliStatus {
@@ -355,6 +389,7 @@ impl Default for CliStatus {
             port: None,
             url: None,
             error: None,
+            startup_events: Vec::new(),
         }
     }
 }
@@ -379,6 +414,12 @@ impl CliProcessManager {
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         log_line(&format!("start requested (dev={dev})"));
+        record_startup_event(
+            &self.status,
+            &app,
+            "cli.start.requested",
+            json!({ "dev": dev }),
+        );
         self.stop()?;
         self.ready.store(false, Ordering::SeqCst);
         *self.bootstrap_token.lock() = None;
@@ -411,6 +452,12 @@ impl CliProcessManager {
                 locked.error = Some(err.to_string());
                 let snapshot = locked.clone();
                 drop(locked);
+                record_startup_event(
+                    &status_arc,
+                    &app,
+                    "cli.start.error",
+                    json!({ "message": err.to_string() }),
+                );
                 let _ = app.emit("cli:error", json!({"message": err.to_string()}));
                 let _ = app.emit("cli:status", snapshot);
             }
@@ -507,6 +554,14 @@ impl CliProcessManager {
         self.status.lock().clone()
     }
 
+    pub fn clear_startup_events(&self) {
+        self.status.lock().startup_events.clear();
+    }
+
+    pub fn record_startup_event(&self, app: &AppHandle, stage: &str, detail: serde_json::Value) {
+        record_startup_event(&self.status, app, stage, detail);
+    }
+
     fn spawn_cli(
         app: AppHandle,
         status: Arc<Mutex<CliStatus>>,
@@ -518,6 +573,16 @@ impl CliProcessManager {
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
         let host = resolve_listening_host();
+        record_startup_event(
+            &status,
+            &app,
+            "cli.entry.resolved",
+            json!({
+                "dev": dev,
+                "runner": format!("{:?}", resolution.runner),
+                "host": host,
+            }),
+        );
         log_line(&format!(
             "resolved CLI entry runner={:?} entry={} host={}",
             resolution.runner, resolution.entry, host
@@ -592,6 +657,7 @@ impl CliProcessManager {
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
+        record_startup_event(&status, &app, "cli.process.spawned", json!({ "pid": pid }));
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -695,6 +761,12 @@ impl CliProcessManager {
                     let _ = child.kill();
                 }
             }
+            record_startup_event(
+                &status_clone,
+                &app_clone,
+                "cli.start.timeout",
+                json!({ "message": "CLI did not start in time" }),
+            );
             let _ = app_clone.emit("cli:error", json!({"message": "CLI did not start in time"}));
             Self::emit_status(&app_clone, &locked);
         });
@@ -839,11 +911,13 @@ impl CliProcessManager {
             .ok()
             .and_then(|u| u.port_or_known_default())
             .map(|p| p as u16);
-        let mut locked = status.lock();
-        locked.port = port;
-        locked.url = Some(base_url.clone());
-        locked.state = CliState::Ready;
-        locked.error = None;
+        {
+            let mut locked = status.lock();
+            locked.port = port;
+            locked.url = Some(base_url.clone());
+            locked.state = CliState::Ready;
+            locked.error = None;
+        }
         log_line(&format!("cli ready on {base_url}"));
 
         let token = bootstrap_token.lock().take();
@@ -879,8 +953,10 @@ impl CliProcessManager {
         } else {
             navigate_main(app, &base_url);
         }
-        let _ = app.emit("cli:ready", locked.clone());
-        Self::emit_status(app, &locked);
+        record_startup_event(status, app, "cli.ready", json!({ "url": base_url }));
+        let snapshot = status.lock().clone();
+        let _ = app.emit("cli:ready", snapshot.clone());
+        Self::emit_status(app, &snapshot);
     }
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
