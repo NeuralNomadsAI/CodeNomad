@@ -9,11 +9,13 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -30,10 +32,12 @@ use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static LAST_ZOOM_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
-const ZOOM_STEP: f64 = 0.2;
+const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
+const ZOOM_DEBOUNCE_MS: u64 = 50;
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -129,7 +133,11 @@ fn should_allow_internal(url: &Url) -> bool {
     }
 }
 
-fn should_allow_window_origin<R: Runtime>(app_handle: &AppHandle<R>, window_label: &str, url: &Url) -> bool {
+fn should_allow_window_origin<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    window_label: &str,
+    url: &Url,
+) -> bool {
     if should_allow_internal(url) {
         return true;
     }
@@ -172,7 +180,11 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
 
     let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
-    let title = format!("{} - {}", payload.name, parsed.host_str().unwrap_or(payload.base_url.as_str()));
+    let title = format!(
+        "{} - {}",
+        payload.name,
+        parsed.host_str().unwrap_or(payload.base_url.as_str())
+    );
 
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.navigate(parsed.clone());
@@ -189,12 +201,13 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
         .map_err(|err| err.to_string())?
         .insert(label.clone(), parsed.origin().ascii_serialization());
 
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
-        .title(title)
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(800.0, 600.0)
-        .build()
-        .map_err(|err| err.to_string())?;
+    let window =
+        WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
+            .title(title)
+            .inner_size(1400.0, 900.0)
+            .min_inner_size(800.0, 600.0)
+            .build()
+            .map_err(|err| err.to_string())?;
 
     let app_handle = app.clone();
     window.on_window_event(move |event| {
@@ -246,6 +259,15 @@ fn clamp_zoom_level(value: f64) -> f64 {
 }
 
 fn set_main_window_zoom(app_handle: &AppHandle, next_zoom: f64) {
+    if let Ok(mut last_zoom_time) = LAST_ZOOM_TIME.lock() {
+        if let Some(last_time) = *last_zoom_time {
+            if last_time.elapsed().as_millis() < ZOOM_DEBOUNCE_MS as u128 {
+                return;
+            }
+        }
+        *last_zoom_time = Some(Instant::now());
+    }
+
     if let Some(window) = app_handle.get_webview_window("main") {
         let normalized = clamp_zoom_level(next_zoom);
         if window.set_zoom(normalized).is_ok() {
