@@ -351,6 +351,13 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }
   }
 
+  const clearHoverPreview = () => {
+    clearHoverTimer()
+    clearCloseTimer()
+    setHoveredSegment(null)
+    setHoverAnchorRect(null)
+  }
+
   const scheduleClose = () => {
     if (typeof window === "undefined") return
     clearHoverTimer()
@@ -358,8 +365,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     // Small delay so the pointer can travel from the segment to the tooltip.
     closeTimer = window.setTimeout(() => {
       closeTimer = null
-      setHoveredSegment(null)
-      setHoverAnchorRect(null)
+      clearHoverPreview()
     }, 160)
   }
 
@@ -399,8 +405,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   onCleanup(() => {
-    clearHoverTimer()
-    clearCloseTimer()
+    clearHoverPreview()
   })
 
   // --- Selection & histogram rib state ---
@@ -451,6 +456,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   }
 
   const handleScroll = () => {
+    if (renderVirtualizedTimeline()) {
+      if (hoveredSegment()) {
+        clearHoverPreview()
+      }
+      return
+    }
     if (!isSelectionActive()) return
     if (!scrollContainerRef || !xrayOverlayRef) return
     xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
@@ -480,6 +491,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const renderVirtualizedTimeline = createMemo(() => !isSelectionActive())
+
+  createEffect(on(renderVirtualizedTimeline, () => {
+    clearHoverPreview()
+  }))
 
   const maxRibWidth = createMemo(() => Math.round(windowWidth() * 0.5))
 
@@ -583,7 +598,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         wasLongPress = true
 
         // Scroll anchoring: preserve visual position of the pressed badge.
-        const btn = buttonRefs.get(segment.id)
+        const btn = renderVirtualizedTimeline() ? null : buttonRefs.get(segment.id)
         let anchorOffset: number | null = null
         if (btn && scrollContainerRef) {
           anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
@@ -801,16 +816,17 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                     aria-current={isActive() ? "true" : undefined}
                     aria-hidden={isHidden() ? "true" : undefined}
                     onClick={(event) => {
-                      if (wasLongPress) {
-                        wasLongPress = false
-                        return
-                      }
+                    if (wasLongPress) {
+                      wasLongPress = false
+                      return
+                    }
 
-                      const btn = buttonRefs.get(segment.id)
-                      let anchorOffset: number | null = null
-                      if (btn && scrollContainerRef) {
-                        anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
-                      }
+                    const btn = buttonRefs.get(segment.id)
+                    const stableBtn = renderVirtualizedTimeline() ? null : btn
+                    let anchorOffset: number | null = null
+                    if (stableBtn && scrollContainerRef) {
+                      anchorOffset = stableBtn.offsetTop - scrollContainerRef.scrollTop
+                    }
 
                       const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
 
@@ -824,11 +840,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                         props.onSegmentClick?.(segment)
                       }
 
-                      if (anchorOffset !== null && btn && scrollContainerRef) {
-                        const desired = btn.offsetTop - anchorOffset
-                        if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
-                          scrollContainerRef.scrollTop = desired
-                        }
+                    if (anchorOffset !== null && stableBtn && scrollContainerRef) {
+                      const desired = stableBtn.offsetTop - anchorOffset
+                      if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
+                        scrollContainerRef.scrollTop = desired
+                      }
                       }
                     }}
                     onPointerDown={(e) => handlePointerDown(segment, e)}
@@ -850,7 +866,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
             {(segment, index) => {
               const segIndex = () => index()
-            onCleanup(() => buttonRefs.delete(segment.id))
             const isActive = () => props.activeSegmentId === segment.id
             const isSelected = () => props.selectedIds?.().has(segment.id)
 
@@ -928,7 +943,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
              return (
                <button
-                  ref={(el) => registerButtonRef(segment.id, el)}
                   type="button"
                   data-variant={segment.variant}
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
