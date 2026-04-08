@@ -326,7 +326,9 @@
 }
 
 /* Subtle extra spacing after the group parent (assistant) to separate
-   from the next user badge below. Uses adjacent sibling targeting. */
+   from the next user badge below. Use an explicit class so this also works
+   in the virtualized path where items are wrapped. */
+.message-timeline-after-group-parent,
 .message-timeline-group-parent + .message-timeline-user,
 .message-timeline-group-parent + .message-timeline-compaction {
   margin-top: 0.35rem;

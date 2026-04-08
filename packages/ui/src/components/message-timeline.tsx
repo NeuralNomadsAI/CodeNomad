@@ -717,6 +717,13 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return map
   })
 
+  const followsGroupParent = (index: number, segment: TimelineSegment): boolean => {
+    if (segment.type !== "user" && segment.type !== "compaction") return false
+    if (index <= 0) return false
+    const previous = props.segments[index - 1]
+    return previous?.type === "assistant" && messagesWithTools().has(previous.messageId)
+  }
+
   return (
     <div class="message-timeline-container">
       <div
@@ -811,7 +818,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                     ref={(el) => registerButtonRef(segment.id, el)}
                     type="button"
                     data-variant={segment.variant}
-                    class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
+                    class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""} ${followsGroupParent(segIndex(), segment) ? "message-timeline-after-group-parent" : ""}`}
                     data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
                     aria-current={isActive() ? "true" : undefined}
                     aria-hidden={isHidden() ? "true" : undefined}
@@ -945,7 +952,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                <button
                   type="button"
                   data-variant={segment.variant}
-                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""}`}
+                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""} ${isGroupStart() ? "message-timeline-group-start" : ""} ${followsGroupParent(segIndex(), segment) ? "message-timeline-after-group-parent" : ""}`}
 
                   data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
 
