@@ -4,7 +4,8 @@ import type {
   Provider as SDKProvider,
   Model as SDKModel,
 } from "@opencode-ai/sdk"
-import type { SessionStatus as SDKSessionStatus, FileDiff } from "@opencode-ai/sdk/v2/client"
+import type { SessionStatus as SDKSessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
 // Export SDK types for external use
 export type { 
