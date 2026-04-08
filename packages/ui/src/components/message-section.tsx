@@ -46,6 +46,33 @@ export default function MessageSection(props: MessageSectionProps) {
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+  const visibleMessageIds = createMemo(() => {
+    const resolvedStore = store()
+    return messageIds().filter((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return false
+
+      if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
+        return true
+      }
+
+      if (record.role !== "assistant") {
+        return false
+      }
+
+      const info = resolvedStore.getMessageInfo(messageId)
+      if (!info || info.role !== "assistant") {
+        return false
+      }
+
+      if (info.error) {
+        return true
+      }
+
+      const timeInfo = info.time as { created: number; end?: number } | undefined
+      return Boolean(timeInfo && (timeInfo.end === undefined || timeInfo.end === 0))
+    })
+  })
 
   const scrollCache = useScrollCache({
     instanceId: props.instanceId,
@@ -611,7 +638,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!element || !api) return
     if (props.loading) return
-    if (messageIds().length === 0) return
+    if (visibleMessageIds().length === 0) return
     if (didRestoreScroll()) return
 
     scrollCache.restore(element, {
@@ -1003,7 +1030,7 @@ export default function MessageSection(props: MessageSectionProps) {
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
-          items={messageIds}
+          items={visibleMessageIds}
           getKey={(messageId) => messageId}
           getAnchorId={getMessageAnchorId}
           getKeyFromAnchorId={getMessageIdFromAnchorId}
@@ -1049,7 +1076,7 @@ export default function MessageSection(props: MessageSectionProps) {
           registerState={(state) => setListState(state)}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && messageIds().length === 0}>
+              <Show when={!props.loading && visibleMessageIds().length === 0}>
                 <div class="empty-state">
                   <div class="empty-state-content">
                     <div class="flex flex-col items-center gap-3 mb-6">

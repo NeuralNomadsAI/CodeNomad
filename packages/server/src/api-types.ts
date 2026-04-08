@@ -376,6 +376,8 @@ export interface ServerMeta {
 
 export type BackgroundProcessStatus = "running" | "stopped" | "error"
 
+export type BackgroundProcessTerminalReason = "finished" | "failed" | "user_stopped" | "user_terminated"
+
 export interface BackgroundProcess {
   id: string
   workspaceId: string
@@ -388,6 +390,7 @@ export interface BackgroundProcess {
   stoppedAt?: string
   exitCode?: number
   outputSizeBytes?: number
+  terminalReason?: BackgroundProcessTerminalReason
 }
 
 export interface BackgroundProcessListResponse {

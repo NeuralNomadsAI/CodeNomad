@@ -3,7 +3,7 @@ import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, 
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -231,6 +231,12 @@ function isContentPartType(type: unknown): boolean {
   return type === "text" || type === "file"
 }
 
+function isVisibleContentPart(part: ClientPart): boolean {
+  if (!part || !isContentPartType((part as any).type)) return false
+  if (isHiddenSyntheticTextPart(part)) return false
+  return partHasRenderableText(part)
+}
+
 function MessageContentItem(props: MessageContentItemProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -264,13 +270,15 @@ function MessageContentItem(props: MessageContentItemProps) {
     return resolved
   })
 
+  const visibleParts = createMemo(() => parts().filter((part) => isVisibleContentPart(part)))
+
   const showAgentMeta = createMemo(() => {
     const current = record()
     if (!current) return false
     if (current.role !== "assistant") return false
 
     const currentParts = parts()
-    if (!currentParts.some((part) => partHasRenderableText(part))) {
+    if (visibleParts().length === 0) {
       return false
     }
 
@@ -286,10 +294,10 @@ function MessageContentItem(props: MessageContentItemProps) {
       if (!isSupportedPartType(part)) continue
 
       if (!isContentPartType((part as any).type)) continue
-      if (partHasRenderableText(part)) {
-        return false
+        if (isVisibleContentPart(part)) {
+          return false
+        }
       }
-    }
 
     return true
   })
@@ -300,7 +308,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         <MessageItem
           record={resolvedRecord()}
           messageInfo={messageInfo()}
-          parts={parts()}
+          parts={visibleParts()}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
           isQueued={isQueued()}
