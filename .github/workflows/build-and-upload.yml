@@ -378,7 +378,7 @@ jobs:
 
       - name: Build macOS bundle (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --bundles app,zip
 
       - name: Package Tauri artifacts (macOS)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -388,7 +388,9 @@ jobs:
           ARTIFACT_DIR="packages/tauri-app/release-tauri"
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
-          if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
+          if [ -f "$BUNDLE_ROOT/macos/CodeNomad.app.zip" ]; then
+            mv "$BUNDLE_ROOT/macos/CodeNomad.app.zip" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.zip"
+          elif [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.zip"
           fi
 
@@ -462,7 +464,7 @@ jobs:
 
       - name: Build macOS bundle (Tauri, arm64)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --bundles app,zip
 
       - name: Package Tauri artifacts (macOS arm64)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -472,7 +474,9 @@ jobs:
           ARTIFACT_DIR="packages/tauri-app/release-tauri"
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
-          if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
+          if [ -f "$BUNDLE_ROOT/macos/CodeNomad.app.zip" ]; then
+            mv "$BUNDLE_ROOT/macos/CodeNomad.app.zip" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-arm64.zip"
+          elif [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-arm64.zip"
           fi
 
@@ -549,7 +553,7 @@ jobs:
       - name: Build Windows bundle (Tauri)
         shell: bash
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --bundles nsis,zip
 
       - name: Package Tauri artifacts (Windows)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -559,10 +563,19 @@ jobs:
           $artifactDir = "packages/tauri-app/release-tauri"
           if (Test-Path $artifactDir) { Remove-Item $artifactDir -Recurse -Force }
           New-Item -ItemType Directory -Path $artifactDir | Out-Null
-          $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
-          if ($null -ne $exe) {
+          
+          # Use Tauri-generated zip if available
+          $tauriZip = Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*.zip" -File | Select-Object -First 1
+          if ($null -ne $tauriZip) {
             $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.zip")
-            Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
+            Move-Item $tauriZip.FullName $dest -Force
+          } else {
+            # Fallback: manually zip the exe
+            $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
+            if ($null -ne $exe) {
+              $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.zip")
+              Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
+            }
           }
 
       - name: Upload Actions artifacts (Tauri Windows)
@@ -648,7 +661,7 @@ jobs:
 
       - name: Build Linux bundle (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build
+        run: npm exec -- tauri build --bundles appimage,deb,rpm
 
       - name: Package Tauri artifacts (Linux)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}

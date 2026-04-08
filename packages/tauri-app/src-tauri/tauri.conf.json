@@ -52,6 +52,7 @@
     ],
     "targets": [
       "app",
+      "zip",
       "appimage",
       "deb",
       "rpm",

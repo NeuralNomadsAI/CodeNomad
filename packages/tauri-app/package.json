@@ -11,7 +11,14 @@
     "sync:version": "node ./scripts/sync-tauri-version.js",
     "prebuild": "node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
-    "build": "tauri build"
+    "build": "tauri build",
+    "build:mac": "tauri build --target universal-apple-darwin --bundles app,zip",
+    "build:mac-arm": "tauri build --target aarch64-apple-darwin --bundles app,zip",
+    "build:mac-intel": "tauri build --target x86_64-apple-darwin --bundles app,zip",
+    "build:mac-zip": "tauri build --target universal-apple-darwin --bundles zip",
+    "build:win": "tauri build --bundles nsis,zip",
+    "build:win-zip": "tauri build --bundles zip",
+    "build:linux": "tauri build --bundles appimage,deb,rpm"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"
