@@ -629,13 +629,12 @@ export default function MessageBlock(props: MessageBlockProps) {
     const lastAssistantIdx = props.lastAssistantIndex()
     const isQueued = current.role === "user" && (lastAssistantIdx === -1 || index > lastAssistantIdx)
 
-    // Intentionally untracked: messageInfoVersion updates should not trigger
-    // a full message block rebuild; record revision is the invalidation key.
-    const info = untrack(messageInfo)
+    const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
 
     const cacheSignature = [
       current.id,
       current.revision,
+      messageInfoVersion,
       isQueued ? 1 : 0,
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
@@ -646,6 +645,9 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (cachedBlock && cachedBlock.signature === cacheSignature) {
       return cachedBlock.block
     }
+
+    // Only capture info after cache check fails - ensures fresh data on version bump
+    const info = untrack(messageInfo)
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, current)
     const items: MessageBlockItem[] = []
@@ -1108,17 +1110,23 @@ function StepCard(props: StepCardProps) {
       return null
     }
     const info = props.messageInfo
-    if (!info || info.role !== "assistant" || !info.tokens) {
+    const part = props.part as any
+    
+    // step-finish parts have tokens embedded; also check messageInfo
+    const partTokens = part?.tokens
+    const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
+    const tokens = partTokens ?? infoTokens
+    if (!tokens) {
       return null
     }
-    const tokens = info.tokens
+    
     return {
       input: tokens.input ?? 0,
       output: tokens.output ?? 0,
       reasoning: tokens.reasoning ?? 0,
       cacheRead: tokens.cache?.read ?? 0,
       cacheWrite: tokens.cache?.write ?? 0,
-      cost: info.cost ?? 0,
+      cost: (part?.cost ?? (info && info.role === "assistant" ? info.cost : 0)) ?? 0,
     }
   }
 
