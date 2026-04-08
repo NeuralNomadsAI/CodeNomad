@@ -1,15 +1,17 @@
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { loadMonaco } from "../../lib/monaco/setup"
 import { getOrCreateTextModel } from "../../lib/monaco/model-cache"
 import { inferMonacoLanguageId } from "../../lib/monaco/language"
 import { ensureMonacoLanguageLoaded } from "../../lib/monaco/setup"
 import { useTheme } from "../../lib/theme"
+import { parsePatchToBeforeAfter } from "../../lib/diff-utils"
 
 interface MonacoDiffViewerProps {
   scopeKey: string
   path: string
-  before: string
-  after: string
+  patch?: string
+  before?: string
+  after?: string
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
@@ -22,6 +24,16 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   let diffEditor: any = null
   let monaco: any = null
   const [ready, setReady] = createSignal(false)
+
+  const resolvedContent = createMemo(() => {
+    if (props.patch !== undefined && props.patch !== null) {
+      return parsePatchToBeforeAfter(props.patch)
+    }
+    return {
+      before: props.before ?? "",
+      after: props.after ?? "",
+    }
+  })
 
   const disposeEditor = () => {
     try {
@@ -115,11 +127,12 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   createEffect(() => {
     if (!ready() || !monaco || !diffEditor) return
     const languageId = inferMonacoLanguageId(monaco, props.path)
+    const { before, after } = resolvedContent()
     const beforeKey = `${props.scopeKey}:diff:${props.path}:before`
     const afterKey = `${props.scopeKey}:diff:${props.path}:after`
 
-    const original = getOrCreateTextModel({ monaco, cacheKey: beforeKey, value: props.before, languageId })
-    const modified = getOrCreateTextModel({ monaco, cacheKey: afterKey, value: props.after, languageId })
+    const original = getOrCreateTextModel({ monaco, cacheKey: beforeKey, value: before, languageId })
+    const modified = getOrCreateTextModel({ monaco, cacheKey: afterKey, value: after, languageId })
     diffEditor.setModel({ original, modified })
 
     void ensureMonacoLanguageLoaded(languageId).then(() => {
