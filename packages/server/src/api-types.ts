@@ -391,6 +391,7 @@ export interface BackgroundProcess {
   exitCode?: number
   outputSizeBytes?: number
   terminalReason?: BackgroundProcessTerminalReason
+  notifyEnabled?: boolean
 }
 
 export interface BackgroundProcessListResponse {

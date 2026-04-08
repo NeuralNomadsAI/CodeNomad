@@ -150,6 +150,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.empty": "没有后台进程。",
   "instanceShell.backgroundProcesses.status": "状态：{status}",
   "instanceShell.backgroundProcesses.output": "输出：{sizeKb}KB",
+  "instanceShell.backgroundProcesses.notify.enabled": "已启用完成通知",
+  "instanceShell.backgroundProcesses.notify.disabled": "已禁用完成通知",
   "instanceShell.backgroundProcesses.actions.output": "输出",
   "instanceShell.backgroundProcesses.actions.stop": "停止",
   "instanceShell.backgroundProcesses.actions.terminate": "终止",

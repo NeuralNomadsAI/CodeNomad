@@ -582,6 +582,7 @@ export class BackgroundProcessManager {
       exitCode: record.exitCode,
       outputSizeBytes: record.outputSizeBytes,
       terminalReason: record.terminalReason,
+      notifyEnabled: Boolean(record.notify),
     }
   }
 
