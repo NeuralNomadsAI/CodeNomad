@@ -15,8 +15,60 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
-  compactUnifiedGutter?: boolean
-  classicUnifiedGutter?: boolean
+  unifiedGutterStyle?: "compact" | "classic"
+}
+
+function getLineCount(value: string): number {
+  if (!value) return 1
+  return value.split("\n").length
+}
+
+function getDigitCount(value: number): number {
+  return String(Math.max(1, value)).length
+}
+
+function getUnifiedGutterSizing(options: {
+  unifiedGutterStyle: "compact" | "classic" | null
+  before: string
+  after: string
+}) {
+  const beforeLineCount = getLineCount(options.before)
+  const afterLineCount = getLineCount(options.after)
+  const beforeDigitCount = getDigitCount(beforeLineCount)
+  const afterDigitCount = getDigitCount(afterLineCount)
+  const maxDigitCount = Math.max(beforeDigitCount, afterDigitCount)
+  const extraDigits = Math.max(0, maxDigitCount - 2)
+  // Reserve one extra character so the number lane keeps a visible gap before
+  // the +/- indicator lane once the line numbers grow beyond trivial widths.
+  const beforeNumberChars = Math.max(2, beforeDigitCount + 1)
+  const afterNumberChars = Math.max(2, afterDigitCount + 1)
+  const fourDigitPenalty = Math.max(0, maxDigitCount - 3)
+
+  if (options.unifiedGutterStyle === "compact") {
+    const sharedNumberChars = Math.max(beforeNumberChars, afterNumberChars)
+    return {
+      diffEditorLineNumbersMinChars: sharedNumberChars,
+      originalLineNumbersMinChars: sharedNumberChars,
+      modifiedLineNumbersMinChars: sharedNumberChars,
+      lineDecorationsWidth: 8 + extraDigits * 4 + fourDigitPenalty * 2,
+    }
+  }
+
+  if (options.unifiedGutterStyle === "classic") {
+    return {
+      diffEditorLineNumbersMinChars: Math.max(beforeNumberChars, afterNumberChars),
+      originalLineNumbersMinChars: beforeNumberChars,
+      modifiedLineNumbersMinChars: afterNumberChars,
+      lineDecorationsWidth: 10 + extraDigits * 4 + fourDigitPenalty * 4,
+    }
+  }
+
+  return {
+    diffEditorLineNumbersMinChars: 4,
+    originalLineNumbersMinChars: 4,
+    modifiedLineNumbersMinChars: 4,
+    lineDecorationsWidth: 12,
+  }
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
@@ -99,8 +151,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
   createEffect(() => {
     if (!host) return
-    host.dataset.compactUnifiedGutter = props.compactUnifiedGutter ? "true" : "false"
-    host.dataset.classicUnifiedGutter = props.classicUnifiedGutter ? "true" : "false"
+    host.dataset.unifiedGutterStyle = props.unifiedGutterStyle ?? ""
   })
 
   createEffect(() => {
@@ -108,17 +159,26 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const viewMode = props.viewMode === "unified" ? "unified" : "split"
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
     const wordWrap = props.wordWrap === "on" ? "on" : "off"
-    const compactUnifiedGutter = Boolean(props.compactUnifiedGutter) && viewMode === "unified"
-    const classicUnifiedGutter = Boolean(props.classicUnifiedGutter) && viewMode === "unified"
-    const lineNumbersMinChars = compactUnifiedGutter ? 3 : classicUnifiedGutter ? 4 : 4
-    const lineDecorationsWidth = compactUnifiedGutter ? 9 : classicUnifiedGutter ? 12 : 12
+    const unifiedGutterStyle = viewMode === "unified" ? props.unifiedGutterStyle ?? null : null
+    const { before, after } = resolvedContent()
+    const {
+      diffEditorLineNumbersMinChars,
+      originalLineNumbersMinChars,
+      modifiedLineNumbersMinChars,
+      lineDecorationsWidth,
+    } = getUnifiedGutterSizing({
+      unifiedGutterStyle,
+      before,
+      after,
+    })
+    const compactUnifiedGutter = unifiedGutterStyle === "compact"
 
     diffEditor.updateOptions({
       renderSideBySide: viewMode === "split",
       renderSideBySideInlineBreakpoint: 0,
       compactMode: compactUnifiedGutter,
       renderIndicators: true,
-      lineNumbersMinChars,
+      lineNumbersMinChars: diffEditorLineNumbersMinChars,
       lineDecorationsWidth,
       hideUnchangedRegions:
         contextMode === "collapsed"
@@ -133,7 +193,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     try {
       diffEditor.getOriginalEditor?.()?.updateOptions?.({
         wordWrap,
-        lineNumbersMinChars,
+        lineNumbersMinChars: originalLineNumbersMinChars,
         lineDecorationsWidth,
       })
     } catch {
@@ -143,7 +203,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     try {
       diffEditor.getModifiedEditor?.()?.updateOptions?.({
         wordWrap,
-        lineNumbersMinChars,
+        lineNumbersMinChars: modifiedLineNumbersMinChars,
         lineDecorationsWidth,
       })
     } catch {
