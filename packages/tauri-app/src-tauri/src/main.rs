@@ -9,7 +9,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
@@ -32,12 +32,10 @@ use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
-static LAST_ZOOM_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
 const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
-const ZOOM_DEBOUNCE_MS: u64 = 50;
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -259,15 +257,6 @@ fn clamp_zoom_level(value: f64) -> f64 {
 }
 
 fn set_main_window_zoom(app_handle: &AppHandle, next_zoom: f64) {
-    if let Ok(mut last_zoom_time) = LAST_ZOOM_TIME.lock() {
-        if let Some(last_time) = *last_zoom_time {
-            if last_time.elapsed().as_millis() < ZOOM_DEBOUNCE_MS as u128 {
-                return;
-            }
-        }
-        *last_zoom_time = Some(Instant::now());
-    }
-
     if let Some(window) = app_handle.get_webview_window("main") {
         let normalized = clamp_zoom_level(next_zoom);
         if window.set_zoom(normalized).is_ok() {
