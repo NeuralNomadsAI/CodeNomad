@@ -98,6 +98,11 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   })
 
   createEffect(() => {
+    if (!host) return
+    host.dataset.compactUnifiedGutter = props.compactUnifiedGutter ? "true" : "false"
+  })
+
+  createEffect(() => {
     if (!ready() || !monaco || !diffEditor) return
     const viewMode = props.viewMode === "unified" ? "unified" : "split"
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
