@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
-import { getWorktreeGitStatus } from "../../workspaces/git-status"
+import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 
 interface RouteDeps {
@@ -23,6 +23,11 @@ const WorkspaceFileContentQuerySchema = z.object({
 
 const WorkspaceFileContentBodySchema = z.object({
   contents: z.string(),
+})
+
+const WorktreeGitDiffQuerySchema = z.object({
+  path: z.string().trim().min(1, "Path is required"),
+  scope: z.enum(["staged", "unstaged"]),
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
@@ -143,6 +148,39 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
 
       return await getWorktreeGitStatus({ workspaceFolder: directory, logger: request.log })
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.get<{
+    Params: { id: string; slug: string }
+    Querystring: { path?: string; scope?: "staged" | "unstaged" }
+  }>("/api/workspaces/:id/worktrees/:slug/git-diff", async (request, reply) => {
+    try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const query = WorktreeGitDiffQuerySchema.parse(request.query ?? {})
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
+      return await getWorktreeGitDiff({
+        workspaceFolder: directory,
+        path: query.path,
+        scope: query.scope,
+      })
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }

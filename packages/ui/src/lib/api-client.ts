@@ -26,6 +26,7 @@ import type {
   WorktreeListResponse,
   WorktreeMap,
   WorktreeCreateRequest,
+  WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
@@ -286,6 +287,12 @@ export const serverApi = {
   fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+    )
+  },
+  fetchWorktreeGitDiff(id: string, slug: string, path: string, scope: "staged" | "unstaged"): Promise<WorktreeGitDiffResponse> {
+    const params = new URLSearchParams({ path, scope })
+    return request<WorktreeGitDiffResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
     )
   },
 

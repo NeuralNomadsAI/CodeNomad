@@ -27,7 +27,6 @@ import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
-import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
@@ -461,39 +460,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     try {
       const path = item?.path ?? ""
-      const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      if (encoding === "base64") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      const afterText = typeof (content as any)?.content === "string" ? ((content as any).content as string) : null
-      if (afterText === null) {
-        throw new Error("Unsupported file type")
-      }
-
-      setGitSelectedAfter(afterText)
-
-      if (item?.status === "added") {
-        setGitSelectedBefore("")
-        return
-      }
-
-      const diffText =
-        typeof (content as any)?.diff === "string" && String((content as any).diff).trim().length > 0
-          ? String((content as any).diff)
-          : (content as any)?.patch
-            ? buildUnifiedDiffFromSdkPatch((content as any).patch)
-            : ""
-
-      const beforeText = tryReverseApplyUnifiedDiff(afterText, diffText)
-      if (beforeText === null) {
-        throw new Error("Unable to calculate diff for this file")
-      }
-      setGitSelectedBefore(beforeText)
+      const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), path, item?.section ?? "unstaged")
+      setGitSelectedBefore(diff.before)
+      setGitSelectedAfter(diff.after)
     } catch (error) {
       setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
     } finally {

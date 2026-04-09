@@ -1,6 +1,8 @@
 import { spawn } from "child_process"
+import { readFile } from "fs/promises"
+import path from "path"
 
-import type { GitChangeKind, WorktreeGitStatusEntry } from "../api-types"
+import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, WorktreeGitStatusEntry } from "../api-types"
 import type { LogLike } from "./git-worktrees"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
@@ -87,6 +89,23 @@ function applyUntrackedOutput(map: Map<string, WorktreeGitStatusEntry>, output: 
   }
 }
 
+async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>, workspaceFolder: string) {
+  const pending = Array.from(map.values())
+    .filter((entry) => entry.unstagedStatus === "untracked")
+    .map(async (entry) => {
+      try {
+        const absolutePath = path.join(workspaceFolder, entry.path)
+        const content = await readFile(absolutePath, "utf-8")
+        entry.unstagedAdditions = content.length === 0 ? 0 : content.split(/\r?\n/).length
+        entry.unstagedDeletions = 0
+      } catch {
+        entry.unstagedAdditions = 0
+        entry.unstagedDeletions = 0
+      }
+    })
+  await Promise.all(pending)
+}
+
 function applyNumstatOutput(
   map: Map<string, WorktreeGitStatusEntry>,
   output: string,
@@ -145,6 +164,73 @@ export async function getWorktreeGitStatus(params: {
   applyUntrackedOutput(entries, untrackedOutput)
   applyNumstatOutput(entries, stagedNumstatOutput, "staged")
   applyNumstatOutput(entries, unstagedNumstatOutput, "unstaged")
+  await applyUntrackedFileStats(entries, workspaceFolder)
 
   return Array.from(entries.values()).sort((a, b) => a.path.localeCompare(b.path))
+}
+
+function decodeGitShowResult(result: GitResult, missingOk = false): string {
+  if (result.ok) return result.stdout
+  const message = result.stderr?.trim() || result.error.message || ""
+  if (
+    missingOk &&
+    (message.includes("exists on disk, but not in") ||
+      message.includes("Path '") ||
+      message.includes("does not exist") ||
+      message.includes("unknown revision or path not in the working tree"))
+  ) {
+    return ""
+  }
+  throw result.error
+}
+
+async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string): Promise<GitResult> {
+  return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder)
+}
+
+export async function getWorktreeGitDiff(params: {
+  workspaceFolder: string
+  path: string
+  scope: WorktreeGitDiffScope
+}): Promise<WorktreeGitDiffResponse> {
+  const normalizedPath = params.path.trim().replace(/\\+/g, "/")
+  if (!normalizedPath) {
+    throw new Error("Path is required")
+  }
+
+  if (params.scope === "staged") {
+    const [beforeResult, afterResult] = await Promise.all([
+      runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder),
+      readGitIndexBlob(params.workspaceFolder, normalizedPath),
+    ])
+
+    return {
+      path: normalizedPath,
+      scope: params.scope,
+      before: decodeGitShowResult(beforeResult, true),
+      after: decodeGitShowResult(afterResult, true),
+    }
+  }
+
+  const [indexResult, workingTreeResult] = await Promise.all([
+    readGitIndexBlob(params.workspaceFolder, normalizedPath),
+    runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder),
+  ])
+
+  const before = decodeGitShowResult(indexResult, true)
+  let after = before
+
+  const fsPath = path.join(params.workspaceFolder, normalizedPath)
+  try {
+    after = await readFile(fsPath, "utf-8")
+  } catch {
+    after = decodeGitShowResult(workingTreeResult, true)
+  }
+
+  return {
+    path: normalizedPath,
+    scope: params.scope,
+    before,
+    after,
+  }
 }

@@ -95,6 +95,15 @@ export interface WorktreeGitStatusEntry {
 
 export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]
 
+export type WorktreeGitDiffScope = "staged" | "unstaged"
+
+export interface WorktreeGitDiffResponse {
+  path: string
+  scope: WorktreeGitDiffScope
+  before: string
+  after: string
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export interface WorkspaceLogEntry {
