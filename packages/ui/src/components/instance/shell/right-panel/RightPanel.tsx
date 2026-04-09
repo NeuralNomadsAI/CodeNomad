@@ -28,7 +28,7 @@ import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
 import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
-import { adaptSdkGitStatusEntries } from "./git-changes-model"
+import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
@@ -345,25 +345,33 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitStatusEntries, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
-  const [gitSelectedPath, setGitSelectedPath] = createSignal<string | null>(null)
+  const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
   const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
   const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
   const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
   const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
 
+  const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+
+  const gitSelectedItem = createMemo(() => {
+    const selectedId = gitSelectedItemId()
+    if (!selectedId) return null
+    return gitListItems().find((item) => item.id === selectedId) ?? null
+  })
+
   const gitMostChangedPath = createMemo<string | null>(() => {
-    const entries = gitStatusEntries()
-    if (!Array.isArray(entries) || entries.length === 0) return null
-    const candidates = entries.filter((item) => item && item.status !== "deleted")
+    const items = gitListItems()
+    if (items.length === 0) return null
+    const candidates = items.filter((item) => item && item.status !== "deleted")
     if (candidates.length === 0) return null
     const best = candidates.reduce((currentBest, item) => {
       const bestScore = (currentBest?.additions ?? 0) + (currentBest?.deletions ?? 0)
       const score = (item?.additions ?? 0) + (item?.deletions ?? 0)
       if (score > bestScore) return item
       if (score < bestScore) return currentBest
-      return String(item.path || "").localeCompare(String(currentBest?.path || "")) < 0 ? item : currentBest
+      return String(item.id || "").localeCompare(String(currentBest?.id || "")) < 0 ? item : currentBest
     }, candidates[0])
-    return typeof best?.path === "string" ? best.path : null
+    return typeof best?.id === "string" ? best.id : null
   })
 
   createEffect(() => {
@@ -380,7 +388,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusEntries(null)
     setGitStatusError(null)
     setGitStatusLoading(false)
-    setGitSelectedPath(null)
+    setGitSelectedItemId(null)
     setGitSelectedLoading(false)
     setGitSelectedError(null)
     setGitSelectedBefore(null)
@@ -403,16 +411,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
   }
 
-  async function openGitFile(path: string) {
-    setGitSelectedPath(path)
+  async function openGitFile(itemId: string) {
+    setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
     setGitSelectedError(null)
     setGitSelectedBefore(null)
     setGitSelectedAfter(null)
 
-    const list = gitStatusEntries() || []
-    const entry = list.find((item) => item.path === path) || null
-    if (entry?.status === "deleted") {
+    const item = gitListItems().find((entry) => entry.id === itemId) || null
+    if (item?.status === "deleted") {
       setGitSelectedError("Deleted file diff is not available yet")
       setGitSelectedLoading(false)
       return
@@ -424,6 +431,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
 
     try {
+      const path = item?.path ?? ""
       const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
@@ -440,7 +448,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       setGitSelectedAfter(afterText)
 
-      if (entry?.status === "added") {
+      if (item?.status === "added") {
         setGitSelectedBefore("")
         return
       }
@@ -466,9 +474,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     if (rightPanelTab() !== "git-changes") return
-    const entries = gitStatusEntries()
-    if (entries === null) return
-    if (gitSelectedPath()) return
+    const items = gitListItems()
+    if (gitStatusEntries() === null) return
+    if (items.length === 0) return
+    if (gitSelectedItemId()) return
     const next = gitMostChangedPath()
     if (!next) return
     void openGitFile(next)
@@ -476,7 +485,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const refreshGitStatus = async () => {
     await loadGitStatus(true)
-    const selected = gitSelectedPath()
+    const selected = gitSelectedItemId()
     if (selected) {
       void openGitFile(selected)
     }
@@ -913,12 +922,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               entries={gitStatusEntries}
               statusLoading={gitStatusLoading}
               statusError={gitStatusError}
-              selectedPath={gitSelectedPath}
+              selectedItemId={gitSelectedItemId}
               selectedLoading={gitSelectedLoading}
               selectedError={gitSelectedError}
               selectedBefore={gitSelectedBefore}
               selectedAfter={gitSelectedAfter}
-              mostChangedPath={gitMostChangedPath}
+              mostChangedItemId={gitMostChangedPath}
               scopeKey={gitScopeKey}
               diffViewMode={diffViewMode}
               diffContextMode={diffContextMode}

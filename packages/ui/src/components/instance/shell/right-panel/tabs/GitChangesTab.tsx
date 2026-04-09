@@ -4,7 +4,8 @@ import { RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry } from "../types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, GitChangeListItem } from "../types"
+import { buildGitChangeListItems } from "../git-changes-model"
 
 const LazyMonacoDiffViewer = lazy(() =>
   import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
@@ -19,12 +20,12 @@ interface GitChangesTabProps {
   statusLoading: Accessor<boolean>
   statusError: Accessor<string | null>
 
-  selectedPath: Accessor<string | null>
+  selectedItemId: Accessor<string | null>
   selectedLoading: Accessor<boolean>
   selectedError: Accessor<string | null>
   selectedBefore: Accessor<string | null>
   selectedAfter: Accessor<string | null>
-  mostChangedPath: Accessor<string | null>
+  mostChangedItemId: Accessor<string | null>
 
   scopeKey: Accessor<string>
 
@@ -35,7 +36,7 @@ interface GitChangesTabProps {
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
-  onOpenFile: (path: string) => void
+  onOpenFile: (itemId: string) => void
   onRefresh: () => void
 
   listOpen: Accessor<boolean>
@@ -70,29 +71,32 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
   const nonDeleted = createMemo(() => sorted().filter((item) => item && item.status !== "deleted"))
 
+  const listItems = createMemo<GitChangeListItem[]>(() => buildGitChangeListItems(sorted()))
+  const nonDeletedItems = createMemo(() => listItems().filter((item) => item && item.status !== "deleted"))
+
   const selectedEntry = createMemo<GitChangeEntry | null>(() => {
-    const list = sorted()
-    const selectedPath = props.selectedPath()
-    const fallbackPath = props.mostChangedPath()
+    const list = listItems()
+    const selectedId = props.selectedItemId()
+    const fallbackId = props.mostChangedItemId()
     const found =
-      list.find((item) => item.path === selectedPath) ||
-      (fallbackPath ? list.find((item) => item.path === fallbackPath) : undefined)
-    return found ?? null
+      list.find((item) => item.id === selectedId) ||
+      (fallbackId ? list.find((item) => item.id === fallbackId) : undefined)
+    return found?.entry ?? null
   })
 
   const emptyViewerMessage = createMemo(() => {
     if (!hasSession()) return props.t("instanceShell.gitChanges.noSessionSelected")
     const currentEntries = entries()
     if (currentEntries === null) return props.t("instanceShell.gitChanges.loading")
-    if (nonDeleted().length === 0) return props.t("instanceShell.gitChanges.empty")
+    if (nonDeletedItems().length === 0) return props.t("instanceShell.gitChanges.empty")
     return props.t("instanceShell.filesShell.viewerEmpty")
   })
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
     const selected = selectedEntry()
-    const sortedList = sorted()
-    const nonDeletedList = nonDeleted()
+    const sortedList = listItems()
+    const nonDeletedList = nonDeletedItems()
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
@@ -167,9 +171,9 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         <For each={sortedList}>
           {(item) => (
             <div
-              class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
+              class={`file-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
               onClick={() => {
-                props.onOpenFile(item.path)
+                props.onOpenFile(item.id)
               }}
             >
               <div class="file-list-item-content">
@@ -199,8 +203,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         <For each={sortedList}>
           {(item) => (
             <div
-              class={`file-list-item ${props.selectedPath() === item.path ? "file-list-item-active" : ""}`}
-              onClick={() => props.onOpenFile(item.path)}
+              class={`file-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
+              onClick={() => props.onOpenFile(item.id)}
               title={item.path}
             >
               <div class="file-list-item-content">

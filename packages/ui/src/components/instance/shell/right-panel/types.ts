@@ -16,3 +16,15 @@ export interface GitChangeEntry {
   stagedStatus?: GitChangeStatus | null
   unstagedStatus?: GitChangeStatus | null
 }
+
+export type GitChangeSection = "staged" | "unstaged"
+
+export interface GitChangeListItem {
+  id: string
+  path: string
+  section: GitChangeSection
+  status: GitChangeStatus
+  additions: number
+  deletions: number
+  entry: GitChangeEntry
+}
