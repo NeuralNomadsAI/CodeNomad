@@ -1,11 +1,10 @@
 import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
-import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry } from "../types"
 
 const LazyMonacoDiffViewer = lazy(() =>
   import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
@@ -16,7 +15,7 @@ interface GitChangesTabProps {
 
   activeSessionId: Accessor<string | null>
 
-  entries: Accessor<GitFileStatus[] | null>
+  entries: Accessor<GitChangeEntry[] | null>
   statusLoading: Accessor<boolean>
   statusError: Accessor<string | null>
 
@@ -52,7 +51,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
   const entries = createMemo(() => (hasSession() ? props.entries() : null))
 
-  const sorted = createMemo<GitFileStatus[]>(() => {
+  const sorted = createMemo<GitChangeEntry[]>(() => {
     const list = entries()
     if (!Array.isArray(list)) return []
     return [...list].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
@@ -61,8 +60,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const totals = createMemo(() => {
     return sorted().reduce(
       (acc, item) => {
-        acc.additions += typeof item.added === "number" ? item.added : 0
-        acc.deletions += typeof item.removed === "number" ? item.removed : 0
+        acc.additions += typeof item.additions === "number" ? item.additions : 0
+        acc.deletions += typeof item.deletions === "number" ? item.deletions : 0
         return acc
       },
       { additions: 0, deletions: 0 },
@@ -71,7 +70,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
   const nonDeleted = createMemo(() => sorted().filter((item) => item && item.status !== "deleted"))
 
-  const selectedEntry = createMemo<GitFileStatus | null>(() => {
+  const selectedEntry = createMemo<GitChangeEntry | null>(() => {
     const list = sorted()
     const selectedPath = props.selectedPath()
     const fallbackPath = props.mostChangedPath()
@@ -183,8 +182,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
-                      <span class="file-list-item-additions">+{item.added}</span>
-                      <span class="file-list-item-deletions">-{item.removed}</span>
+                      <span class="file-list-item-additions">+{item.additions}</span>
+                      <span class="file-list-item-deletions">-{item.deletions}</span>
                     </>
                   </Show>
                 </div>
@@ -214,8 +213,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                   </Show>
                   <Show when={item.status !== "deleted"}>
                     <>
-                      <span class="file-list-item-additions">+{item.added}</span>
-                      <span class="file-list-item-deletions">-{item.removed}</span>
+                      <span class="file-list-item-additions">+{item.additions}</span>
+                      <span class="file-list-item-deletions">-{item.deletions}</span>
                     </>
                   </Show>
                 </div>

@@ -20,7 +20,7 @@ import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { DrawerViewState } from "../types"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, RightPanelTab } from "./types"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
@@ -28,6 +28,7 @@ import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
 import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
+import { adaptSdkGitStatusEntries } from "./git-changes-model"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
@@ -341,7 +342,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
 
-  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitFileStatus[] | null>(null)
+  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
   const [gitSelectedPath, setGitSelectedPath] = createSignal<string | null>(null)
@@ -356,8 +357,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const candidates = entries.filter((item) => item && item.status !== "deleted")
     if (candidates.length === 0) return null
     const best = candidates.reduce((currentBest, item) => {
-      const bestScore = (currentBest?.added ?? 0) + (currentBest?.removed ?? 0)
-      const score = (item?.added ?? 0) + (item?.removed ?? 0)
+      const bestScore = (currentBest?.additions ?? 0) + (currentBest?.deletions ?? 0)
+      const score = (item?.additions ?? 0) + (item?.deletions ?? 0)
       if (score > bestScore) return item
       if (score < bestScore) return currentBest
       return String(item.path || "").localeCompare(String(currentBest?.path || "")) < 0 ? item : currentBest
@@ -392,7 +393,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusError(null)
     try {
       const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
-      setGitStatusEntries(Array.isArray(list) ? list : [])
+      setGitStatusEntries(adaptSdkGitStatusEntries(list))
     } catch (error) {
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
       setGitStatusEntries([])
