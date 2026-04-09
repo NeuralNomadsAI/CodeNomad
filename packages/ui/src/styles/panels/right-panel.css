@@ -342,6 +342,11 @@
   padding-left: 4px;
 }
 
+.file-viewer-content--monaco .monaco-viewer[data-classic-unified-gutter="true"] .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
 .file-viewer-empty {
   @apply flex flex-col items-center justify-center h-full gap-3 text-center;
   color: var(--text-muted);

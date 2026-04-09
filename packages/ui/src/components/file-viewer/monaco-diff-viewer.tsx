@@ -100,6 +100,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   createEffect(() => {
     if (!host) return
     host.dataset.compactUnifiedGutter = props.compactUnifiedGutter ? "true" : "false"
+    host.dataset.classicUnifiedGutter = props.classicUnifiedGutter ? "true" : "false"
   })
 
   createEffect(() => {
