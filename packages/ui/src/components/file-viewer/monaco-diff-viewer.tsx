@@ -71,6 +71,25 @@ function getUnifiedGutterSizing(options: {
   }
 }
 
+function getSplitGutterSizing(options: { before: string; after: string }) {
+  const beforeLineCount = getLineCount(options.before)
+  const afterLineCount = getLineCount(options.after)
+  const beforeDigitCount = getDigitCount(beforeLineCount)
+  const afterDigitCount = getDigitCount(afterLineCount)
+  const maxDigitCount = Math.max(beforeDigitCount, afterDigitCount)
+  const extraDigits = Math.max(0, maxDigitCount - 2)
+  const beforeNumberChars = Math.max(2, beforeDigitCount + 1)
+  const afterNumberChars = Math.max(2, afterDigitCount + 1)
+  const fourDigitPenalty = Math.max(0, maxDigitCount - 3)
+
+  return {
+    diffEditorLineNumbersMinChars: Math.max(beforeNumberChars, afterNumberChars),
+    originalLineNumbersMinChars: beforeNumberChars,
+    modifiedLineNumbersMinChars: afterNumberChars,
+    lineDecorationsWidth: 10 + extraDigits * 2 + fourDigitPenalty * 2,
+  }
+}
+
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   const { isDark } = useTheme()
   let host: HTMLDivElement | undefined
@@ -151,6 +170,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
   createEffect(() => {
     if (!host) return
+    host.dataset.viewMode = props.viewMode === "split" ? "split" : "unified"
     host.dataset.unifiedGutterStyle = props.unifiedGutterStyle ?? ""
   })
 
@@ -161,16 +181,20 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const wordWrap = props.wordWrap === "on" ? "on" : "off"
     const unifiedGutterStyle = viewMode === "unified" ? props.unifiedGutterStyle ?? null : null
     const { before, after } = resolvedContent()
+    const sizing =
+      viewMode === "unified"
+        ? getUnifiedGutterSizing({
+            unifiedGutterStyle,
+            before,
+            after,
+          })
+        : getSplitGutterSizing({ before, after })
     const {
       diffEditorLineNumbersMinChars,
       originalLineNumbersMinChars,
       modifiedLineNumbersMinChars,
       lineDecorationsWidth,
-    } = getUnifiedGutterSizing({
-      unifiedGutterStyle,
-      before,
-      after,
-    })
+    } = sizing
     const compactUnifiedGutter = unifiedGutterStyle === "compact"
 
     diffEditor.updateOptions({

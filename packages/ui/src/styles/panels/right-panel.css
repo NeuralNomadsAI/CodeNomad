@@ -347,6 +347,12 @@
   padding-left: 4px;
 }
 
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .line-numbers,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.modified .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
 .file-viewer-empty {
   @apply flex flex-col items-center justify-center h-full gap-3 text-center;
   color: var(--text-muted);
