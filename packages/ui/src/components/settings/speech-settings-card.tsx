@@ -334,7 +334,7 @@ const Field: Component<{
         <div class="settings-toggle-title">{props.label}</div>
         <div class="settings-toggle-caption">{props.caption}</div>
       </div>
-      <div class="flex items-center gap-2 min-w-[18rem] max-w-[24rem] w-full">
+      <div class="flex items-center gap-2 w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         {props.icon}
         <input
           type={props.type ?? "text"}
@@ -361,7 +361,7 @@ const SelectField: Component<{
         <div class="settings-toggle-title">{props.label}</div>
         <div class="settings-toggle-caption">{props.caption}</div>
       </div>
-      <div class="min-w-[18rem] max-w-[24rem] w-full">
+      <div class="w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         <select value={props.value} onInput={(event) => props.onInput(event.currentTarget.value)} class="selector-input w-full">
           <For each={props.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
         </select>

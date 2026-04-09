@@ -526,14 +526,49 @@
 @media (max-width: 640px) {
   .settings-screen-frame {
     padding: 0;
+    overflow: hidden;
   }
 
   .modal-surface.settings-screen-shell {
     width: 100%;
+    max-width: 100%;
     height: 100%;
     max-height: none;
     min-height: 100%;
     border-radius: 0;
+    overflow-x: hidden;
+  }
+
+  .modal-surface.settings-screen-shell .settings-screen-nav,
+  .modal-surface.settings-screen-shell .settings-screen-nav-list,
+  .modal-surface.settings-screen-shell .settings-screen-content,
+  .modal-surface.settings-screen-shell .settings-screen-scroll,
+  .modal-surface.settings-screen-shell .settings-section-stack,
+  .modal-surface.settings-screen-shell .settings-stack,
+  .modal-surface.settings-screen-shell .settings-card,
+  .modal-surface.settings-screen-shell .settings-card-content,
+  .modal-surface.settings-screen-shell .settings-toggle-row,
+  .modal-surface.settings-screen-shell .settings-toggle-row > * {
+    min-width: 0;
+  }
+
+  .modal-surface.settings-screen-shell .selector-trigger,
+  .modal-surface.settings-screen-shell .selector-input,
+  .modal-surface.settings-screen-shell .selector-button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .modal-surface.settings-screen-shell .settings-toggle-caption,
+  .modal-surface.settings-screen-shell .settings-inline-note,
+  .modal-surface.settings-screen-shell .remote-address-url,
+  .modal-surface.settings-screen-shell code {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .modal-surface.settings-screen-shell .whitespace-nowrap {
+    white-space: normal;
   }
 
   .settings-screen-content-header,
