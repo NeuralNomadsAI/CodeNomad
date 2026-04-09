@@ -26,6 +26,7 @@ export interface ModelPreference {
 }
 
 export type DiffViewMode = "split" | "unified"
+export type GitDiffUnifiedGutterStyle = "compact" | "classic"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
 export type ListeningMode = "local" | "all"
@@ -59,6 +60,7 @@ export interface UiSettings {
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
+  gitDiffUnifiedGutterStyle: GitDiffUnifiedGutterStyle
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: ExpansionPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
@@ -136,6 +138,7 @@ const defaultUiSettings: UiSettings = {
   promptSubmitOnEnter: false,
   showPromptVoiceInput: true,
   diffViewMode: "split",
+  gitDiffUnifiedGutterStyle: "compact",
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
@@ -160,6 +163,8 @@ const defaultSpeechSettings: SpeechSettings = {
 
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
+  const gitDiffUnifiedGutterStyle: GitDiffUnifiedGutterStyle =
+    sanitized.gitDiffUnifiedGutterStyle === "classic" ? "classic" : "compact"
   return {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     showKeyboardShortcutHints:
@@ -170,6 +175,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
+    gitDiffUnifiedGutterStyle,
     toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
     diagnosticsExpansion: sanitized.diagnosticsExpansion ?? defaultUiSettings.diagnosticsExpansion,
     toolInputsVisibility:
@@ -622,6 +628,11 @@ function setDiffViewMode(mode: DiffViewMode): void {
   updateUiSettings({ diffViewMode: mode })
 }
 
+function setGitDiffUnifiedGutterStyle(style: GitDiffUnifiedGutterStyle): void {
+  if (preferences().gitDiffUnifiedGutterStyle === style) return
+  updateUiSettings({ gitDiffUnifiedGutterStyle: style })
+}
+
 function setToolOutputExpansion(mode: ExpansionPreference): void {
   if (preferences().toolOutputExpansion === mode) return
   updateUiSettings({ toolOutputExpansion: mode })
@@ -742,6 +753,7 @@ interface ConfigContextValue {
   togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
   toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
   setDiffViewMode: typeof setDiffViewMode
+  setGitDiffUnifiedGutterStyle: typeof setGitDiffUnifiedGutterStyle
   setToolOutputExpansion: typeof setToolOutputExpansion
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
   setThinkingBlocksExpansion: typeof setThinkingBlocksExpansion
@@ -793,6 +805,7 @@ const configContextValue: ConfigContextValue = {
   togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
+  setGitDiffUnifiedGutterStyle,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
@@ -874,6 +887,7 @@ export {
   togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
+  setGitDiffUnifiedGutterStyle,
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,

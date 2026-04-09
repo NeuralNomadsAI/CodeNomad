@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
@@ -6,6 +6,7 @@ import { RefreshCw } from "lucide-solid"
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
+import type { GitDiffUnifiedGutterStyle } from "../../../../../stores/preferences"
 
 const LazyMonacoDiffViewer = lazy(() =>
   import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
@@ -32,9 +33,11 @@ interface GitChangesTabProps {
   diffViewMode: Accessor<DiffViewMode>
   diffContextMode: Accessor<DiffContextMode>
   diffWordWrapMode: Accessor<DiffWordWrapMode>
+  unifiedGutterStyle: Accessor<GitDiffUnifiedGutterStyle>
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
+  onUnifiedGutterStyleChange: (style: GitDiffUnifiedGutterStyle) => void
 
   onOpenFile: (path: string) => void
   onRefresh: () => void
@@ -48,7 +51,6 @@ interface GitChangesTabProps {
 }
 
 const GitChangesTab: Component<GitChangesTabProps> = (props) => {
-  const [unifiedGutterStyle, setUnifiedGutterStyle] = createSignal<"compact" | "classic">("compact")
   const sessionId = createMemo(() => props.activeSessionId())
   const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
   const entries = createMemo(() => (hasSession() ? props.entries() : null))
@@ -140,7 +142,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
-                          unifiedGutterStyle={unifiedGutterStyle()}
+                          unifiedGutterStyle={props.unifiedGutterStyle()}
                         />
                       </Suspense>
                     )}
@@ -270,20 +272,21 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               <Show when={props.diffViewMode() === "unified"}>
                 <button
                   type="button"
-                  class={`file-viewer-toolbar-button${unifiedGutterStyle() === "classic" ? " active" : ""}`}
-                  onClick={() => setUnifiedGutterStyle(unifiedGutterStyle() === "compact" ? "classic" : "compact")}
+                  class={`file-viewer-toolbar-button${props.unifiedGutterStyle() === "classic" ? " active" : ""}`}
+                  onClick={() =>
+                    props.onUnifiedGutterStyleChange(props.unifiedGutterStyle() === "compact" ? "classic" : "compact")}
                   aria-label={
-                    unifiedGutterStyle() === "compact"
+                    props.unifiedGutterStyle() === "compact"
                       ? "Switch unified gutter to classic"
                       : "Switch unified gutter to compact"
                   }
                   title={
-                    unifiedGutterStyle() === "compact"
+                    props.unifiedGutterStyle() === "compact"
                       ? "Switch unified gutter to classic"
                       : "Switch unified gutter to compact"
                   }
                 >
-                  {unifiedGutterStyle() === "compact" ? "Compact" : "Classic"}
+                  {props.unifiedGutterStyle() === "compact" ? "Compact" : "Classic"}
                 </button>
               </Show>
             </>
