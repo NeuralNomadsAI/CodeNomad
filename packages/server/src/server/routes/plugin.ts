@@ -27,6 +27,12 @@ const VoiceModeStateSchema = z.object({
   connectionId: z.string().trim().min(1),
 })
 
+const SessionTitleUpdateSchema = z.object({
+  sessionID: z.string().trim().min(1),
+  directory: z.string().trim().min(1).optional(),
+  title: z.string().trim().min(1),
+})
+
 export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/workspaces/:id/plugin/events", (request, reply) => {
     const workspace = deps.workspaceManager.get(request.params.id)
@@ -89,6 +95,49 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
       const parsed = PluginEventSchema.parse(request.body ?? {})
       handlePluginEvent(workspaceId, parsed, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: deps.logger })
       reply.code(204).send()
+      return
+    }
+
+    if (normalized === "session/title" && request.method === "POST") {
+      const parsed = SessionTitleUpdateSchema.parse(request.body ?? {})
+      const port = deps.workspaceManager.getInstancePort(workspaceId)
+      if (!port) {
+        reply.code(502).send({ error: "Workspace instance is not ready" })
+        return
+      }
+
+      const params = new URLSearchParams()
+      if (parsed.directory) {
+        params.set("directory", parsed.directory)
+      }
+
+      const targetUrl = `http://127.0.0.1:${port}/session/${encodeURIComponent(parsed.sessionID)}${params.size > 0 ? `?${params.toString()}` : ""}`
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      }
+
+      const authorization = deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
+      if (authorization) {
+        headers.authorization = authorization
+      }
+
+      const response = await fetch(targetUrl, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ title: parsed.title }),
+      })
+
+      if (!response.ok) {
+        const message = await response.text().catch(() => "")
+        reply.code(response.status).send({ error: message || `Session update failed with ${response.status}` })
+        return
+      }
+
+      const payload = (await response.json().catch(() => null)) as { id?: string; title?: string } | null
+      reply.send({
+        sessionID: payload?.id ?? parsed.sessionID,
+        title: payload?.title ?? parsed.title,
+      })
       return
     }
 
