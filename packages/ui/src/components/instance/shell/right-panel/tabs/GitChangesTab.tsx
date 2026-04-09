@@ -139,6 +139,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
+                          compactUnifiedGutter={true}
                         />
                       </Suspense>
                     )}

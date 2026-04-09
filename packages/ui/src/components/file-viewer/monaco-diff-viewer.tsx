@@ -15,6 +15,7 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
+  compactUnifiedGutter?: boolean
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
@@ -100,25 +101,41 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const viewMode = props.viewMode === "unified" ? "unified" : "split"
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
     const wordWrap = props.wordWrap === "on" ? "on" : "off"
+    const compactUnifiedGutter = Boolean(props.compactUnifiedGutter) && viewMode === "unified"
 
     diffEditor.updateOptions({
       renderSideBySide: viewMode === "split",
       renderSideBySideInlineBreakpoint: 0,
+      compactMode: compactUnifiedGutter,
+      renderIndicators: true,
+      lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
+      lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
       hideUnchangedRegions:
         contextMode === "collapsed"
           ? { enabled: true }
           : { enabled: false },
       wordWrap,
+      experimental: {
+        useTrueInlineView: compactUnifiedGutter,
+      },
     })
 
     try {
-      diffEditor.getOriginalEditor?.()?.updateOptions?.({ wordWrap })
+      diffEditor.getOriginalEditor?.()?.updateOptions?.({
+        wordWrap,
+        lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
+        lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
+      })
     } catch {
       // ignore
     }
 
     try {
-      diffEditor.getModifiedEditor?.()?.updateOptions?.({ wordWrap })
+      diffEditor.getModifiedEditor?.()?.updateOptions?.({
+        wordWrap,
+        lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
+        lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
+      })
     } catch {
       // ignore
     }
