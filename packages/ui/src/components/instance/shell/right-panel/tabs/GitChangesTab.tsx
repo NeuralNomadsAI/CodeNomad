@@ -277,16 +277,18 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     props.onUnifiedGutterStyleChange(props.unifiedGutterStyle() === "compact" ? "classic" : "compact")}
                   aria-label={
                     props.unifiedGutterStyle() === "compact"
-                      ? "Switch unified gutter to classic"
-                      : "Switch unified gutter to compact"
+                      ? props.t("instanceShell.diff.switchToClassicGutter")
+                      : props.t("instanceShell.diff.switchToCompactGutter")
                   }
                   title={
                     props.unifiedGutterStyle() === "compact"
-                      ? "Switch unified gutter to classic"
-                      : "Switch unified gutter to compact"
+                      ? props.t("instanceShell.diff.switchToClassicGutter")
+                      : props.t("instanceShell.diff.switchToCompactGutter")
                   }
                 >
-                  {props.unifiedGutterStyle() === "compact" ? "Compact" : "Classic"}
+                  {props.unifiedGutterStyle() === "compact"
+                    ? props.t("instanceShell.diff.gutterStyleCompact")
+                    : props.t("instanceShell.diff.gutterStyleClassic")}
                 </button>
               </Show>
             </>

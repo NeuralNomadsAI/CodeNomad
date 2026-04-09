@@ -144,6 +144,10 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "עבור לתצוגה מאוחדת",
   "instanceShell.diff.enableWordWrap": "הפעל גלישת מילים",
   "instanceShell.diff.disableWordWrap": "כבה גלישת מילים",
+  "instanceShell.diff.switchToCompactGutter": "עבור לשוליים מאוחדים קומפקטיים",
+  "instanceShell.diff.switchToClassicGutter": "עבור לשוליים מאוחדים קלאסיים",
+  "instanceShell.diff.gutterStyleCompact": "קומפקטי",
+  "instanceShell.diff.gutterStyleClassic": "קלאסי",
   "instanceShell.worktree.create": "+ צור worktree",
 
   "instanceShell.plan.noSessionSelected": "בחר סשן לצפייה בתוכנית.",

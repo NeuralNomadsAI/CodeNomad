@@ -130,6 +130,10 @@ export const instanceMessages = {
   "instanceShell.gitChanges.loading": "Chargement des changements Git...",
   "instanceShell.gitChanges.empty": "Aucun changement Git pour l'instant.",
   "instanceShell.gitChanges.deleted": "Supprimé",
+  "instanceShell.diff.switchToCompactGutter": "Passer la gouttière unifiée en mode compact",
+  "instanceShell.diff.switchToClassicGutter": "Passer la gouttière unifiée en mode classique",
+  "instanceShell.diff.gutterStyleCompact": "Compact",
+  "instanceShell.diff.gutterStyleClassic": "Classique",
 
   "instanceShell.filesShell.fileListTitle": "Liste des fichiers",
   "instanceShell.filesShell.mobileSelectorLabel": "Sélectionner un fichier",
