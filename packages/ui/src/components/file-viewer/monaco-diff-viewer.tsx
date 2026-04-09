@@ -16,6 +16,7 @@ interface MonacoDiffViewerProps {
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
   compactUnifiedGutter?: boolean
+  classicUnifiedGutter?: boolean
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
@@ -102,14 +103,17 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
     const wordWrap = props.wordWrap === "on" ? "on" : "off"
     const compactUnifiedGutter = Boolean(props.compactUnifiedGutter) && viewMode === "unified"
+    const classicUnifiedGutter = Boolean(props.classicUnifiedGutter) && viewMode === "unified"
+    const lineNumbersMinChars = compactUnifiedGutter ? 3 : classicUnifiedGutter ? 4 : 4
+    const lineDecorationsWidth = compactUnifiedGutter ? 9 : classicUnifiedGutter ? 12 : 12
 
     diffEditor.updateOptions({
       renderSideBySide: viewMode === "split",
       renderSideBySideInlineBreakpoint: 0,
       compactMode: compactUnifiedGutter,
       renderIndicators: true,
-      lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
-      lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
+      lineNumbersMinChars,
+      lineDecorationsWidth,
       hideUnchangedRegions:
         contextMode === "collapsed"
           ? { enabled: true }
@@ -123,8 +127,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     try {
       diffEditor.getOriginalEditor?.()?.updateOptions?.({
         wordWrap,
-        lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
-        lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
+        lineNumbersMinChars,
+        lineDecorationsWidth,
       })
     } catch {
       // ignore
@@ -133,8 +137,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     try {
       diffEditor.getModifiedEditor?.()?.updateOptions?.({
         wordWrap,
-        lineNumbersMinChars: compactUnifiedGutter ? 3 : 4,
-        lineDecorationsWidth: compactUnifiedGutter ? 9 : 12,
+        lineNumbersMinChars,
+        lineDecorationsWidth,
       })
     } catch {
       // ignore

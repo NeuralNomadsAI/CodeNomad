@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 
 import { RefreshCw } from "lucide-solid"
@@ -48,6 +48,7 @@ interface GitChangesTabProps {
 }
 
 const GitChangesTab: Component<GitChangesTabProps> = (props) => {
+  const [unifiedGutterStyle, setUnifiedGutterStyle] = createSignal<"compact" | "classic">("compact")
   const sessionId = createMemo(() => props.activeSessionId())
   const hasSession = createMemo(() => Boolean(sessionId() && sessionId() !== "info"))
   const entries = createMemo(() => (hasSession() ? props.entries() : null))
@@ -139,7 +140,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
-                          compactUnifiedGutter={true}
+                          compactUnifiedGutter={unifiedGutterStyle() === "compact"}
+                          classicUnifiedGutter={unifiedGutterStyle() === "classic"}
                         />
                       </Suspense>
                     )}
@@ -265,6 +267,26 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 onContextModeChange={props.onContextModeChange}
                 onWordWrapModeChange={props.onWordWrapModeChange}
               />
+
+              <Show when={props.diffViewMode() === "unified"}>
+                <button
+                  type="button"
+                  class={`file-viewer-toolbar-button${unifiedGutterStyle() === "classic" ? " active" : ""}`}
+                  onClick={() => setUnifiedGutterStyle(unifiedGutterStyle() === "compact" ? "classic" : "compact")}
+                  aria-label={
+                    unifiedGutterStyle() === "compact"
+                      ? "Switch unified gutter to classic"
+                      : "Switch unified gutter to compact"
+                  }
+                  title={
+                    unifiedGutterStyle() === "compact"
+                      ? "Switch unified gutter to classic"
+                      : "Switch unified gutter to compact"
+                  }
+                >
+                  {unifiedGutterStyle() === "compact" ? "Compact" : "Classic"}
+                </button>
+              </Show>
             </>
           }
         list={{ panel: renderListPanel, overlay: renderListOverlay }}
