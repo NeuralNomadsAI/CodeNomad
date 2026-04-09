@@ -183,7 +183,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     return <div ref={setBottomSentinel} aria-hidden="true" class={options.sentinelClassName} style={{ height: "1px" }} />
   }
 
-  const restoreAfterRender = (config?: { forceBottom?: boolean }) => {
+  const restoreAfterRender = (_config?: { forceBottom?: boolean }) => {
     const container = scrollContainerRef
     if (container && hasUserScrollIntent() && !isAtBottom(container)) {
       if (autoScroll()) {
@@ -195,7 +195,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       return
     }
 
-    const shouldFollow = config?.forceBottom ?? autoScroll()
+    // Never let a render-time caller force follow mode back on after the user
+    // has already escaped it. Staying pinned should depend on the current
+    // follow state, not on a caller opting into forceBottom.
+    const shouldFollow = autoScroll()
     requestAnimationFrame(() => {
       restoreScrollPosition(shouldFollow)
       if (shouldFollow) {

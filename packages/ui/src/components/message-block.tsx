@@ -1344,9 +1344,7 @@ function ReasoningStreamOutput(props: {
     if (preRef && preRef.textContent !== nextText) {
       preRef.textContent = nextText
     }
-    if (followScroll.autoScroll()) {
-      followScroll.restoreAfterRender({ forceBottom: true })
-    }
+    followScroll.restoreAfterRender()
     notifyContentRendered()
   })
 
