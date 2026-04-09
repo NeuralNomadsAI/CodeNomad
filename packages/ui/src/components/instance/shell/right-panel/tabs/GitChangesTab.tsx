@@ -269,28 +269,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 onWordWrapModeChange={props.onWordWrapModeChange}
               />
 
-              <Show when={props.diffViewMode() === "unified"}>
-                <button
-                  type="button"
-                  class={`file-viewer-toolbar-button${props.unifiedGutterStyle() === "classic" ? " active" : ""}`}
-                  onClick={() =>
-                    props.onUnifiedGutterStyleChange(props.unifiedGutterStyle() === "compact" ? "classic" : "compact")}
-                  aria-label={
-                    props.unifiedGutterStyle() === "compact"
-                      ? props.t("instanceShell.diff.switchToClassicGutter")
-                      : props.t("instanceShell.diff.switchToCompactGutter")
-                  }
-                  title={
-                    props.unifiedGutterStyle() === "compact"
-                      ? props.t("instanceShell.diff.switchToClassicGutter")
-                      : props.t("instanceShell.diff.switchToCompactGutter")
-                  }
-                >
-                  {props.unifiedGutterStyle() === "compact"
-                    ? props.t("instanceShell.diff.gutterStyleCompact")
-                    : props.t("instanceShell.diff.gutterStyleClassic")}
-                </button>
-              </Show>
             </>
           }
         list={{ panel: renderListPanel, overlay: renderListOverlay }}
