@@ -86,7 +86,11 @@ export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copi
 export interface WorktreeGitStatusEntry {
   path: string
   stagedStatus: GitChangeKind | null
+  stagedAdditions: number
+  stagedDeletions: number
   unstagedStatus: GitChangeKind | null
+  unstagedAdditions: number
+  unstagedDeletions: number
 }
 
 export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]

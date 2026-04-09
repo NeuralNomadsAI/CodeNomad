@@ -220,7 +220,7 @@
 }
 
 .file-list-item {
-  @apply px-3 py-2.5 border-b cursor-pointer transition-all duration-150;
+  @apply px-3 py-2 border-b cursor-pointer transition-all duration-150;
   border-color: var(--border-base);
   background-color: transparent;
 }
@@ -240,6 +240,53 @@
 
 .file-list-item-content {
   @apply flex items-center justify-between gap-3;
+}
+
+.git-change-sections {
+  @apply flex flex-col;
+}
+
+.git-change-section {
+  @apply border-b last:border-b-0;
+  border-color: var(--border-base);
+}
+
+.git-change-section-header {
+  @apply w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left;
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.git-change-section-header:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.git-change-section-header-main {
+  @apply flex items-center gap-2 min-w-0;
+}
+
+.git-change-section-chevron {
+  @apply inline-flex items-center justify-center shrink-0;
+}
+
+.git-change-section-title {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+}
+
+.git-change-section-count {
+  @apply text-[10px] px-1.5 py-0.5 rounded-full shrink-0;
+  background-color: var(--surface-base);
+  color: var(--text-muted);
+  border: 1px solid var(--border-base);
+}
+
+.git-change-section-items {
+  @apply flex flex-col;
+}
+
+.git-change-list-item {
+  padding-inline-start: 1.75rem;
 }
 
 .file-list-item-path {

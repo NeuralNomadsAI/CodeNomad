@@ -15,6 +15,10 @@ export interface GitChangeEntry {
   status: GitChangeStatus
   stagedStatus?: GitChangeStatus | null
   unstagedStatus?: GitChangeStatus | null
+  stagedAdditions?: number
+  stagedDeletions?: number
+  unstagedAdditions?: number
+  unstagedDeletions?: number
 }
 
 export type GitChangeSection = "staged" | "unstaged"

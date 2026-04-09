@@ -42,7 +42,11 @@ import {
   RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY,
   RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
+  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY,
   RIGHT_PANEL_TAB_STORAGE_KEY,
   readStoredBool,
   readStoredEnum,
@@ -134,6 +138,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [changesListTouched, setChangesListTouched] = createSignal(false)
   const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
   const [gitChangesListTouched, setGitChangesListTouched] = createSignal(false)
+  const [gitStagedOpen, setGitStagedOpen] = createSignal(true)
+  const [gitUnstagedOpen, setGitUnstagedOpen] = createSignal(true)
 
   const listLayoutKey = createMemo(() => (props.isPhoneLayout() ? "phone" : "nonphone"))
 
@@ -150,9 +156,26 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return layout === "phone" ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY
   }
 
+  const gitSectionStorageKey = (section: "staged" | "unstaged") => {
+    const layout = listLayoutKey()
+    if (section === "staged") {
+      return layout === "phone"
+        ? RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY
+        : RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY
+    }
+    return layout === "phone"
+      ? RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY
+      : RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY
+  }
+
   const persistListOpen = (tab: "changes" | "git-changes" | "files", value: boolean) => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
+  }
+
+  const persistGitSectionOpen = (section: "staged" | "unstaged", value: boolean) => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(gitSectionStorageKey(section), value ? "true" : "false")
   }
 
   createEffect(() => {
@@ -186,6 +209,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setGitChangesListOpen(true)
       setGitChangesListTouched(false)
     }
+
+    const stagedPersisted = readStoredBool(gitSectionStorageKey("staged"))
+    setGitStagedOpen(stagedPersisted ?? true)
+
+    const unstagedPersisted = readStoredBool(gitSectionStorageKey("unstaged"))
+    setGitUnstagedOpen(unstagedPersisted ?? true)
   })
 
   createEffect(() => {
@@ -937,6 +966,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onWordWrapModeChange={setDiffWordWrapMode}
               onOpenFile={(path: string) => void openGitFile(path)}
               onRefresh={() => void refreshGitStatus()}
+              stagedOpen={gitStagedOpen}
+              unstagedOpen={gitUnstagedOpen}
+              onToggleStagedOpen={() => {
+                const next = !gitStagedOpen()
+                setGitStagedOpen(next)
+                persistGitSectionOpen("staged", next)
+              }}
+              onToggleUnstagedOpen={() => {
+                const next = !gitUnstagedOpen()
+                setGitUnstagedOpen(next)
+                persistGitSectionOpen("unstaged", next)
+              }}
               listOpen={gitChangesListOpen}
               onToggleList={toggleGitList}
               splitWidth={gitChangesSplitWidth}

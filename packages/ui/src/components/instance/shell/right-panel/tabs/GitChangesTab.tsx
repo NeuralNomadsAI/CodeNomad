@@ -1,6 +1,6 @@
 import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
 
-import { RefreshCw } from "lucide-solid"
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
@@ -39,6 +39,11 @@ interface GitChangesTabProps {
   onOpenFile: (itemId: string) => void
   onRefresh: () => void
 
+  stagedOpen: Accessor<boolean>
+  unstagedOpen: Accessor<boolean>
+  onToggleStagedOpen: () => void
+  onToggleUnstagedOpen: () => void
+
   listOpen: Accessor<boolean>
   onToggleList: () => void
   splitWidth: Accessor<number>
@@ -73,6 +78,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
   const listItems = createMemo<GitChangeListItem[]>(() => buildGitChangeListItems(sorted()))
   const nonDeletedItems = createMemo(() => listItems().filter((item) => item && item.status !== "deleted"))
+  const stagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "staged"))
+  const unstagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "unstaged"))
 
   const selectedEntry = createMemo<GitChangeEntry | null>(() => {
     const list = listItems()
@@ -95,8 +102,9 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
     const selected = selectedEntry()
-    const sortedList = listItems()
     const nonDeletedList = nonDeletedItems()
+    const stagedList = stagedItems()
+    const unstagedList = unstagedItems()
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
@@ -166,66 +174,64 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
     const renderEmptyList = () => <div class="p-3 text-xs text-secondary">{emptyViewerMessage()}</div>
 
-    const renderListPanel = () => (
-      <Show when={nonDeletedList.length > 0} fallback={renderEmptyList()}>
-        <For each={sortedList}>
-          {(item) => (
-            <div
-              class={`file-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
-              onClick={() => {
-                props.onOpenFile(item.id)
-              }}
-            >
-              <div class="file-list-item-content">
-                <div class="file-list-item-path" title={item.path}>
-                  <span class="file-path-text">{item.path}</span>
-                </div>
-                <div class="file-list-item-stats">
-                  <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
-                  </Show>
-                  <Show when={item.status !== "deleted"}>
-                    <>
-                      <span class="file-list-item-additions">+{item.additions}</span>
-                      <span class="file-list-item-deletions">-{item.deletions}</span>
-                    </>
-                  </Show>
-                </div>
-              </div>
-            </div>
-          )}
-        </For>
-      </Show>
+    const renderListItem = (item: GitChangeListItem) => (
+      <div
+        class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
+        onClick={() => props.onOpenFile(item.id)}
+        title={item.path}
+      >
+        <div class="file-list-item-content">
+          <div class="file-list-item-path" title={item.path}>
+            <span class="file-path-text">{item.path}</span>
+          </div>
+          <div class="file-list-item-stats">
+            <span class="file-list-item-additions">+{item.additions}</span>
+            <span class="file-list-item-deletions">-{item.deletions}</span>
+          </div>
+        </div>
+      </div>
     )
 
-    const renderListOverlay = () => (
+    const renderSection = (
+      title: string,
+      items: GitChangeListItem[],
+      isOpen: boolean,
+      onToggle: () => void,
+    ) => (
+      <div class="git-change-section">
+        <button type="button" class="git-change-section-header" onClick={onToggle}>
+          <span class="git-change-section-header-main">
+            <span class="git-change-section-chevron">
+              {isOpen ? <ChevronDown class="h-3.5 w-3.5" /> : <ChevronRight class="h-3.5 w-3.5" />}
+            </span>
+            <span class="git-change-section-title">{title}</span>
+          </span>
+          <span class="git-change-section-count">{items.length}</span>
+        </button>
+        <Show when={isOpen}>
+          <div class="git-change-section-items">
+            <For each={items}>{(item) => renderListItem(item)}</For>
+          </div>
+        </Show>
+      </div>
+    )
+
+    const renderGroupedList = () => (
       <Show when={nonDeletedList.length > 0} fallback={renderEmptyList()}>
-        <For each={sortedList}>
-          {(item) => (
-            <div
-              class={`file-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
-              onClick={() => props.onOpenFile(item.id)}
-              title={item.path}
-            >
-              <div class="file-list-item-content">
-                <div class="file-list-item-path" title={item.path}>
-                  <span class="file-path-text">{item.path}</span>
-                </div>
-                <div class="file-list-item-stats">
-                  <Show when={item.status === "deleted"}>
-                    <span class="text-[10px] text-secondary">{props.t("instanceShell.gitChanges.deleted")}</span>
-                  </Show>
-                  <Show when={item.status !== "deleted"}>
-                    <>
-                      <span class="file-list-item-additions">+{item.additions}</span>
-                      <span class="file-list-item-deletions">-{item.deletions}</span>
-                    </>
-                  </Show>
-                </div>
-              </div>
-            </div>
+        <div class="git-change-sections">
+          {renderSection(
+            props.t("instanceShell.gitChanges.sections.staged"),
+            stagedList,
+            props.stagedOpen(),
+            props.onToggleStagedOpen,
           )}
-        </For>
+          {renderSection(
+            props.t("instanceShell.gitChanges.sections.unstaged"),
+            unstagedList,
+            props.unstagedOpen(),
+            props.onToggleUnstagedOpen,
+          )}
+        </div>
       </Show>
     )
 
@@ -269,7 +275,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               />
             </>
           }
-        list={{ panel: renderListPanel, overlay: renderListOverlay }}
+        list={{ panel: renderGroupedList, overlay: renderGroupedList }}
         viewer={renderViewer()}
         listOpen={props.listOpen()}
         onToggleList={props.onToggleList}
