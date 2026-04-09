@@ -393,7 +393,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusError(null)
     try {
       const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
-      setGitStatusEntries(adaptSdkGitStatusEntries(list))
+      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, worktreeSlugForViewer()).catch(() => null)
+      setGitStatusEntries(adaptSdkGitStatusEntries(list, detailList))
     } catch (error) {
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
       setGitStatusEntries([])

@@ -1,4 +1,5 @@
 import type { File as SdkGitFileStatus } from "@opencode-ai/sdk/v2/client"
+import type { WorktreeGitStatusEntry } from "../../../../../../server/src/api-types"
 
 import type { GitChangeEntry, GitChangeStatus } from "./types"
 
@@ -15,7 +16,23 @@ export function adaptSdkGitStatusEntry(entry: SdkGitFileStatus): GitChangeEntry 
   }
 }
 
-export function adaptSdkGitStatusEntries(entries: SdkGitFileStatus[] | null | undefined): GitChangeEntry[] {
+export function adaptSdkGitStatusEntries(
+  entries: SdkGitFileStatus[] | null | undefined,
+  details?: WorktreeGitStatusEntry[] | null,
+): GitChangeEntry[] {
   if (!Array.isArray(entries)) return []
-  return entries.map(adaptSdkGitStatusEntry).filter((entry) => entry.path.length > 0)
+  const detailsByPath = new Map((details ?? []).map((entry) => [entry.path, entry]))
+  return entries
+    .map((entry) => {
+      const adapted = adaptSdkGitStatusEntry(entry)
+      const detail = detailsByPath.get(adapted.path)
+      return detail
+        ? {
+            ...adapted,
+            stagedStatus: detail.stagedStatus,
+            unstagedStatus: detail.unstagedStatus,
+          }
+        : adapted
+    })
+    .filter((entry) => entry.path.length > 0)
 }

@@ -26,6 +26,7 @@ import type {
   WorktreeListResponse,
   WorktreeMap,
   WorktreeCreateRequest,
+  WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
@@ -280,6 +281,11 @@ export const serverApi = {
         method: "PUT",
         body: JSON.stringify({ contents }),
       },
+    )
+  },
+  fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
+    return request<WorktreeGitStatusResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
     )
   },
 

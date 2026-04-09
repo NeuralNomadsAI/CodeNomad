@@ -1,6 +1,8 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
+import { getWorktreeGitStatus } from "../../workspaces/git-status"
+import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -114,6 +116,33 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
       deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
       reply.code(204)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.get<{
+    Params: { id: string; slug: string }
+  }>("/api/workspaces/:id/worktrees/:slug/git-status", async (request, reply) => {
+    try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
+      return await getWorktreeGitStatus({ workspaceFolder: directory, logger: request.log })
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }

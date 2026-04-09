@@ -13,4 +13,6 @@ export interface GitChangeEntry {
   additions: number
   deletions: number
   status: GitChangeStatus
+  stagedStatus?: GitChangeStatus | null
+  unstagedStatus?: GitChangeStatus | null
 }
