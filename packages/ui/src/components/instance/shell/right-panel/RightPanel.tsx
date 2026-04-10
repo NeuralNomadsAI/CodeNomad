@@ -390,6 +390,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
   const [gitCommitMessage, setGitCommitMessage] = createSignal("")
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
+  let gitStatusRequestVersion = 0
+  let passiveGitRefreshInFlight = false
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
@@ -417,6 +419,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       if (samePath) return samePath.id
     }
     return gitMostChangedPath()
+  }
+
+  const describeGitSelectionFingerprint = (itemId: string | null) => {
+    if (!itemId) return null
+    const item = gitListItems().find((entry) => entry.id === itemId) ?? null
+    if (!item) return null
+    return `${item.path}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
   }
 
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
@@ -472,17 +481,58 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const loadGitStatus = async (force = false) => {
     if (!force && gitStatusEntries() !== null) return
+    const requestVersion = ++gitStatusRequestVersion
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
       const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
       const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, worktreeSlugForViewer())
+      if (requestVersion !== gitStatusRequestVersion) return
       setGitStatusEntries(adaptSdkGitStatusEntries(list, detailList))
     } catch (error) {
+      if (requestVersion !== gitStatusRequestVersion) return
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
       setGitStatusEntries([])
     } finally {
+      if (requestVersion !== gitStatusRequestVersion) return
       setGitStatusLoading(false)
+    }
+  }
+
+  const clearSelectedGitDiff = () => {
+    setGitSelectedError(null)
+    setGitSelectedBefore(null)
+    setGitSelectedAfter(null)
+  }
+
+  const passiveRefreshGitStatus = async () => {
+    if (rightPanelTab() !== "git-changes") return
+    if (passiveGitRefreshInFlight) return
+    if (gitCommitSubmitting()) return
+
+    passiveGitRefreshInFlight = true
+    const previousSelection = describeGitSelection(gitSelectedItemId())
+    const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
+    const hadSelectedDiff =
+      previousSelection.itemId !== null &&
+      (gitSelectedBefore() !== null || gitSelectedAfter() !== null || gitSelectedError() !== null)
+
+    try {
+      await loadGitStatus(true)
+      const nextSelection = resolveValidGitSelection(previousSelection)
+      setGitSelectedItemId(nextSelection)
+
+      if (!nextSelection) {
+        clearSelectedGitDiff()
+        return
+      }
+
+      const nextFingerprint = describeGitSelectionFingerprint(nextSelection)
+      if (!hadSelectedDiff || previousFingerprint !== nextFingerprint) {
+        await openGitFile(nextSelection)
+      }
+    } finally {
+      passiveGitRefreshInFlight = false
     }
   }
 
@@ -600,9 +650,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (selected) {
       void openGitFile(selected)
     } else {
-      setGitSelectedError(null)
-      setGitSelectedBefore(null)
-      setGitSelectedAfter(null)
+      clearSelectedGitDiff()
     }
   }
 
@@ -808,9 +856,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     if (rightPanelTab() !== "git-changes") return
-    if (gitStatusLoading()) return
-    if (gitStatusEntries() !== null) return
-    void loadGitStatus()
+    void passiveRefreshGitStatus()
   })
 
   createEffect(() => {
