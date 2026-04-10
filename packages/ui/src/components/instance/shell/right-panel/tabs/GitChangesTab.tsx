@@ -64,8 +64,10 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     return [...list].sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")))
   })
 
+  const listItems = createMemo<GitChangeListItem[]>(() => buildGitChangeListItems(sorted()))
+
   const totals = createMemo(() => {
-    return sorted().reduce(
+    return listItems().reduce(
       (acc, item) => {
         acc.additions += typeof item.additions === "number" ? item.additions : 0
         acc.deletions += typeof item.deletions === "number" ? item.deletions : 0
@@ -74,8 +76,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       { additions: 0, deletions: 0 },
     )
   })
-
-  const listItems = createMemo<GitChangeListItem[]>(() => buildGitChangeListItems(sorted()))
   const stagedItems = createMemo(() => listItems().filter((item) => item.section === "staged"))
   const unstagedItems = createMemo(() => listItems().filter((item) => item.section === "unstaged"))
 

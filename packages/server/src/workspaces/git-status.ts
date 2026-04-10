@@ -24,6 +24,28 @@ async function readFileAsDiffText(filePath: string): Promise<{ content: string; 
   return { content: buffer.toString("utf-8"), isBinary: false }
 }
 
+function countGitStyleLines(content: string): number {
+  if (content.length === 0) return 0
+  const normalized = content.replace(/\r\n/g, "\n")
+  let count = 1
+  for (let index = 0; index < normalized.length; index += 1) {
+    if (normalized.charCodeAt(index) === 10) count += 1
+  }
+  return normalized.endsWith("\n") ? count - 1 : count
+}
+
+async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingOk = false): Promise<{ content: string; isBinary: boolean }> {
+  const result = await resultPromise
+  if (!result.ok) {
+    return { content: decodeGitShowResult(result, missingOk), isBinary: false }
+  }
+  const buffer = Buffer.from(result.stdout, "utf-8")
+  if (isLikelyBinaryBuffer(buffer)) {
+    return { content: "", isBinary: true }
+  }
+  return { content: result.stdout, isBinary: false }
+}
+
 function runGit(args: string[], cwd: string): Promise<GitResult> {
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
@@ -112,7 +134,7 @@ async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>,
       try {
         const absolutePath = path.join(workspaceFolder, entry.path)
         const content = await readFile(absolutePath, "utf-8")
-        entry.unstagedAdditions = content.length === 0 ? 0 : content.split(/\r?\n/).length
+        entry.unstagedAdditions = countGitStyleLines(content)
         entry.unstagedDeletions = 0
       } catch {
         entry.unstagedAdditions = 0
@@ -216,15 +238,16 @@ export async function getWorktreeGitDiff(params: {
 
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
-      runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder),
-      readGitIndexBlob(params.workspaceFolder, normalizedPath),
+      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder), true),
+      readGitBlobAsDiffText(readGitIndexBlob(params.workspaceFolder, normalizedPath), true),
     ])
 
     return {
       path: normalizedPath,
       scope: params.scope,
-      before: decodeGitShowResult(beforeResult, true),
-      after: decodeGitShowResult(afterResult, true),
+      before: beforeResult.content,
+      after: afterResult.content,
+      isBinary: beforeResult.isBinary || afterResult.isBinary,
     }
   }
 
