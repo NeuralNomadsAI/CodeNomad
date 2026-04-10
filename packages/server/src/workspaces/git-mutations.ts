@@ -88,8 +88,17 @@ export async function stageWorktreePaths(params: { workspaceFolder: string; path
 
 export async function unstageWorktreePaths(params: { workspaceFolder: string; paths: string[] }): Promise<void> {
   const paths = normalizeGitMutationPaths(params.paths)
+  const headResult = await runGit(["rev-parse", "--verify", "HEAD"], params.workspaceFolder)
+  if (headResult.ok) {
+    await ensureGitCommandSucceeded(
+      runGit(["restore", "--staged", "--", ...paths], params.workspaceFolder),
+      "Failed to unstage files",
+    )
+    return
+  }
+
   await ensureGitCommandSucceeded(
-    runGit(["restore", "--staged", "--", ...paths], params.workspaceFolder),
+    runGit(["rm", "--cached", "--quiet", "--", ...paths], params.workspaceFolder),
     "Failed to unstage files",
   )
 }

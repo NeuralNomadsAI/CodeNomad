@@ -395,7 +395,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   let gitStatusRequestVersion = 0
   let gitDiffRequestVersion = 0
   let passiveGitRefreshInFlight = false
-  let pendingGitPassiveRefresh = false
+  let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
@@ -467,7 +467,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     gitStatusRequestVersion += 1
     gitDiffRequestVersion += 1
     passiveGitRefreshInFlight = false
-    pendingGitPassiveRefresh = false
+    pendingGitPassiveRefreshOptions = null
     setBrowserPath(".")
     setBrowserEntries(null)
     setBrowserError(null)
@@ -528,7 +528,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const passiveRefreshGitStatus = async (options?: { forceReloadSelectedDiff?: boolean }) => {
     if (rightPanelTab() !== "git-changes") return
     if (passiveGitRefreshInFlight) {
-      pendingGitPassiveRefresh = true
+      pendingGitPassiveRefreshOptions = {
+        forceReloadSelectedDiff:
+          pendingGitPassiveRefreshOptions?.forceReloadSelectedDiff || options?.forceReloadSelectedDiff || false,
+      }
       return
     }
     if (gitCommitSubmitting()) return
@@ -560,9 +563,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
     } finally {
       passiveGitRefreshInFlight = false
-      if (pendingGitPassiveRefresh) {
-        pendingGitPassiveRefresh = false
-        void passiveRefreshGitStatus(options)
+      if (pendingGitPassiveRefreshOptions) {
+        const nextOptions = pendingGitPassiveRefreshOptions
+        pendingGitPassiveRefreshOptions = null
+        void passiveRefreshGitStatus(nextOptions)
       }
     }
   }
@@ -895,8 +899,17 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedDirty(false)
   })
 
+  let previousGitChangesActivationKey: string | null = null
   createEffect(() => {
-    if (rightPanelTab() !== "git-changes") return
+    const tab = rightPanelTab()
+    const slug = worktreeSlugForViewer()
+    const activationKey = tab === "git-changes" ? `${props.instanceId}:${slug}` : null
+    if (!activationKey) {
+      previousGitChangesActivationKey = null
+      return
+    }
+    if (previousGitChangesActivationKey === activationKey) return
+    previousGitChangesActivationKey = activationKey
     void passiveRefreshGitStatus()
   })
 
