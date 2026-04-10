@@ -41,6 +41,10 @@ interface GitChangesTabProps {
   onInsertContext: (item: GitChangeListItem, selection: { startLine: number; endLine: number }) => void
   onStageFile: (item: GitChangeListItem) => void
   onUnstageFile: (item: GitChangeListItem) => void
+  commitMessage: Accessor<string>
+  commitSubmitting: Accessor<boolean>
+  onCommitMessageInput: (value: string) => void
+  onSubmitCommit: () => void
 
   stagedOpen: Accessor<boolean>
   unstagedOpen: Accessor<boolean>
@@ -80,6 +84,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   })
   const stagedItems = createMemo(() => listItems().filter((item) => item.section === "staged"))
   const unstagedItems = createMemo(() => listItems().filter((item) => item.section === "unstaged"))
+  const canCommit = createMemo(() => stagedItems().length > 0 && props.commitMessage().trim().length > 0 && !props.commitSubmitting())
 
   const selectedEntry = createMemo<GitChangeEntry | null>(() => {
     const list = listItems()
@@ -98,6 +103,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     if (listItems().length === 0) return props.t("instanceShell.gitChanges.empty")
     return props.t("instanceShell.filesShell.viewerEmpty")
   })
+
+  const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
@@ -151,7 +158,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
                           insertContextLabel={props.t("instanceShell.gitChanges.actions.insertContext")}
-                          onRequestInsertContext={(selection) => {
+                          onRequestInsertContext={binaryViewerActive() ? undefined : (selection) => {
                             const selectedId = props.selectedItemId()
                             if (!selectedId) return
                             const item = listItems().find((entry) => entry.id === selectedId)
@@ -249,12 +256,43 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     const renderGroupedList = () => (
       <Show when={allItems.length > 0} fallback={renderEmptyList()}>
         <div class="git-change-sections">
-          {renderSection(
-            props.t("instanceShell.gitChanges.sections.staged"),
-            stagedList,
-            props.stagedOpen(),
-            props.onToggleStagedOpen,
-          )}
+          <div class="git-change-section">
+            <button type="button" class="git-change-section-header" onClick={props.onToggleStagedOpen}>
+              <span class="git-change-section-header-main">
+                <span class="git-change-section-chevron">
+                  {props.stagedOpen() ? <ChevronDown class="h-3.5 w-3.5" /> : <ChevronRight class="h-3.5 w-3.5" />}
+                </span>
+                <span class="git-change-section-title">{props.t("instanceShell.gitChanges.sections.staged")}</span>
+              </span>
+              <span class="git-change-section-count">{stagedList.length}</span>
+            </button>
+            <Show when={props.stagedOpen()}>
+              <div class="git-change-section-items">
+                <div class="git-change-commit-box">
+                  <div class="git-change-commit-input-wrap">
+                    <textarea
+                      class="git-change-commit-input"
+                      value={props.commitMessage()}
+                      rows={1}
+                      placeholder={props.t("instanceShell.gitChanges.commit.placeholder")}
+                      onInput={(event) => props.onCommitMessageInput(event.currentTarget.value)}
+                    />
+                    <button
+                      type="button"
+                      class="git-change-commit-button git-change-commit-button-overlay"
+                      disabled={!canCommit()}
+                      onClick={() => props.onSubmitCommit()}
+                    >
+                      {props.commitSubmitting()
+                        ? props.t("instanceShell.gitChanges.commit.submitting")
+                        : props.t("instanceShell.gitChanges.commit.submit")}
+                    </button>
+                  </div>
+                </div>
+                <For each={stagedList}>{(item) => renderListItem(item)}</For>
+              </div>
+            </Show>
+          </div>
           {renderSection(
             props.t("instanceShell.gitChanges.sections.unstaged"),
             unstagedList,

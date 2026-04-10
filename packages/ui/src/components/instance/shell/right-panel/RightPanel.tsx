@@ -388,6 +388,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
   const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
   const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
+  const [gitCommitMessage, setGitCommitMessage] = createSignal("")
+  const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
@@ -464,6 +466,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitSelectedError(null)
     setGitSelectedBefore(null)
     setGitSelectedAfter(null)
+    setGitCommitMessage("")
+    setGitCommitSubmitting(false)
   })
 
   const loadGitStatus = async (force = false) => {
@@ -510,6 +514,38 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
   }
 
+  const submitGitCommit = async () => {
+    const message = gitCommitMessage().trim()
+    if (!message || gitCommitSubmitting()) return
+
+    setGitCommitSubmitting(true)
+    try {
+      await serverApi.commitWorktreeGitChanges(props.instanceId, worktreeSlugForViewer(), { message })
+      setGitCommitMessage("")
+      await loadGitStatus(true)
+      const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
+      setGitSelectedItemId(nextSelection)
+      if (nextSelection) {
+        await openGitFile(nextSelection)
+      } else {
+        setGitSelectedError(null)
+        setGitSelectedBefore(null)
+        setGitSelectedAfter(null)
+      }
+      showToastNotification({
+        message: props.t("instanceShell.gitChanges.commit.success"),
+        variant: "success",
+      })
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : props.t("instanceShell.gitChanges.commit.error"),
+        variant: "error",
+      })
+    } finally {
+      setGitCommitSubmitting(false)
+    }
+  }
+
   async function openGitFile(itemId: string) {
     setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
@@ -534,7 +570,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       const path = item?.path ?? ""
       const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), path, item?.section ?? "unstaged")
       if (diff.isBinary) {
-        setGitSelectedError("Binary file cannot be displayed")
+        setGitSelectedError(props.t("instanceShell.gitChanges.binaryViewer"))
         return
       }
       setGitSelectedBefore(diff.before)
@@ -1019,6 +1055,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onInsertContext={insertGitChangeContext}
               onStageFile={(item) => void mutateGitFile(item, "stage")}
               onUnstageFile={(item) => void mutateGitFile(item, "unstage")}
+              commitMessage={gitCommitMessage}
+              commitSubmitting={gitCommitSubmitting}
+              onCommitMessageInput={setGitCommitMessage}
+              onSubmitCommit={() => void submitGitCommit()}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {

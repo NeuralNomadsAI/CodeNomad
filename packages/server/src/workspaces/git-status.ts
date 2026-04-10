@@ -133,8 +133,13 @@ async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>,
     .map(async (entry) => {
       try {
         const absolutePath = path.join(workspaceFolder, entry.path)
-        const content = await readFile(absolutePath, "utf-8")
-        entry.unstagedAdditions = countGitStyleLines(content)
+        const fileResult = await readFileAsDiffText(absolutePath)
+        if (fileResult.isBinary) {
+          entry.unstagedAdditions = 0
+          entry.unstagedDeletions = 0
+          return
+        }
+        entry.unstagedAdditions = countGitStyleLines(fileResult.content)
         entry.unstagedDeletions = 0
       } catch {
         entry.unstagedAdditions = 0
