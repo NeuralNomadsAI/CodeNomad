@@ -21,7 +21,15 @@ import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, GitChangeListItem, RightPanelTab } from "./types"
+import type {
+  DiffContextMode,
+  DiffViewMode,
+  DiffWordWrapMode,
+  GitChangeEntry,
+  GitChangeListItem,
+  GitSelectionDescriptor,
+  RightPanelTab,
+} from "./types"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
@@ -383,10 +391,29 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
-  const resolveValidGitSelection = (preferredId: string | null): string | null => {
+  const describeGitSelection = (itemId: string | null): GitSelectionDescriptor => {
+    if (!itemId) {
+      return { itemId: null, path: null, section: null }
+    }
+    const match = gitListItems().find((item) => item.id === itemId) ?? null
+    return {
+      itemId,
+      path: match?.path ?? null,
+      section: match?.section ?? null,
+    }
+  }
+
+  const resolveValidGitSelection = (selection: GitSelectionDescriptor): string | null => {
     const items = gitListItems()
     if (items.length === 0) return null
-    if (preferredId && items.some((item) => item.id === preferredId)) return preferredId
+    if (selection.itemId && items.some((item) => item.id === selection.itemId)) return selection.itemId
+    if (selection.path && selection.section) {
+      const oppositeSection = selection.section === "staged" ? "unstaged" : "staged"
+      const moved = items.find((item) => item.path === selection.path && item.section === oppositeSection)
+      if (moved) return moved.id
+      const samePath = items.find((item) => item.path === selection.path)
+      if (samePath) return samePath.id
+    }
     return gitMostChangedPath()
   }
 
@@ -455,6 +482,34 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
   }
 
+  const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
+    const currentSelection = describeGitSelection(gitSelectedItemId())
+    const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
+    try {
+      if (action === "stage") {
+        await serverApi.stageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: [item.path] })
+      } else {
+        await serverApi.unstageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: [item.path] })
+      }
+
+      await loadGitStatus(true)
+      const nextSelection = resolveValidGitSelection(fallbackSelection)
+      setGitSelectedItemId(nextSelection)
+      if (nextSelection) {
+        await openGitFile(nextSelection)
+      } else {
+        setGitSelectedError(null)
+        setGitSelectedBefore(null)
+        setGitSelectedAfter(null)
+      }
+    } catch (error) {
+      showToastNotification({
+        message: error instanceof Error ? error.message : `Failed to ${action} file`,
+        variant: "error",
+      })
+    }
+  }
+
   async function openGitFile(itemId: string) {
     setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
@@ -504,7 +559,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const refreshGitStatus = async () => {
     await loadGitStatus(true)
-    const selected = resolveValidGitSelection(gitSelectedItemId())
+    const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
     setGitSelectedItemId(selected)
     if (selected) {
       void openGitFile(selected)
@@ -962,6 +1017,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onOpenFile={(path: string) => void openGitFile(path)}
               onRefresh={() => void refreshGitStatus()}
               onInsertContext={insertGitChangeContext}
+              onStageFile={(item) => void mutateGitFile(item, "stage")}
+              onUnstageFile={(item) => void mutateGitFile(item, "unstage")}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {

@@ -134,6 +134,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.staged": "Staged Changes",
   "instanceShell.gitChanges.sections.unstaged": "Changes",
   "instanceShell.gitChanges.actions.insertContext": "Add to prompt",
+  "instanceShell.gitChanges.actions.stage": "Stage file",
+  "instanceShell.gitChanges.actions.unstage": "Unstage file",
 
   "instanceShell.filesShell.fileListTitle": "File list",
   "instanceShell.filesShell.mobileSelectorLabel": "Select file",

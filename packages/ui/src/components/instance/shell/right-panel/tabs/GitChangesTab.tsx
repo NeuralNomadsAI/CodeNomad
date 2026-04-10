@@ -39,6 +39,8 @@ interface GitChangesTabProps {
   onOpenFile: (itemId: string) => void
   onRefresh: () => void
   onInsertContext: (item: GitChangeListItem, selection: { startLine: number; endLine: number }) => void
+  onStageFile: (item: GitChangeListItem) => void
+  onUnstageFile: (item: GitChangeListItem) => void
 
   stagedOpen: Accessor<boolean>
   unstagedOpen: Accessor<boolean>
@@ -196,6 +198,25 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
           <div class="file-list-item-stats">
             <span class="file-list-item-additions">+{item.additions}</span>
             <span class="file-list-item-deletions">-{item.deletions}</span>
+          </div>
+          <div class="git-change-list-item-actions" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              class="git-change-row-action"
+              title={
+                item.section === "staged"
+                  ? props.t("instanceShell.gitChanges.actions.unstage")
+                  : props.t("instanceShell.gitChanges.actions.stage")
+              }
+              aria-label={
+                item.section === "staged"
+                  ? props.t("instanceShell.gitChanges.actions.unstage")
+                  : props.t("instanceShell.gitChanges.actions.stage")
+              }
+              onClick={() => (item.section === "staged" ? props.onUnstageFile(item) : props.onStageFile(item))}
+            >
+              <span class="git-change-row-action-glyph">{item.section === "staged" ? "−" : "+"}</span>
+            </button>
           </div>
         </div>
       </div>

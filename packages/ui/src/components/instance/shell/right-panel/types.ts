@@ -34,3 +34,9 @@ export interface GitChangeListItem {
   displayName: string
   parentPath: string
 }
+
+export interface GitSelectionDescriptor {
+  itemId: string | null
+  path: string | null
+  section: GitChangeSection | null
+}
