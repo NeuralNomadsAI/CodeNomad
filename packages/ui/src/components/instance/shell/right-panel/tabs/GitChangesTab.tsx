@@ -1,4 +1,15 @@
-import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import {
+  For,
+  Show,
+  Suspense,
+  createMemo,
+  createSignal,
+  lazy,
+  onCleanup,
+  type Accessor,
+  type Component,
+  type JSX,
+} from "solid-js"
 
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-solid"
 
@@ -105,6 +116,40 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   })
 
   const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
+  const [revealedActionRowId, setRevealedActionRowId] = createSignal<string | null>(null)
+  const [hoveredActionZoneRowId, setHoveredActionZoneRowId] = createSignal<string | null>(null)
+  let hideActionRowTimer: ReturnType<typeof setTimeout> | null = null
+
+  const clearHideActionRowTimer = () => {
+    if (hideActionRowTimer) {
+      clearTimeout(hideActionRowTimer)
+      hideActionRowTimer = null
+    }
+  }
+
+  const revealActionRow = (rowId: string) => {
+    clearHideActionRowTimer()
+    setRevealedActionRowId(rowId)
+  }
+
+  const scheduleHideActionRow = (rowId: string) => {
+    clearHideActionRowTimer()
+    hideActionRowTimer = setTimeout(() => {
+      setRevealedActionRowId((current) => (current === rowId ? null : current))
+      hideActionRowTimer = null
+    }, 500)
+  }
+
+  const actionRowVisible = (rowId: string) => {
+    if (!props.isPhoneLayout()) {
+      return revealedActionRowId() === rowId
+    }
+    return true
+  }
+
+  onCleanup(() => {
+    clearHideActionRowTimer()
+  })
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
@@ -189,45 +234,83 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
     const renderEmptyList = () => <div class="p-3 text-xs text-secondary">{emptyViewerMessage()}</div>
 
-    const renderListItem = (item: GitChangeListItem) => (
-      <div
-        class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""}`}
-        onClick={() => props.onOpenFile(item.id)}
-        title={item.path}
-      >
-        <div class="file-list-item-content">
-          <div class="git-change-list-item-text" title={item.path}>
-            <span class="git-change-list-item-name">{item.displayName}</span>
-            <Show when={item.parentPath}>
-              <span class="git-change-list-item-parent">{item.parentPath}</span>
-            </Show>
-          </div>
-          <div class="file-list-item-stats">
-            <span class="file-list-item-additions">+{item.additions}</span>
-            <span class="file-list-item-deletions">-{item.deletions}</span>
-          </div>
-          <div class="git-change-list-item-actions" onClick={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              class="git-change-row-action"
-              title={
-                item.section === "staged"
-                  ? props.t("instanceShell.gitChanges.actions.unstage")
-                  : props.t("instanceShell.gitChanges.actions.stage")
-              }
-              aria-label={
-                item.section === "staged"
-                  ? props.t("instanceShell.gitChanges.actions.unstage")
-                  : props.t("instanceShell.gitChanges.actions.stage")
-              }
-              onClick={() => (item.section === "staged" ? props.onUnstageFile(item) : props.onStageFile(item))}
-            >
-              <span class="git-change-row-action-glyph">{item.section === "staged" ? "−" : "+"}</span>
-            </button>
+    const renderListItem = (item: GitChangeListItem) => {
+      const actionLabel =
+        item.section === "staged"
+          ? props.t("instanceShell.gitChanges.actions.unstage")
+          : props.t("instanceShell.gitChanges.actions.stage")
+
+      const triggerAction = () => {
+        if (item.section === "staged") props.onUnstageFile(item)
+        else props.onStageFile(item)
+      }
+
+      return (
+        <div
+          class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
+          onClick={() => props.onOpenFile(item.id)}
+          onMouseEnter={() => revealActionRow(item.id)}
+          onMouseLeave={() => {
+            if (hoveredActionZoneRowId() === item.id) return
+            scheduleHideActionRow(item.id)
+          }}
+          title={item.path}
+        >
+          <div class="file-list-item-content">
+            <div class="git-change-list-item-text" title={item.path}>
+              <span class="git-change-list-item-name">{item.displayName}</span>
+              <Show when={item.parentPath}>
+                <span class="git-change-list-item-parent">{item.parentPath}</span>
+              </Show>
+            </div>
+            <div class="git-change-list-item-right">
+              <div class="file-list-item-stats">
+                <span class="file-list-item-additions">+{item.additions}</span>
+                <span class="file-list-item-deletions">-{item.deletions}</span>
+              </div>
+              <div
+                class="git-change-list-item-actions-zone"
+                onMouseEnter={() => {
+                  setHoveredActionZoneRowId(item.id)
+                  revealActionRow(item.id)
+                }}
+                onMouseLeave={() => {
+                  setHoveredActionZoneRowId((current) => (current === item.id ? null : current))
+                  scheduleHideActionRow(item.id)
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  triggerAction()
+                }}
+              >
+                <div class="git-change-list-item-actions">
+                  <button
+                    type="button"
+                    class="git-change-row-action"
+                    title={actionLabel}
+                    aria-label={actionLabel}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      triggerAction()
+                    }}
+                  >
+                    <span
+                      class={`git-change-row-action-glyph ${item.section === "staged" ? "git-change-row-action-glyph-minus" : "git-change-row-action-glyph-plus"}`}
+                      aria-hidden="true"
+                    >
+                      <span class="git-change-row-action-bar git-change-row-action-bar-horizontal" />
+                      <Show when={item.section !== "staged"}>
+                        <span class="git-change-row-action-bar git-change-row-action-bar-vertical" />
+                      </Show>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    )
+      )
+    }
 
     const renderSection = (
       title: string,

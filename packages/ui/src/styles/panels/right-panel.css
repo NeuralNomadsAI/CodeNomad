@@ -350,17 +350,49 @@
   @apply flex flex-col min-w-0 flex-1;
 }
 
-.git-change-list-item-actions {
+.git-change-list-item-right {
   @apply flex items-center shrink-0;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
+  min-width: 0;
 }
 
-.git-change-list-item:hover .git-change-list-item-actions,
-.git-change-list-item.file-list-item-active .git-change-list-item-actions {
+.git-change-list-item .file-list-item-stats {
+  transition:
+    transform 280ms ease,
+    opacity 280ms ease;
+}
+
+.git-change-list-item-actions-zone {
+  @apply flex items-center justify-end shrink-0;
+  width: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width 280ms ease;
+}
+
+.git-change-list-item-actions {
+  @apply flex items-center justify-center;
+  width: 28px;
+  opacity: 0;
+  transform: translateX(10px);
+  transition:
+    transform 280ms ease,
+    opacity 280ms ease;
+}
+
+.git-change-list-item-action-visible .git-change-list-item-actions-zone {
+  width: 28px;
   opacity: 1;
   pointer-events: auto;
+}
+
+.git-change-list-item-action-visible .git-change-list-item-actions {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.git-change-list-item-action-visible .file-list-item-stats {
+  transform: translateX(-4px);
+  opacity: 0.72;
 }
 
 .git-change-row-action {
@@ -380,12 +412,48 @@
 }
 
 .git-change-row-action-glyph {
+  position: relative;
   display: block;
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-  transform: translateY(-1px);
+  width: 100%;
+  height: 100%;
   pointer-events: none;
+}
+
+.git-change-row-action-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  background-color: currentColor;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.git-change-row-action-bar-horizontal {
+  width: 14px;
+  height: 2px;
+}
+
+.git-change-row-action-bar-vertical {
+  width: 2px;
+  height: 14px;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .git-change-list-item-actions-zone {
+    width: 28px;
+    pointer-events: auto;
+  }
+
+  .git-change-list-item-actions {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .git-change-list-item .file-list-item-stats {
+    transform: none;
+    opacity: 1;
+  }
 }
 
 .git-change-list-item-name {
