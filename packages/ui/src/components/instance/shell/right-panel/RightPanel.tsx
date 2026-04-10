@@ -387,6 +387,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
   const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
   const [gitBulkSelectedItemIds, setGitBulkSelectedItemIds] = createSignal<Set<string>>(new Set())
+  const [gitBulkSelectionAnchorId, setGitBulkSelectionAnchorId] = createSignal<string | null>(null)
   const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
   const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
   const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
@@ -403,6 +404,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const clearGitBulkSelection = () => {
     setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
+    setGitBulkSelectionAnchorId(null)
   }
 
   const toggleGitBulkSelection = (itemId: string) => {
@@ -412,6 +414,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       else next.add(itemId)
       return next
     })
+  }
+
+  const selectGitBulkRange = (anchorId: string, itemId: string) => {
+    const items = gitListItems()
+    const anchorIndex = items.findIndex((entry) => entry.id === anchorId)
+    const itemIndex = items.findIndex((entry) => entry.id === itemId)
+    if (anchorIndex < 0 || itemIndex < 0) {
+      setGitBulkSelectedItemIds(new Set<string>([itemId]))
+      return
+    }
+
+    const start = Math.min(anchorIndex, itemIndex)
+    const end = Math.max(anchorIndex, itemIndex)
+    setGitBulkSelectedItemIds(new Set(items.slice(start, end + 1).map((entry) => entry.id)))
   }
 
   const describeGitSelection = (itemId: string | null): GitSelectionDescriptor => {
@@ -559,6 +575,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
       return next.size === current.size ? current : next
     })
+
+    const anchorId = gitBulkSelectionAnchorId()
+    if (anchorId && !validIds.has(anchorId)) {
+      setGitBulkSelectionAnchorId(null)
+    }
   }
 
   createEffect(() => {
@@ -660,12 +681,23 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   }
 
   const handleGitRowClick = (item: GitChangeListItem, event: MouseEvent) => {
+    if (event.shiftKey) {
+      event.preventDefault()
+      const anchorId = gitBulkSelectionAnchorId() ?? item.id
+      selectGitBulkRange(anchorId, item.id)
+      setGitBulkSelectionAnchorId(item.id)
+      return
+    }
+
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
       toggleGitBulkSelection(item.id)
+      setGitBulkSelectionAnchorId(item.id)
       return
     }
+
     clearGitBulkSelection()
+    setGitBulkSelectionAnchorId(item.id)
     void openGitFile(item.id)
   }
 
