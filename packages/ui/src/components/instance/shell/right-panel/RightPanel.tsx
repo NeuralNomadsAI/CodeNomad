@@ -368,6 +368,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   onCleanup(() => {
     stopSplitResize()
+    clearGitPassivePollingTimer()
   })
 
   const worktreeSlugForViewer = createMemo(() => {
@@ -392,6 +393,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
   let gitStatusRequestVersion = 0
   let passiveGitRefreshInFlight = false
+  let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
@@ -533,6 +535,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
     } finally {
       passiveGitRefreshInFlight = false
+    }
+  }
+
+  const clearGitPassivePollingTimer = () => {
+    if (gitPassivePollingTimer) {
+      clearInterval(gitPassivePollingTimer)
+      gitPassivePollingTimer = null
     }
   }
 
@@ -857,6 +866,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     if (rightPanelTab() !== "git-changes") return
     void passiveRefreshGitStatus()
+  })
+
+  createEffect(() => {
+    if (rightPanelTab() !== "git-changes") {
+      clearGitPassivePollingTimer()
+      return
+    }
+
+    clearGitPassivePollingTimer()
+    gitPassivePollingTimer = setInterval(() => {
+      void passiveRefreshGitStatus()
+    }, 20_000)
   })
 
   createEffect(() => {
