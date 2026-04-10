@@ -256,6 +256,11 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       return (
         <div
           class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${isBulkSelected() ? "git-change-list-item-bulk-selected" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
+          onMouseDown={(event) => {
+            if (event.shiftKey || event.ctrlKey || event.metaKey) {
+              event.preventDefault()
+            }
+          }}
           onClick={(event) => props.onRowClick(item, event)}
           onMouseEnter={() => {
             setHoveredRowId(item.id)

@@ -685,7 +685,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       event.preventDefault()
       const anchorId = gitBulkSelectionAnchorId() ?? item.id
       selectGitBulkRange(anchorId, item.id)
-      setGitBulkSelectionAnchorId(item.id)
       return
     }
 
