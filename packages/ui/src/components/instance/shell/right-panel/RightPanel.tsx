@@ -386,6 +386,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
   const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
+  const [gitBulkSelectedItemIds, setGitBulkSelectedItemIds] = createSignal<Set<string>>(new Set())
   const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
   const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
   const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
@@ -399,6 +400,19 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+
+  const clearGitBulkSelection = () => {
+    setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
+  }
+
+  const toggleGitBulkSelection = (itemId: string) => {
+    setGitBulkSelectedItemIds((current) => {
+      const next = new Set(current)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }
 
   const describeGitSelection = (itemId: string | null): GitSelectionDescriptor => {
     if (!itemId) {
@@ -480,6 +494,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusError(null)
     setGitStatusLoading(false)
     setGitSelectedItemId(null)
+    clearGitBulkSelection()
     setGitSelectedLoading(false)
     setGitSelectedError(null)
     setGitSelectedBefore(null)
@@ -529,9 +544,27 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const clearSelectedGitDiffAndSelection = () => {
     setGitSelectedItemId(null)
+    clearGitBulkSelection()
     setGitSelectedLoading(false)
     clearSelectedGitDiff()
   }
+
+  const pruneGitBulkSelection = () => {
+    const validIds = new Set(gitListItems().map((item) => item.id))
+    setGitBulkSelectedItemIds((current) => {
+      if (current.size === 0) return current
+      const next = new Set<string>()
+      for (const itemId of current) {
+        if (validIds.has(itemId)) next.add(itemId)
+      }
+      return next.size === current.size ? current : next
+    })
+  }
+
+  createEffect(() => {
+    gitListItems()
+    pruneGitBulkSelection()
+  })
 
   const passiveRefreshGitStatus = async (options?: { forceReloadSelectedDiff?: boolean }) => {
     if (rightPanelTab() !== "git-changes") return
@@ -595,14 +628,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
     const currentSelection = describeGitSelection(gitSelectedItemId())
     const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
+    const selectedIds = gitBulkSelectedItemIds()
+    const selectedItems = gitListItems().filter((candidate) => selectedIds.has(candidate.id))
+    const bulkTargets = selectedItems.filter((candidate) => candidate.section === item.section)
+    const targetItems = bulkTargets.some((candidate) => candidate.id === item.id) ? bulkTargets : [item]
+    const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
     try {
       if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: [item.path] })
+        await serverApi.stageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: targetPaths })
       } else {
-        await serverApi.unstageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: [item.path] })
+        await serverApi.unstageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: targetPaths })
       }
 
       await loadGitStatus(true)
+      clearGitBulkSelection()
       const nextSelection = resolveValidGitSelection(fallbackSelection)
       setGitSelectedItemId(nextSelection)
       if (nextSelection) {
@@ -618,6 +657,16 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         variant: "error",
       })
     }
+  }
+
+  const handleGitRowClick = (item: GitChangeListItem, event: MouseEvent) => {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      toggleGitBulkSelection(item.id)
+      return
+    }
+    clearGitBulkSelection()
+    void openGitFile(item.id)
   }
 
   const submitGitCommit = async () => {
@@ -1185,6 +1234,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               statusLoading={gitStatusLoading}
               statusError={gitStatusError}
               selectedItemId={gitSelectedItemId}
+              selectedBulkItemIds={gitBulkSelectedItemIds}
               selectedLoading={gitSelectedLoading}
               selectedError={gitSelectedError}
               selectedBefore={gitSelectedBefore}
@@ -1198,6 +1248,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onContextModeChange={setDiffContextMode}
               onWordWrapModeChange={setDiffWordWrapMode}
               onOpenFile={(path: string) => void openGitFile(path)}
+              onRowClick={handleGitRowClick}
               onRefresh={() => void refreshGitStatus()}
               onInsertContext={insertGitChangeContext}
               onStageFile={(item) => void mutateGitFile(item, "stage")}

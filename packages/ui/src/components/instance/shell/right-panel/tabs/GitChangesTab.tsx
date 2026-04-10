@@ -32,6 +32,7 @@ interface GitChangesTabProps {
   statusError: Accessor<string | null>
 
   selectedItemId: Accessor<string | null>
+  selectedBulkItemIds: Accessor<Set<string>>
   selectedLoading: Accessor<boolean>
   selectedError: Accessor<string | null>
   selectedBefore: Accessor<string | null>
@@ -48,6 +49,7 @@ interface GitChangesTabProps {
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
   onOpenFile: (itemId: string) => void
+  onRowClick: (item: GitChangeListItem, event: MouseEvent) => void
   onRefresh: () => void
   onInsertContext: (item: GitChangeListItem, selection: { startLine: number; endLine: number }) => void
   onStageFile: (item: GitChangeListItem) => void
@@ -240,6 +242,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     const renderEmptyList = () => <div class="p-3 text-xs text-secondary">{emptyViewerMessage()}</div>
 
     const renderListItem = (item: GitChangeListItem) => {
+      const isBulkSelected = createMemo(() => props.selectedBulkItemIds().has(item.id))
       const actionLabel =
         item.section === "staged"
           ? props.t("instanceShell.gitChanges.actions.unstage")
@@ -252,8 +255,8 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
       return (
         <div
-          class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
-          onClick={() => props.onOpenFile(item.id)}
+          class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${isBulkSelected() ? "git-change-list-item-bulk-selected" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
+          onClick={(event) => props.onRowClick(item, event)}
           onMouseEnter={() => {
             setHoveredRowId(item.id)
             revealActionRow(item.id)

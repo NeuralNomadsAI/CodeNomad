@@ -238,6 +238,21 @@
   box-shadow: inset 0 0 0 1px var(--accent-primary);
 }
 
+.git-change-list-item-bulk-selected {
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 45%, transparent);
+}
+
+.git-change-list-item-bulk-selected:hover {
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+}
+
+.git-change-list-item-bulk-selected.file-list-item-active {
+  box-shadow:
+    inset 0 0 0 1px var(--accent-primary),
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 20%, transparent);
+}
+
 .file-list-item-content {
   @apply flex items-center justify-between gap-3;
 }
