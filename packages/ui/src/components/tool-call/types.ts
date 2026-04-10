@@ -47,7 +47,7 @@ export interface ToolScrollHelpers {
   registerContainer(element: HTMLDivElement | null, options?: { disableTracking?: boolean }): void
   handleScroll(event: Event & { currentTarget: HTMLDivElement }): void
   renderSentinel(options?: { disableTracking?: boolean }): JSXElement | null
-  restoreAfterRender(options?: { forceBottom?: boolean }): void
+  restoreAfterRender(): void
 }
 
 export interface ToolRendererContext {

@@ -16,7 +16,7 @@ export interface FollowScrollHelpers {
   registerContainer: (element: HTMLDivElement | null | undefined, options?: { disableTracking?: boolean }) => void
   handleScroll: (event: Event & { currentTarget: HTMLDivElement }) => void
   renderSentinel: (options?: { disableTracking?: boolean }) => JSXElement | null
-  restoreAfterRender: (options?: { forceBottom?: boolean }) => void
+  restoreAfterRender: () => void
   autoScroll: Accessor<boolean>
 }
 
@@ -183,7 +183,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     return <div ref={setBottomSentinel} aria-hidden="true" class={options.sentinelClassName} style={{ height: "1px" }} />
   }
 
-  const restoreAfterRender = (config?: { forceBottom?: boolean }) => {
+  const restoreAfterRender = () => {
     const container = scrollContainerRef
     if (container && hasUserScrollIntent() && !isAtBottom(container)) {
       if (autoScroll()) {
@@ -195,7 +195,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       return
     }
 
-    const shouldFollow = config?.forceBottom ?? autoScroll()
+    // Never let a render-time caller force follow mode back on after the user
+    // has already escaped it. Staying pinned should depend on the current
+    // follow state, not on a caller opting into forceBottom.
+    const shouldFollow = autoScroll()
     requestAnimationFrame(() => {
       restoreScrollPosition(shouldFollow)
       if (shouldFollow) {

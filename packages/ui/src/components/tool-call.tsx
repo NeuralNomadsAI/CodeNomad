@@ -454,7 +454,7 @@ function ToolCallDetails(props: {
 
   createEffect(() => {
     if (followScroll.autoScroll()) {
-      scrollHelpers.restoreAfterRender({ forceBottom: true })
+      scrollHelpers.restoreAfterRender()
     }
   })
 
