@@ -15,6 +15,10 @@ import type {
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  WorktreeGitCommitRequest,
+  WorktreeGitCommitResponse,
+  WorktreeGitMutationResponse,
+  WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -293,6 +297,33 @@ export const serverApi = {
     const params = new URLSearchParams({ path, scope })
     return request<WorktreeGitDiffResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+    )
+  },
+  stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    )
+  },
+  unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    )
+  },
+  commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
+    return request<WorktreeGitCommitResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
     )
   },
 

@@ -1,7 +1,9 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
+import type { WorktreeGitCommitRequest, WorktreeGitPathsRequest } from "../../api-types"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
+import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 
 interface RouteDeps {
@@ -28,6 +30,14 @@ const WorkspaceFileContentBodySchema = z.object({
 const WorktreeGitDiffQuerySchema = z.object({
   path: z.string().trim().min(1, "Path is required"),
   scope: z.enum(["staged", "unstaged"]),
+})
+
+const WorktreeGitPathsBodySchema = z.object({
+  paths: z.array(z.string().trim().min(1, "Path is required")).min(1, "At least one path is required"),
+})
+
+const WorktreeGitCommitBodySchema = z.object({
+  message: z.string().trim().min(1, "Commit message is required"),
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
@@ -185,10 +195,104 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return handleWorkspaceError(error, reply)
     }
   })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: WorktreeGitPathsRequest
+  }>("/api/workspaces/:id/worktrees/:slug/git-stage", async (request, reply) => {
+    try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const body = WorktreeGitPathsBodySchema.parse(request.body ?? {})
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
+      await stageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      return { ok: true as const }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: WorktreeGitPathsRequest
+  }>("/api/workspaces/:id/worktrees/:slug/git-unstage", async (request, reply) => {
+    try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const body = WorktreeGitPathsBodySchema.parse(request.body ?? {})
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
+      await unstageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      return { ok: true as const }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string; slug: string }
+    Body: WorktreeGitCommitRequest
+  }>("/api/workspaces/:id/worktrees/:slug/git-commit", async (request, reply) => {
+    try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const body = WorktreeGitCommitBodySchema.parse(request.body ?? {})
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
+      const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
+      return { ok: true as const, ...result }
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
 }
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (isGitMutationError(error)) {
+    reply.code(error.statusCode)
+    return { error: error.message }
+  }
   if (error instanceof Error && error.message === "Workspace not found") {
     reply.code(404)
     return { error: "Workspace not found" }

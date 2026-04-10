@@ -97,6 +97,23 @@ export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]
 
 export type WorktreeGitDiffScope = "staged" | "unstaged"
 
+export interface WorktreeGitPathsRequest {
+  paths: string[]
+}
+
+export interface WorktreeGitMutationResponse {
+  ok: true
+}
+
+export interface WorktreeGitCommitRequest {
+  message: string
+}
+
+export interface WorktreeGitCommitResponse {
+  ok: true
+  commitSha?: string
+}
+
 export interface WorktreeGitDiffResponse {
   path: string
   scope: WorktreeGitDiffScope
