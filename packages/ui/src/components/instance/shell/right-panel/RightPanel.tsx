@@ -393,6 +393,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitCommitMessage, setGitCommitMessage] = createSignal("")
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
   let gitStatusRequestVersion = 0
+  let gitDiffRequestVersion = 0
   let passiveGitRefreshInFlight = false
   let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
 
@@ -508,12 +509,19 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitSelectedAfter(null)
   }
 
-  const passiveRefreshGitStatus = async () => {
+  const clearSelectedGitDiffAndSelection = () => {
+    setGitSelectedItemId(null)
+    setGitSelectedLoading(false)
+    clearSelectedGitDiff()
+  }
+
+  const passiveRefreshGitStatus = async (options?: { forceReloadSelectedDiff?: boolean }) => {
     if (rightPanelTab() !== "git-changes") return
     if (passiveGitRefreshInFlight) return
     if (gitCommitSubmitting()) return
 
     passiveGitRefreshInFlight = true
+    const refreshSelectionId = gitSelectedItemId()
     const previousSelection = describeGitSelection(gitSelectedItemId())
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
     const hadSelectedDiff =
@@ -522,6 +530,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     try {
       await loadGitStatus(true)
+      if (gitSelectedItemId() !== refreshSelectionId) {
+        return
+      }
       const nextSelection = resolveValidGitSelection(previousSelection)
       setGitSelectedItemId(nextSelection)
 
@@ -531,7 +542,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
 
       const nextFingerprint = describeGitSelectionFingerprint(nextSelection)
-      if (!hadSelectedDiff || previousFingerprint !== nextFingerprint) {
+      if (options?.forceReloadSelectedDiff || !hadSelectedDiff || previousFingerprint !== nextFingerprint) {
         await openGitFile(nextSelection)
       }
     } finally {
@@ -607,6 +618,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   }
 
   async function openGitFile(itemId: string) {
+    const requestVersion = ++gitDiffRequestVersion
     setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
     setGitSelectedError(null)
@@ -615,9 +627,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     const item = gitListItems().find((entry) => entry.id === itemId) || null
     if (!item) {
-      setGitSelectedItemId(null)
-      setGitSelectedError(null)
-      setGitSelectedLoading(false)
+      if (requestVersion !== gitDiffRequestVersion) return
+      clearSelectedGitDiffAndSelection()
       return
     }
 
@@ -629,6 +640,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     try {
       const path = item?.path ?? ""
       const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), path, item?.section ?? "unstaged")
+      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
         setGitSelectedError(props.t("instanceShell.gitChanges.binaryViewer"))
         return
@@ -636,8 +648,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setGitSelectedBefore(diff.before)
       setGitSelectedAfter(diff.after)
     } catch (error) {
+      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
     } finally {
+      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       setGitSelectedLoading(false)
     }
   }
@@ -876,7 +890,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const unsubscribe = serverEvents.on("workspace.filesChanged", (event) => {
       if (event.type !== "workspace.filesChanged") return
       if (event.instanceId !== instanceId) return
-      void passiveRefreshGitStatus()
+      if (!event.worktreeSlug) return
+      if (event.worktreeSlug !== worktreeSlugForViewer()) return
+      void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
     })
 
     onCleanup(() => {

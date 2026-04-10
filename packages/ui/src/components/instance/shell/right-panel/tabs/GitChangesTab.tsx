@@ -278,10 +278,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                   setHoveredActionZoneRowId((current) => (current === item.id ? null : current))
                   scheduleHideActionRow(item.id)
                 }}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  triggerAction()
-                }}
               >
                 <div class="git-change-list-item-actions">
                   <button

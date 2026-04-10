@@ -360,6 +360,8 @@ export type WorkspaceEventPayload =
   | {
       type: "workspace.filesChanged"
       instanceId: string
+      directory?: string
+      worktreeSlug?: string
       reason: "write" | "edit" | "apply_patch"
     }
 

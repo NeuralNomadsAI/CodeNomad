@@ -52,3 +52,31 @@ export async function resolveWorktreeDirectory(params: {
   })
   return refreshed.worktrees.find((wt) => wt.slug === params.worktreeSlug)?.directory ?? null
 }
+
+export async function resolveWorktreeSlugForDirectory(params: {
+  workspaceId: string
+  workspacePath: string
+  directory: string
+  logger?: LogLike
+}): Promise<string | null> {
+  const target = (params.directory ?? "").trim()
+  if (!target) return null
+
+  const cached = await getCachedWorktrees({
+    workspaceId: params.workspaceId,
+    workspacePath: params.workspacePath,
+    logger: params.logger,
+  })
+  const match = cached.worktrees.find((wt) => wt.directory === target)
+  if (match) {
+    return match.slug
+  }
+
+  worktreeCache.delete(params.workspaceId)
+  const refreshed = await getCachedWorktrees({
+    workspaceId: params.workspaceId,
+    workspacePath: params.workspacePath,
+    logger: params.logger,
+  })
+  return refreshed.worktrees.find((wt) => wt.directory === target)?.slug ?? null
+}

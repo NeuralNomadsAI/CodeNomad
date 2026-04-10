@@ -4,6 +4,7 @@ import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
 import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
+import { resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const INSTANCE_HOST = "127.0.0.1"
 const STREAM_AGENT = new UndiciAgent({ bodyTimeout: 0, headersTimeout: 0 })
@@ -194,14 +195,14 @@ export class InstanceEventBridge {
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }
-      this.maybePublishFilesChanged(workspaceId, event)
+      void this.maybePublishFilesChanged(workspaceId, event)
       this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
     } catch (error) {
       this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
     }
   }
 
-  private maybePublishFilesChanged(workspaceId: string, event: InstanceStreamEvent) {
+  private async maybePublishFilesChanged(workspaceId: string, event: InstanceStreamEvent) {
     if ((event as any)?.type !== "message.part.updated") return
 
     const rawPart = (event as any)?.properties?.part
@@ -214,9 +215,23 @@ export class InstanceEventBridge {
     if (status !== "completed") return
     if (tool !== "write" && tool !== "edit" && tool !== "apply_patch") return
 
+    const workspace = this.options.workspaceManager.get(workspaceId)
+    const directory = typeof (event as any)?.directory === "string" ? (event as any).directory : undefined
+    const worktreeSlug =
+      workspace && directory
+        ? await resolveWorktreeSlugForDirectory({
+            workspaceId,
+            workspacePath: workspace.path,
+            directory,
+            logger: this.options.logger,
+          })
+        : null
+
     this.options.eventBus.publish({
       type: "workspace.filesChanged",
       instanceId: workspaceId,
+      directory,
+      worktreeSlug: worktreeSlug ?? undefined,
       reason: tool,
     })
   }
