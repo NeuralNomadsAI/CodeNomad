@@ -430,7 +430,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (!itemId) return null
     const item = gitListItems().find((entry) => entry.id === itemId) ?? null
     if (!item) return null
-    return `${item.path}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
+    return `${item.path}::${item.originalPath ?? ""}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
   }
 
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
@@ -496,11 +496,24 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const list = await requestData<GitFileStatus[]>(client.file.status(), "file.status")
-      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, slug)
+      const [sdkResult, detailResult] = await Promise.allSettled([
+        requestData<GitFileStatus[]>(client.file.status(), "file.status"),
+        serverApi.fetchWorktreeGitStatus(props.instanceId, slug),
+      ])
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== worktreeSlugForViewer()) return
-      setGitStatusEntries(adaptSdkGitStatusEntries(list, detailList))
+
+      const sdkList = sdkResult.status === "fulfilled" ? sdkResult.value : null
+      const detailList = detailResult.status === "fulfilled" ? detailResult.value : null
+
+      if (detailList) {
+        setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
+        return
+      }
+
+      const detailError = detailResult.status === "rejected" ? detailResult.reason : null
+      const sdkError = sdkResult.status === "rejected" ? sdkResult.reason : null
+      throw (detailError instanceof Error ? detailError : sdkError instanceof Error ? sdkError : new Error("Failed to load git status"))
     } catch (error) {
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== worktreeSlugForViewer()) return
@@ -558,7 +571,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
 
       const nextFingerprint = describeGitSelectionFingerprint(nextSelection)
-      if (options?.forceReloadSelectedDiff || !hadSelectedDiff || previousFingerprint !== nextFingerprint) {
+      const shouldReloadSelectedDiff =
+        options?.forceReloadSelectedDiff ||
+        !hadSelectedDiff ||
+        previousFingerprint !== nextFingerprint ||
+        previousSelection.itemId === nextSelection
+
+      if (shouldReloadSelectedDiff) {
         await openGitFile(nextSelection)
       }
     } finally {
@@ -660,7 +679,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     try {
       const path = item?.path ?? ""
-      const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), path, item?.section ?? "unstaged")
+      const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), {
+        path,
+        originalPath: item.originalPath ?? null,
+        scope: item?.section ?? "unstaged",
+      })
       if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
         setGitSelectedError(props.t("instanceShell.gitChanges.binaryViewer"))

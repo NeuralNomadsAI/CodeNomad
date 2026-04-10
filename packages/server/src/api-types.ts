@@ -85,6 +85,7 @@ export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copi
 
 export interface WorktreeGitStatusEntry {
   path: string
+  originalPath?: string | null
   stagedStatus: GitChangeKind | null
   stagedAdditions: number
   stagedDeletions: number
@@ -116,10 +117,17 @@ export interface WorktreeGitCommitResponse {
 
 export interface WorktreeGitDiffResponse {
   path: string
+  originalPath?: string | null
   scope: WorktreeGitDiffScope
   before: string
   after: string
   isBinary?: boolean
+}
+
+export interface WorktreeGitDiffRequest {
+  path: string
+  originalPath?: string | null
+  scope: WorktreeGitDiffScope
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error"

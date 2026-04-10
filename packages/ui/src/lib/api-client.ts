@@ -17,6 +17,7 @@ import type {
   VoiceModeStateResponse,
   WorktreeGitCommitRequest,
   WorktreeGitCommitResponse,
+  WorktreeGitDiffRequest,
   WorktreeGitMutationResponse,
   WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
@@ -293,8 +294,11 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
     )
   },
-  fetchWorktreeGitDiff(id: string, slug: string, path: string, scope: "staged" | "unstaged"): Promise<WorktreeGitDiffResponse> {
-    const params = new URLSearchParams({ path, scope })
+  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest): Promise<WorktreeGitDiffResponse> {
+    const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
+    if (requestPayload.originalPath) {
+      params.set("originalPath", requestPayload.originalPath)
+    }
     return request<WorktreeGitDiffResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
     )

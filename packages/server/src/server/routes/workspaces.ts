@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
-import type { WorktreeGitCommitRequest, WorktreeGitPathsRequest } from "../../api-types"
+import type { WorktreeGitCommitRequest, WorktreeGitDiffRequest, WorktreeGitPathsRequest } from "../../api-types"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
@@ -29,6 +29,7 @@ const WorkspaceFileContentBodySchema = z.object({
 
 const WorktreeGitDiffQuerySchema = z.object({
   path: z.string().trim().min(1, "Path is required"),
+  originalPath: z.string().trim().optional(),
   scope: z.enum(["staged", "unstaged"]),
 })
 
@@ -165,7 +166,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string; slug: string }
-    Querystring: { path?: string; scope?: "staged" | "unstaged" }
+    Querystring: WorktreeGitDiffRequest
   }>("/api/workspaces/:id/worktrees/:slug/git-diff", async (request, reply) => {
     try {
       const workspace = deps.workspaceManager.get(request.params.id)
@@ -189,6 +190,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return await getWorktreeGitDiff({
         workspaceFolder: directory,
         path: query.path,
+        originalPath: query.originalPath,
         scope: query.scope,
       })
     } catch (error) {

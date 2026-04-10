@@ -10,6 +10,7 @@ export type GitChangeStatus = "added" | "modified" | "deleted" | "renamed" | "co
 
 export interface GitChangeEntry {
   path: string
+  originalPath?: string | null
   additions: number
   deletions: number
   status: GitChangeStatus
@@ -26,6 +27,7 @@ export type GitChangeSection = "staged" | "unstaged"
 export interface GitChangeListItem {
   id: string
   path: string
+   originalPath?: string | null
   section: GitChangeSection
   status: GitChangeStatus
   additions: number

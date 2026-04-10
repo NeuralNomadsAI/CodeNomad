@@ -16,6 +16,7 @@ export function normalizeGitChangeStatus(status: unknown): GitChangeStatus {
 export function adaptSdkGitStatusEntry(entry: SdkGitFileStatus): GitChangeEntry {
   return {
     path: normalizeGitChangePath(entry?.path),
+    originalPath: null,
     additions: typeof entry?.added === "number" ? entry.added : 0,
     deletions: typeof entry?.removed === "number" ? entry.removed : 0,
     status: normalizeGitChangeStatus(entry?.status),
@@ -41,11 +42,12 @@ export function adaptSdkGitStatusEntries(
     const adapted = adaptSdkGitStatusEntry(entry)
     if (!adapted.path) continue
     const detail = detailsByPath.get(adapted.path)
-    adaptedByPath.set(adapted.path, {
-      ...adapted,
-      stagedStatus: detail?.stagedStatus ?? null,
-      unstagedStatus: detail?.unstagedStatus ?? null,
-      stagedAdditions: detail?.stagedAdditions ?? 0,
+      adaptedByPath.set(adapted.path, {
+        ...adapted,
+        originalPath: detail?.originalPath ? normalizeGitChangePath(detail.originalPath) : adapted.originalPath ?? null,
+        stagedStatus: detail?.stagedStatus ?? null,
+        unstagedStatus: detail?.unstagedStatus ?? null,
+        stagedAdditions: detail?.stagedAdditions ?? 0,
       stagedDeletions: detail?.stagedDeletions ?? 0,
       unstagedAdditions: detail?.unstagedAdditions ?? 0,
       unstagedDeletions: detail?.unstagedDeletions ?? 0,
@@ -55,11 +57,12 @@ export function adaptSdkGitStatusEntries(
   for (const detail of details ?? []) {
     const normalizedPath = normalizeGitChangePath(detail.path)
     if (!normalizedPath || adaptedByPath.has(normalizedPath)) continue
-    adaptedByPath.set(normalizedPath, {
-      path: normalizedPath,
-      additions: 0,
-      deletions: 0,
-      status: detail.unstagedStatus ?? detail.stagedStatus ?? "modified",
+      adaptedByPath.set(normalizedPath, {
+        path: normalizedPath,
+        originalPath: detail.originalPath ? normalizeGitChangePath(detail.originalPath) : null,
+        additions: 0,
+        deletions: 0,
+        status: detail.unstagedStatus ?? detail.stagedStatus ?? "modified",
       stagedStatus: detail.stagedStatus,
       unstagedStatus: detail.unstagedStatus,
       stagedAdditions: detail.stagedAdditions,
@@ -98,6 +101,7 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
       items.push({
         id: buildGitChangeListItemId("staged", entry.path),
         path: entry.path,
+        originalPath: entry.originalPath ?? null,
         section: "staged",
         status: entry.stagedStatus,
         additions: entry.stagedAdditions ?? 0,
@@ -111,6 +115,7 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
       items.push({
         id: buildGitChangeListItemId("unstaged", entry.path),
         path: entry.path,
+        originalPath: entry.originalPath ?? null,
         section: "unstaged",
         status: entry.unstagedStatus,
         additions: entry.unstagedAdditions ?? entry.additions,
@@ -124,6 +129,7 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
       items.push({
         id: buildGitChangeListItemId("unstaged", entry.path),
         path: entry.path,
+        originalPath: entry.originalPath ?? null,
         section: "unstaged",
         status: entry.status,
         additions: entry.additions,

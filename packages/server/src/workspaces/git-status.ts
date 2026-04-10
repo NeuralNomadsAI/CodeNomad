@@ -78,6 +78,7 @@ function ensureEntry(map: Map<string, WorktreeGitStatusEntry>, path: string): Wo
   if (existing) return existing
   const next: WorktreeGitStatusEntry = {
     path,
+    originalPath: null,
     stagedStatus: null,
     stagedAdditions: 0,
     stagedDeletions: 0,
@@ -87,6 +88,32 @@ function ensureEntry(map: Map<string, WorktreeGitStatusEntry>, path: string): Wo
   }
   map.set(path, next)
   return next
+}
+
+function normalizeGitStatusPath(value: string): string {
+  return value.trim().replace(/\\+/g, "/")
+}
+
+function parseRenameLikePath(value: string): { path: string; originalPath: string | null } {
+  const normalized = normalizeGitStatusPath(value)
+  if (!normalized) return { path: "", originalPath: null }
+
+  const braceMatch = normalized.match(/^(.*)\{(.*) => (.*)\}(.*)$/)
+  if (braceMatch) {
+    const [, prefix, left, right, suffix] = braceMatch
+    const originalPath = normalizeGitStatusPath(`${prefix}${left}${suffix}`)
+    const path = normalizeGitStatusPath(`${prefix}${right}${suffix}`)
+    return { path, originalPath: originalPath || null }
+  }
+
+  const arrowIndex = normalized.indexOf(" => ")
+  if (arrowIndex >= 0) {
+    const originalPath = normalizeGitStatusPath(normalized.slice(0, arrowIndex))
+    const path = normalizeGitStatusPath(normalized.slice(arrowIndex + 4))
+    return { path, originalPath: originalPath || null }
+  }
+
+  return { path: normalized, originalPath: null }
 }
 
 function parseGitChangeKind(code: string): GitChangeKind | null {
@@ -114,15 +141,20 @@ function applyNameStatusOutput(
     if (!statusCode) continue
 
     const path = statusCode === "renamed" || statusCode === "copied" ? parts[2] ?? parts[1] ?? "" : parts[1] ?? ""
-    const normalizedPath = path.trim()
+    const normalizedPath = normalizeGitStatusPath(path)
     if (!normalizedPath) continue
-    ensureEntry(map, normalizedPath)[target] = statusCode
+    const entry = ensureEntry(map, normalizedPath)
+    entry[target] = statusCode
+    if (statusCode === "renamed" || statusCode === "copied") {
+      const originalPath = normalizeGitStatusPath(parts[1] ?? "")
+      entry.originalPath = originalPath || entry.originalPath || null
+    }
   }
 }
 
 function applyUntrackedOutput(map: Map<string, WorktreeGitStatusEntry>, output: string) {
   for (const rawLine of output.split(/\r?\n/)) {
-    const path = rawLine.trim()
+    const path = normalizeGitStatusPath(rawLine)
     if (!path) continue
     ensureEntry(map, path).unstagedStatus = "untracked"
   }
@@ -159,12 +191,15 @@ function applyNumstatOutput(
     const line = rawLine.trim()
     if (!line) continue
     const parts = rawLine.split("\t")
-    const path = (parts[2] ?? parts[1] ?? "").trim()
-    if (!path) continue
+    const parsedPath = parseRenameLikePath(parts[2] ?? parts[1] ?? "")
+    if (!parsedPath.path) continue
 
     const additions = parts[0] === "-" ? 0 : Number.parseInt(parts[0] ?? "0", 10)
     const deletions = parts[1] === "-" ? 0 : Number.parseInt(parts[1] ?? "0", 10)
-    const entry = ensureEntry(map, path)
+    const entry = ensureEntry(map, parsedPath.path)
+    if (parsedPath.originalPath) {
+      entry.originalPath = parsedPath.originalPath
+    }
 
     if (target === "staged") {
       entry.stagedAdditions = Number.isFinite(additions) ? additions : 0
@@ -235,18 +270,24 @@ async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string)
 export async function getWorktreeGitDiff(params: {
   workspaceFolder: string
   path: string
+  originalPath?: string | null
   scope: WorktreeGitDiffScope
 }): Promise<WorktreeGitDiffResponse> {
   const normalizedPath = normalizeGitWorktreeRelativePath(params.path)
+  const normalizedOriginalPath = params.originalPath ? normalizeGitWorktreeRelativePath(params.originalPath) : null
 
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
-      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder), true),
+      readGitBlobAsDiffText(
+        runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder),
+        true,
+      ),
       readGitBlobAsDiffText(readGitIndexBlob(params.workspaceFolder, normalizedPath), true),
     ])
 
     return {
       path: normalizedPath,
+      originalPath: normalizedOriginalPath,
       scope: params.scope,
       before: beforeResult.content,
       after: afterResult.content,
@@ -254,7 +295,7 @@ export async function getWorktreeGitDiff(params: {
     }
   }
 
-  const indexResult = await readGitIndexBlob(params.workspaceFolder, normalizedPath)
+  const indexResult = await readGitIndexBlob(params.workspaceFolder, normalizedOriginalPath ?? normalizedPath)
 
   const before = decodeGitShowResult(indexResult, true)
   let after = before
@@ -271,6 +312,7 @@ export async function getWorktreeGitDiff(params: {
 
   return {
     path: normalizedPath,
+    originalPath: normalizedOriginalPath,
     scope: params.scope,
     before,
     after,
