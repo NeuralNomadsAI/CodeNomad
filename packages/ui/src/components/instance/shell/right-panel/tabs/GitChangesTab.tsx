@@ -75,12 +75,9 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     )
   })
 
-  const nonDeleted = createMemo(() => sorted().filter((item) => item && item.status !== "deleted"))
-
   const listItems = createMemo<GitChangeListItem[]>(() => buildGitChangeListItems(sorted()))
-  const nonDeletedItems = createMemo(() => listItems().filter((item) => item && item.status !== "deleted"))
-  const stagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "staged"))
-  const unstagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "unstaged"))
+  const stagedItems = createMemo(() => listItems().filter((item) => item.section === "staged"))
+  const unstagedItems = createMemo(() => listItems().filter((item) => item.section === "unstaged"))
 
   const selectedEntry = createMemo<GitChangeEntry | null>(() => {
     const list = listItems()
@@ -96,14 +93,14 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     if (!hasSession()) return props.t("instanceShell.gitChanges.noSessionSelected")
     const currentEntries = entries()
     if (currentEntries === null) return props.t("instanceShell.gitChanges.loading")
-    if (nonDeletedItems().length === 0) return props.t("instanceShell.gitChanges.empty")
+    if (listItems().length === 0) return props.t("instanceShell.gitChanges.empty")
     return props.t("instanceShell.filesShell.viewerEmpty")
   })
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
     const selected = selectedEntry()
-    const nonDeletedList = nonDeletedItems()
+    const allItems = listItems()
     const stagedList = stagedItems()
     const unstagedList = unstagedItems()
 
@@ -121,7 +118,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                       selected &&
                       props.selectedBefore() !== null &&
                       props.selectedAfter() !== null &&
-                      selected.status !== "deleted"
+                      true
                         ? {
                             path: selected.path,
                             before: props.selectedBefore() as string,
@@ -151,6 +148,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
+                          insertContextLabel={props.t("instanceShell.gitChanges.actions.insertContext")}
                           onRequestInsertContext={(selection) => {
                             const selectedId = props.selectedItemId()
                             if (!selectedId) return
@@ -228,7 +226,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
     )
 
     const renderGroupedList = () => (
-      <Show when={nonDeletedList.length > 0} fallback={renderEmptyList()}>
+      <Show when={allItems.length > 0} fallback={renderEmptyList()}>
         <div class="git-change-sections">
           {renderSection(
             props.t("instanceShell.gitChanges.sections.staged"),

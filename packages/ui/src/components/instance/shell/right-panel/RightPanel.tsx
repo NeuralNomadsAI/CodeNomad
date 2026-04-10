@@ -456,11 +456,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitSelectedAfter(null)
 
     const item = gitListItems().find((entry) => entry.id === itemId) || null
-    if (item?.status === "deleted") {
-      setGitSelectedError("Deleted file diff is not available yet")
-      setGitSelectedLoading(false)
-      return
-    }
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {

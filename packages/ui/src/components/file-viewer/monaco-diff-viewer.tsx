@@ -16,12 +16,12 @@ interface MonacoDiffViewerProps {
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
   onRequestInsertContext?: (selection: { startLine: number; endLine: number }) => void
+  insertContextLabel?: string
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   const { isDark } = useTheme()
   let host: HTMLDivElement | undefined
-  let overlayHost: HTMLDivElement | undefined
 
   let diffEditor: any = null
   let monaco: any = null
@@ -269,7 +269,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
   return (
     <div class="monaco-viewer" ref={host}>
-      <div class="git-change-context-overlay" ref={overlayHost}>
+      <div class="git-change-context-overlay">
         <Show when={widgetPosition()}>
           {(position: () => { top: number; left: number }) => (
             <div
@@ -287,8 +287,8 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
               <button
                 type="button"
                 class="git-change-context-widget"
-                aria-label="Add git change context to prompt"
-                title="Add git change context to prompt"
+                aria-label={props.insertContextLabel ?? "Add git change context to prompt"}
+                title={props.insertContextLabel ?? "Add git change context to prompt"}
                 onMouseDown={(event) => {
                   event.preventDefault()
                   event.stopPropagation()

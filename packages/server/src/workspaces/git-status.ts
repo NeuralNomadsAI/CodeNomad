@@ -212,10 +212,7 @@ export async function getWorktreeGitDiff(params: {
     }
   }
 
-  const [indexResult, workingTreeResult] = await Promise.all([
-    readGitIndexBlob(params.workspaceFolder, normalizedPath),
-    runGit(["show", `HEAD:${normalizedPath}`], params.workspaceFolder),
-  ])
+  const indexResult = await readGitIndexBlob(params.workspaceFolder, normalizedPath)
 
   const before = decodeGitShowResult(indexResult, true)
   let after = before
@@ -224,7 +221,7 @@ export async function getWorktreeGitDiff(params: {
   try {
     after = await readFile(fsPath, "utf-8")
   } catch {
-    after = decodeGitShowResult(workingTreeResult, true)
+    after = ""
   }
 
   return {
