@@ -305,6 +305,37 @@
   text-overflow: ellipsis;
 }
 
+.git-change-context-widget-host {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.git-change-context-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 70%, white 30%);
+  color: white;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
 .file-list-item-path {
   @apply text-xs font-mono min-w-0 flex-1 overflow-hidden whitespace-nowrap;
   color: var(--text-primary);
@@ -398,6 +429,14 @@
   width: 100%;
   height: 100%;
   direction: ltr;
+  position: relative;
+}
+
+.git-change-context-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
 }
 
 .file-viewer-empty {
