@@ -117,6 +117,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
   const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
   const [revealedActionRowId, setRevealedActionRowId] = createSignal<string | null>(null)
+  const [hoveredRowId, setHoveredRowId] = createSignal<string | null>(null)
   const [hoveredActionZoneRowId, setHoveredActionZoneRowId] = createSignal<string | null>(null)
   let hideActionRowTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -135,6 +136,10 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const scheduleHideActionRow = (rowId: string) => {
     clearHideActionRowTimer()
     hideActionRowTimer = setTimeout(() => {
+      if (hoveredRowId() === rowId || hoveredActionZoneRowId() === rowId) {
+        hideActionRowTimer = null
+        return
+      }
       setRevealedActionRowId((current) => (current === rowId ? null : current))
       hideActionRowTimer = null
     }, 500)
@@ -249,8 +254,12 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         <div
           class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
           onClick={() => props.onOpenFile(item.id)}
-          onMouseEnter={() => revealActionRow(item.id)}
+          onMouseEnter={() => {
+            setHoveredRowId(item.id)
+            revealActionRow(item.id)
+          }}
           onMouseLeave={() => {
+            setHoveredRowId((current) => (current === item.id ? null : current))
             if (hoveredActionZoneRowId() === item.id) return
             scheduleHideActionRow(item.id)
           }}
@@ -268,40 +277,35 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 <span class="file-list-item-additions">+{item.additions}</span>
                 <span class="file-list-item-deletions">-{item.deletions}</span>
               </div>
-              <div
-                class="git-change-list-item-actions-zone"
-                onMouseEnter={() => {
-                  setHoveredActionZoneRowId(item.id)
-                  revealActionRow(item.id)
-                }}
-                onMouseLeave={() => {
-                  setHoveredActionZoneRowId((current) => (current === item.id ? null : current))
-                  scheduleHideActionRow(item.id)
-                }}
-              >
-                <div class="git-change-list-item-actions">
-                  <button
-                    type="button"
-                    class="git-change-row-action"
-                    title={actionLabel}
-                    aria-label={actionLabel}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      triggerAction()
-                    }}
-                  >
-                    <span
-                      class={`git-change-row-action-glyph ${item.section === "staged" ? "git-change-row-action-glyph-minus" : "git-change-row-action-glyph-plus"}`}
-                      aria-hidden="true"
-                    >
-                      <span class="git-change-row-action-bar git-change-row-action-bar-horizontal" />
-                      <Show when={item.section !== "staged"}>
-                        <span class="git-change-row-action-bar git-change-row-action-bar-vertical" />
-                      </Show>
-                    </span>
-                  </button>
-                </div>
-              </div>
+            </div>
+          </div>
+          <div
+            class="git-change-list-item-actions-zone"
+            onClick={(event) => {
+              event.stopPropagation()
+              triggerAction()
+            }}
+            onMouseEnter={() => {
+              setHoveredActionZoneRowId(item.id)
+              revealActionRow(item.id)
+            }}
+            onMouseLeave={() => {
+              setHoveredActionZoneRowId((current) => (current === item.id ? null : current))
+              scheduleHideActionRow(item.id)
+            }}
+          >
+            <div class="git-change-list-item-actions">
+              <span class="git-change-row-action" title={actionLabel} aria-hidden="true">
+                <span
+                  class={`git-change-row-action-glyph ${item.section === "staged" ? "git-change-row-action-glyph-minus" : "git-change-row-action-glyph-plus"}`}
+                  aria-hidden="true"
+                >
+                  <span class="git-change-row-action-bar git-change-row-action-bar-horizontal" />
+                  <Show when={item.section !== "staged"}>
+                    <span class="git-change-row-action-bar git-change-row-action-bar-vertical" />
+                  </Show>
+                </span>
+              </span>
             </div>
           </div>
         </div>

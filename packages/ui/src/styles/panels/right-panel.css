@@ -344,6 +344,11 @@
 
 .git-change-list-item {
   padding-inline-start: 0.25rem;
+  position: relative;
+}
+
+.git-change-list-item .file-list-item-content {
+  transition: padding-inline-end 280ms ease;
 }
 
 .git-change-list-item-text {
@@ -362,11 +367,13 @@
 }
 
 .git-change-list-item-actions-zone {
-  @apply flex items-center justify-end shrink-0;
-  width: 0;
-  overflow: hidden;
-  pointer-events: none;
-  transition: width 280ms ease;
+  @apply flex items-center justify-end;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 30px;
+  pointer-events: auto;
+  z-index: 2;
 }
 
 .git-change-list-item-actions {
@@ -374,15 +381,14 @@
   width: 28px;
   opacity: 0;
   transform: translateX(10px);
+  pointer-events: none;
   transition:
     transform 280ms ease,
     opacity 280ms ease;
 }
 
 .git-change-list-item-action-visible .git-change-list-item-actions-zone {
-  width: 28px;
   opacity: 1;
-  pointer-events: auto;
 }
 
 .git-change-list-item-action-visible .git-change-list-item-actions {
@@ -390,9 +396,8 @@
   transform: translateX(0);
 }
 
-.git-change-list-item-action-visible .file-list-item-stats {
-  transform: translateX(-4px);
-  opacity: 0.72;
+.git-change-list-item-action-visible .file-list-item-content {
+  padding-inline-end: 1.5rem;
 }
 
 .git-change-row-action {
@@ -403,9 +408,16 @@
   padding: 0;
   position: relative;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .git-change-row-action:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--border-base);
+  color: white;
+}
+
+.git-change-list-item-actions-zone:hover .git-change-row-action {
   background-color: var(--surface-hover);
   border-color: var(--border-base);
   color: white;
@@ -442,7 +454,6 @@
 @media (hover: none), (pointer: coarse) {
   .git-change-list-item-actions-zone {
     width: 28px;
-    pointer-events: auto;
   }
 
   .git-change-list-item-actions {
