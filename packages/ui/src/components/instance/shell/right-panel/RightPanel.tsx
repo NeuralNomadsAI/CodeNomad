@@ -416,18 +416,29 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     })
   }
 
-  const selectGitBulkRange = (anchorId: string, itemId: string) => {
+  const addGitBulkRange = (anchorId: string, itemId: string) => {
     const items = gitListItems()
     const anchorIndex = items.findIndex((entry) => entry.id === anchorId)
     const itemIndex = items.findIndex((entry) => entry.id === itemId)
     if (anchorIndex < 0 || itemIndex < 0) {
-      setGitBulkSelectedItemIds(new Set<string>([itemId]))
+      setGitBulkSelectedItemIds((current) => {
+        const next = new Set(current)
+        next.add(itemId)
+        return next
+      })
       return
     }
 
     const start = Math.min(anchorIndex, itemIndex)
     const end = Math.max(anchorIndex, itemIndex)
-    setGitBulkSelectedItemIds(new Set(items.slice(start, end + 1).map((entry) => entry.id)))
+    const rangeIds = items.slice(start, end + 1).map((entry) => entry.id)
+    setGitBulkSelectedItemIds((current) => {
+      const next = new Set(current)
+      for (const rangeId of rangeIds) {
+        next.add(rangeId)
+      }
+      return next
+    })
   }
 
   const describeGitSelection = (itemId: string | null): GitSelectionDescriptor => {
@@ -684,7 +695,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (event.shiftKey) {
       event.preventDefault()
       const anchorId = gitBulkSelectionAnchorId() ?? item.id
-      selectGitBulkRange(anchorId, item.id)
+      addGitBulkRange(anchorId, item.id)
       return
     }
 
