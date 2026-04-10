@@ -395,6 +395,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   let gitStatusRequestVersion = 0
   let gitDiffRequestVersion = 0
   let passiveGitRefreshInFlight = false
+  let pendingGitPassiveRefresh = false
   let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
@@ -463,6 +464,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     // Reset tab state when worktree context changes.
     worktreeSlugForViewer()
+    gitStatusRequestVersion += 1
+    gitDiffRequestVersion += 1
+    passiveGitRefreshInFlight = false
+    pendingGitPassiveRefresh = false
     setBrowserPath(".")
     setBrowserEntries(null)
     setBrowserError(null)
@@ -485,20 +490,25 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const loadGitStatus = async (force = false) => {
     if (!force && gitStatusEntries() !== null) return
+    const slug = worktreeSlugForViewer()
+    const client = getOrCreateWorktreeClient(props.instanceId, slug)
     const requestVersion = ++gitStatusRequestVersion
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
-      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, worktreeSlugForViewer())
+      const list = await requestData<GitFileStatus[]>(client.file.status(), "file.status")
+      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, slug)
       if (requestVersion !== gitStatusRequestVersion) return
+      if (slug !== worktreeSlugForViewer()) return
       setGitStatusEntries(adaptSdkGitStatusEntries(list, detailList))
     } catch (error) {
       if (requestVersion !== gitStatusRequestVersion) return
+      if (slug !== worktreeSlugForViewer()) return
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
       setGitStatusEntries([])
     } finally {
       if (requestVersion !== gitStatusRequestVersion) return
+      if (slug !== worktreeSlugForViewer()) return
       setGitStatusLoading(false)
     }
   }
@@ -517,7 +527,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const passiveRefreshGitStatus = async (options?: { forceReloadSelectedDiff?: boolean }) => {
     if (rightPanelTab() !== "git-changes") return
-    if (passiveGitRefreshInFlight) return
+    if (passiveGitRefreshInFlight) {
+      pendingGitPassiveRefresh = true
+      return
+    }
     if (gitCommitSubmitting()) return
 
     passiveGitRefreshInFlight = true
@@ -547,6 +560,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
     } finally {
       passiveGitRefreshInFlight = false
+      if (pendingGitPassiveRefresh) {
+        pendingGitPassiveRefresh = false
+        void passiveRefreshGitStatus(options)
+      }
     }
   }
 

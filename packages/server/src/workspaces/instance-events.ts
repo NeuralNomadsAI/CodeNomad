@@ -195,7 +195,9 @@ export class InstanceEventBridge {
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }
-      void this.maybePublishFilesChanged(workspaceId, event)
+      void this.maybePublishFilesChanged(workspaceId, event).catch((error) => {
+        this.options.logger.warn({ workspaceId, err: error }, "Failed to publish workspace.filesChanged")
+      })
       this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
     } catch (error) {
       this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
