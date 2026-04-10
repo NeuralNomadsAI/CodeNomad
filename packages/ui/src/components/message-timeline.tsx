@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor, type JSX } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -55,6 +55,21 @@ const LONG_PRESS_MS = 500
 const JITTER_THRESHOLD = 10
 const ABSOLUTE_TOKEN_CAP = 10000
 const TIMELINE_VIRTUALIZER_BUFFER_PX = 240
+
+function TimelineVirtualItem(props: { style: JSX.CSSProperties; index: number; ref?: unknown; children: JSX.Element }) {
+  return (
+    <div
+      ref={props.ref as never}
+      class="message-timeline-virtual-item"
+      style={{
+        ...props.style,
+        "margin-top": props.index === 0 ? "0" : "var(--message-timeline-segment-gap)",
+      }}
+    >
+      {props.children}
+    </div>
+  )
+}
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -731,7 +746,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           scrollContainerRef = element
           setScrollElement(element)
         }}
-        class={`message-timeline${isSelectionActive() ? " message-timeline--selection-active" : ""}`}
+        class={`message-timeline${isSelectionActive() ? " message-timeline--selection-active" : ""}${renderVirtualizedTimeline() ? " message-timeline--virtualized" : ""}`}
         role="navigation"
         aria-label={t("messageTimeline.ariaLabel")}
         onScroll={handleScroll}
@@ -870,7 +885,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             </For>
           )}
         >
-          <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
+          <Virtualizer ref={setVirtualizerHandle} data={props.segments} item={TimelineVirtualItem} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
             {(segment, index) => {
               const segIndex = () => index()
             const isActive = () => props.activeSegmentId === segment.id

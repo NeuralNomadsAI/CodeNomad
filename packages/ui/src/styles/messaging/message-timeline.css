@@ -66,16 +66,21 @@
 }
 
 .message-timeline {
+  --message-timeline-segment-gap: 0.35rem;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--message-timeline-segment-gap);
   padding: 0.25rem;
   overflow-y: auto;
   overflow-x: visible;
   border-radius: 8px;
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow);
+}
+
+.message-timeline--virtualized {
+  gap: 0;
 }
 
 .message-timeline--selection-active {
@@ -322,7 +327,7 @@
 /* Extra spacing before the first tool in a group to separate from the
    preceding user/assistant badge. */
 .message-timeline-group-start {
-  margin-top: 0.35rem;
+  margin-top: var(--message-timeline-segment-gap);
 }
 
 /* Subtle extra spacing after the group parent (assistant) to separate
@@ -331,7 +336,7 @@
 .message-timeline-after-group-parent,
 .message-timeline-group-parent + .message-timeline-user,
 .message-timeline-group-parent + .message-timeline-compaction {
-  margin-top: 0.35rem;
+  margin-top: var(--message-timeline-segment-gap);
 }
 
 .message-timeline-container {
