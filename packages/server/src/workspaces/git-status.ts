@@ -267,6 +267,18 @@ async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string)
   return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder)
 }
 
+async function resolveUnstagedBeforePath(params: {
+  workspaceFolder: string
+  normalizedPath: string
+  normalizedOriginalPath: string | null
+}): Promise<GitResult> {
+  const currentPathResult = await readGitIndexBlob(params.workspaceFolder, params.normalizedPath)
+  if (currentPathResult.ok || !params.normalizedOriginalPath || params.normalizedOriginalPath === params.normalizedPath) {
+    return currentPathResult
+  }
+  return readGitIndexBlob(params.workspaceFolder, params.normalizedOriginalPath)
+}
+
 export async function getWorktreeGitDiff(params: {
   workspaceFolder: string
   path: string
@@ -295,7 +307,11 @@ export async function getWorktreeGitDiff(params: {
     }
   }
 
-  const indexResult = await readGitIndexBlob(params.workspaceFolder, normalizedOriginalPath ?? normalizedPath)
+  const indexResult = await resolveUnstagedBeforePath({
+    workspaceFolder: params.workspaceFolder,
+    normalizedPath,
+    normalizedOriginalPath,
+  })
 
   const before = decodeGitShowResult(indexResult, true)
   let after = before

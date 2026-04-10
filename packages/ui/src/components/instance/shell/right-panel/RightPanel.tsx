@@ -496,24 +496,19 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const [sdkResult, detailResult] = await Promise.allSettled([
-        requestData<GitFileStatus[]>(client.file.status(), "file.status"),
-        serverApi.fetchWorktreeGitStatus(props.instanceId, slug),
-      ])
+      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status(), "file.status")
+      const detailPromise = serverApi.fetchWorktreeGitStatus(props.instanceId, slug)
+      const detailList = await detailPromise
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== worktreeSlugForViewer()) return
 
-      const sdkList = sdkResult.status === "fulfilled" ? sdkResult.value : null
-      const detailList = detailResult.status === "fulfilled" ? detailResult.value : null
+      const sdkResult = await Promise.race([
+        sdkStatusPromise.then((value) => ({ kind: "fulfilled" as const, value })),
+        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 1500)),
+      ]).catch(() => null)
 
-      if (detailList) {
-        setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
-        return
-      }
-
-      const detailError = detailResult.status === "rejected" ? detailResult.reason : null
-      const sdkError = sdkResult.status === "rejected" ? sdkResult.reason : null
-      throw (detailError instanceof Error ? detailError : sdkError instanceof Error ? sdkError : new Error("Failed to load git status"))
+      const sdkList = sdkResult && sdkResult.kind === "fulfilled" ? sdkResult.value : null
+      setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
     } catch (error) {
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== worktreeSlugForViewer()) return
