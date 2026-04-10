@@ -15,6 +15,7 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
+  onSelectionChange?: (selection: { startLine: number; endLine: number } | null) => void
 }
 
 export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
@@ -93,6 +94,32 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   createEffect(() => {
     if (!ready() || !monaco || !diffEditor) return
     monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
+  })
+
+  createEffect(() => {
+    if (!ready() || !diffEditor) return
+    const modifiedEditor = diffEditor.getModifiedEditor?.()
+    if (!modifiedEditor?.onDidChangeCursorSelection) return
+
+    const disposable = modifiedEditor.onDidChangeCursorSelection((event: any) => {
+      const selection = event?.selection
+      if (!selection) {
+        props.onSelectionChange?.(null)
+        return
+      }
+      props.onSelectionChange?.({
+        startLine: Math.min(selection.startLineNumber, selection.endLineNumber),
+        endLine: Math.max(selection.startLineNumber, selection.endLineNumber),
+      })
+    })
+
+    onCleanup(() => {
+      try {
+        disposable?.dispose?.()
+      } catch {
+        // ignore
+      }
+    })
   })
 
   createEffect(() => {

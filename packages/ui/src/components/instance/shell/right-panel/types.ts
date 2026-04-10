@@ -31,4 +31,6 @@ export interface GitChangeListItem {
   additions: number
   deletions: number
   entry: GitChangeEntry
+  displayName: string
+  parentPath: string
 }

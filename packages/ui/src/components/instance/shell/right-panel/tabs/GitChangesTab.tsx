@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createMemo, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-solid"
 
@@ -38,6 +38,7 @@ interface GitChangesTabProps {
 
   onOpenFile: (itemId: string) => void
   onRefresh: () => void
+  onInsertContext: (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => void
 
   stagedOpen: Accessor<boolean>
   unstagedOpen: Accessor<boolean>
@@ -80,6 +81,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   const nonDeletedItems = createMemo(() => listItems().filter((item) => item && item.status !== "deleted"))
   const stagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "staged"))
   const unstagedItems = createMemo(() => nonDeletedItems().filter((item) => item.section === "unstaged"))
+  const [lineSelection, setLineSelection] = createSignal<{ startLine: number; endLine: number } | null>(null)
 
   const selectedEntry = createMemo<GitChangeEntry | null>(() => {
     const list = listItems()
@@ -89,6 +91,12 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       list.find((item) => item.id === selectedId) ||
       (fallbackId ? list.find((item) => item.id === fallbackId) : undefined)
     return found?.entry ?? null
+  })
+
+  const selectedItem = createMemo<GitChangeListItem | null>(() => {
+    const selectedId = props.selectedItemId()
+    if (!selectedId) return null
+    return listItems().find((item) => item.id === selectedId) ?? null
   })
 
   const emptyViewerMessage = createMemo(() => {
@@ -150,6 +158,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
+                          onSelectionChange={setLineSelection}
                         />
                       </Suspense>
                     )}
@@ -181,8 +190,11 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
         title={item.path}
       >
         <div class="file-list-item-content">
-          <div class="file-list-item-path" title={item.path}>
-            <span class="file-path-text">{item.path}</span>
+          <div class="git-change-list-item-text" title={item.path}>
+            <span class="git-change-list-item-name">{item.displayName}</span>
+            <Show when={item.parentPath}>
+              <span class="git-change-list-item-parent">{item.parentPath}</span>
+            </Show>
           </div>
           <div class="file-list-item-stats">
             <span class="file-list-item-additions">+{item.additions}</span>
@@ -252,6 +264,21 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               </span>
               <Show when={props.statusError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
+
+            <button
+              type="button"
+              class="files-header-icon-button"
+              title={props.t("instanceShell.gitChanges.actions.insertContext")}
+              aria-label={props.t("instanceShell.gitChanges.actions.insertContext")}
+              disabled={!selectedItem()}
+              onClick={() => {
+                const item = selectedItem()
+                if (!item) return
+                props.onInsertContext(item, lineSelection())
+              }}
+            >
+              <ChevronRight class="h-4 w-4" />
+            </button>
 
             <button
               type="button"

@@ -76,11 +76,24 @@ function buildGitChangeListItemId(section: GitChangeSection, path: string): stri
   return `${section}:${path}`
 }
 
+function splitGitChangePath(path: string) {
+  const normalized = normalizeGitChangePath(path)
+  const lastSlash = normalized.lastIndexOf("/")
+  if (lastSlash === -1) {
+    return { displayName: normalized, parentPath: "" }
+  }
+  return {
+    displayName: normalized.slice(lastSlash + 1),
+    parentPath: normalized.slice(0, lastSlash),
+  }
+}
+
 export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undefined): GitChangeListItem[] {
   if (!Array.isArray(entries)) return []
 
   const items: GitChangeListItem[] = []
   for (const entry of entries) {
+    const pathParts = splitGitChangePath(entry.path)
     if (entry.stagedStatus) {
       items.push({
         id: buildGitChangeListItemId("staged", entry.path),
@@ -90,6 +103,8 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         additions: entry.stagedAdditions ?? 0,
         deletions: entry.stagedDeletions ?? 0,
         entry,
+        displayName: pathParts.displayName,
+        parentPath: pathParts.parentPath,
       })
     }
     if (entry.unstagedStatus) {
@@ -101,6 +116,8 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         additions: entry.unstagedAdditions ?? entry.additions,
         deletions: entry.unstagedDeletions ?? entry.deletions,
         entry,
+        displayName: pathParts.displayName,
+        parentPath: pathParts.parentPath,
       })
     }
     if (!entry.stagedStatus && !entry.unstagedStatus) {
@@ -112,6 +129,8 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         additions: entry.additions,
         deletions: entry.deletions,
         entry,
+        displayName: pathParts.displayName,
+        parentPath: pathParts.parentPath,
       })
     }
   }

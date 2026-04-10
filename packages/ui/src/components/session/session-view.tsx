@@ -36,6 +36,7 @@ interface SessionViewProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   isActive?: boolean
+  registerSessionPromptApi?: (sessionId: string, api: PromptInputApi | null) => void
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
@@ -143,6 +144,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   function registerPromptInputApi(api: PromptInputApi) {
     promptInputApi = api
+    props.registerSessionPromptApi?.(props.sessionId, api)
 
     if (pendingPromptText) {
       api.setPromptText(pendingPromptText, { focus: true })
@@ -157,6 +159,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return () => {
       if (promptInputApi === api) {
         promptInputApi = null
+        props.registerSessionPromptApi?.(props.sessionId, null)
       }
     }
   }

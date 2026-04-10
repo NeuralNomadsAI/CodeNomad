@@ -19,8 +19,9 @@ import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
+import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, RightPanelTab } from "./types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, GitChangeEntry, GitChangeListItem, RightPanelTab } from "./types"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
@@ -86,6 +87,7 @@ interface RightPanelProps {
   onCloseRightDrawer: () => void
   onPinRightDrawer: () => void
   onUnpinRightDrawer: () => void
+  promptInputApi: Accessor<PromptInputApi | null>
 
   setContentEl: (el: HTMLElement | null) => void
 }
@@ -380,6 +382,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+
+  const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
+    const startLine = selection?.startLine ?? 1
+    const endLine = selection?.endLine ?? startLine
+    const comment = `<!-- Git change context: ${item.path} lines ${startLine}-${endLine} -->`
+    props.promptInputApi()?.insertComment(comment)
+  }
 
   const gitSelectedItem = createMemo(() => {
     const selectedId = gitSelectedItemId()
@@ -935,6 +944,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onWordWrapModeChange={setDiffWordWrapMode}
               onOpenFile={(path: string) => void openGitFile(path)}
               onRefresh={() => void refreshGitStatus()}
+              onInsertContext={insertGitChangeContext}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {

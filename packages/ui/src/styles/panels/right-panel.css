@@ -220,7 +220,7 @@
 }
 
 .file-list-item {
-  @apply px-3 py-2 border-b cursor-pointer transition-all duration-150;
+  @apply px-2 py-1 border-b cursor-pointer transition-all duration-150;
   border-color: var(--border-base);
   background-color: transparent;
 }
@@ -252,7 +252,7 @@
 }
 
 .git-change-section-header {
-  @apply w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left;
+  @apply w-full flex items-center justify-between gap-2 px-2 py-1 text-left;
   background-color: var(--surface-secondary);
   color: var(--text-secondary);
 }
@@ -286,7 +286,23 @@
 }
 
 .git-change-list-item {
-  padding-inline-start: 1.75rem;
+  padding-inline-start: 0.25rem;
+}
+
+.git-change-list-item-text {
+  @apply flex flex-col min-w-0 flex-1;
+}
+
+.git-change-list-item-name {
+  @apply text-[12px] leading-4 min-w-0 overflow-hidden whitespace-nowrap;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+}
+
+.git-change-list-item-parent {
+  @apply text-[10px] leading-3 min-w-0 overflow-hidden whitespace-nowrap;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
 }
 
 .file-list-item-path {
