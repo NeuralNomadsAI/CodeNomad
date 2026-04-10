@@ -313,15 +313,15 @@ export async function getWorktreeGitDiff(params: {
     normalizedOriginalPath,
   })
 
-  const before = decodeGitShowResult(indexResult, true)
-  let after = before
-  let isBinary = false
+  const beforeResult = await readGitBlobAsDiffText(Promise.resolve(indexResult), true)
+  let after = beforeResult.content
+  let isBinary = beforeResult.isBinary
 
   const fsPath = path.join(params.workspaceFolder, normalizedPath)
   try {
     const fileResult = await readFileAsDiffText(fsPath)
     after = fileResult.content
-    isBinary = fileResult.isBinary
+    isBinary = beforeResult.isBinary || fileResult.isBinary
   } catch {
     after = ""
   }
@@ -330,7 +330,7 @@ export async function getWorktreeGitDiff(params: {
     path: normalizedPath,
     originalPath: normalizedOriginalPath,
     scope: params.scope,
-    before,
+    before: beforeResult.content,
     after,
     isBinary,
   }
