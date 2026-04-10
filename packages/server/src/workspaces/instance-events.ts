@@ -194,10 +194,31 @@ export class InstanceEventBridge {
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }
+      this.maybePublishFilesChanged(workspaceId, event)
       this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
     } catch (error) {
       this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
     }
+  }
+
+  private maybePublishFilesChanged(workspaceId: string, event: InstanceStreamEvent) {
+    if ((event as any)?.type !== "message.part.updated") return
+
+    const rawPart = (event as any)?.properties?.part
+    if (!rawPart || typeof rawPart !== "object") return
+    if ((rawPart as any)?.type !== "tool") return
+
+    const tool = (rawPart as any)?.tool
+    const status = (rawPart as any)?.state?.status
+    if (typeof tool !== "string") return
+    if (status !== "completed") return
+    if (tool !== "write" && tool !== "edit" && tool !== "apply_patch") return
+
+    this.options.eventBus.publish({
+      type: "workspace.filesChanged",
+      instanceId: workspaceId,
+      reason: tool,
+    })
   }
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {

@@ -31,6 +31,7 @@ export class EventBus extends EventEmitter {
     this.on("instance.dataChanged", handler)
     this.on("instance.event", handler)
     this.on("instance.eventStatus", handler)
+    this.on("workspace.filesChanged", handler)
     return () => {
       this.off("workspace.created", handler)
       this.off("workspace.started", handler)
@@ -44,6 +45,7 @@ export class EventBus extends EventEmitter {
       this.off("instance.dataChanged", handler)
       this.off("instance.event", handler)
       this.off("instance.eventStatus", handler)
+      this.off("workspace.filesChanged", handler)
     }
   }
 }

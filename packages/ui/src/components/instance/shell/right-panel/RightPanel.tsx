@@ -34,6 +34,7 @@ import type {
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
+import { serverEvents } from "../../../../lib/server-events"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
@@ -866,6 +867,21 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     if (rightPanelTab() !== "git-changes") return
     void passiveRefreshGitStatus()
+  })
+
+  createEffect(() => {
+    if (rightPanelTab() !== "git-changes") return
+
+    const instanceId = props.instanceId
+    const unsubscribe = serverEvents.on("workspace.filesChanged", (event) => {
+      if (event.type !== "workspace.filesChanged") return
+      if (event.instanceId !== instanceId) return
+      void passiveRefreshGitStatus()
+    })
+
+    onCleanup(() => {
+      unsubscribe()
+    })
   })
 
   createEffect(() => {
