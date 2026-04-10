@@ -39,7 +39,7 @@ function runGit(args: string[], cwd: string): Promise<GitResult> {
   })
 }
 
-function normalizeGitMutationPath(input: string): string {
+export function normalizeGitWorktreeRelativePath(input: string): string {
   const normalized = input.trim().replace(/\\+/g, "/").replace(/^\.\//, "")
   if (!normalized) {
     throw new GitMutationError("Path is required", 400)
@@ -59,7 +59,7 @@ function normalizeGitMutationPath(input: string): string {
 function normalizeGitMutationPaths(paths: string[]): string[] {
   const deduped = new Set<string>()
   for (const rawPath of paths) {
-    deduped.add(normalizeGitMutationPath(rawPath))
+    deduped.add(normalizeGitWorktreeRelativePath(rawPath))
   }
   const normalized = Array.from(deduped)
   if (normalized.length === 0) {

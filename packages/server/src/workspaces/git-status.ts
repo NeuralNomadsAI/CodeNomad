@@ -4,6 +4,7 @@ import path from "path"
 
 import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, WorktreeGitStatusEntry } from "../api-types"
 import type { LogLike } from "./git-worktrees"
+import { normalizeGitWorktreeRelativePath } from "./git-mutations"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
@@ -236,10 +237,7 @@ export async function getWorktreeGitDiff(params: {
   path: string
   scope: WorktreeGitDiffScope
 }): Promise<WorktreeGitDiffResponse> {
-  const normalizedPath = params.path.trim().replace(/\\+/g, "/")
-  if (!normalizedPath) {
-    throw new Error("Path is required")
-  }
+  const normalizedPath = normalizeGitWorktreeRelativePath(params.path)
 
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
