@@ -8,6 +8,22 @@ import type { LogLike } from "./git-worktrees"
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
 
+function isLikelyBinaryBuffer(buffer: Buffer): boolean {
+  const sample = buffer.subarray(0, Math.min(buffer.length, 8000))
+  for (const byte of sample) {
+    if (byte === 0) return true
+  }
+  return false
+}
+
+async function readFileAsDiffText(filePath: string): Promise<{ content: string; isBinary: boolean }> {
+  const buffer = await readFile(filePath)
+  if (isLikelyBinaryBuffer(buffer)) {
+    return { content: "", isBinary: true }
+  }
+  return { content: buffer.toString("utf-8"), isBinary: false }
+}
+
 function runGit(args: string[], cwd: string): Promise<GitResult> {
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
@@ -216,10 +232,13 @@ export async function getWorktreeGitDiff(params: {
 
   const before = decodeGitShowResult(indexResult, true)
   let after = before
+  let isBinary = false
 
   const fsPath = path.join(params.workspaceFolder, normalizedPath)
   try {
-    after = await readFile(fsPath, "utf-8")
+    const fileResult = await readFileAsDiffText(fsPath)
+    after = fileResult.content
+    isBinary = fileResult.isBinary
   } catch {
     after = ""
   }
@@ -229,5 +248,6 @@ export async function getWorktreeGitDiff(params: {
     scope: params.scope,
     before,
     after,
+    isBinary,
   }
 }

@@ -102,6 +102,7 @@ export interface WorktreeGitDiffResponse {
   scope: WorktreeGitDiffScope
   before: string
   after: string
+  isBinary?: boolean
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error"

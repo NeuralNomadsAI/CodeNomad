@@ -383,6 +383,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
 
+  const resolveValidGitSelection = (preferredId: string | null): string | null => {
+    const items = gitListItems()
+    if (items.length === 0) return null
+    if (preferredId && items.some((item) => item.id === preferredId)) return preferredId
+    return gitMostChangedPath()
+  }
+
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
     const startLine = selection?.startLine ?? 1
     const endLine = selection?.endLine ?? startLine
@@ -438,7 +445,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitStatusError(null)
     try {
       const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
-      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, worktreeSlugForViewer()).catch(() => null)
+      const detailList = await serverApi.fetchWorktreeGitStatus(props.instanceId, worktreeSlugForViewer())
       setGitStatusEntries(adaptSdkGitStatusEntries(list, detailList))
     } catch (error) {
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
@@ -456,6 +463,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setGitSelectedAfter(null)
 
     const item = gitListItems().find((entry) => entry.id === itemId) || null
+    if (!item) {
+      setGitSelectedItemId(null)
+      setGitSelectedError(null)
+      setGitSelectedLoading(false)
+      return
+    }
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {
@@ -465,6 +478,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     try {
       const path = item?.path ?? ""
       const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), path, item?.section ?? "unstaged")
+      if (diff.isBinary) {
+        setGitSelectedError("Binary file cannot be displayed")
+        return
+      }
       setGitSelectedBefore(diff.before)
       setGitSelectedAfter(diff.after)
     } catch (error) {
@@ -487,9 +504,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const refreshGitStatus = async () => {
     await loadGitStatus(true)
-    const selected = gitSelectedItemId()
+    const selected = resolveValidGitSelection(gitSelectedItemId())
+    setGitSelectedItemId(selected)
     if (selected) {
       void openGitFile(selected)
+    } else {
+      setGitSelectedError(null)
+      setGitSelectedBefore(null)
+      setGitSelectedAfter(null)
     }
   }
 
