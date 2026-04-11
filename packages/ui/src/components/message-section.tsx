@@ -556,6 +556,51 @@ export default function MessageSection(props: MessageSectionProps) {
     setSelectedTimelineIds(new Set(segments.filter((s) => isMessageDeletable(s.messageId)).map((s) => s.id)))
   }
 
+  const stageDeleteSelectionByIndices = (indices: number[]) => {
+    if (!Array.isArray(indices) || indices.length === 0) {
+      clearDeleteMode()
+      return
+    }
+
+    // External prune-selection commands address the current deletable badge
+    // order using 1-based indices from oldest to newest.
+    const deletableSegments = timelineSegments().filter((segment) => isMessageDeletable(segment.messageId))
+    if (deletableSegments.length === 0) {
+      clearDeleteMode()
+      return
+    }
+
+    const selectedSegmentIds = new Set<string>()
+    for (const rawIndex of indices) {
+      const normalizedIndex = Math.trunc(rawIndex)
+      if (!Number.isFinite(normalizedIndex) || normalizedIndex < 1) continue
+      const segment = deletableSegments[normalizedIndex - 1]
+      if (!segment) continue
+      selectedSegmentIds.add(segment.id)
+    }
+
+    if (selectedSegmentIds.size === 0) {
+      clearDeleteMode()
+      return
+    }
+
+    setSelectionMode("all")
+    setSelectedTimelineIds(selectedSegmentIds)
+
+    const selectedMessageIds = new Set<string>()
+    for (const segment of deletableSegments) {
+      if (!selectedSegmentIds.has(segment.id) || segment.type === "tool") continue
+      selectedMessageIds.add(segment.messageId)
+    }
+    setSelectedForDeletion(selectedMessageIds)
+
+    const orderedSelectedSegments = deletableSegments.filter((segment) => selectedSegmentIds.has(segment.id))
+    const anchorSegment = orderedSelectedSegments[orderedSelectedSegments.length - 1]
+    setLastSelectionAnchorId(anchorSegment?.id ?? null)
+    setActiveSegmentId(anchorSegment?.id ?? null)
+    setIsDeleteMenuOpen(false)
+  }
+
   const deleteSelectedMessages = async () => {
     const selected = deleteMessageIds()
     const toolParts = deleteToolParts()
@@ -664,8 +709,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const pendingCommand = getPendingContextPruneSelection(props.sessionId)
     if (!pendingCommand) return
 
-    // Commit 1 intentionally stops at the bridge. The next slice maps these
-    // 1-based badge indices onto timeline selections inside the existing delete UI.
+    if (timelineSegments().length === 0) return
+
+    stageDeleteSelectionByIndices(pendingCommand.indices)
     consumeContextPruneSelection(props.sessionId)
   })
 
