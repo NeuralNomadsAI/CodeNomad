@@ -12,11 +12,23 @@ export function stageContextPruneSelection(command: ContextPruneSelectionCommand
     throw new Error("Context prune selection requires a sessionId")
   }
 
+  const normalizedIndices = Array.from(
+    new Set(
+      command.indices
+        .map((value) => Math.trunc(value))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    ),
+  ).sort((left, right) => left - right)
+
+  if (normalizedIndices.length === 0) {
+    throw new Error("Context prune selection requires at least one positive index")
+  }
+
   setPendingCommands((prev) => {
     const next = new Map(prev)
     next.set(command.sessionId, {
       sessionId: command.sessionId,
-      indices: [...command.indices],
+      indices: normalizedIndices,
     })
     return next
   })

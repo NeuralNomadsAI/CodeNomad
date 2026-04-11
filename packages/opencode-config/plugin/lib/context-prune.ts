@@ -6,6 +6,8 @@ type ContextPruneRouteRequest = {
   indices: number[]
 }
 
+const MAX_SELECTABLE_INDICES = 1000
+
 export function createContextPruneTools(config: CodeNomadConfig) {
   const requester = createCodeNomadRequester(config)
 
@@ -73,5 +75,13 @@ function parseRange(input: string): number[] {
     values.add(value)
   }
 
-  return Array.from(values).sort((left, right) => left - right)
+  const indices = Array.from(values).sort((left, right) => left - right)
+  if (indices.length === 0) {
+    throw new Error("Range did not resolve to any indices")
+  }
+  if (indices.length > MAX_SELECTABLE_INDICES) {
+    throw new Error(`Range selects too many indices (${indices.length}). Maximum allowed is ${MAX_SELECTABLE_INDICES}.`)
+  }
+
+  return indices
 }

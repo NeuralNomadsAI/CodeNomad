@@ -580,7 +580,6 @@ export default function MessageSection(props: MessageSectionProps) {
     }
 
     if (selectedSegmentIds.size === 0) {
-      clearDeleteMode()
       return
     }
 
