@@ -16,12 +16,14 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
+import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
 
 const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
+const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
 export interface MessageSectionProps {
@@ -594,7 +596,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
 
-  const followToken = createMemo(() => `${sessionRevision()}|${preferenceSignature()}`)
+  // Only preferences should force a follow-token re-anchor. Message/session
+  // revision churn at the end of a turn (message.updated, session.idle, etc.)
+  // should not trigger an immediate scroll-to-bottom.
+  const followToken = createMemo(() => preferenceSignature())
 
   const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
   const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
@@ -623,6 +628,30 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
+
+  const lastVisibleMessageId = createMemo(() => {
+    const ids = visibleMessageIds()
+    return ids[ids.length - 1] ?? null
+  })
+
+  const autoPinHoldTargetKey = createMemo(() => {
+    const messageId = lastVisibleMessageId()
+    return isAssistantTextMessage(messageId) ? messageId : null
+  })
+
+  function isAssistantTextMessage(messageId: string | null | undefined) {
+    if (!messageId) return false
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record || record.role !== "assistant") return false
+
+    const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
+    return orderedParts.some((part) => {
+      if ((part as any)?.type !== "text") return false
+      if (partHasRenderableText(part)) return true
+      return typeof (part as { text?: unknown }).text === "string"
+    })
+  }
 
   createEffect(() => {
     const api = listApi()
@@ -1044,6 +1073,12 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
+          autoPinHoldTargetKey={autoPinHoldTargetKey}
+          autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
+          resolveAutoPinHoldElement={(itemWrapper, key) => {
+            const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"]`))
+            return candidates[candidates.length - 1] ?? null
+          }}
           onScroll={() => {
             clearQuoteSelection()
             scrollCache.persist(streamElement())
