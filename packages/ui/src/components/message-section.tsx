@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { MoreHorizontal, Trash, X } from "lucide-solid"
+import { MoreHorizontal, Pause, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
@@ -42,10 +42,11 @@ export interface MessageSectionProps {
 }
 
 export default function MessageSection(props: MessageSectionProps) {
-  const { preferences } = useConfig()
+  const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
+  const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
@@ -635,9 +636,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const autoPinHoldTargetKey = createMemo(() => {
+    if (!holdLongAssistantRepliesEnabled()) return null
     const messageId = lastVisibleMessageId()
     return isAssistantTextMessage(messageId) ? messageId : null
   })
+
+  function toggleHoldLongAssistantReplies() {
+    updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
+  }
 
   function isAssistantTextMessage(messageId: string | null | undefined) {
     if (!messageId) return false
@@ -1109,6 +1115,52 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={(api) => setListApi(api)}
           registerState={(state) => setListState(state)}
+          renderControls={(state, api) => (
+            <div class="message-scroll-button-wrapper">
+              <button
+                type="button"
+                class="message-scroll-button"
+                data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
+                onClick={toggleHoldLongAssistantReplies}
+                aria-label={
+                  holdLongAssistantRepliesEnabled()
+                    ? t("messageSection.scroll.disableHoldAriaLabel")
+                    : t("messageSection.scroll.enableHoldAriaLabel")
+                }
+                title={
+                  holdLongAssistantRepliesEnabled()
+                    ? t("messageSection.scroll.disableHoldAriaLabel")
+                    : t("messageSection.scroll.enableHoldAriaLabel")
+                }
+              >
+                <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
+              </button>
+              <Show when={state.showScrollTopButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => api.scrollToTop()}
+                  aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                >
+                  <span class="message-scroll-icon" aria-hidden="true">
+                    ↑
+                  </span>
+                </button>
+              </Show>
+              <Show when={state.showScrollBottomButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => api.scrollToBottom()}
+                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                >
+                  <span class="message-scroll-icon" aria-hidden="true">
+                    ↓
+                  </span>
+                </button>
+              </Show>
+            </div>
+          )}
           renderBeforeItems={() => (
             <>
               <Show when={!props.loading && visibleMessageIds().length === 0}>

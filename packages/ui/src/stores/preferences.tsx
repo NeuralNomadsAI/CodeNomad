@@ -55,6 +55,7 @@ export interface UiSettings {
   showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showTimelineTools: boolean
+  holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   showPromptVoiceInput: boolean
   locale?: string
@@ -133,6 +134,7 @@ const defaultUiSettings: UiSettings = {
   showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
   showTimelineTools: true,
+  holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
   showPromptVoiceInput: true,
   diffViewMode: "split",
@@ -166,6 +168,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
+    holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
