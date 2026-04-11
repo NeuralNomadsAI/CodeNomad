@@ -13,9 +13,9 @@ export function createContextPruneTools(config: CodeNomadConfig) {
 
   return {
     select_context_range: tool({
-      description: "Select existing conversation badges for context pruning by 1-based range indices so the user can review and delete them in the UI.",
+      description: "Stage context-prune badge selections in the UI using 1-based badge indices. A single call can include multiple individual indices and multiple ranges, such as 1,3-5,8,10-12. Call this tool once with the full final selection because later calls replace the staged selection.",
       args: {
-        range: tool.schema.string().describe("Comma-separated badge indices and ranges, e.g. 1,3-5,6"),
+        range: tool.schema.string().describe("Full final selection to stage in one call. Supports multiple single badge indices and multiple inclusive ranges combined with commas, for example: 1,3-5,8,10-12. Repeated tool calls replace the previous staged selection instead of merging with it."),
       },
       async execute(args, context) {
         const indices = parseRange(args.range)
