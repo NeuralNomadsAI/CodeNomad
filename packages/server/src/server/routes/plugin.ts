@@ -27,6 +27,11 @@ const VoiceModeStateSchema = z.object({
   connectionId: z.string().trim().min(1),
 })
 
+const ContextPruneSelectSchema = z.object({
+  sessionID: z.string().trim().min(1),
+  indices: z.array(z.number().int().positive()).min(1),
+})
+
 export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/workspaces/:id/plugin/events", (request, reply) => {
     const workspace = deps.workspaceManager.get(request.params.id)
@@ -88,6 +93,23 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     if (normalized === "event" && request.method === "POST") {
       const parsed = PluginEventSchema.parse(request.body ?? {})
       handlePluginEvent(workspaceId, parsed, { workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, logger: deps.logger })
+      reply.code(204).send()
+      return
+    }
+
+    if (normalized === "context-prune/select" && request.method === "POST") {
+      const parsed = ContextPruneSelectSchema.parse(request.body ?? {})
+      deps.eventBus.publish({
+        type: "instance.event",
+        instanceId: workspaceId,
+        event: {
+          type: "context.prune.select",
+          properties: {
+            sessionID: parsed.sessionID,
+            indices: parsed.indices,
+          },
+        },
+      })
       reply.code(204).send()
       return
     }
