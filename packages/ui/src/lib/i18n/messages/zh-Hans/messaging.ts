@@ -18,6 +18,8 @@ export const messagingMessages = {
   "messageSection.loading.messages": "正在加载消息...",
   "messageSection.scroll.toFirstAriaLabel": "滚动到第一条消息",
   "messageSection.scroll.toLatestAriaLabel": "滚动到最新消息",
+  "messageSection.scroll.enableHoldAriaLabel": "启用长助手回复保持",
+  "messageSection.scroll.disableHoldAriaLabel": "禁用长助手回复保持",
   "messageSection.quote.addAsQuote": "作为引用添加",
   "messageSection.quote.addAsCode": "作为代码添加",
   "messageSection.quote.copy": "复制",

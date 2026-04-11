@@ -18,6 +18,8 @@ export const messagingMessages = {
   "messageSection.loading.messages": "טוען הודעות...",
   "messageSection.scroll.toFirstAriaLabel": "גלול להודעה הראשונה",
   "messageSection.scroll.toLatestAriaLabel": "גלול להודעה האחרונה",
+  "messageSection.scroll.enableHoldAriaLabel": "הפעל עצירה לתגובות עוזר ארוכות",
+  "messageSection.scroll.disableHoldAriaLabel": "כבה עצירה לתגובות עוזר ארוכות",
   "messageSection.quote.addAsQuote": "הוסף כציטוט",
   "messageSection.quote.addAsCode": "הוסף כקוד",
   "messageSection.quote.copy": "העתק",

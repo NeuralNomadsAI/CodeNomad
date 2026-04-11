@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
@@ -1040,24 +1041,26 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           {(data) => {
             onCleanup(() => setTooltipElement(null))
             return (
-              <div
-                ref={(element) => setTooltipElement(element)}
-                class="message-timeline-tooltip"
-                style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
-                onMouseEnter={() => clearCloseTimer()}
-                onMouseLeave={() => scheduleClose()}
-              >
-                <MessagePreview
-                  messageId={data().messageId}
-                  instanceId={props.instanceId}
-                  sessionId={props.sessionId}
-                  store={store}
-                  deleteHover={props.deleteHover}
-                  onDeleteHoverChange={props.onDeleteHoverChange}
-                  onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                  selectedMessageIds={props.selectedMessageIds}
-                />
-              </div>
+              <Portal>
+                <div
+                  ref={(element) => setTooltipElement(element)}
+                  class="message-timeline-tooltip"
+                  style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
+                  onMouseEnter={() => clearCloseTimer()}
+                  onMouseLeave={() => scheduleClose()}
+                >
+                  <MessagePreview
+                    messageId={data().messageId}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    store={store}
+                    deleteHover={props.deleteHover}
+                    onDeleteHoverChange={props.onDeleteHoverChange}
+                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                    selectedMessageIds={props.selectedMessageIds}
+                  />
+                </div>
+              </Portal>
             )
           }}
         </Show>

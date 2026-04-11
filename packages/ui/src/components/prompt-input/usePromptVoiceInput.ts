@@ -176,7 +176,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     const before = current.slice(0, start)
     const after = current.slice(end)
     const prefix = ""
-    const suffix = after.length > 0 && !after.startsWith("\n") ? "\n" : ""
+    const suffix = after.length > 0 ? (/^\s/.test(after) ? "" : " ") : " "
     const nextValue = `${before}${prefix}${text}${suffix}${after}`
     const cursor = before.length + prefix.length + text.length + suffix.length
 
