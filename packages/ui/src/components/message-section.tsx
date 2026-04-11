@@ -6,6 +6,7 @@ import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualFollowListApi, type VirtualFollowListState } from "./virtual-follow-list"
 import { useConfig } from "../stores/preferences"
+import { consumeContextPruneSelection, getPendingContextPruneSelection } from "../stores/context-prune-selection"
 import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
@@ -658,6 +659,15 @@ export default function MessageSection(props: MessageSectionProps) {
       return typeof (part as { text?: unknown }).text === "string"
     })
   }
+
+  createEffect(() => {
+    const pendingCommand = getPendingContextPruneSelection(props.sessionId)
+    if (!pendingCommand) return
+
+    // Commit 1 intentionally stops at the bridge. The next slice maps these
+    // 1-based badge indices onto timeline selections inside the existing delete UI.
+    consumeContextPruneSelection(props.sessionId)
+  })
 
   createEffect(() => {
     const api = listApi()
