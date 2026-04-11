@@ -13,7 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::Webview;
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -31,7 +33,7 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
-const ZOOM_STEP: f64 = 0.2;
+const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
 
@@ -129,7 +131,11 @@ fn should_allow_internal(url: &Url) -> bool {
     }
 }
 
-fn should_allow_window_origin<R: Runtime>(app_handle: &AppHandle<R>, window_label: &str, url: &Url) -> bool {
+fn should_allow_window_origin<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    window_label: &str,
+    url: &Url,
+) -> bool {
     if should_allow_internal(url) {
         return true;
     }
@@ -172,7 +178,11 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
 
     let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
-    let title = format!("{} - {}", payload.name, parsed.host_str().unwrap_or(payload.base_url.as_str()));
+    let title = format!(
+        "{} - {}",
+        payload.name,
+        parsed.host_str().unwrap_or(payload.base_url.as_str())
+    );
 
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.navigate(parsed.clone());
@@ -189,12 +199,13 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
         .map_err(|err| err.to_string())?
         .insert(label.clone(), parsed.origin().ascii_serialization());
 
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
-        .title(title)
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(800.0, 600.0)
-        .build()
-        .map_err(|err| err.to_string())?;
+    let window =
+        WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
+            .title(title)
+            .inner_size(1400.0, 900.0)
+            .min_inner_size(800.0, 600.0)
+            .build()
+            .map_err(|err| err.to_string())?;
 
     let app_handle = app.clone();
     window.on_window_event(move |event| {

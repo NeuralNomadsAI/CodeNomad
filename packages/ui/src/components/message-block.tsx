@@ -3,7 +3,7 @@ import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, 
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -231,6 +231,12 @@ function isContentPartType(type: unknown): boolean {
   return type === "text" || type === "file"
 }
 
+function isVisibleContentPart(part: ClientPart): boolean {
+  if (!part || !isContentPartType((part as any).type)) return false
+  if (isHiddenSyntheticTextPart(part)) return false
+  return partHasRenderableText(part)
+}
+
 function MessageContentItem(props: MessageContentItemProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -264,13 +270,15 @@ function MessageContentItem(props: MessageContentItemProps) {
     return resolved
   })
 
+  const visibleParts = createMemo(() => parts().filter((part) => isVisibleContentPart(part)))
+
   const showAgentMeta = createMemo(() => {
     const current = record()
     if (!current) return false
     if (current.role !== "assistant") return false
 
     const currentParts = parts()
-    if (!currentParts.some((part) => partHasRenderableText(part))) {
+    if (visibleParts().length === 0) {
       return false
     }
 
@@ -286,10 +294,10 @@ function MessageContentItem(props: MessageContentItemProps) {
       if (!isSupportedPartType(part)) continue
 
       if (!isContentPartType((part as any).type)) continue
-      if (partHasRenderableText(part)) {
-        return false
+        if (isVisibleContentPart(part)) {
+          return false
+        }
       }
-    }
 
     return true
   })
@@ -300,7 +308,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         <MessageItem
           record={resolvedRecord()}
           messageInfo={messageInfo()}
-          parts={parts()}
+          parts={visibleParts()}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
           isQueued={isQueued()}
@@ -621,13 +629,12 @@ export default function MessageBlock(props: MessageBlockProps) {
     const lastAssistantIdx = props.lastAssistantIndex()
     const isQueued = current.role === "user" && (lastAssistantIdx === -1 || index > lastAssistantIdx)
 
-    // Intentionally untracked: messageInfoVersion updates should not trigger
-    // a full message block rebuild; record revision is the invalidation key.
-    const info = untrack(messageInfo)
+    const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
 
     const cacheSignature = [
       current.id,
       current.revision,
+      messageInfoVersion,
       isQueued ? 1 : 0,
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
@@ -638,6 +645,9 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (cachedBlock && cachedBlock.signature === cacheSignature) {
       return cachedBlock.block
     }
+
+    // Only capture info after cache check fails - ensures fresh data on version bump
+    const info = untrack(messageInfo)
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, current)
     const items: MessageBlockItem[] = []
@@ -1100,17 +1110,23 @@ function StepCard(props: StepCardProps) {
       return null
     }
     const info = props.messageInfo
-    if (!info || info.role !== "assistant" || !info.tokens) {
+    const part = props.part as any
+    
+    // step-finish parts have tokens embedded; also check messageInfo
+    const partTokens = part?.tokens
+    const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
+    const tokens = partTokens ?? infoTokens
+    if (!tokens) {
       return null
     }
-    const tokens = info.tokens
+    
     return {
       input: tokens.input ?? 0,
       output: tokens.output ?? 0,
       reasoning: tokens.reasoning ?? 0,
       cacheRead: tokens.cache?.read ?? 0,
       cacheWrite: tokens.cache?.write ?? 0,
-      cost: info.cost ?? 0,
+      cost: (part?.cost ?? (info && info.role === "assistant" ? info.cost : 0)) ?? 0,
     }
   }
 
@@ -1328,9 +1344,7 @@ function ReasoningStreamOutput(props: {
     if (preRef && preRef.textContent !== nextText) {
       preRef.textContent = nextText
     }
-    if (followScroll.autoScroll()) {
-      followScroll.restoreAfterRender({ forceBottom: true })
-    }
+    followScroll.restoreAfterRender()
     notifyContentRendered()
   })
 

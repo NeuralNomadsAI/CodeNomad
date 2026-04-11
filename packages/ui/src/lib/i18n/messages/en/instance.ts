@@ -160,6 +160,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.empty": "No background processes.",
   "instanceShell.backgroundProcesses.status": "Status: {status}",
   "instanceShell.backgroundProcesses.output": "Output: {sizeKb}KB",
+  "instanceShell.backgroundProcesses.notify.enabled": "Completion notification enabled",
+  "instanceShell.backgroundProcesses.notify.disabled": "Completion notification disabled",
   "instanceShell.backgroundProcesses.actions.output": "Output",
   "instanceShell.backgroundProcesses.actions.stop": "Stop",
   "instanceShell.backgroundProcesses.actions.terminate": "Terminate",

@@ -3,6 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
+import { isHiddenSyntheticTextPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
@@ -114,6 +115,7 @@ function collectReasoningText(part: ClientPart): string {
 
 function collectTextFromPart(part: ClientPart, t: (key: string, params?: Record<string, unknown>) => string): string {
   if (!part) return ""
+  if (isHiddenSyntheticTextPart(part)) return ""
   if (typeof (part as any).text === "string") {
     return (part as any).text as string
   }

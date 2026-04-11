@@ -158,6 +158,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.empty": "אין תהליכי רקע.",
   "instanceShell.backgroundProcesses.status": "סטטוס: {status}",
   "instanceShell.backgroundProcesses.output": "פלט: {sizeKb}KB",
+  "instanceShell.backgroundProcesses.notify.enabled": "התראת סיום פעילה",
+  "instanceShell.backgroundProcesses.notify.disabled": "התראת סיום כבויה",
   "instanceShell.backgroundProcesses.actions.output": "פלט",
   "instanceShell.backgroundProcesses.actions.stop": "עצור",
   "instanceShell.backgroundProcesses.actions.terminate": "סיים",

@@ -150,6 +150,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.empty": "バックグラウンドプロセスはありません。",
   "instanceShell.backgroundProcesses.status": "状態: {status}",
   "instanceShell.backgroundProcesses.output": "出力: {sizeKb}KB",
+  "instanceShell.backgroundProcesses.notify.enabled": "完了通知が有効",
+  "instanceShell.backgroundProcesses.notify.disabled": "完了通知が無効",
   "instanceShell.backgroundProcesses.actions.output": "出力",
   "instanceShell.backgroundProcesses.actions.stop": "停止",
   "instanceShell.backgroundProcesses.actions.terminate": "終了",

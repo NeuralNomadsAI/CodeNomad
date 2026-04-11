@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
@@ -290,9 +290,9 @@ export default function MessageItem(props: MessageItemProps) {
 
   const getRawContent = () => {
     return props.parts
-      .filter(part => part.type === "text")
-      .map(part => (part as { text?: string }).text || "")
-      .filter(text => text.trim().length > 0)
+      .filter((part) => part.type === "text" && !isHiddenSyntheticTextPart(part))
+      .map((part) => (part as { text?: string }).text || "")
+      .filter((text) => text.trim().length > 0)
       .join("\n\n")
   }
 
@@ -338,7 +338,7 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
-  if (!isUser() && !hasContent() && !isGenerating()) {
+  if (!hasContent() && !isGenerating()) {
     return null
   }
 
