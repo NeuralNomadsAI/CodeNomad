@@ -13,9 +13,9 @@ export function createContextPruneTools(config: CodeNomadConfig) {
 
   return {
     select_context_range: tool({
-      description: "Stage context-prune badge selections in the UI using 1-based badge indices. A single call can include multiple individual indices and multiple ranges, such as 1,3-5,8,10-12. Call this tool once with the full final selection because later calls replace the staged selection.",
+      description: "Stage context-prune badge selections in the UI using 1-based positions in the current visible pruneable conversation order. The model usually sees conversation entries as message ids like m0001, m0002, m0003; treat those as the visible chronological sequence and convert them into 1-based positions for this tool. Example: if the pruneable visible sequence is m0007, m0008, m0009, m0010, then their positions for this tool are 1, 2, 3, 4. A single call can include multiple individual positions and multiple ranges, such as 1,3-5,8,10-12. Call this tool once with the full final selection because later calls replace the staged selection.",
       args: {
-        range: tool.schema.string().describe("Full final selection to stage in one call. Supports multiple single badge indices and multiple inclusive ranges combined with commas, for example: 1,3-5,8,10-12. Repeated tool calls replace the previous staged selection instead of merging with it."),
+        range: tool.schema.string().describe("Full final selection to stage in one call, using 1-based positions in the current pruneable visible conversation order. Example: if the pruneable visible sequence is m0007, m0008, m0009, m0010, use 1,2,3,4 respectively, so selecting m0008 through m0010 would be 2-4. Supports multiple single positions and inclusive ranges combined with commas, for example: 1,3-5,8,10-12. Repeated tool calls replace the previous staged selection instead of merging with it."),
       },
       async execute(args, context) {
         const indices = parseRange(args.range)
