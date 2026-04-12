@@ -5,9 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::env;
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(windows)]
+use std::mem::{size_of, zeroed};
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -20,10 +24,93 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
 #[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsJobObject {
+    // The desktop wrapper may observe only a short-lived Node wrapper PID while the real
+    // server and workspace descendants continue running below it. KILL_ON_JOB_CLOSE gives
+    // Tauri an OS-owned handle for the whole subtree instead of relying on a single PID.
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+impl WindowsJobObject {
+    fn create() -> anyhow::Result<Self> {
+        let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(anyhow::anyhow!(
+                "CreateJobObjectW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(anyhow::anyhow!("SetInformationJobObject failed: {}", err));
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign_child(&self, child: &Child) -> anyhow::Result<()> {
+        let process_handle = child.as_raw_handle() as HANDLE;
+        let ok = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
+        if ok == 0 {
+            return Err(anyhow::anyhow!(
+                "AssignProcessToJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJobObject {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe impl Send for WindowsJobObject {}
+
+#[cfg(windows)]
+unsafe impl Sync for WindowsJobObject {}
 
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
@@ -363,6 +450,8 @@ impl Default for CliStatus {
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    #[cfg(windows)]
+    job: Arc<Mutex<Option<WindowsJobObject>>>,
     ready: Arc<AtomicBool>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
 }
@@ -372,6 +461,8 @@ impl CliProcessManager {
         Self {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            #[cfg(windows)]
+            job: Arc::new(Mutex::new(None)),
             ready: Arc::new(AtomicBool::new(false)),
             bootstrap_token: Arc::new(Mutex::new(None)),
         }
@@ -394,6 +485,8 @@ impl CliProcessManager {
 
         let status_arc = self.status.clone();
         let child_arc = self.child.clone();
+        #[cfg(windows)]
+        let job_arc = self.job.clone();
         let ready_flag = self.ready.clone();
         let token_arc = self.bootstrap_token.clone();
         thread::spawn(move || {
@@ -401,6 +494,8 @@ impl CliProcessManager {
                 app.clone(),
                 status_arc.clone(),
                 child_arc,
+                #[cfg(windows)]
+                job_arc,
                 ready_flag,
                 token_arc,
                 dev,
@@ -420,11 +515,12 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
+        #[cfg(windows)]
+        let _job = self.job.lock().take();
+
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
             log_line(&format!("stopping CLI pid={}", child.id()));
-            #[cfg(windows)]
-            let mut forced_tree_shutdown = false;
             #[cfg(unix)]
             unsafe {
                 let pid = child.id() as i32;
@@ -446,18 +542,16 @@ impl CliProcessManager {
                     Ok(Some(_)) => break,
                     Ok(None) => {
                         #[cfg(windows)]
-                        if !forced_tree_shutdown
-                            && start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS)
-                        {
+                        if start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS) {
                             log_line(&format!(
                                 "regular Windows shutdown still running after {}ms; escalating pid={}",
                                 CLI_WINDOWS_FORCE_GRACE_MS,
                                 child.id()
                             ));
-                            forced_tree_shutdown = true;
                             if !kill_process_tree_windows(child.id(), true) {
                                 let _ = child.kill();
                             }
+                            break;
                         }
 
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
@@ -476,11 +570,7 @@ impl CliProcessManager {
                             }
                             #[cfg(windows)]
                             {
-                                if !forced_tree_shutdown
-                                    && !kill_process_tree_windows(child.id(), true)
-                                {
-                                    let _ = child.kill();
-                                } else if forced_tree_shutdown {
+                                if !kill_process_tree_windows(child.id(), true) {
                                     let _ = child.kill();
                                 }
                             }
@@ -491,6 +581,9 @@ impl CliProcessManager {
                     Err(_) => break,
                 }
             }
+        } else {
+            #[cfg(windows)]
+            log_line("tracked CLI process already exited; dropping Windows job object to reap descendants");
         }
 
         let mut status = self.status.lock();
@@ -511,6 +604,7 @@ impl CliProcessManager {
         app: AppHandle,
         status: Arc<Mutex<CliStatus>>,
         child_holder: Arc<Mutex<Option<Child>>>,
+        #[cfg(windows)] job_holder: Arc<Mutex<Option<WindowsJobObject>>>,
         ready: Arc<AtomicBool>,
         bootstrap_token: Arc<Mutex<Option<String>>>,
         dev: bool,
@@ -592,6 +686,22 @@ impl CliProcessManager {
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
+        #[cfg(windows)]
+        match WindowsJobObject::create().and_then(|job| {
+            job.assign_child(&child)?;
+            Ok(job)
+        }) {
+            Ok(job) => {
+                log_line(&format!("attached pid={pid} to Windows job object"));
+                *job_holder.lock() = Some(job);
+            }
+            Err(err) => {
+                log_line(&format!(
+                    "failed to attach pid={pid} to Windows job object; falling back to taskkill-only cleanup: {err}"
+                ));
+            }
+        }
+
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -665,6 +775,8 @@ impl CliProcessManager {
         let status_clone = status.clone();
         let ready_clone = ready.clone();
         let child_holder_clone = child_holder.clone();
+        #[cfg(windows)]
+        let job_holder_clone = job_holder.clone();
         thread::spawn(move || {
             let timeout = Duration::from_secs(60);
             thread::sleep(timeout);
@@ -719,6 +831,10 @@ impl CliProcessManager {
                             // Drop the handle after the process exits so other callers
                             // don't attempt to stop/kill a finished process.
                             *guard = None;
+                            #[cfg(windows)]
+                            {
+                                let _ = job_holder_clone.lock().take();
+                            }
                             Some(status)
                         }
                         None => None,
@@ -776,7 +892,8 @@ impl CliProcessManager {
         auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
-        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
+        let local_url_regex =
+            Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
@@ -818,7 +935,6 @@ impl CliProcessManager {
                             );
                             continue;
                         }
-
                     }
                 }
                 Err(_) => break,
@@ -1022,15 +1138,23 @@ fn resolve_tsx(_app: &AppHandle) -> Option<String> {
     let cwd = std::env::current_dir().ok();
     let workspace = workspace_root();
     let mut candidates = vec![
-        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
         cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.js")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.js")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
         workspace
             .as_ref()
             .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
