@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
+    "@fastify/multipart": "^8.3.1",
     "@fastify/reply-from": "^9.8.0",
     "@fastify/static": "^7.0.4",
     "commander": "^12.1.0",

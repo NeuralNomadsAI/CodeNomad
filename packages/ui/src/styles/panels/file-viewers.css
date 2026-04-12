@@ -1,0 +1,80 @@
+/* File Viewers - Previewer styles */
+
+/* Markdown Viewer */
+.markdown-viewer-content {
+  background-color: var(--surface-secondary);
+}
+
+/* Image Viewer */
+.image-viewer-toolbar {
+  background-color: var(--surface-secondary);
+}
+
+.image-viewer-content {
+  background-color: var(--surface-secondary);
+}
+
+/* Audio Viewer */
+.audio-viewer {
+  background-color: var(--surface-secondary);
+}
+
+/* Video Viewer */
+.video-viewer-content {
+  background-color: var(--surface-secondary);
+}
+
+/* PDF Viewer */
+.pdf-viewer-toolbar {
+  background-color: var(--surface-secondary);
+}
+
+.pdf-viewer-content iframe {
+  background-color: white;
+}
+
+/* Progress Bar */
+.file-progress-bar {
+  background-color: var(--surface-secondary);
+}
+
+.file-progress-track {
+  background-color: var(--surface-base);
+}
+
+.file-progress-fill {
+  background-color: var(--accent-primary);
+}
+
+/* File List Item Actions - Fixed action column */
+.file-list-item-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 48px;
+}
+
+.file-action-btn {
+  @apply inline-flex items-center justify-center rounded border border-base transition-colors;
+  width: 22px;
+  height: 22px;
+  background-color: transparent;
+  color: var(--text-muted);
+}
+
+.file-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.file-action-btn:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.file-action-btn.delete:hover {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+}

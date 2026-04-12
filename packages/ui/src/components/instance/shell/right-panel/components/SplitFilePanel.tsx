@@ -2,6 +2,8 @@ import { Show, type Component, type JSX } from "solid-js"
 
 import { useI18n } from "../../../../../lib/i18n"
 import OverlayList from "./OverlayList"
+import ProgressBar from "../../../../file-viewer/progress-bar"
+import type { FileOperationState } from "../hooks/useFileOperations"
 
 type SplitFilePanelList = {
   panel: () => JSX.Element
@@ -22,6 +24,9 @@ interface SplitFilePanelProps {
 
   isPhoneLayout: boolean
   overlayAriaLabel: string
+
+  operationState?: FileOperationState
+  onResetOperation?: () => void
 }
 
 const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
@@ -37,6 +42,16 @@ const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
           {props.header}
         </div>
       </div>
+
+      <Show when={props.operationState?.inProgress}>
+        <ProgressBar
+          progress={props.operationState?.progress ?? 0}
+          label={props.operationState?.label}
+          onCancel={() => props.operationState?.cancel?.()}
+          showClose={props.operationState?.isComplete ?? false}
+          onClose={props.onResetOperation}
+        />
+      </Show>
 
       <div class="files-tab-body">
         <Show
@@ -55,7 +70,7 @@ const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
               onMouseDown={props.onResizeMouseDown}
               onTouchStart={props.onResizeTouchStart}
             />
-            {props.viewer}
+            <div class="file-viewer-cell">{props.viewer}</div>
           </div>
         </Show>
 

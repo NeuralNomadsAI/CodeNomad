@@ -239,3 +239,49 @@ export async function removeWorktree(params: {
   // Best-effort cleanup of stale metadata.
   await runGit(["worktree", "prune"], workspaceFolder).catch(() => undefined)
 }
+
+interface WorktreeCacheEntry {
+  expiresAt: number
+  repoRoot: string
+  worktrees: Array<{ slug: string; directory: string }>
+}
+
+const WORKTREE_CACHE_TTL_MS = 2000
+const worktreeCache = new Map<string, WorktreeCacheEntry>()
+
+export async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger: LogLike }) {
+  const cached = worktreeCache.get(params.workspaceId)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) {
+    return cached
+  }
+
+  const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
+  const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
+  const entry: WorktreeCacheEntry = {
+    expiresAt: now + WORKTREE_CACHE_TTL_MS,
+    repoRoot,
+    worktrees: worktrees.map((wt) => ({ slug: wt.slug, directory: wt.directory })),
+  }
+  worktreeCache.set(params.workspaceId, entry)
+  return entry
+}
+
+export async function resolveWorktreeDirectory(params: {
+  workspaceId: string
+  workspacePath: string
+  worktreeSlug: string
+  logger: LogLike
+}): Promise<string | null> {
+  const { worktreeSlug } = params
+  const cached = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  const match = cached.worktrees.find((wt) => wt.slug === worktreeSlug)
+  if (match) {
+    return match.directory
+  }
+
+  // If the slug is new (e.g., created moments ago), refresh once.
+  worktreeCache.delete(params.workspaceId)
+  const refreshed = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
+  return refreshed.worktrees.find((wt) => wt.slug === worktreeSlug)?.directory ?? null
+}

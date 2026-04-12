@@ -266,20 +266,165 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
     )
   },
-  readWorkspaceFile(id: string, relativePath: string): Promise<WorkspaceFileResponse> {
+  readWorkspaceFile(id: string, relativePath: string, worktree?: string): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
+    if (worktree) {
+      params.set("worktree", worktree)
+    }
     return request<WorkspaceFileResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string): Promise<void> {
+  writeWorkspaceFile(id: string, relativePath: string, contents: string, worktree?: string): Promise<void> {
     const params = new URLSearchParams({ path: relativePath })
+    if (worktree) {
+      params.set("worktree", worktree)
+    }
     return request(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
       {
         method: "PUT",
         body: JSON.stringify({ contents }),
       },
+    )
+  },
+  uploadWorkspaceFile(
+    id: string,
+    targetPath: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+    options?: { worktree?: string; overwrite?: boolean },
+  ): { promise: Promise<{ path: string; size: number }>; abort: () => void } {
+    const params = new URLSearchParams({ path: targetPath })
+    if (options?.worktree) {
+      params.set("worktree", options.worktree)
+    }
+    const formData = new FormData()
+    formData.append("file", file)
+
+    const xhr = new XMLHttpRequest()
+    const url = buildAbsoluteUrl(`/api/workspaces/${encodeURIComponent(id)}/files/upload?${params.toString()}`)
+    xhr.open("POST", url)
+    xhr.withCredentials = true
+
+    if (options?.overwrite) {
+      xhr.setRequestHeader("X-Overwrite", "true")
+    }
+
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress(event.loaded, event.total)
+        }
+      }
+    }
+
+    let aborted = false
+    const promise = new Promise<{ path: string; size: number }>((resolve, reject) => {
+      xhr.onload = () => {
+        if (aborted) return
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText)
+            resolve({ path: response.path, size: response.size })
+          } catch {
+            reject(new Error("Failed to parse upload response"))
+          }
+        } else if (xhr.status === 409) {
+          const error = new Error("File already exists")
+          ;(error as any).status = 409
+          reject(error)
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status}`))
+        }
+      }
+      xhr.onerror = () => {
+        if (aborted) return
+        reject(new Error("Network error during upload"))
+      }
+      xhr.ontimeout = () => {
+        if (aborted) return
+        reject(new Error("Upload timed out"))
+      }
+      xhr.onabort = () => {
+        aborted = true
+        reject(new Error("Upload cancelled"))
+      }
+      xhr.send(formData)
+    })
+
+    return { promise, abort: () => { aborted = true; xhr.abort() } }
+  },
+  downloadWorkspaceFile(
+    id: string,
+    relativePath: string,
+    onProgress?: (loaded: number, total: number) => void,
+    options?: { worktree?: string },
+  ): { promise: Promise<{ blobUrl: string; fileName: string }>; abort: () => void } {
+    const params = new URLSearchParams({ path: relativePath })
+    if (options?.worktree) {
+      params.set("worktree", options.worktree)
+    }
+
+    const xhr = new XMLHttpRequest()
+    const url = buildAbsoluteUrl(`/api/workspaces/${encodeURIComponent(id)}/files/download?${params.toString()}`)
+    xhr.open("GET", url)
+    xhr.withCredentials = true
+    xhr.responseType = "blob"
+
+    if (onProgress) {
+      xhr.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress(event.loaded, event.total)
+        }
+      }
+    }
+
+    let aborted = false
+    const promise = new Promise<{ blobUrl: string; fileName: string }>((resolve, reject) => {
+      xhr.onload = () => {
+        if (aborted) return
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const blob = xhr.response as Blob
+          const blobUrl = URL.createObjectURL(blob)
+          const disposition = xhr.getResponseHeader("Content-Disposition")
+          let fileName = relativePath.split("/").pop() || "download"
+          if (disposition) {
+            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+            if (match) {
+              fileName = decodeURIComponent(match[1].replace(/['"]/g, ""))
+            }
+          }
+          resolve({ blobUrl, fileName })
+        } else {
+          reject(new Error(`Download failed: ${xhr.status}`))
+        }
+      }
+      xhr.onerror = () => {
+        if (aborted) return
+        reject(new Error("Network error during download"))
+      }
+      xhr.ontimeout = () => {
+        if (aborted) return
+        reject(new Error("Download timed out"))
+      }
+      xhr.onabort = () => {
+        aborted = true
+        reject(new Error("Download cancelled"))
+      }
+      xhr.send()
+    })
+
+    return { promise, abort: () => { aborted = true; xhr.abort() } }
+  },
+  deleteWorkspaceFile(id: string, relativePath: string, options?: { worktree?: string }): Promise<void> {
+    const params = new URLSearchParams({ path: relativePath })
+    if (options?.worktree) {
+      params.set("worktree", options.worktree)
+    }
+    return request(
+      `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
+      { method: "DELETE" },
     )
   },
 

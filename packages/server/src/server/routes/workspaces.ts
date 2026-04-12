@@ -1,6 +1,9 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
+import fs from "fs"
+import path from "path"
 import { WorkspaceManager } from "../../workspaces/manager"
+import { FileSystemBrowser } from "../../filesystem/browser"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -13,14 +16,26 @@ const WorkspaceCreateSchema = z.object({
 
 const WorkspaceFilesQuerySchema = z.object({
   path: z.string().optional(),
+  worktree: z.string().optional(),
 })
 
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
+  worktree: z.string().optional(),
 })
 
 const WorkspaceFileContentBodySchema = z.object({
   contents: z.string(),
+})
+
+const WorkspaceUploadQuerySchema = z.object({
+  path: z.string(),
+  worktree: z.string().optional(),
+})
+
+const WorkspaceDownloadQuerySchema = z.object({
+  path: z.string(),
+  worktree: z.string().optional(),
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
@@ -31,6 +46,7 @@ const WorkspaceFileSearchQuerySchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? undefined : value === "true")),
+  worktree: z.string().optional(),
 })
 
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -67,11 +83,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; worktree?: string }
   }>("/api/workspaces/:id/files", async (request, reply) => {
     try {
       const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
-      return deps.workspaceManager.listFiles(request.params.id, query.path ?? ".")
+      return deps.workspaceManager.listFiles(request.params.id, query.path ?? ".", query.worktree)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -79,7 +95,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string }
-    Querystring: { q?: string; limit?: string; type?: "all" | "file" | "directory"; refresh?: string }
+    Querystring: { q?: string; limit?: string; type?: "all" | "file" | "directory"; refresh?: string; worktree?: string }
   }>("/api/workspaces/:id/files/search", async (request, reply) => {
     try {
       const query = WorkspaceFileSearchQuerySchema.parse(request.query ?? {})
@@ -87,7 +103,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         limit: query.limit,
         type: query.type,
         refresh: query.refresh,
-      })
+      }, query.worktree)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -95,11 +111,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; worktree?: string }
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
-      return deps.workspaceManager.readFile(request.params.id, query.path)
+      return deps.workspaceManager.readFile(request.params.id, query.path, query.worktree)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -107,13 +123,102 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.put<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; worktree?: string }
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
-      deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
+      deps.workspaceManager.writeFile(request.params.id, query.path, body.contents, query.worktree)
       reply.code(204)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.delete<{
+    Params: { id: string }
+    Querystring: { path?: string; worktree?: string }
+  }>("/api/workspaces/:id/files/content", async (request, reply) => {
+    try {
+      const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
+      deps.workspaceManager.deleteFile(request.params.id, query.path, query.worktree)
+      reply.code(204)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string }
+    Querystring: { path?: string; worktree?: string }
+  }>("/api/workspaces/:id/files/upload", async (request, reply) => {
+    try {
+      const query = WorkspaceUploadQuerySchema.parse(request.query ?? {})
+      const data = await request.file({
+        limits: {
+          fileSize: 100 * 1024 * 1024, // 100MB
+        },
+      })
+      if (!data?.file) {
+        reply.code(400)
+        return { error: "No file provided" }
+      }
+      const overwrite = request.headers["x-overwrite"] === "true"
+      const result = await deps.workspaceManager.uploadFile(request.params.id, query.path, data.file, query.worktree, overwrite)
+      reply.code(201)
+      return result
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.get<{
+    Params: { id: string }
+    Querystring: { path?: string; worktree?: string }
+  }>("/api/workspaces/:id/files/download", async (request, reply) => {
+    try {
+      const query = WorkspaceDownloadQuerySchema.parse(request.query ?? {})
+      const resolvedPath = await deps.workspaceManager.resolveFilePath(request.params.id, query.path, query.worktree)
+      const fileName = path.basename(resolvedPath)
+
+      const stats = fs.statSync(resolvedPath)
+      if (stats.isDirectory()) {
+        reply.code(400)
+        return { error: "Cannot download directory" }
+      }
+      if (stats.size > 100 * 1024 * 1024) {
+        reply.code(413)
+        return { error: "File too large (max 100MB)" }
+      }
+
+      const mimeType = getMimeType(fileName)
+      reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`)
+      reply.header("Content-Type", mimeType)
+      reply.header("Accept-Ranges", "bytes")
+      reply.header("ETag", `"${stats.mtimeMs}-${stats.size}"`)
+      reply.header("Content-Length", stats.size)
+
+      const range = request.headers.range
+      if (range) {
+        const rangeMatch = range.match(/^bytes=(\d+)-(\d*)$/)
+        if (!rangeMatch) {
+          reply.code(400)
+          return { error: "Invalid Range header" }
+        }
+        const start = parseInt(rangeMatch[1], 10)
+        const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : stats.size - 1
+        const chunkSize = (end - start) + 1
+
+        reply.code(206)
+        reply.header("Content-Range", `bytes ${start}-${end}/${stats.size}`)
+        reply.header("Content-Length", chunkSize)
+
+        const stream = fs.createReadStream(resolvedPath, { start, end })
+        return reply.send(stream)
+      }
+
+      const stream = fs.createReadStream(resolvedPath)
+      return reply.send(stream)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -126,6 +231,49 @@ function handleWorkspaceError(error: unknown, reply: FastifyReply) {
     reply.code(404)
     return { error: "Workspace not found" }
   }
+  if (error instanceof Error && error.message.includes("Cannot delete directory")) {
+    reply.code(400)
+    return { error: "Folder deletion is not supported" }
+  }
+  if (error instanceof Error && error.message.includes("File already exists")) {
+    reply.code(409)
+    return { error: "File already exists" }
+  }
+  if (error instanceof Error && error.message.includes("outside of root")) {
+    reply.code(403)
+    return { error: "Access denied" }
+  }
   reply.code(400)
   return { error: error instanceof Error ? error.message : "Unable to fulfill request" }
+}
+
+function getMimeType(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase()
+  const mimeTypes: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".bmp": "image/bmp",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".pdf": "application/pdf",
+    ".json": "application/json",
+    ".xml": "application/xml",
+    ".html": "text/html",
+    ".css": "text/css",
+    ".js": "text/javascript",
+    ".ts": "text/typescript",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+  }
+  return mimeTypes[ext] || "application/octet-stream"
 }

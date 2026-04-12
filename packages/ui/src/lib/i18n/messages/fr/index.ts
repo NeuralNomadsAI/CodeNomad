@@ -2,6 +2,7 @@ import { advancedSettingsMessages } from "./advancedSettings"
 import { appMessages } from "./app"
 import { commandMessages } from "./commands"
 import { dialogMessages } from "./dialogs"
+import { fileViewerMessages } from "./fileViewer"
 import { filesystemMessages } from "./filesystem"
 import { folderSelectionMessages } from "./folderSelection"
 import { instanceMessages } from "./instance"
@@ -33,4 +34,5 @@ export const frMessages = mergeMessageParts(
   settingsMessages,
   remoteAccessMessages,
   commandMessages,
+  fileViewerMessages,
 )

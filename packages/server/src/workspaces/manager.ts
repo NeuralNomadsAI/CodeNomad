@@ -18,6 +18,7 @@ import {
   OPENCODE_SERVER_PASSWORD_ENV,
   OPENCODE_SERVER_USERNAME_ENV,
 } from "./opencode-auth"
+import { resolveWorktreeDirectory, isValidWorktreeSlug } from "./git-worktrees"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
@@ -61,20 +62,23 @@ export class WorkspaceManager {
     return this.opencodeAuth.get(id)?.authorization
   }
 
-  listFiles(workspaceId: string, relativePath = "."): FileSystemEntry[] {
+  async listFiles(workspaceId: string, relativePath = ".", worktreeSlug = "root"): Promise<FileSystemEntry[]> {
     const workspace = this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
     return browser.list(relativePath)
   }
 
-  searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions): FileSystemEntry[] {
+  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions, worktreeSlug = "root"): Promise<FileSystemEntry[]> {
     const workspace = this.requireWorkspace(workspaceId)
-    return searchWorkspaceFiles(workspace.path, query, options)
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    return searchWorkspaceFiles(rootDir, query, options)
   }
 
-  readFile(workspaceId: string, relativePath: string): WorkspaceFileResponse {
+  async readFile(workspaceId: string, relativePath: string, worktreeSlug = "root"): Promise<WorkspaceFileResponse> {
     const workspace = this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
     const contents = browser.readFile(relativePath)
     return {
       workspaceId,
@@ -83,10 +87,51 @@ export class WorkspaceManager {
     }
   }
 
-  writeFile(workspaceId: string, relativePath: string, contents: string): void {
+  async writeFile(workspaceId: string, relativePath: string, contents: string, worktreeSlug = "root"): Promise<void> {
     const workspace = this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
     browser.writeFile(relativePath, contents)
+  }
+
+  async uploadFile(workspaceId: string, relativePath: string, fileStream: NodeJS.ReadableStream, worktreeSlug = "root", overwrite = false): Promise<{ path: string; size: number }> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
+    return browser.uploadFile(relativePath, fileStream, overwrite)
+  }
+
+  async deleteFile(workspaceId: string, relativePath: string, worktreeSlug = "root"): Promise<void> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
+    browser.deleteFile(relativePath)
+  }
+
+  async resolveFilePath(workspaceId: string, relativePath: string, worktreeSlug = "root"): Promise<string> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const rootDir = await this.resolveRootDir(workspaceId, workspace.path, worktreeSlug)
+    const browser = new FileSystemBrowser({ rootDir })
+    return browser.resolvePath(relativePath)
+  }
+
+  private async resolveRootDir(workspaceId: string, workspacePath: string, worktreeSlug: string): Promise<string> {
+    if (worktreeSlug === "root") {
+      return workspacePath
+    }
+    if (!isValidWorktreeSlug(worktreeSlug)) {
+      throw new Error(`Invalid worktree slug: ${worktreeSlug}`)
+    }
+    const resolved = await resolveWorktreeDirectory({
+      workspaceId,
+      workspacePath,
+      worktreeSlug,
+      logger: this.options.logger,
+    })
+    if (!resolved) {
+      throw new Error(`Worktree "${worktreeSlug}" not found`)
+    }
+    return resolved
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {

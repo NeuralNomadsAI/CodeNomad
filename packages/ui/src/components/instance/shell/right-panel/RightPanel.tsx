@@ -29,6 +29,8 @@ import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
 import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
+import { isBinaryFile, inferMimeType } from "../../../../lib/file-types"
+import { useFileOperations } from "./hooks/useFileOperations"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
@@ -109,6 +111,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [browserSelectedDirty, setBrowserSelectedDirty] = createSignal(false)
   const [browserSelectedSaving, setBrowserSelectedSaving] = createSignal(false)
   const [browserSelectedOriginalContent, setBrowserSelectedOriginalContent] = createSignal<string | null>(null)
+  const [browserSelectedBlobUrl, setBrowserSelectedBlobUrl] = createSignal<string | null>(null)
+  const [browserSelectedMimeType, setBrowserSelectedMimeType] = createSignal<string | null>(null)
+
+  const [mdImageBlobUrls, setMdImageBlobUrls] = createSignal<Map<string, string>>(new Map())
 
   const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
@@ -329,6 +335,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   onCleanup(() => {
     stopSplitResize()
+    const blobUrl = browserSelectedBlobUrl()
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl)
+    }
+    mdImageBlobUrls().forEach((url) => URL.revokeObjectURL(url))
   })
 
   const worktreeSlugForViewer = createMemo(() => {
@@ -340,6 +351,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
+
+  const { operation, resetOperation, uploadFile, downloadFile, deleteFile } = useFileOperations(
+    props.instanceId,
+    worktreeSlugForViewer,
+    props.t,
+    () => void loadBrowserEntries(browserPath()),
+  )
 
   const [gitStatusEntries, setGitStatusEntries] = createSignal<GitFileStatus[] | null>(null)
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
@@ -394,7 +412,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
       setGitStatusEntries(Array.isArray(list) ? list : [])
     } catch (error) {
-      setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
+      setGitStatusError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.gitStatusFailed"))
       setGitStatusEntries([])
     } finally {
       setGitStatusLoading(false)
@@ -411,7 +429,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const list = gitStatusEntries() || []
     const entry = list.find((item) => item.path === path) || null
     if (entry?.status === "deleted") {
-      setGitSelectedError("Deleted file diff is not available yet")
+      setGitSelectedError(props.t("instanceShell.rightPanel.errors.diffNotAvailable"))
       setGitSelectedLoading(false)
       return
     }
@@ -426,14 +444,14 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
       if (type && type !== "text") {
-        throw new Error("Binary file cannot be displayed")
+        throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
       }
       if (encoding === "base64") {
-        throw new Error("Binary file cannot be displayed")
+        throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
       }
       const afterText = typeof (content as any)?.content === "string" ? ((content as any).content as string) : null
       if (afterText === null) {
-        throw new Error("Unsupported file type")
+        throw new Error(props.t("instanceShell.rightPanel.errors.unsupportedType"))
       }
 
       setGitSelectedAfter(afterText)
@@ -456,7 +474,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       }
       setGitSelectedBefore(beforeText)
     } catch (error) {
-      setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
+      setGitSelectedError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.fileChangesFailed"))
     } finally {
       setGitSelectedLoading(false)
     }
@@ -534,43 +552,103 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setBrowserPath(normalized)
       setBrowserEntries(Array.isArray(nodes) ? nodes : [])
     } catch (error) {
-      setBrowserError(error instanceof Error ? error.message : "Failed to load files")
+      setBrowserError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.filesLoadFailed"))
       setBrowserEntries([])
     } finally {
       setBrowserLoading(false)
     }
   }
 
-  const openBrowserFile = async (path: string) => {
-    setBrowserSelectedPath(path)
+  const getBlobUrlForPath = async (relativePath: string): Promise<string | null> => {
+    try {
+      const resolved = resolveBrowserPath(browserPath(), relativePath)
+      if (!resolved) return null
+      const cache = mdImageBlobUrls()
+      const cached = cache.get(resolved)
+      if (cached) return cached
+      const { promise } = serverApi.downloadWorkspaceFile(
+        props.instanceId,
+        resolved,
+        undefined,
+        { worktree: worktreeSlugForViewer() },
+      )
+      const result = await promise
+      setMdImageBlobUrls((prev) => new Map(prev).set(resolved, result.blobUrl))
+      return result.blobUrl
+    } catch {
+      return null
+    }
+  }
+
+  const resolveBrowserPath = (currentDir: string, relativePath: string): string | null => {
+    const baseParts = currentDir.split("/").filter(Boolean)
+    const relParts = relativePath.replace(/^\.?\//, "").split("/").filter(Boolean)
+    for (const part of relParts) {
+      if (part === "..") {
+        if (baseParts.length === 0) return null
+        baseParts.pop()
+      } else if (part !== ".") {
+        baseParts.push(part)
+      }
+    }
+    return baseParts.join("/")
+  }
+
+  const openBrowserFile = async (filePath: string) => {
+    setBrowserSelectedPath(filePath)
     setBrowserSelectedLoading(true)
     setBrowserSelectedError(null)
     setBrowserSelectedContent(null)
     setBrowserSelectedDirty(false)
     setBrowserSelectedOriginalContent(null)
+    setBrowserSelectedBlobUrl(null)
+    setBrowserSelectedMimeType(null)
+
+    // Revoke previous blob URL to prevent memory leaks
+    const prevBlobUrl = browserSelectedBlobUrl()
+    if (prevBlobUrl) {
+      URL.revokeObjectURL(prevBlobUrl)
+    }
+
+    // Revoke all markdown image blob URLs
+    mdImageBlobUrls().forEach((url) => URL.revokeObjectURL(url))
+    setMdImageBlobUrls(new Map())
 
     // Phone: treat file selection as a commit action and close the overlay.
     if (props.isPhoneLayout()) {
       setFilesListOpen(false)
     }
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") {
-        throw new Error("Binary file cannot be displayed")
+      if (isBinaryFile(filePath)) {
+        const { promise } = serverApi.downloadWorkspaceFile(
+          props.instanceId,
+          filePath,
+          undefined,
+          { worktree: worktreeSlugForViewer() },
+        )
+        const result = await promise
+        setBrowserSelectedBlobUrl(result.blobUrl)
+        setBrowserSelectedMimeType(inferMimeType(filePath))
+        setBrowserSelectedContent("")
+      } else {
+        const content = await requestData<FileContent>(browserClient().file.read({ path: filePath }), "file.read")
+        const type = (content as any)?.type
+        const encoding = (content as any)?.encoding
+        if (type && type !== "text") {
+          throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
+        }
+        if (encoding === "base64") {
+          throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
+        }
+        const text = (content as any)?.content
+        if (typeof text !== "string") {
+          throw new Error(props.t("instanceShell.rightPanel.errors.unsupportedType"))
+        }
+        setBrowserSelectedContent(text)
+        setBrowserSelectedOriginalContent(text) // Track original content for conflict detection
       }
-      if (encoding === "base64") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      const text = (content as any)?.content
-      if (typeof text !== "string") {
-        throw new Error("Unsupported file type")
-      }
-      setBrowserSelectedContent(text)
-      setBrowserSelectedOriginalContent(text) // Track original content for conflict detection
     } catch (error) {
-      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
+      setBrowserSelectedError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.fileReadFailed"))
     } finally {
       setBrowserSelectedLoading(false)
     }
@@ -614,7 +692,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     setBrowserSelectedSaving(true)
     try {
-      await serverApi.writeWorkspaceFile(props.instanceId, path, content)
+      await serverApi.writeWorkspaceFile(props.instanceId, path, content, worktreeSlugForViewer())
       setBrowserSelectedContent(content)
       setBrowserSelectedOriginalContent(content) // Update original to match saved
       setBrowserSelectedDirty(false)
@@ -624,7 +702,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       })
       return true
     } catch (error) {
-      setBrowserSelectedError(error instanceof Error ? error.message : "Failed to save file")
+      setBrowserSelectedError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.fileSaveFailed"))
       showToastNotification({
         message: props.t("instanceShell.rightPanel.toast.saveError"),
         variant: "error",
@@ -673,11 +751,21 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   createEffect(() => {
-    if (rightPanelTab() === "files") return
+    if (rightPanelTab() !== "files") return
     setBrowserSelectedContent(null)
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
     setBrowserSelectedDirty(false)
+  })
+
+  // Re-fetch selected file content when returning to files tab
+  createEffect(() => {
+    if (rightPanelTab() !== "files") return
+    const path = browserSelectedPath()
+    if (!path) return
+    if (browserSelectedContent() !== null) return
+    if (browserSelectedLoading()) return
+    void openBrowserFile(path)
   })
 
   createEffect(() => {
@@ -757,20 +845,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         const type = (content as any)?.type
         const encoding = (content as any)?.encoding
         if (type && type !== "text") {
-          throw new Error("Binary file cannot be displayed")
+          throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
         }
         if (encoding === "base64") {
-          throw new Error("Binary file cannot be displayed")
+          throw new Error(props.t("instanceShell.rightPanel.errors.binaryFile"))
         }
         const text = (content as any)?.content
         if (typeof text !== "string") {
-          throw new Error("Unsupported file type")
+          throw new Error(props.t("instanceShell.rightPanel.errors.unsupportedType"))
         }
         setBrowserSelectedContent(text)
         setBrowserSelectedOriginalContent(text) // Update original content after refresh
         setBrowserSelectedDirty(false) // Clear dirty after refresh
       } catch (error) {
-        setBrowserSelectedError(error instanceof Error ? error.message : "Failed to read file")
+        setBrowserSelectedError(error instanceof Error ? error.message : props.t("instanceShell.rightPanel.errors.fileReadFailed"))
       } finally {
         setBrowserSelectedLoading(false)
       }
@@ -950,6 +1038,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedError={browserSelectedError}
               browserSelectedDirty={browserSelectedDirty}
               browserSelectedSaving={browserSelectedSaving}
+              browserSelectedBlobUrl={browserSelectedBlobUrl}
+              browserSelectedMimeType={browserSelectedMimeType}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
@@ -963,6 +1053,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onResizeMouseDown={handleSplitResizeMouseDown("files")}
               onResizeTouchStart={handleSplitResizeTouchStart("files")}
               isPhoneLayout={props.isPhoneLayout}
+              onUpload={(targetPath, file) => uploadFile(targetPath, file)}
+              onDownload={(relativePath) => downloadFile(relativePath)}
+              onDelete={(relativePath) => deleteFile(relativePath, browserSelectedDirty())}
+              operationState={operation()}
+              onResetOperation={resetOperation}
+              onGetBlobUrl={(relativePath: string) => getBlobUrlForPath(relativePath)}
             />
           </Suspense>
         </Show>

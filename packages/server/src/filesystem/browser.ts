@@ -89,6 +89,52 @@ export class FileSystemBrowser {
     fs.writeFileSync(resolved, contents, "utf-8")
   }
 
+  deleteFile(relativePath: string): void {
+    if (this.unrestricted) {
+      throw new Error("deleteFile is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    const stats = fs.statSync(resolved)
+    if (stats.isDirectory()) {
+      throw new Error("Cannot delete directory: folder deletion is not supported")
+    }
+    fs.unlinkSync(resolved)
+  }
+
+  resolvePath(relativePath: string): string {
+    if (this.unrestricted) {
+      throw new Error("resolvePath is not available in unrestricted mode")
+    }
+    return this.toRestrictedAbsolute(relativePath)
+  }
+
+  async uploadFile(relativePath: string, fileStream: NodeJS.ReadableStream, overwrite = false): Promise<{ path: string; size: number }> {
+    if (this.unrestricted) {
+      throw new Error("uploadFile is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    if (!overwrite && fs.existsSync(resolved)) {
+      throw new Error("File already exists")
+    }
+    const dir = path.dirname(resolved)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    let writtenBytes = 0
+    const writeStream = fs.createWriteStream(resolved)
+    fileStream.on("data", (chunk) => {
+      writtenBytes += chunk.length
+    })
+    return new Promise((resolve, reject) => {
+      writeStream.on("finish", () => {
+        resolve({ path: relativePath, size: writtenBytes })
+      })
+      writeStream.on("error", reject)
+      fileStream.on("error", reject)
+      fileStream.pipe(writeStream)
+    })
+  }
+
   readFile(relativePath: string): string {
     if (this.unrestricted) {
       throw new Error("readFile is not available in unrestricted mode")
