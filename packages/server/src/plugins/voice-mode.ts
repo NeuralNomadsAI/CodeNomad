@@ -77,7 +77,10 @@ export class VoiceModeManager {
       this.aggregateByInstance.delete(instanceId)
     }
 
-    this.options.logger.debug({ instanceId, enabled }, "Broadcasting aggregate voice mode")
+    this.options.logger.debug(
+      { instanceId, enabled },
+      "Broadcasting aggregate voice mode",
+    )
     this.options.channel.send(instanceId, buildVoiceModeEvent(enabled))
   }
 }

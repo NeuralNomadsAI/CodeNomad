@@ -54,6 +54,9 @@ interface HttpServerDeps {
   speechService: SpeechService
   sidecarManager: SideCarManager
   authManager: AuthManager
+  clientConnectionManager: ClientConnectionManager
+  pluginChannel: PluginChannelManager
+  voiceModeManager: VoiceModeManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -182,13 +185,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     logger: deps.logger.child({ component: "background-processes" }),
   })
-  const clientConnectionManager = new ClientConnectionManager(deps.logger.child({ component: "client-connections" }))
-  const pluginChannel = new PluginChannelManager(deps.logger.child({ component: "plugin-channel" }))
-  const voiceModeManager = new VoiceModeManager({
-    connections: clientConnectionManager,
-    channel: pluginChannel,
-    logger: deps.logger.child({ component: "voice-mode" }),
-  })
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
@@ -268,7 +264,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
     logger: sseLogger,
-    connectionManager: clientConnectionManager,
+    connectionManager: deps.clientConnectionManager,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
@@ -289,8 +285,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
     eventBus: deps.eventBus,
     logger: proxyLogger,
-    channel: pluginChannel,
-    voiceModeManager,
+    channel: deps.pluginChannel,
+    voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
@@ -356,7 +352,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
     stop: () => {
       closeSseClients()
-      clientConnectionManager.shutdown()
       return app.close()
     },
   }
