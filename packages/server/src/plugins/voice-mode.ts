@@ -19,13 +19,13 @@ export class VoiceModeManager {
     })
   }
 
-  setEnabled(instanceId: string, connection: ClientConnectionRef, enabled: boolean): void {
+  setEnabled(instanceId: string, connection: ClientConnectionRef, enabled: boolean): boolean {
     if (enabled && !this.options.connections.isConnected(connection)) {
       this.options.logger.debug(
         { instanceId, clientId: connection.clientId, connectionId: connection.connectionId },
         "Ignoring voice mode enable for disconnected client connection",
       )
-      return
+      return false
     }
 
     const key = getConnectionKey(connection)
@@ -44,6 +44,7 @@ export class VoiceModeManager {
 
     this.options.logger.debug({ instanceId, clientId: connection.clientId, connectionId: connection.connectionId, enabled }, "Voice mode updated for client connection")
     this.publishIfChanged(instanceId)
+    return true
   }
 
   syncInstance(instanceId: string): void {
