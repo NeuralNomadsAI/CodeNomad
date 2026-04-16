@@ -102,15 +102,22 @@ export async function listWorktrees(params: {
   logger?: LogLike
 }): Promise<WorktreeDescriptor[]> {
   const { repoRoot, workspaceFolder, logger } = params
-  const rootDescriptor: WorktreeDescriptor = { slug: "root", directory: repoRoot, kind: "root" }
 
   const result = await runGit(["worktree", "list", "--porcelain"], workspaceFolder)
   if (!result.ok) {
+    const rootDescriptor: WorktreeDescriptor = { slug: "root", directory: repoRoot, kind: "root" }
     logger?.debug?.({ repoRoot, err: result.error }, "Failed to list git worktrees; returning root only")
     return [rootDescriptor]
   }
 
   const records = parseWorktreePorcelain(result.stdout)
+  const rootRecord = records.find((record) => path.resolve(record.worktree) === path.resolve(repoRoot))
+  const rootDescriptor: WorktreeDescriptor = {
+    slug: "root",
+    directory: repoRoot,
+    kind: "root",
+    branch: rootRecord?.branch,
+  }
 
   const worktrees: WorktreeDescriptor[] = [rootDescriptor]
   const seen = new Set<string>(["root"])

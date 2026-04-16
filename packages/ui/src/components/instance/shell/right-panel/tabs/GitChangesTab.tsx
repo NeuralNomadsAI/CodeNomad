@@ -9,7 +9,7 @@ import {
   type JSX,
 } from "solid-js"
 
-import { ChevronDown, ChevronRight, GitBranch, RefreshCw, Split } from "lucide-solid"
+import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
@@ -55,7 +55,6 @@ interface GitChangesTabProps {
   commitSubmitting: Accessor<boolean>
   onCommitMessageInput: (value: string) => void
   onSubmitCommit: () => void
-  worktreeLabel: Accessor<string | null>
   branchLabel: Accessor<string | null>
 
   stagedOpen: Accessor<boolean>
@@ -298,14 +297,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 </span>
                 <span class="git-change-section-title-row">
                   <span class="git-change-section-title">{props.t("instanceShell.gitChanges.sections.staged")}</span>
-                  <Show when={props.worktreeLabel()}>
-                    {(label) => (
-                      <span class="status-indicator session-status-list worktree-indicator git-change-section-badge" title={`Worktree: ${label()}`}>
-                        <Split class="w-3.5 h-3.5" aria-hidden="true" />
-                        <span class="worktree-indicator-label">{label()}</span>
-                      </span>
-                    )}
-                  </Show>
                   <Show when={props.branchLabel()}>
                     {(label) => (
                       <span class="status-indicator session-status-list worktree-indicator git-change-section-badge" title={`Branch: ${label()}`}>

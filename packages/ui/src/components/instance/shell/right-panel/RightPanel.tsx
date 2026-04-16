@@ -388,12 +388,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return getWorktrees(props.instanceId).find((worktree) => worktree.slug === slug) ?? null
   })
 
-  const gitChangesWorktreeLabel = createMemo(() => {
-    const slug = gitChangesWorktreeSlug()
-    if (!slug) return null
-    return slug === "root" ? "Workspace" : slug
-  })
-
   const gitChangesBranchLabel = createMemo(() => {
     const branch = gitChangesWorktree()?.branch?.trim()
     return branch || null
@@ -881,7 +875,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               commitSubmitting={gitCommitSubmitting}
               onCommitMessageInput={setGitCommitMessage}
               onSubmitCommit={() => void submitGitCommit()}
-              worktreeLabel={gitChangesWorktreeLabel}
               branchLabel={gitChangesBranchLabel}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
