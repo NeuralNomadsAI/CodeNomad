@@ -27,6 +27,7 @@ import {
   getDefaultWorktreeSlug,
   getGitRepoStatus,
   getOrCreateWorktreeClient,
+  getWorktreeSlugForDirectory,
   getWorktreeSlugForSession,
   getWorktrees,
 } from "../../../../stores/worktrees"
@@ -369,6 +370,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const worktreeSlugForViewer = createMemo(() => {
+    const activeSessionDirectory = (props.activeSession() as { directory?: string } | null)?.directory
+    const slugFromActiveSessionDirectory = getWorktreeSlugForDirectory(props.instanceId, activeSessionDirectory)
+    if (slugFromActiveSessionDirectory) {
+      return slugFromActiveSessionDirectory
+    }
+
     const implicitWorkspaceWorktreeSlug =
       getWorktrees(props.instanceId).find((worktree) => worktree.directory === props.instance.folder && worktree.slug !== "root")?.slug ??
       null
