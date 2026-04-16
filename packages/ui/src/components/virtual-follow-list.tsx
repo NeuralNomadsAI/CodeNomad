@@ -175,7 +175,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
   let lastObservedScrollOffset = 0
-  let pendingBottomPinFrame: number | null = null
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -283,28 +282,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
     setAutoScroll(true)
-
-    if (immediate) {
-      if (pendingBottomPinFrame !== null) {
-        cancelAnimationFrame(pendingBottomPinFrame)
-      }
-      pendingBottomPinFrame = requestAnimationFrame(() => {
-        pendingBottomPinFrame = requestAnimationFrame(() => {
-          pendingBottomPinFrame = null
-          if (!autoScroll() || effectiveSuspendAutoPinToBottom()) return
-          const element = scrollElement()
-          if (!element) return
-          const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-          if (Math.abs(element.scrollTop - maxScrollTop) <= 1) {
-            lastObservedScrollOffset = element.scrollTop
-            return
-          }
-          element.scrollTop = maxScrollTop
-          lastObservedScrollOffset = maxScrollTop
-          updateScrollButtons()
-        })
-      })
-    }
   }
 
   function scrollToTop(immediate = true) {
@@ -482,13 +459,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleResize = () => updateAutoPinHold()
     window.addEventListener("resize", handleResize)
     onCleanup(() => window.removeEventListener("resize", handleResize))
-  })
-
-  onCleanup(() => {
-    if (pendingBottomPinFrame !== null) {
-      cancelAnimationFrame(pendingBottomPinFrame)
-      pendingBottomPinFrame = null
-    }
   })
 
   return (
