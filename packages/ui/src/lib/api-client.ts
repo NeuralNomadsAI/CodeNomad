@@ -105,6 +105,25 @@ function logHttp(message: string, context?: Record<string, unknown>) {
   httpLogger.info(message)
 }
 
+async function readErrorMessage(response: Response): Promise<string> {
+  const text = await response.text()
+  if (!text) return `Request failed with ${response.status}`
+
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown }
+    if (typeof parsed?.error === "string" && parsed.error.trim()) {
+      return parsed.error
+    }
+    if (typeof parsed?.message === "string" && parsed.message.trim()) {
+      return parsed.message
+    }
+  } catch {
+    // Keep the original body for plain-text responses.
+  }
+
+  return text
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
   const headers = normalizeHeaders(init?.headers)
@@ -119,7 +138,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
-      const message = await response.text()
+      const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
       throw new Error(message || `Request failed with ${response.status}`)
     }
@@ -148,7 +167,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
   const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
-    const message = await response.text()
+    const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
     throw new Error(message || `Request failed with ${response.status}`)
   }

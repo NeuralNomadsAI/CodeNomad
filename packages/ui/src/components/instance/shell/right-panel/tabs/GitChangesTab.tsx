@@ -3,9 +3,7 @@ import {
   Show,
   Suspense,
   createMemo,
-  createSignal,
   lazy,
-  onCleanup,
   type Accessor,
   type Component,
   type JSX,
@@ -48,7 +46,6 @@ interface GitChangesTabProps {
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
-  onOpenFile: (itemId: string) => void
   onRowClick: (item: GitChangeListItem, event: MouseEvent) => void
   onRefresh: () => void
   onInsertContext: (item: GitChangeListItem, selection: { startLine: number; endLine: number }) => void
@@ -118,45 +115,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   })
 
   const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
-  const [revealedActionRowId, setRevealedActionRowId] = createSignal<string | null>(null)
-  const [hoveredRowId, setHoveredRowId] = createSignal<string | null>(null)
-  const [hoveredActionZoneRowId, setHoveredActionZoneRowId] = createSignal<string | null>(null)
-  let hideActionRowTimer: ReturnType<typeof setTimeout> | null = null
-
-  const clearHideActionRowTimer = () => {
-    if (hideActionRowTimer) {
-      clearTimeout(hideActionRowTimer)
-      hideActionRowTimer = null
-    }
-  }
-
-  const revealActionRow = (rowId: string) => {
-    clearHideActionRowTimer()
-    setRevealedActionRowId(rowId)
-  }
-
-  const scheduleHideActionRow = (rowId: string) => {
-    clearHideActionRowTimer()
-    hideActionRowTimer = setTimeout(() => {
-      if (hoveredRowId() === rowId || hoveredActionZoneRowId() === rowId) {
-        hideActionRowTimer = null
-        return
-      }
-      setRevealedActionRowId((current) => (current === rowId ? null : current))
-      hideActionRowTimer = null
-    }, 500)
-  }
-
-  const actionRowVisible = (rowId: string) => {
-    if (!props.isPhoneLayout()) {
-      return revealedActionRowId() === rowId
-    }
-    return true
-  }
-
-  onCleanup(() => {
-    clearHideActionRowTimer()
-  })
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
@@ -255,30 +213,18 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
 
       return (
         <div
-          class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${isBulkSelected() ? "git-change-list-item-bulk-selected" : ""} ${actionRowVisible(item.id) ? "git-change-list-item-action-visible" : ""}`}
+          class={`file-list-item git-change-list-item ${props.selectedItemId() === item.id ? "file-list-item-active" : ""} ${isBulkSelected() ? "git-change-list-item-bulk-selected" : ""}`}
           onMouseDown={(event) => {
             if (event.shiftKey || event.ctrlKey || event.metaKey) {
               event.preventDefault()
             }
           }}
           onClick={(event) => props.onRowClick(item, event)}
-          onMouseEnter={() => {
-            setHoveredRowId(item.id)
-            revealActionRow(item.id)
-          }}
-          onMouseLeave={() => {
-            setHoveredRowId((current) => (current === item.id ? null : current))
-            if (hoveredActionZoneRowId() === item.id) return
-            scheduleHideActionRow(item.id)
-          }}
           title={item.path}
         >
-          <div class="file-list-item-content">
-            <div class="git-change-list-item-text" title={item.path}>
-              <span class="git-change-list-item-name">{item.displayName}</span>
-              <Show when={item.parentPath}>
-                <span class="git-change-list-item-parent">{item.parentPath}</span>
-              </Show>
+          <div class="file-list-item-content" title={item.path}>
+            <div class="file-list-item-path" title={item.path}>
+              <span class="file-path-text">{item.path}</span>
             </div>
             <div class="git-change-list-item-right">
               <div class="file-list-item-stats">
@@ -287,23 +233,18 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               </div>
             </div>
           </div>
-          <div
-            class="git-change-list-item-actions-zone"
-            onClick={(event) => {
-              event.stopPropagation()
-              triggerAction()
-            }}
-            onMouseEnter={() => {
-              setHoveredActionZoneRowId(item.id)
-              revealActionRow(item.id)
-            }}
-            onMouseLeave={() => {
-              setHoveredActionZoneRowId((current) => (current === item.id ? null : current))
-              scheduleHideActionRow(item.id)
-            }}
-          >
+          <div class="git-change-list-item-actions-zone">
             <div class="git-change-list-item-actions">
-              <span class="git-change-row-action" title={actionLabel} aria-hidden="true">
+              <button
+                type="button"
+                class="git-change-row-action"
+                title={actionLabel}
+                aria-label={actionLabel}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  triggerAction()
+                }}
+              >
                 <span
                   class={`git-change-row-action-glyph ${item.section === "staged" ? "git-change-row-action-glyph-minus" : "git-change-row-action-glyph-plus"}`}
                   aria-hidden="true"
@@ -313,7 +254,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                     <span class="git-change-row-action-bar git-change-row-action-bar-vertical" />
                   </Show>
                 </span>
-              </span>
+              </button>
             </div>
           </div>
         </div>

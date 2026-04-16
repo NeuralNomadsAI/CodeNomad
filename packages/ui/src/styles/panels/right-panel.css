@@ -277,7 +277,7 @@
 }
 
 .git-change-commit-input {
-  @apply w-full min-h-[32px] px-2 py-1.5 text-xs rounded border border-base resize-y;
+  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs rounded border border-base resize-y;
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -295,19 +295,19 @@
 .git-change-commit-button-overlay {
   position: absolute;
   bottom: 8px;
-  right: 16px;
+  right: 8px;
   z-index: 1;
   align-self: auto;
   padding: 0.25rem 0.5rem;
-  opacity: 0.35;
 }
 
 .git-change-commit-button-overlay:focus-visible {
-  opacity: 1;
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
 }
 
 .git-change-commit-button-overlay:hover {
-  opacity: 1;
+  background-color: var(--surface-hover);
 }
 
 .git-change-commit-button:hover:not(:disabled) {
@@ -316,7 +316,7 @@
 
 .git-change-commit-button:disabled {
   opacity: 0.5;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 .git-change-section {
@@ -363,23 +363,9 @@
   position: relative;
 }
 
-.git-change-list-item .file-list-item-content {
-  transition: padding-inline-end 280ms ease;
-}
-
-.git-change-list-item-text {
-  @apply flex flex-col min-w-0 flex-1;
-}
-
 .git-change-list-item-right {
   @apply flex items-center shrink-0;
   min-width: 0;
-}
-
-.git-change-list-item .file-list-item-stats {
-  transition:
-    transform 280ms ease,
-    opacity 280ms ease;
 }
 
 .git-change-list-item-actions-zone {
@@ -387,33 +373,17 @@
   position: absolute;
   inset-block: 0;
   inset-inline-end: 0;
-  width: 30px;
-  pointer-events: auto;
+  width: 34px;
   z-index: 2;
 }
 
 .git-change-list-item-actions {
   @apply flex items-center justify-center;
-  width: 28px;
-  opacity: 0;
-  transform: translateX(10px);
-  pointer-events: none;
-  transition:
-    transform 280ms ease,
-    opacity 280ms ease;
+  width: 32px;
 }
 
-.git-change-list-item-action-visible .git-change-list-item-actions-zone {
-  opacity: 1;
-}
-
-.git-change-list-item-action-visible .git-change-list-item-actions {
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.git-change-list-item-action-visible .file-list-item-content {
-  padding-inline-end: 1.5rem;
+.git-change-list-item .file-list-item-content {
+  padding-inline-end: 2rem;
 }
 
 .git-change-row-action {
@@ -424,7 +394,6 @@
   padding: 0;
   position: relative;
   overflow: hidden;
-  pointer-events: none;
 }
 
 .git-change-row-action:hover {
@@ -433,10 +402,9 @@
   color: white;
 }
 
-.git-change-list-item-actions-zone:hover .git-change-row-action {
-  background-color: var(--surface-hover);
-  border-color: var(--border-base);
-  color: white;
+.git-change-row-action:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
 }
 
 .git-change-row-action-glyph {
@@ -469,17 +437,7 @@
 
 @media (hover: none), (pointer: coarse) {
   .git-change-list-item-actions-zone {
-    width: 28px;
-  }
-
-  .git-change-list-item-actions {
-    opacity: 1;
-    transform: translateX(0);
-  }
-
-  .git-change-list-item .file-list-item-stats {
-    transform: none;
-    opacity: 1;
+    width: 34px;
   }
 }
 

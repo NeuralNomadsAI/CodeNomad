@@ -10,7 +10,7 @@ import {
   type Component,
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
-import type { FileContent, FileNode, File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
+import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -21,24 +21,15 @@ import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
-import type {
-  DiffContextMode,
-  DiffViewMode,
-  DiffWordWrapMode,
-  GitChangeEntry,
-  GitChangeListItem,
-  GitSelectionDescriptor,
-  RightPanelTab,
-} from "./types"
+import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
-import { serverEvents } from "../../../../lib/server-events"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
-import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
+import { useGitChanges } from "./useGitChanges"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
@@ -369,7 +360,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   onCleanup(() => {
     stopSplitResize()
-    clearGitPassivePollingTimer()
   })
 
   const worktreeSlugForViewer = createMemo(() => {
@@ -382,133 +372,38 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
 
-  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
-  const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
-  const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
-  const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
-  const [gitBulkSelectedItemIds, setGitBulkSelectedItemIds] = createSignal<Set<string>>(new Set())
-  const [gitBulkSelectionAnchorId, setGitBulkSelectionAnchorId] = createSignal<string | null>(null)
-  const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
-  const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
-  const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
-  const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
-  const [gitCommitMessage, setGitCommitMessage] = createSignal("")
-  const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
-  let gitStatusRequestVersion = 0
-  let gitDiffRequestVersion = 0
-  let passiveGitRefreshInFlight = false
-  let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
-  let gitPassivePollingTimer: ReturnType<typeof setInterval> | null = null
-
-  const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
-
-  const clearGitBulkSelection = () => {
-    setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
-    setGitBulkSelectionAnchorId(null)
-  }
-
-  const toggleGitBulkSelection = (itemId: string) => {
-    setGitBulkSelectedItemIds((current) => {
-      const next = new Set(current)
-      if (next.has(itemId)) next.delete(itemId)
-      else next.add(itemId)
-      return next
-    })
-  }
-
-  const addGitBulkRange = (anchorId: string, itemId: string) => {
-    const items = gitListItems()
-    const anchorIndex = items.findIndex((entry) => entry.id === anchorId)
-    const itemIndex = items.findIndex((entry) => entry.id === itemId)
-    if (anchorIndex < 0 || itemIndex < 0) {
-      setGitBulkSelectedItemIds((current) => {
-        const next = new Set(current)
-        next.add(itemId)
-        return next
-      })
-      return
-    }
-
-    const start = Math.min(anchorIndex, itemIndex)
-    const end = Math.max(anchorIndex, itemIndex)
-    const rangeIds = items.slice(start, end + 1).map((entry) => entry.id)
-    setGitBulkSelectedItemIds((current) => {
-      const next = new Set(current)
-      for (const rangeId of rangeIds) {
-        next.add(rangeId)
-      }
-      return next
-    })
-  }
-
-  const describeGitSelection = (itemId: string | null): GitSelectionDescriptor => {
-    if (!itemId) {
-      return { itemId: null, path: null, section: null }
-    }
-    const match = gitListItems().find((item) => item.id === itemId) ?? null
-    return {
-      itemId,
-      path: match?.path ?? null,
-      section: match?.section ?? null,
-    }
-  }
-
-  const resolveValidGitSelection = (selection: GitSelectionDescriptor): string | null => {
-    const items = gitListItems()
-    if (items.length === 0) return null
-    if (selection.itemId && items.some((item) => item.id === selection.itemId)) return selection.itemId
-    if (selection.path && selection.section) {
-      const oppositeSection = selection.section === "staged" ? "unstaged" : "staged"
-      const moved = items.find((item) => item.path === selection.path && item.section === oppositeSection)
-      if (moved) return moved.id
-      const samePath = items.find((item) => item.path === selection.path)
-      if (samePath) return samePath.id
-    }
-    return gitMostChangedPath()
-  }
-
-  const describeGitSelectionFingerprint = (itemId: string | null) => {
-    if (!itemId) return null
-    const item = gitListItems().find((entry) => entry.id === itemId) ?? null
-    if (!item) return null
-    return `${item.path}::${item.originalPath ?? ""}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
-  }
-
-  const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
-    const startLine = selection?.startLine ?? 1
-    const endLine = selection?.endLine ?? startLine
-    const comment = `<!-- Git change context: ${item.path} lines ${startLine}-${endLine} -->`
-    props.promptInputApi()?.insertComment(comment)
-  }
-
-  const gitSelectedItem = createMemo(() => {
-    const selectedId = gitSelectedItemId()
-    if (!selectedId) return null
-    return gitListItems().find((item) => item.id === selectedId) ?? null
-  })
-
-  const gitMostChangedPath = createMemo<string | null>(() => {
-    const items = gitListItems()
-    if (items.length === 0) return null
-    const candidates = items.filter((item) => item && item.status !== "deleted")
-    if (candidates.length === 0) return null
-    const best = candidates.reduce((currentBest, item) => {
-      const bestScore = (currentBest?.additions ?? 0) + (currentBest?.deletions ?? 0)
-      const score = (item?.additions ?? 0) + (item?.deletions ?? 0)
-      if (score > bestScore) return item
-      if (score < bestScore) return currentBest
-      return String(item.id || "").localeCompare(String(currentBest?.id || "")) < 0 ? item : currentBest
-    }, candidates[0])
-    return typeof best?.id === "string" ? best.id : null
+  const {
+    gitStatusEntries,
+    gitStatusLoading,
+    gitStatusError,
+    gitSelectedItemId,
+    gitBulkSelectedItemIds,
+    gitSelectedLoading,
+    gitSelectedError,
+    gitSelectedBefore,
+    gitSelectedAfter,
+    gitCommitMessage,
+    gitCommitSubmitting,
+    gitMostChangedItemId,
+    setGitCommitMessage,
+    handleGitRowClick,
+    refreshGitStatus,
+    insertGitChangeContext,
+    submitGitCommit,
+    stageGitFile,
+    unstageGitFile,
+  } = useGitChanges({
+    t: props.t,
+    instanceId: props.instanceId,
+    rightPanelTab,
+    worktreeSlug: worktreeSlugForViewer,
+    isPhoneLayout: props.isPhoneLayout,
+    promptInputApi: props.promptInputApi,
+    closeGitList: () => setGitChangesListOpen(false),
   })
 
   createEffect(() => {
-    // Reset tab state when worktree context changes.
     worktreeSlugForViewer()
-    gitStatusRequestVersion += 1
-    gitDiffRequestVersion += 1
-    passiveGitRefreshInFlight = false
-    pendingGitPassiveRefreshOptions = null
     setBrowserPath(".")
     setBrowserEntries(null)
     setBrowserError(null)
@@ -516,297 +411,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedError(null)
     setBrowserSelectedLoading(false)
-
-    setGitStatusEntries(null)
-    setGitStatusError(null)
-    setGitStatusLoading(false)
-    setGitSelectedItemId(null)
-    clearGitBulkSelection()
-    setGitSelectedLoading(false)
-    setGitSelectedError(null)
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-    setGitCommitMessage("")
-    setGitCommitSubmitting(false)
   })
-
-  const loadGitStatus = async (force = false) => {
-    if (!force && gitStatusEntries() !== null) return
-    const slug = worktreeSlugForViewer()
-    const client = getOrCreateWorktreeClient(props.instanceId, slug)
-    const requestVersion = ++gitStatusRequestVersion
-    setGitStatusLoading(true)
-    setGitStatusError(null)
-    try {
-      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status(), "file.status")
-      const detailPromise = serverApi.fetchWorktreeGitStatus(props.instanceId, slug)
-      const detailList = await detailPromise
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== worktreeSlugForViewer()) return
-
-      const sdkResult = await Promise.race([
-        sdkStatusPromise.then((value) => ({ kind: "fulfilled" as const, value })),
-        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 1500)),
-      ]).catch(() => null)
-
-      const sdkList = sdkResult && sdkResult.kind === "fulfilled" ? sdkResult.value : null
-      setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
-    } catch (error) {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== worktreeSlugForViewer()) return
-      setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
-      setGitStatusEntries([])
-    } finally {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== worktreeSlugForViewer()) return
-      setGitStatusLoading(false)
-    }
-  }
-
-  const clearSelectedGitDiff = () => {
-    setGitSelectedError(null)
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-  }
-
-  const clearSelectedGitDiffAndSelection = () => {
-    setGitSelectedItemId(null)
-    clearGitBulkSelection()
-    setGitSelectedLoading(false)
-    clearSelectedGitDiff()
-  }
-
-  const pruneGitBulkSelection = () => {
-    const validIds = new Set(gitListItems().map((item) => item.id))
-    setGitBulkSelectedItemIds((current) => {
-      if (current.size === 0) return current
-      const next = new Set<string>()
-      for (const itemId of current) {
-        if (validIds.has(itemId)) next.add(itemId)
-      }
-      return next.size === current.size ? current : next
-    })
-
-    const anchorId = gitBulkSelectionAnchorId()
-    if (anchorId && !validIds.has(anchorId)) {
-      setGitBulkSelectionAnchorId(null)
-    }
-  }
-
-  createEffect(() => {
-    gitListItems()
-    pruneGitBulkSelection()
-  })
-
-  const passiveRefreshGitStatus = async (options?: { forceReloadSelectedDiff?: boolean }) => {
-    if (rightPanelTab() !== "git-changes") return
-    if (passiveGitRefreshInFlight) {
-      pendingGitPassiveRefreshOptions = {
-        forceReloadSelectedDiff:
-          pendingGitPassiveRefreshOptions?.forceReloadSelectedDiff || options?.forceReloadSelectedDiff || false,
-      }
-      return
-    }
-    if (gitCommitSubmitting()) return
-
-    passiveGitRefreshInFlight = true
-    const refreshSelectionId = gitSelectedItemId()
-    const previousSelection = describeGitSelection(gitSelectedItemId())
-    const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
-    const hadSelectedDiff =
-      previousSelection.itemId !== null &&
-      (gitSelectedBefore() !== null || gitSelectedAfter() !== null || gitSelectedError() !== null)
-
-    try {
-      await loadGitStatus(true)
-      if (gitSelectedItemId() !== refreshSelectionId) {
-        return
-      }
-      const nextSelection = resolveValidGitSelection(previousSelection)
-      setGitSelectedItemId(nextSelection)
-
-      if (!nextSelection) {
-        clearSelectedGitDiff()
-        return
-      }
-
-      const nextFingerprint = describeGitSelectionFingerprint(nextSelection)
-      const shouldReloadSelectedDiff =
-        options?.forceReloadSelectedDiff ||
-        !hadSelectedDiff ||
-        previousFingerprint !== nextFingerprint ||
-        previousSelection.itemId === nextSelection
-
-      if (shouldReloadSelectedDiff) {
-        await openGitFile(nextSelection)
-      }
-    } finally {
-      passiveGitRefreshInFlight = false
-      if (pendingGitPassiveRefreshOptions) {
-        const nextOptions = pendingGitPassiveRefreshOptions
-        pendingGitPassiveRefreshOptions = null
-        void passiveRefreshGitStatus(nextOptions)
-      }
-    }
-  }
-
-  const clearGitPassivePollingTimer = () => {
-    if (gitPassivePollingTimer) {
-      clearInterval(gitPassivePollingTimer)
-      gitPassivePollingTimer = null
-    }
-  }
-
-  const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
-    const currentSelection = describeGitSelection(gitSelectedItemId())
-    const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
-    const selectedIds = gitBulkSelectedItemIds()
-    const selectedItems = gitListItems().filter((candidate) => selectedIds.has(candidate.id))
-    const bulkTargets = selectedItems.filter((candidate) => candidate.section === item.section)
-    const targetItems = bulkTargets.some((candidate) => candidate.id === item.id) ? bulkTargets : [item]
-    const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
-    try {
-      if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: targetPaths })
-      } else {
-        await serverApi.unstageWorktreeGitPaths(props.instanceId, worktreeSlugForViewer(), { paths: targetPaths })
-      }
-
-      await loadGitStatus(true)
-      clearGitBulkSelection()
-      const nextSelection = resolveValidGitSelection(fallbackSelection)
-      setGitSelectedItemId(nextSelection)
-      if (nextSelection) {
-        await openGitFile(nextSelection)
-      } else {
-        setGitSelectedError(null)
-        setGitSelectedBefore(null)
-        setGitSelectedAfter(null)
-      }
-    } catch (error) {
-      showToastNotification({
-        message: error instanceof Error ? error.message : `Failed to ${action} file`,
-        variant: "error",
-      })
-    }
-  }
-
-  const handleGitRowClick = (item: GitChangeListItem, event: MouseEvent) => {
-    if (event.shiftKey) {
-      event.preventDefault()
-      const anchorId = gitBulkSelectionAnchorId() ?? item.id
-      addGitBulkRange(anchorId, item.id)
-      return
-    }
-
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault()
-      toggleGitBulkSelection(item.id)
-      setGitBulkSelectionAnchorId(item.id)
-      return
-    }
-
-    clearGitBulkSelection()
-    setGitBulkSelectionAnchorId(item.id)
-    void openGitFile(item.id)
-  }
-
-  const submitGitCommit = async () => {
-    const message = gitCommitMessage().trim()
-    if (!message || gitCommitSubmitting()) return
-
-    setGitCommitSubmitting(true)
-    try {
-      await serverApi.commitWorktreeGitChanges(props.instanceId, worktreeSlugForViewer(), { message })
-      setGitCommitMessage("")
-      await loadGitStatus(true)
-      const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
-      setGitSelectedItemId(nextSelection)
-      if (nextSelection) {
-        await openGitFile(nextSelection)
-      } else {
-        setGitSelectedError(null)
-        setGitSelectedBefore(null)
-        setGitSelectedAfter(null)
-      }
-      showToastNotification({
-        message: props.t("instanceShell.gitChanges.commit.success"),
-        variant: "success",
-      })
-    } catch (error) {
-      showToastNotification({
-        message: error instanceof Error ? error.message : props.t("instanceShell.gitChanges.commit.error"),
-        variant: "error",
-      })
-    } finally {
-      setGitCommitSubmitting(false)
-    }
-  }
-
-  async function openGitFile(itemId: string) {
-    const requestVersion = ++gitDiffRequestVersion
-    setGitSelectedItemId(itemId)
-    setGitSelectedLoading(true)
-    setGitSelectedError(null)
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-
-    const item = gitListItems().find((entry) => entry.id === itemId) || null
-    if (!item) {
-      if (requestVersion !== gitDiffRequestVersion) return
-      clearSelectedGitDiffAndSelection()
-      return
-    }
-
-    // Phone: treat file selection as a commit action and close the overlay.
-    if (props.isPhoneLayout()) {
-      setGitChangesListOpen(false)
-    }
-
-    try {
-      const path = item?.path ?? ""
-      const diff = await serverApi.fetchWorktreeGitDiff(props.instanceId, worktreeSlugForViewer(), {
-        path,
-        originalPath: item.originalPath ?? null,
-        scope: item?.section ?? "unstaged",
-      })
-      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
-      if (diff.isBinary) {
-        setGitSelectedError(props.t("instanceShell.gitChanges.binaryViewer"))
-        return
-      }
-      setGitSelectedBefore(diff.before)
-      setGitSelectedAfter(diff.after)
-    } catch (error) {
-      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
-      setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
-    } finally {
-      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
-      setGitSelectedLoading(false)
-    }
-  }
-
-  createEffect(() => {
-    if (rightPanelTab() !== "git-changes") return
-    const items = gitListItems()
-    if (gitStatusEntries() === null) return
-    if (items.length === 0) return
-    if (gitSelectedItemId()) return
-    const next = gitMostChangedPath()
-    if (!next) return
-    void openGitFile(next)
-  })
-
-  const refreshGitStatus = async () => {
-    await loadGitStatus(true)
-    const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
-    setGitSelectedItemId(selected)
-    if (selected) {
-      void openGitFile(selected)
-    } else {
-      clearSelectedGitDiff()
-    }
-  }
 
   const bestDiffFile = createMemo<string | null>(() => {
     const diffs = props.activeSessionDiffs()
@@ -1006,57 +611,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
     setBrowserSelectedDirty(false)
-  })
-
-  let previousGitChangesActivationKey: string | null = null
-  createEffect(() => {
-    const tab = rightPanelTab()
-    const slug = worktreeSlugForViewer()
-    const activationKey = tab === "git-changes" ? `${props.instanceId}:${slug}` : null
-    if (!activationKey) {
-      previousGitChangesActivationKey = null
-      return
-    }
-    if (previousGitChangesActivationKey === activationKey) return
-    previousGitChangesActivationKey = activationKey
-    void passiveRefreshGitStatus()
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() !== "git-changes") return
-
-    const instanceId = props.instanceId
-    const unsubscribe = serverEvents.on("workspace.filesChanged", (event) => {
-      if (event.type !== "workspace.filesChanged") return
-      if (event.instanceId !== instanceId) return
-      if (!event.worktreeSlug) return
-      if (event.worktreeSlug !== worktreeSlugForViewer()) return
-      void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
-    })
-
-    onCleanup(() => {
-      unsubscribe()
-    })
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() !== "git-changes") {
-      clearGitPassivePollingTimer()
-      return
-    }
-
-    clearGitPassivePollingTimer()
-    gitPassivePollingTimer = setInterval(() => {
-      void passiveRefreshGitStatus()
-    }, 20_000)
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() === "git-changes") return
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-    setGitSelectedLoading(false)
-    setGitSelectedError(null)
   })
 
   const handleSelectChangesFile = (file: string, closeList: boolean) => {
@@ -1281,7 +835,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               selectedError={gitSelectedError}
               selectedBefore={gitSelectedBefore}
               selectedAfter={gitSelectedAfter}
-              mostChangedItemId={gitMostChangedPath}
+              mostChangedItemId={gitMostChangedItemId}
               scopeKey={gitScopeKey}
               diffViewMode={diffViewMode}
               diffContextMode={diffContextMode}
@@ -1289,12 +843,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onViewModeChange={setDiffViewMode}
               onContextModeChange={setDiffContextMode}
               onWordWrapModeChange={setDiffWordWrapMode}
-              onOpenFile={(path: string) => void openGitFile(path)}
               onRowClick={handleGitRowClick}
               onRefresh={() => void refreshGitStatus()}
               onInsertContext={insertGitChangeContext}
-              onStageFile={(item) => void mutateGitFile(item, "stage")}
-              onUnstageFile={(item) => void mutateGitFile(item, "unstage")}
+              onStageFile={stageGitFile}
+              onUnstageFile={unstageGitFile}
               commitMessage={gitCommitMessage}
               commitSubmitting={gitCommitSubmitting}
               onCommitMessageInput={setGitCommitMessage}
