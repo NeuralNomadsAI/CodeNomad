@@ -23,7 +23,13 @@ import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
 
-import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
+import {
+  getDefaultWorktreeSlug,
+  getGitRepoStatus,
+  getOrCreateWorktreeClient,
+  getWorktreeSlugForSession,
+  getWorktrees,
+} from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
@@ -368,6 +374,29 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       return getWorktreeSlugForSession(props.instanceId, sessionId)
     }
     return getDefaultWorktreeSlug(props.instanceId)
+  })
+
+  const gitChangesWorktreeSlug = createMemo(() => {
+    if (getGitRepoStatus(props.instanceId) === false) return null
+    const slug = worktreeSlugForViewer().trim()
+    return slug ? slug : null
+  })
+
+  const gitChangesWorktree = createMemo(() => {
+    const slug = gitChangesWorktreeSlug()
+    if (!slug) return null
+    return getWorktrees(props.instanceId).find((worktree) => worktree.slug === slug) ?? null
+  })
+
+  const gitChangesWorktreeLabel = createMemo(() => {
+    const slug = gitChangesWorktreeSlug()
+    if (!slug) return null
+    return slug === "root" ? "Workspace" : slug
+  })
+
+  const gitChangesBranchLabel = createMemo(() => {
+    const branch = gitChangesWorktree()?.branch?.trim()
+    return branch || null
   })
 
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
@@ -852,6 +881,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               commitSubmitting={gitCommitSubmitting}
               onCommitMessageInput={setGitCommitMessage}
               onSubmitCommit={() => void submitGitCommit()}
+              worktreeLabel={gitChangesWorktreeLabel}
+              branchLabel={gitChangesBranchLabel}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {
