@@ -369,11 +369,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const worktreeSlugForViewer = createMemo(() => {
+    const implicitWorkspaceWorktreeSlug =
+      getWorktrees(props.instanceId).find((worktree) => worktree.directory === props.instance.folder && worktree.slug !== "root")?.slug ??
+      null
+
     const sessionId = props.activeSessionId()
     if (sessionId && sessionId !== "info") {
-      return getWorktreeSlugForSession(props.instanceId, sessionId)
+      const mappedSlug = getWorktreeSlugForSession(props.instanceId, sessionId)
+      return mappedSlug === "root" ? implicitWorkspaceWorktreeSlug ?? mappedSlug : mappedSlug
     }
-    return getDefaultWorktreeSlug(props.instanceId)
+
+    const defaultSlug = getDefaultWorktreeSlug(props.instanceId)
+    return defaultSlug === "root" ? implicitWorkspaceWorktreeSlug ?? defaultSlug : defaultSlug
   })
 
   const gitChangesWorktree = createMemo(() => {
