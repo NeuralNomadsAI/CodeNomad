@@ -18,6 +18,7 @@ CodeNomad transforms OpenCode from a terminal tool into a **premium desktop work
 - **🎙️ Voice Input & Speech**
 - **🌳 Git Worktrees**
 - **💬 Rich Message Experience**
+- **🧩 SideCars**
 - **⌨️ Command Palette**
 - **📁 File System Browser**
 - **🔐 Authentication & Security**
@@ -58,6 +59,60 @@ Bleeding-edge builds from the `dev` branch:
 ```bash
 npx @neuralnomads/codenomad-dev --launch
 ```
+
+---
+
+## SideCars
+
+SideCars let you open local web tools inside CodeNomad as tabs.
+
+<details>
+<summary><strong>Configuration</strong></summary>
+
+- **Name**: Display name used in CodeNomad
+- **Port**: Local HTTP or HTTPS service running on `127.0.0.1:<port>`
+- **Base path**: Mounted under `/sidecars/:id`
+- **Prefix mode**:
+  - **Preserve prefix** forwards the full `/sidecars/:id/...` path upstream
+  - **Strip prefix** removes `/sidecars/:id` before forwarding the request upstream
+
+</details>
+
+<details>
+<summary><strong>VSCode (OpenVSCode Server)</strong></summary>
+
+Run with Docker:
+
+```bash
+docker run -it --init -p 8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
+```
+
+Add SideCar as:
+
+- **Name**: `VSCode`
+- **Port**: `http://127.0.0.1:8000`
+- **Base path**: `/sidecars/vscode`
+- **Prefix mode**: `Preserve prefix`
+
+</details>
+
+<details>
+<summary><strong>Terminal (ttyd)</strong></summary>
+
+Run with:
+
+```bash
+ttyd --writable zsh
+```
+
+Add SideCar as:
+
+- **Name**: `Terminal`
+- **Port**: `http://127.0.0.1:7681`
+- **Base path**: `/sidecars/terminal`
+- **Prefix mode**: `Strip prefix`
+
+</details>
 
 ---
 
