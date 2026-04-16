@@ -66,10 +66,11 @@
 }
 
 .message-timeline {
+  --message-timeline-segment-gap: 0.35rem;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0;
   padding: 0.25rem;
   overflow-y: auto;
   overflow-x: visible;
@@ -112,6 +113,17 @@
   -webkit-user-select: none;
   touch-action: manipulation;
   -webkit-touch-callout: none;
+}
+
+.message-timeline-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.message-timeline-item-spacer {
+  flex: none;
+  width: 100%;
 }
 
 .message-timeline-segment[data-delete-hover="true"]::before {
@@ -319,18 +331,7 @@
   border-inline-start: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
 }
 
-/* Extra spacing before the first tool in a group to separate from the
-   preceding user/assistant badge. */
-.message-timeline-group-start {
-  margin-top: 0.35rem;
-}
-
-/* Subtle extra spacing after the group parent (assistant) to separate
-   from the next user badge below. Uses adjacent sibling targeting. */
-.message-timeline-group-parent + .message-timeline-user,
-.message-timeline-group-parent + .message-timeline-compaction {
-  margin-top: 0.35rem;
-}
+/* Spacing is rendered by the measured item wrapper so virtua can account for it. */
 
 .message-timeline-container {
   position: relative;
