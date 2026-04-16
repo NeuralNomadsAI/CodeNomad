@@ -9,7 +9,7 @@ import {
   type JSX,
 } from "solid-js"
 
-import { ChevronDown, ChevronRight, RefreshCw, Split } from "lucide-solid"
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
@@ -55,8 +55,6 @@ interface GitChangesTabProps {
   commitSubmitting: Accessor<boolean>
   onCommitMessageInput: (value: string) => void
   onSubmitCommit: () => void
-  worktreeLabel: Accessor<string | null>
-  worktreeTitle: Accessor<string>
 
   stagedOpen: Accessor<boolean>
   unstagedOpen: Accessor<boolean>
@@ -296,20 +294,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 <span class="git-change-section-chevron">
                   {props.stagedOpen() ? <ChevronDown class="h-3.5 w-3.5" /> : <ChevronRight class="h-3.5 w-3.5" />}
                 </span>
-                <span class="git-change-section-title-row">
-                  <span class="git-change-section-title">{props.t("instanceShell.gitChanges.sections.staged")}</span>
-                  <Show when={props.worktreeLabel()}>
-                    {(label) => (
-                      <span
-                        class="status-indicator session-status-list worktree-indicator git-change-section-badge"
-                        title={props.worktreeTitle()}
-                      >
-                        <Split class="w-3.5 h-3.5" aria-hidden="true" />
-                        <span class="worktree-indicator-label">{label()}</span>
-                      </span>
-                    )}
-                  </Show>
-                </span>
+                <span class="git-change-section-title">{props.t("instanceShell.gitChanges.sections.staged")}</span>
               </span>
               <span class="git-change-section-count">{stagedList.length}</span>
             </button>

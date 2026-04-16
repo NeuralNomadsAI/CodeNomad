@@ -23,14 +23,7 @@ import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
 
-import {
-  getDefaultWorktreeSlug,
-  getGitRepoStatus,
-  getOrCreateWorktreeClient,
-  getWorktreeSlugForDirectory,
-  getWorktreeSlugForSession,
-  getWorktrees,
-} from "../../../../stores/worktrees"
+import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
@@ -370,56 +363,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const worktreeSlugForViewer = createMemo(() => {
-    const activeSessionDirectory = (props.activeSession() as { directory?: string } | null)?.directory
-    const slugFromActiveSessionDirectory = getWorktreeSlugForDirectory(props.instanceId, activeSessionDirectory)
-    if (slugFromActiveSessionDirectory) {
-      return slugFromActiveSessionDirectory
-    }
-
-    const implicitWorkspaceWorktreeSlug =
-      getWorktrees(props.instanceId).find((worktree) => worktree.directory === props.instance.folder && worktree.slug !== "root")?.slug ??
-      null
-
     const sessionId = props.activeSessionId()
     if (sessionId && sessionId !== "info") {
-      const mappedSlug = getWorktreeSlugForSession(props.instanceId, sessionId)
-      return mappedSlug === "root" ? implicitWorkspaceWorktreeSlug ?? mappedSlug : mappedSlug
+      return getWorktreeSlugForSession(props.instanceId, sessionId)
     }
-
-    const defaultSlug = getDefaultWorktreeSlug(props.instanceId)
-    return defaultSlug === "root" ? implicitWorkspaceWorktreeSlug ?? defaultSlug : defaultSlug
-  })
-
-  const gitChangesWorktree = createMemo(() => {
-    const slug = worktreeSlugForViewer()
-    return getWorktrees(props.instanceId).find((worktree) => worktree.slug === slug) ?? null
-  })
-
-  const gitChangesWorktreeLabel = createMemo(() => {
-    if (getGitRepoStatus(props.instanceId) === false) return null
-    const worktree = gitChangesWorktree()
-    if (!worktree) return null
-
-    const branch = worktree.branch?.trim()
-    if (branch) return branch
-
-    const slug = worktree.slug.trim()
-    return slug && slug !== "root" ? slug : null
-  })
-
-  const gitChangesWorktreeTitle = createMemo(() => {
-    const worktree = gitChangesWorktree()
-    const label = gitChangesWorktreeLabel()
-    if (!worktree || !label) return ""
-
-    const branch = worktree.branch?.trim()
-    if (branch && worktree.slug !== "root") {
-      return `Branch: ${branch} • Worktree: ${worktree.slug}`
-    }
-    if (branch) {
-      return `Branch: ${branch}`
-    }
-    return `Worktree: ${worktree.slug}`
+    return getDefaultWorktreeSlug(props.instanceId)
   })
 
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
@@ -904,8 +852,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               commitSubmitting={gitCommitSubmitting}
               onCommitMessageInput={setGitCommitMessage}
               onSubmitCommit={() => void submitGitCommit()}
-              worktreeLabel={gitChangesWorktreeLabel}
-              worktreeTitle={gitChangesWorktreeTitle}
               stagedOpen={gitStagedOpen}
               unstagedOpen={gitUnstagedOpen}
               onToggleStagedOpen={() => {
