@@ -81,6 +81,55 @@ export interface WorktreeMap {
   parentSessionWorktreeSlug: Record<string, string>
 }
 
+export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
+
+export interface WorktreeGitStatusEntry {
+  path: string
+  originalPath?: string | null
+  stagedStatus: GitChangeKind | null
+  stagedAdditions: number
+  stagedDeletions: number
+  unstagedStatus: GitChangeKind | null
+  unstagedAdditions: number
+  unstagedDeletions: number
+}
+
+export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]
+
+export type WorktreeGitDiffScope = "staged" | "unstaged"
+
+export interface WorktreeGitPathsRequest {
+  paths: string[]
+}
+
+export interface WorktreeGitMutationResponse {
+  ok: true
+}
+
+export interface WorktreeGitCommitRequest {
+  message: string
+}
+
+export interface WorktreeGitCommitResponse {
+  ok: true
+  commitSha?: string
+}
+
+export interface WorktreeGitDiffResponse {
+  path: string
+  originalPath?: string | null
+  scope: WorktreeGitDiffScope
+  before: string
+  after: string
+  isBinary?: boolean
+}
+
+export interface WorktreeGitDiffRequest {
+  path: string
+  originalPath?: string | null
+  scope: WorktreeGitDiffScope
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export interface WorkspaceLogEntry {

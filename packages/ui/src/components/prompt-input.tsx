@@ -120,6 +120,11 @@ export default function PromptInput(props: PromptInputProps) {
           insertQuotedSelection(text)
         }
       },
+      insertComment: (text: string) => {
+        const normalized = (text ?? "").replace(/\r/g, "").trim()
+        if (!normalized) return
+        insertBlockContent(`${normalized}\n\n`)
+      },
       expandTextAttachment: (attachmentId: string) => {
         const attachment = attachments().find((a) => a.id === attachmentId)
         if (!attachment) return

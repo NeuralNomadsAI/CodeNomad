@@ -220,7 +220,7 @@
 }
 
 .file-list-item {
-  @apply px-3 py-2.5 border-b cursor-pointer transition-all duration-150;
+  @apply px-2 py-1 border-b cursor-pointer transition-all duration-150;
   border-color: var(--border-base);
   background-color: transparent;
 }
@@ -234,12 +234,278 @@
 }
 
 .file-list-item-active {
-  background-color: var(--surface-base);
+  background-color: color-mix(in srgb, var(--surface-base) 88%, white);
   box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.git-change-list-item-bulk-selected {
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 45%, transparent);
+}
+
+.git-change-list-item-bulk-selected:hover {
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+}
+
+.git-change-list-item-bulk-selected.file-list-item-active {
+  background-color: color-mix(in srgb, var(--accent-primary) 18%, var(--surface-base));
+  box-shadow:
+    inset 0 0 0 1px var(--accent-primary),
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 
 .file-list-item-content {
   @apply flex items-center justify-between gap-3;
+}
+
+.git-change-list-item .file-list-item-content {
+  gap: 0.5rem;
+}
+
+.git-change-sections {
+  @apply flex flex-col;
+}
+
+.git-change-commit-box {
+  @apply flex flex-col gap-2 px-2 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.git-change-commit-input-wrap {
+  position: relative;
+}
+
+.git-change-commit-input {
+  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs rounded border border-base resize-y;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.git-change-commit-input::placeholder {
+  color: var(--text-muted);
+}
+
+.git-change-commit-button {
+  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium rounded border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.git-change-commit-button-overlay {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 1;
+  align-self: auto;
+  padding: 0.25rem 0.5rem;
+}
+
+.git-change-commit-button-overlay:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.git-change-commit-button-overlay:hover {
+  background-color: var(--surface-hover);
+}
+
+.git-change-commit-button:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.git-change-commit-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.git-change-section {
+  @apply border-b last:border-b-0;
+  border-color: var(--border-base);
+}
+
+.git-change-section-header {
+  @apply w-full flex items-center justify-between gap-2 px-2 py-1 text-left;
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.git-change-section-header:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.git-change-section-header-main {
+  @apply flex items-center gap-2 min-w-0;
+}
+
+.git-change-section-chevron {
+  @apply inline-flex items-center justify-center shrink-0;
+}
+
+.git-change-section-title {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+}
+
+.git-change-section-title-row {
+  @apply inline-flex items-center gap-2 min-w-0 flex-wrap;
+}
+
+.git-change-section-badge {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.git-change-section-count {
+  @apply text-[10px] px-1.5 py-0.5 rounded-full shrink-0;
+  background-color: var(--surface-base);
+  color: var(--text-muted);
+  border: 1px solid var(--border-base);
+}
+
+.git-change-section-items {
+  @apply flex flex-col;
+}
+
+.git-change-list-item {
+  padding-inline-start: 0.25rem;
+  position: relative;
+}
+
+.git-change-list-item-right {
+  @apply flex items-center shrink-0;
+  min-width: 0;
+}
+
+.git-change-list-item-actions-zone {
+  @apply flex items-center justify-end;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 34px;
+  z-index: 2;
+}
+
+.git-change-list-item-actions {
+  @apply flex items-center justify-center;
+  width: 32px;
+}
+
+.git-change-list-item .file-list-item-content {
+  padding-inline-end: 2rem;
+}
+
+.git-change-row-action {
+  @apply inline-flex items-center justify-center w-5 h-5 rounded border border-base leading-none;
+  background-color: var(--surface-base);
+  border-color: var(--border-base);
+  color: var(--text-secondary);
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.git-change-row-action:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.file-list-item-active .git-change-row-action,
+.git-change-list-item-bulk-selected .git-change-row-action {
+  background-color: color-mix(in srgb, var(--surface-base) 94%, white);
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--border-base));
+}
+
+.file-list-item-active .git-change-row-action:hover,
+.git-change-list-item-bulk-selected .git-change-row-action:hover {
+  background-color: var(--surface-base);
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-base));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 24%, transparent);
+}
+
+.git-change-row-action:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.git-change-row-action-glyph {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.git-change-row-action-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  background-color: currentColor;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+}
+
+.git-change-row-action-bar-horizontal {
+  width: 12px;
+  height: 1.5px;
+}
+
+.git-change-row-action-bar-vertical {
+  width: 1.5px;
+  height: 12px;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .git-change-list-item-actions-zone {
+    width: 34px;
+  }
+}
+
+.git-change-list-item-name {
+  @apply text-[12px] leading-4 min-w-0 overflow-hidden whitespace-nowrap;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+}
+
+.git-change-list-item-parent {
+  @apply text-[10px] leading-3 min-w-0 overflow-hidden whitespace-nowrap;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+}
+
+.git-change-context-widget-host {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.git-change-context-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 70%, white 30%);
+  color: white;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
 }
 
 .file-list-item-path {
@@ -335,6 +601,14 @@
   width: 100%;
   height: 100%;
   direction: ltr;
+  position: relative;
+}
+
+.git-change-context-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
 }
 
 .file-viewer-empty {
@@ -507,6 +781,7 @@
     opacity: 0;
     transform: scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
