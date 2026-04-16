@@ -175,6 +175,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
   let lastObservedScrollOffset = 0
+  let lastObservedPinnedAtBottom = false
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -241,6 +242,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     const offset = handle.scrollOffset
     const scrolledUp = offset < lastObservedScrollOffset - 1
+    const wasPinnedAtBottom = lastObservedPinnedAtBottom
     const scrollHeight = handle.scrollSize
     const clientHeight = element.clientHeight
     const atBottom = scrollHeight - (offset + clientHeight) <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
@@ -256,8 +258,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // scrollbar). If follow mode stays enabled, the next render notification
     // snaps the list straight back to bottom. A real upward viewport move away
     // from bottom should always break follow unless a hold target is active.
-    if (scrolledUp && autoScroll() && !atBottom && heldItemCount() === null) {
+    if (wasPinnedAtBottom && scrolledUp && autoScroll() && !atBottom && heldItemCount() === null) {
       setAutoScroll(false)
+      lastObservedPinnedAtBottom = false
       return
     }
 
@@ -272,6 +275,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         setAutoScroll(false)
       }
     }
+
+    lastObservedPinnedAtBottom = autoScroll() && atBottom
   }
 
   function scrollToBottom(immediate = true, options?: { suppressAutoAnchor?: boolean }) {
@@ -409,6 +414,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     itemElements.clear()
     setHeldItemCount(null)
     lastObservedScrollOffset = 0
+    lastObservedPinnedAtBottom = false
   }))
 
   // Handle autoScroll (Follow) on items change
