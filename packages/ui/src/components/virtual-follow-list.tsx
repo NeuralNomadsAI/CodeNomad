@@ -174,6 +174,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastResetKey: string | number | undefined
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
+  let lastObservedScrollOffset = 0
+  let pendingBottomPinFrame: number | null = null
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -239,14 +241,26 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!handle || !element) return
 
     const offset = handle.scrollOffset
+    const scrolledUp = offset < lastObservedScrollOffset - 1
     const scrollHeight = handle.scrollSize
     const clientHeight = element.clientHeight
     const atBottom = scrollHeight - (offset + clientHeight) <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
     const atTop = offset <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
+    lastObservedScrollOffset = offset
 
     const hasItems = props.items().length > 0
     setShowScrollBottomButton(hasItems && !atBottom)
     setShowScrollTopButton(hasItems && !atTop)
+
+    // Keyboard/PageUp scrolls can move the viewport without ever hitting our
+    // local key intent listeners (for example after dragging the native
+    // scrollbar). If follow mode stays enabled, the next render notification
+    // snaps the list straight back to bottom. A real upward viewport move away
+    // from bottom should always break follow unless a hold target is active.
+    if (scrolledUp && autoScroll() && !atBottom && heldItemCount() === null) {
+      setAutoScroll(false)
+      return
+    }
 
     // Sync autoScroll state based on scroll position if it was a user scroll
     if (hasUserScrollIntent()) {
@@ -269,6 +283,28 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
     setAutoScroll(true)
+
+    if (immediate) {
+      if (pendingBottomPinFrame !== null) {
+        cancelAnimationFrame(pendingBottomPinFrame)
+      }
+      pendingBottomPinFrame = requestAnimationFrame(() => {
+        pendingBottomPinFrame = requestAnimationFrame(() => {
+          pendingBottomPinFrame = null
+          if (!autoScroll() || effectiveSuspendAutoPinToBottom()) return
+          const element = scrollElement()
+          if (!element) return
+          const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+          if (Math.abs(element.scrollTop - maxScrollTop) <= 1) {
+            lastObservedScrollOffset = element.scrollTop
+            return
+          }
+          element.scrollTop = maxScrollTop
+          lastObservedScrollOffset = maxScrollTop
+          updateScrollButtons()
+        })
+      })
+    }
   }
 
   function scrollToTop(immediate = true) {
@@ -395,6 +431,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), () => {
     itemElements.clear()
     setHeldItemCount(null)
+    lastObservedScrollOffset = 0
   }))
 
   // Handle autoScroll (Follow) on items change
@@ -445,6 +482,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleResize = () => updateAutoPinHold()
     window.addEventListener("resize", handleResize)
     onCleanup(() => window.removeEventListener("resize", handleResize))
+  })
+
+  onCleanup(() => {
+    if (pendingBottomPinFrame !== null) {
+      cancelAnimationFrame(pendingBottomPinFrame)
+      pendingBottomPinFrame = null
+    }
   })
 
   return (
