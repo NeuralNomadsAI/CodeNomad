@@ -9,45 +9,19 @@ import { normalizeGitWorktreeRelativePath } from "./git-mutations"
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
 
-function isLikelyBinaryBuffer(buffer: Buffer): boolean {
-  const sample = buffer.subarray(0, Math.min(buffer.length, 8000))
-  for (const byte of sample) {
-    if (byte === 0) return true
-  }
-  return false
+async function readFileAsDiffText(filePath: string): Promise<string> {
+  return readFile(filePath, "utf-8")
 }
 
-async function readFileAsDiffText(filePath: string): Promise<{ content: string; isBinary: boolean }> {
-  const buffer = await readFile(filePath)
-  if (isLikelyBinaryBuffer(buffer)) {
-    return { content: "", isBinary: true }
-  }
-  return { content: buffer.toString("utf-8"), isBinary: false }
-}
-
-function countGitStyleLines(content: string): number {
-  if (content.length === 0) return 0
-  const normalized = content.replace(/\r\n/g, "\n")
-  let count = 1
-  for (let index = 0; index < normalized.length; index += 1) {
-    if (normalized.charCodeAt(index) === 10) count += 1
-  }
-  return normalized.endsWith("\n") ? count - 1 : count
-}
-
-async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingOk = false): Promise<{ content: string; isBinary: boolean }> {
+async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingOk = false): Promise<string> {
   const result = await resultPromise
   if (!result.ok) {
-    return { content: decodeGitShowResult(result, missingOk), isBinary: false }
+    return decodeGitShowResult(result, missingOk)
   }
-  const buffer = Buffer.from(result.stdout, "utf-8")
-  if (isLikelyBinaryBuffer(buffer)) {
-    return { content: "", isBinary: true }
-  }
-  return { content: result.stdout, isBinary: false }
+  return result.stdout
 }
 
-function runGit(args: string[], cwd: string): Promise<GitResult> {
+function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
@@ -63,7 +37,7 @@ function runGit(args: string[], cwd: string): Promise<GitResult> {
       resolve({ ok: false, error, stdout, stderr })
     })
     child.once("close", (code) => {
-      if (code === 0) {
+      if (acceptedExitCodes.includes(code ?? 0)) {
         resolve({ ok: true, stdout })
       } else {
         const error = new Error(stderr.trim() || `git ${args.join(" ")} failed with code ${code}`)
@@ -94,28 +68,6 @@ function normalizeGitStatusPath(value: string): string {
   return value.trim().replace(/\\+/g, "/")
 }
 
-function parseRenameLikePath(value: string): { path: string; originalPath: string | null } {
-  const normalized = normalizeGitStatusPath(value)
-  if (!normalized) return { path: "", originalPath: null }
-
-  const braceMatch = normalized.match(/^(.*)\{(.*) => (.*)\}(.*)$/)
-  if (braceMatch) {
-    const [, prefix, left, right, suffix] = braceMatch
-    const originalPath = normalizeGitStatusPath(`${prefix}${left}${suffix}`)
-    const path = normalizeGitStatusPath(`${prefix}${right}${suffix}`)
-    return { path, originalPath: originalPath || null }
-  }
-
-  const arrowIndex = normalized.indexOf(" => ")
-  if (arrowIndex >= 0) {
-    const originalPath = normalizeGitStatusPath(normalized.slice(0, arrowIndex))
-    const path = normalizeGitStatusPath(normalized.slice(arrowIndex + 4))
-    return { path, originalPath: originalPath || null }
-  }
-
-  return { path: normalized, originalPath: null }
-}
-
 function parseGitChangeKind(code: string): GitChangeKind | null {
   const normalized = code.trim().toUpperCase()
   if (!normalized) return null
@@ -133,20 +85,27 @@ function applyNameStatusOutput(
   output: string,
   target: "stagedStatus" | "unstagedStatus",
 ) {
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const parts = rawLine.split("\t")
+  const tokens = output.split("\0")
+  let index = 0
+
+  while (index < tokens.length) {
+    const record = tokens[index++] ?? ""
+    if (!record) continue
+
+    const parts = record.split("\t")
     const statusCode = parseGitChangeKind(parts[0] ?? "")
     if (!statusCode) continue
 
-    const path = statusCode === "renamed" || statusCode === "copied" ? parts[2] ?? parts[1] ?? "" : parts[1] ?? ""
+    const inlinePath = parts.slice(1).join("\t")
+    const firstPath = inlinePath || tokens[index++] || ""
+    const secondPath = statusCode === "renamed" || statusCode === "copied" ? tokens[index++] || "" : ""
+    const path = statusCode === "renamed" || statusCode === "copied" ? secondPath || firstPath : firstPath
     const normalizedPath = normalizeGitStatusPath(path)
     if (!normalizedPath) continue
     const entry = ensureEntry(map, normalizedPath)
     entry[target] = statusCode
     if (statusCode === "renamed" || statusCode === "copied") {
-      const originalPath = normalizeGitStatusPath(parts[1] ?? "")
+      const originalPath = normalizeGitStatusPath(firstPath)
       entry.originalPath = originalPath || entry.originalPath || null
     }
   }
@@ -160,20 +119,42 @@ function applyUntrackedOutput(map: Map<string, WorktreeGitStatusEntry>, output: 
   }
 }
 
+function parseSingleNumstat(output: string): { additions: number; deletions: number; isBinary: boolean; found: boolean } {
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const parts = rawLine.split("\t")
+    const isBinary = parts[0] === "-" || parts[1] === "-"
+    return {
+      additions: isBinary ? 0 : Number.parseInt(parts[0] ?? "0", 10) || 0,
+      deletions: isBinary ? 0 : Number.parseInt(parts[1] ?? "0", 10) || 0,
+      isBinary,
+      found: true,
+    }
+  }
+
+  return { additions: 0, deletions: 0, isBinary: false, found: false }
+}
+
+async function getUntrackedFileNumstat(workspaceFolder: string, relativePath: string): Promise<{ additions: number; deletions: number }> {
+  const absolutePath = path.join(workspaceFolder, relativePath)
+  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], workspaceFolder, [0, 1])
+  if (!result.ok) {
+    throw result.error
+  }
+
+  const parsed = parseSingleNumstat(result.stdout)
+  return { additions: parsed.additions, deletions: parsed.deletions }
+}
+
 async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>, workspaceFolder: string) {
   const pending = Array.from(map.values())
     .filter((entry) => entry.unstagedStatus === "untracked")
     .map(async (entry) => {
       try {
-        const absolutePath = path.join(workspaceFolder, entry.path)
-        const fileResult = await readFileAsDiffText(absolutePath)
-        if (fileResult.isBinary) {
-          entry.unstagedAdditions = 0
-          entry.unstagedDeletions = 0
-          return
-        }
-        entry.unstagedAdditions = countGitStyleLines(fileResult.content)
-        entry.unstagedDeletions = 0
+        const stats = await getUntrackedFileNumstat(workspaceFolder, entry.path)
+        entry.unstagedAdditions = stats.additions
+        entry.unstagedDeletions = stats.deletions
       } catch {
         entry.unstagedAdditions = 0
         entry.unstagedDeletions = 0
@@ -187,18 +168,27 @@ function applyNumstatOutput(
   output: string,
   target: "staged" | "unstaged",
 ) {
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const parts = rawLine.split("\t")
-    const parsedPath = parseRenameLikePath(parts[2] ?? parts[1] ?? "")
-    if (!parsedPath.path) continue
+  const tokens = output.split("\0")
+  let index = 0
+
+  while (index < tokens.length) {
+    const record = tokens[index++] ?? ""
+    if (!record) continue
+
+    const parts = record.split("\t")
+    if (parts.length < 3) continue
 
     const additions = parts[0] === "-" ? 0 : Number.parseInt(parts[0] ?? "0", 10)
     const deletions = parts[1] === "-" ? 0 : Number.parseInt(parts[1] ?? "0", 10)
-    const entry = ensureEntry(map, parsedPath.path)
-    if (parsedPath.originalPath) {
-      entry.originalPath = parsedPath.originalPath
+    const inlinePath = parts.slice(2).join("\t")
+    const isRenameLike = inlinePath === ""
+    const originalPath = isRenameLike ? normalizeGitStatusPath(tokens[index++] ?? "") : null
+    const normalizedPath = normalizeGitStatusPath(isRenameLike ? tokens[index++] ?? "" : inlinePath)
+    if (!normalizedPath) continue
+
+    const entry = ensureEntry(map, normalizedPath)
+    if (originalPath) {
+      entry.originalPath = originalPath
     }
 
     if (target === "staged") {
@@ -217,11 +207,11 @@ export async function getWorktreeGitStatus(params: {
 }): Promise<WorktreeGitStatusEntry[]> {
   const { workspaceFolder, logger } = params
   const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult] = await Promise.all([
-    runGit(["diff", "--name-status", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    runGit(["diff", "--name-status", "--find-renames", "--find-copies"], workspaceFolder),
+    runGit(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
+    runGit(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
     runGit(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
-    runGit(["diff", "--numstat", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    runGit(["diff", "--numstat", "--find-renames", "--find-copies"], workspaceFolder),
+    runGit(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
+    runGit(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
   ])
 
   for (const result of [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult]) {
@@ -267,6 +257,44 @@ async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string)
   return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder)
 }
 
+async function getTrackedDiffMetadata(params: {
+  workspaceFolder: string
+  scope: WorktreeGitDiffScope
+  normalizedPath: string
+  normalizedOriginalPath: string | null
+}): Promise<{ isBinary: boolean; found: boolean }> {
+  const args = ["diff", "--numstat"]
+  if (params.scope === "staged") {
+    args.push("--cached")
+  }
+  args.push("--find-renames", "--find-copies", "--")
+  args.push(params.normalizedPath)
+  if (params.normalizedOriginalPath && params.normalizedOriginalPath !== params.normalizedPath) {
+    args.push(params.normalizedOriginalPath)
+  }
+
+  const result = await runGit(args, params.workspaceFolder)
+  if (!result.ok) {
+    throw result.error
+  }
+
+  const parsed = parseSingleNumstat(result.stdout)
+  return { isBinary: parsed.isBinary, found: parsed.found }
+}
+
+async function getUntrackedDiffMetadata(params: {
+  workspaceFolder: string
+  normalizedPath: string
+}): Promise<{ isBinary: boolean }> {
+  const absolutePath = path.join(params.workspaceFolder, params.normalizedPath)
+  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], params.workspaceFolder, [0, 1])
+  if (!result.ok) {
+    throw result.error
+  }
+
+  return { isBinary: parseSingleNumstat(result.stdout).isBinary }
+}
+
 async function resolveUnstagedBeforePath(params: {
   workspaceFolder: string
   normalizedPath: string
@@ -288,12 +316,35 @@ export async function getWorktreeGitDiff(params: {
   const normalizedPath = normalizeGitWorktreeRelativePath(params.path)
   const normalizedOriginalPath = params.originalPath ? normalizeGitWorktreeRelativePath(params.originalPath) : null
 
+  const trackedMetadata = await getTrackedDiffMetadata({
+    workspaceFolder: params.workspaceFolder,
+    scope: params.scope,
+    normalizedPath,
+    normalizedOriginalPath,
+  })
+
+  const diffMetadata =
+    params.scope === "unstaged" && !trackedMetadata.found
+      ? await getUntrackedDiffMetadata({
+          workspaceFolder: params.workspaceFolder,
+          normalizedPath,
+        })
+      : trackedMetadata
+
+  if (diffMetadata.isBinary) {
+    return {
+      path: normalizedPath,
+      originalPath: normalizedOriginalPath,
+      scope: params.scope,
+      before: "",
+      after: "",
+      isBinary: true,
+    }
+  }
+
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
-      readGitBlobAsDiffText(
-        runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder),
-        true,
-      ),
+      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder), true),
       readGitBlobAsDiffText(readGitIndexBlob(params.workspaceFolder, normalizedPath), true),
     ])
 
@@ -301,9 +352,9 @@ export async function getWorktreeGitDiff(params: {
       path: normalizedPath,
       originalPath: normalizedOriginalPath,
       scope: params.scope,
-      before: beforeResult.content,
-      after: afterResult.content,
-      isBinary: beforeResult.isBinary || afterResult.isBinary,
+      before: beforeResult,
+      after: afterResult,
+      isBinary: false,
     }
   }
 
@@ -314,14 +365,11 @@ export async function getWorktreeGitDiff(params: {
   })
 
   const beforeResult = await readGitBlobAsDiffText(Promise.resolve(indexResult), true)
-  let after = beforeResult.content
-  let isBinary = beforeResult.isBinary
+  let after = beforeResult
 
   const fsPath = path.join(params.workspaceFolder, normalizedPath)
   try {
-    const fileResult = await readFileAsDiffText(fsPath)
-    after = fileResult.content
-    isBinary = beforeResult.isBinary || fileResult.isBinary
+    after = await readFileAsDiffText(fsPath)
   } catch {
     after = ""
   }
@@ -330,8 +378,8 @@ export async function getWorktreeGitDiff(params: {
     path: normalizedPath,
     originalPath: normalizedOriginalPath,
     scope: params.scope,
-    before: beforeResult.content,
+    before: beforeResult,
     after,
-    isBinary,
+    isBinary: false,
   }
 }

@@ -10,6 +10,10 @@ export interface LogLike {
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 
+function isGitUnavailableResult(result: GitResult): boolean {
+  return !result.ok && (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT"
+}
+
 function runGit(args: string[], cwd: string): Promise<GitResult> {
   return new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
@@ -38,6 +42,9 @@ function runGit(args: string[], cwd: string): Promise<GitResult> {
 
 export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise<{ repoRoot: string; isGitRepo: boolean }> {
   const result = await runGit(["rev-parse", "--show-toplevel"], folder)
+  if (isGitUnavailableResult(result)) {
+    throw new Error("Git is not installed or not available in PATH")
+  }
   if (!result.ok) {
     logger?.debug?.({ folder, err: result.error }, "Folder is not a Git repository; using workspace folder as root")
     return { repoRoot: folder, isGitRepo: false }
@@ -47,6 +54,11 @@ export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise
     return { repoRoot: folder, isGitRepo: false }
   }
   return { repoRoot, isGitRepo: true }
+}
+
+export async function isGitAvailable(folder: string): Promise<boolean> {
+  const result = await runGit(["--version"], folder)
+  return result.ok || !isGitUnavailableResult(result)
 }
 
 function parseWorktreePorcelain(output: string): Array<{ worktree: string; branch?: string; head?: string; detached?: boolean }> {

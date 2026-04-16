@@ -350,7 +350,6 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
-  | "workspace.filesChanged"
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -365,13 +364,6 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
-  | {
-      type: "workspace.filesChanged"
-      instanceId: string
-      directory?: string
-      worktreeSlug?: string
-      reason: "write" | "edit" | "apply_patch"
-    }
 
 export interface NetworkAddress {
   ip: string

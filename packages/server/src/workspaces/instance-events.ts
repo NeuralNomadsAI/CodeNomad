@@ -4,7 +4,6 @@ import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
 import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
-import { resolveWorktreeSlugForDirectory } from "./worktree-directory"
 
 const INSTANCE_HOST = "127.0.0.1"
 const STREAM_AGENT = new UndiciAgent({ bodyTimeout: 0, headersTimeout: 0 })
@@ -195,47 +194,10 @@ export class InstanceEventBridge {
       if (this.options.logger.isLevelEnabled("trace")) {
         this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
       }
-      void this.maybePublishFilesChanged(workspaceId, event).catch((error) => {
-        this.options.logger.warn({ workspaceId, err: error }, "Failed to publish workspace.filesChanged")
-      })
       this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
     } catch (error) {
       this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
     }
-  }
-
-  private async maybePublishFilesChanged(workspaceId: string, event: InstanceStreamEvent) {
-    if ((event as any)?.type !== "message.part.updated") return
-
-    const rawPart = (event as any)?.properties?.part
-    if (!rawPart || typeof rawPart !== "object") return
-    if ((rawPart as any)?.type !== "tool") return
-
-    const tool = (rawPart as any)?.tool
-    const status = (rawPart as any)?.state?.status
-    if (typeof tool !== "string") return
-    if (status !== "completed") return
-    if (tool !== "write" && tool !== "edit" && tool !== "apply_patch") return
-
-    const workspace = this.options.workspaceManager.get(workspaceId)
-    const directory = typeof (event as any)?.directory === "string" ? (event as any).directory : undefined
-    const worktreeSlug =
-      workspace && directory
-        ? await resolveWorktreeSlugForDirectory({
-            workspaceId,
-            workspacePath: workspace.path,
-            directory,
-            logger: this.options.logger,
-          })
-        : null
-
-    this.options.eventBus.publish({
-      type: "workspace.filesChanged",
-      instanceId: workspaceId,
-      directory,
-      worktreeSlug: worktreeSlug ?? undefined,
-      reason: tool,
-    })
   }
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {

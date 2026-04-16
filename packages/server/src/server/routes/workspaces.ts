@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
-import type { WorktreeGitCommitRequest, WorktreeGitDiffRequest, WorktreeGitPathsRequest } from "../../api-types"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
+import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 
 interface RouteDeps {
@@ -141,22 +141,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     Params: { id: string; slug: string }
   }>("/api/workspaces/:id/worktrees/:slug/git-status", async (request, reply) => {
     try {
-      const workspace = deps.workspaceManager.get(request.params.id)
-      if (!workspace) {
-        reply.code(404)
-        return { error: "Workspace not found" }
-      }
-
-      const directory = await resolveWorktreeDirectory({
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        worktreeSlug: request.params.slug,
-        logger: request.log,
-      })
-      if (!directory) {
-        reply.code(404)
-        return { error: "Worktree not found" }
-      }
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
 
       return await getWorktreeGitStatus({ workspaceFolder: directory, logger: request.log })
     } catch (error) {
@@ -166,26 +152,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string; slug: string }
-    Querystring: WorktreeGitDiffRequest
+    Querystring: { path: string; originalPath?: string; scope: "staged" | "unstaged" }
   }>("/api/workspaces/:id/worktrees/:slug/git-diff", async (request, reply) => {
     try {
-      const workspace = deps.workspaceManager.get(request.params.id)
-      if (!workspace) {
-        reply.code(404)
-        return { error: "Workspace not found" }
-      }
-
       const query = WorktreeGitDiffQuerySchema.parse(request.query ?? {})
-      const directory = await resolveWorktreeDirectory({
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        worktreeSlug: request.params.slug,
-        logger: request.log,
-      })
-      if (!directory) {
-        reply.code(404)
-        return { error: "Worktree not found" }
-      }
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
 
       return await getWorktreeGitDiff({
         workspaceFolder: directory,
@@ -200,26 +172,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.post<{
     Params: { id: string; slug: string }
-    Body: WorktreeGitPathsRequest
+    Body: { paths: string[] }
   }>("/api/workspaces/:id/worktrees/:slug/git-stage", async (request, reply) => {
     try {
-      const workspace = deps.workspaceManager.get(request.params.id)
-      if (!workspace) {
-        reply.code(404)
-        return { error: "Workspace not found" }
-      }
-
       const body = WorktreeGitPathsBodySchema.parse(request.body ?? {})
-      const directory = await resolveWorktreeDirectory({
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        worktreeSlug: request.params.slug,
-        logger: request.log,
-      })
-      if (!directory) {
-        reply.code(404)
-        return { error: "Worktree not found" }
-      }
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
 
       await stageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
       return { ok: true as const }
@@ -230,26 +188,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.post<{
     Params: { id: string; slug: string }
-    Body: WorktreeGitPathsRequest
+    Body: { paths: string[] }
   }>("/api/workspaces/:id/worktrees/:slug/git-unstage", async (request, reply) => {
     try {
-      const workspace = deps.workspaceManager.get(request.params.id)
-      if (!workspace) {
-        reply.code(404)
-        return { error: "Workspace not found" }
-      }
-
       const body = WorktreeGitPathsBodySchema.parse(request.body ?? {})
-      const directory = await resolveWorktreeDirectory({
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        worktreeSlug: request.params.slug,
-        logger: request.log,
-      })
-      if (!directory) {
-        reply.code(404)
-        return { error: "Worktree not found" }
-      }
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
 
       await unstageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
       return { ok: true as const }
@@ -260,26 +204,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.post<{
     Params: { id: string; slug: string }
-    Body: WorktreeGitCommitRequest
+    Body: { message: string }
   }>("/api/workspaces/:id/worktrees/:slug/git-commit", async (request, reply) => {
     try {
-      const workspace = deps.workspaceManager.get(request.params.id)
-      if (!workspace) {
-        reply.code(404)
-        return { error: "Workspace not found" }
-      }
-
       const body = WorktreeGitCommitBodySchema.parse(request.body ?? {})
-      const directory = await resolveWorktreeDirectory({
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        worktreeSlug: request.params.slug,
-        logger: request.log,
-      })
-      if (!directory) {
-        reply.code(404)
-        return { error: "Worktree not found" }
-      }
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
 
       const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
       return { ok: true as const, ...result }
@@ -287,6 +217,49 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return handleWorkspaceError(error, reply)
     }
   })
+}
+
+async function resolveGitWorktreeDirectory(
+  workspaceManager: WorkspaceManager,
+  workspaceId: string,
+  worktreeSlug: string,
+  logger: { debug?: (obj: any, msg?: string) => void; warn?: (obj: any, msg?: string) => void },
+  reply: FastifyReply,
+): Promise<string | null> {
+  const workspace = workspaceManager.get(workspaceId)
+  if (!workspace) {
+    reply.code(404)
+    reply.send({ error: "Workspace not found" })
+    return null
+  }
+
+  const gitAvailable = await isGitAvailable(workspace.path)
+  if (!gitAvailable) {
+    reply.code(503)
+    reply.send({ error: "Git is not installed or not available in PATH" })
+    return null
+  }
+
+  const { isGitRepo } = await resolveRepoRoot(workspace.path, logger)
+  if (!isGitRepo) {
+    reply.code(400)
+    reply.send({ error: "Workspace is not a Git repository" })
+    return null
+  }
+
+  const directory = await resolveWorktreeDirectory({
+    workspaceId: workspace.id,
+    workspacePath: workspace.path,
+    worktreeSlug,
+    logger,
+  })
+  if (!directory) {
+    reply.code(404)
+    reply.send({ error: "Worktree not found" })
+    return null
+  }
+
+  return directory
 }
 
 
