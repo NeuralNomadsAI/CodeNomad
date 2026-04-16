@@ -347,6 +347,15 @@
   @apply text-[11px] font-semibold uppercase tracking-wide;
 }
 
+.git-change-section-title-row {
+  @apply inline-flex items-center gap-2 min-w-0;
+}
+
+.git-change-section-badge {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 .git-change-section-count {
   @apply text-[10px] px-1.5 py-0.5 rounded-full shrink-0;
   background-color: var(--surface-base);
