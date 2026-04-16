@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "Открыть выбор папки для создания нового экземпляра",
   "commands.newInstance.keywords": "папка, проект, рабочее пространство",
 
-  "commands.closeInstance.label": "Закрыть экземпляр",
-  "commands.closeInstance.description": "Остановить сервер текущего экземпляра",
-  "commands.closeInstance.keywords": "остановить, выйти, закрыть",
+  "commands.closeInstance.label": "Закрыть вкладку",
+  "commands.closeInstance.description": "Закрыть текущую верхнеуровневую вкладку",
+  "commands.closeInstance.keywords": "остановить, выйти, закрыть, вкладка",
 
-  "commands.nextInstance.label": "Следующий экземпляр",
-  "commands.nextInstance.description": "Переключиться на следующую вкладку экземпляра",
-  "commands.nextInstance.keywords": "переключить, навигация",
+  "commands.nextInstance.label": "Следующая вкладка",
+  "commands.nextInstance.description": "Переключиться на следующую верхнеуровневую вкладку",
+  "commands.nextInstance.keywords": "переключить, навигация, вкладка",
 
-  "commands.previousInstance.label": "Предыдущий экземпляр",
-  "commands.previousInstance.description": "Переключиться на предыдущую вкладку экземпляра",
-  "commands.previousInstance.keywords": "переключить, навигация",
+  "commands.previousInstance.label": "Предыдущая вкладка",
+  "commands.previousInstance.description": "Переключиться на предыдущую верхнеуровневую вкладку",
+  "commands.previousInstance.keywords": "переключить, навигация, вкладка",
 
   "commands.newSession.label": "Новая сессия",
   "commands.newSession.description": "Создать новую родительскую сессию",

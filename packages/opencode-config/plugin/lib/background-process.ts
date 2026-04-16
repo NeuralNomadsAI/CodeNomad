@@ -13,6 +13,11 @@ type BackgroundProcess = {
   outputSizeBytes?: number
 }
 
+type BackgroundProcessNotificationRequest = {
+  sessionID: string
+  directory: string
+}
+
 type BackgroundProcessOptions = {
   baseDir: string
 }
@@ -36,12 +41,19 @@ export function createBackgroundProcessTools(config: CodeNomadConfig, options: B
       args: {
         title: tool.schema.string().describe("Short label for the process (e.g. Dev server, DB server)"),
         command: tool.schema.string().describe("Shell command to run in the workspace"),
+        notify: tool.schema.boolean().optional().describe("Notify the current session when the process ends"),
       },
-      async execute(args) {
+      async execute(args, context) {
         assertCommandWithinBase(args.command, options.baseDir)
+        const notification: BackgroundProcessNotificationRequest | undefined = args.notify
+          ? {
+              sessionID: context.sessionID,
+              directory: context.directory,
+            }
+          : undefined
         const process = await request<BackgroundProcess>("", {
           method: "POST",
-          body: JSON.stringify({ title: args.title, command: args.command }),
+          body: JSON.stringify({ title: args.title, command: args.command, notify: args.notify, notification }),
         })
 
         return `Started background process ${process.id} (${process.title})\nStatus: ${process.status}\nCommand: ${process.command}`

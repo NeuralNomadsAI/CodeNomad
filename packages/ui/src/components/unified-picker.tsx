@@ -79,6 +79,7 @@ interface UnifiedPickerProps {
   mode?: "mention" | "command"
   onSelect: (item: PickerItem, action: PickerSelectAction) => void
   onClose: () => void
+  onSubmitWithoutSelection?: () => void
   agents: Agent[]
   commands?: SDKCommand[]
   instanceClient: OpencodeClient | null
@@ -404,6 +405,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       if (selected) {
         const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"
         props.onSelect(selected, action)
+      } else if (e.key === "Enter" && mode() === "mention") {
+        props.onSubmitWithoutSelection?.()
       }
     } else if (e.key === "Escape") {
       e.preventDefault()

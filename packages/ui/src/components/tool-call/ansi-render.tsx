@@ -1,4 +1,4 @@
-import type { Accessor, JSXElement } from "solid-js"
+import { createEffect, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import type { RenderCache } from "../../types/message"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../lib/ansi"
 import { escapeHtml } from "../../lib/text-render-utils"
@@ -9,6 +9,97 @@ type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
 type CacheHandle = {
   get<T>(): T | undefined
   set(value: unknown): void
+}
+
+export interface StableAnsiStreamUpdater {
+  update: (element: HTMLElement, content: string) => void
+  reset: () => void
+}
+
+export function createStableAnsiStreamUpdater(): StableAnsiStreamUpdater {
+  const renderer = createAnsiStreamRenderer()
+  let previousContent = ""
+  let ansiActive = false
+
+  return {
+    update(element: HTMLElement, content: string) {
+      const resetStreaming = !previousContent || !content.startsWith(previousContent)
+
+      if (resetStreaming) {
+        ansiActive = hasAnsi(content)
+        renderer.reset()
+        element.innerHTML = ansiActive ? renderer.render(content) : escapeHtml(content)
+        previousContent = content
+        return
+      }
+
+      const delta = content.slice(previousContent.length)
+      if (delta.length === 0) {
+        return
+      }
+
+      if (!ansiActive && hasAnsi(delta)) {
+        ansiActive = true
+        renderer.reset()
+        element.innerHTML = renderer.render(content)
+        previousContent = content
+        return
+      }
+
+      if (ansiActive) {
+        const htmlChunk = renderer.render(delta)
+        if (htmlChunk.length > 0) {
+          element.insertAdjacentHTML("beforeend", htmlChunk)
+        }
+      } else {
+        const escapedDelta = escapeHtml(delta)
+        if (escapedDelta.length > 0) {
+          element.insertAdjacentHTML("beforeend", escapedDelta)
+        }
+      }
+
+      previousContent = content
+    },
+    reset() {
+      previousContent = ""
+      ansiActive = false
+      renderer.reset()
+    },
+  }
+}
+
+function StreamingAnsiContent(props: {
+  html: string
+  htmlChunk?: string
+  updateMode: "replace" | "append" | "noop"
+}) {
+  let preRef: HTMLPreElement | undefined
+
+  createEffect(() => {
+    const element = preRef
+    if (!element) return
+    if (props.updateMode === "noop") return
+    if (props.updateMode === "append") {
+      if (element.innerHTML.length === 0) {
+        element.innerHTML = props.html
+        return
+      }
+      const chunk = props.htmlChunk ?? ""
+      if (chunk.length > 0) {
+        element.insertAdjacentHTML("beforeend", chunk)
+      }
+      return
+    }
+    if (element.innerHTML !== props.html) {
+      element.innerHTML = props.html
+    }
+  })
+
+  onCleanup(() => {
+    preRef = undefined
+  })
+
+  return <pre ref={preRef} class="tool-call-content tool-call-ansi" dir="auto" />
 }
 
 export function createAnsiContentRenderer(params: {
@@ -46,6 +137,8 @@ export function createAnsiContentRenderer(params: {
     const isRunningVariant = options.variant === "running"
     const disableScrollTracking = !isRunningVariant
     const registerRef = disableScrollTracking ? registerUntracked : registerTracked
+    let updateMode: "replace" | "append" | "noop" = "replace"
+    let htmlChunk = ""
 
     let nextCache: AnsiRenderCache
 
@@ -54,6 +147,7 @@ export function createAnsiContentRenderer(params: {
       const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
 
       if (resetStreaming) {
+        updateMode = "replace"
         const detectedAnsi = hasAnsi(content)
         if (detectedAnsi) {
           runningAnsiRenderer.reset()
@@ -66,15 +160,21 @@ export function createAnsiContentRenderer(params: {
       } else {
         const delta = content.slice(cached.text.length)
         if (delta.length === 0) {
+          updateMode = "noop"
           nextCache = { ...cached, mode }
         } else if (!cached.hasAnsi && hasAnsi(delta)) {
+          updateMode = "replace"
           runningAnsiRenderer.reset()
           const html = runningAnsiRenderer.render(content)
           nextCache = { text: content, html, mode, hasAnsi: true }
         } else if (cached.hasAnsi) {
-          const htmlChunk = runningAnsiRenderer.render(delta)
-          nextCache = { text: content, html: `${cached.html}${htmlChunk}`, mode, hasAnsi: true }
+          const appendedHtml = runningAnsiRenderer.render(delta)
+          updateMode = "append"
+          htmlChunk = appendedHtml
+          nextCache = { text: content, html: `${cached.html}${appendedHtml}`, mode, hasAnsi: true }
         } else {
+          updateMode = "append"
+          htmlChunk = escapeHtml(delta)
           nextCache = { text: content, html: `${cached.html}${escapeHtml(delta)}`, mode, hasAnsi: false }
         }
       }
@@ -98,7 +198,7 @@ export function createAnsiContentRenderer(params: {
 
     return (
       <div class={messageClass} ref={registerRef} onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}>
-        <pre class="tool-call-content tool-call-ansi" dir="auto" innerHTML={nextCache.html} />
+        <StreamingAnsiContent html={nextCache.html} htmlChunk={htmlChunk} updateMode={updateMode} />
         {params.scrollHelpers.renderSentinel({ disableTracking: disableScrollTracking })}
       </div>
     )

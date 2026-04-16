@@ -33,6 +33,12 @@ declare global {
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+    openRemoteWindow?: (payload: {
+      id: string
+      name: string
+      baseUrl: string
+      skipTlsVerify: boolean
+    }) => Promise<{ ok: boolean }>
   }
 
   interface File {

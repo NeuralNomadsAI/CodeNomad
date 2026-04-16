@@ -1,21 +1,22 @@
-import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack } from "solid-js"
+import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { formatTokenTotal } from "../lib/formatters"
 import { sessions, setActiveParentSession, setActiveSession } from "../stores/sessions"
-import { setActiveInstanceId } from "../stores/instances"
+import { selectInstanceTab } from "../stores/app-tabs"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage } from "../stores/session-actions"
 import { useI18n } from "../lib/i18n"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
+import { createFollowScroll } from "../lib/follow-scroll"
 
 function DeleteUpToIcon() {
   return (
@@ -29,6 +30,7 @@ const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
+const REASONING_SCROLL_SENTINEL_MARGIN_PX = 48
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -130,7 +132,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
-  setActiveInstanceId(location.instanceId)
+  selectInstanceTab(location.instanceId)
   const parentToActivate = location.parentId ?? location.sessionId
   setActiveParentSession(location.instanceId, parentToActivate)
   if (location.parentId) {
@@ -229,6 +231,12 @@ function isContentPartType(type: unknown): boolean {
   return type === "text" || type === "file"
 }
 
+function isVisibleContentPart(part: ClientPart): boolean {
+  if (!part || !isContentPartType((part as any).type)) return false
+  if (isHiddenSyntheticTextPart(part)) return false
+  return partHasRenderableText(part)
+}
+
 function MessageContentItem(props: MessageContentItemProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
@@ -262,13 +270,15 @@ function MessageContentItem(props: MessageContentItemProps) {
     return resolved
   })
 
+  const visibleParts = createMemo(() => parts().filter((part) => isVisibleContentPart(part)))
+
   const showAgentMeta = createMemo(() => {
     const current = record()
     if (!current) return false
     if (current.role !== "assistant") return false
 
     const currentParts = parts()
-    if (!currentParts.some((part) => partHasRenderableText(part))) {
+    if (visibleParts().length === 0) {
       return false
     }
 
@@ -284,10 +294,10 @@ function MessageContentItem(props: MessageContentItemProps) {
       if (!isSupportedPartType(part)) continue
 
       if (!isContentPartType((part as any).type)) continue
-      if (partHasRenderableText(part)) {
-        return false
+        if (isVisibleContentPart(part)) {
+          return false
+        }
       }
-    }
 
     return true
   })
@@ -298,7 +308,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         <MessageItem
           record={resolvedRecord()}
           messageInfo={messageInfo()}
-          parts={parts()}
+          parts={visibleParts()}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
           isQueued={isQueued()}
@@ -619,13 +629,12 @@ export default function MessageBlock(props: MessageBlockProps) {
     const lastAssistantIdx = props.lastAssistantIndex()
     const isQueued = current.role === "user" && (lastAssistantIdx === -1 || index > lastAssistantIdx)
 
-    // Intentionally untracked: messageInfoVersion updates should not trigger
-    // a full message block rebuild; record revision is the invalidation key.
-    const info = untrack(messageInfo)
+    const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
 
     const cacheSignature = [
       current.id,
       current.revision,
+      messageInfoVersion,
       isQueued ? 1 : 0,
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
@@ -636,6 +645,9 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (cachedBlock && cachedBlock.signature === cacheSignature) {
       return cachedBlock.block
     }
+
+    // Only capture info after cache check fails - ensures fresh data on version bump
+    const info = untrack(messageInfo)
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, current)
     const items: MessageBlockItem[] = []
@@ -803,19 +815,19 @@ export default function MessageBlock(props: MessageBlockProps) {
           data-message-id={resolvedBlock().record.id}
           data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
         >
-          <For each={resolvedBlock().items}>
+          <Index each={resolvedBlock().items}>
             {(item, index) => (
               <Switch>
-                <Match when={item.type === "content"}>
+                <Match when={item().type === "content"}>
                   <MessageContentItem
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     store={props.store}
-                    messageId={(item as ContentDisplayItem).messageId}
-                    startPartId={(item as ContentDisplayItem).startPartId}
+                    messageId={(item() as ContentDisplayItem).messageId}
+                    startPartId={(item() as ContentDisplayItem).startPartId}
                     messageIndex={props.messageIndex}
                     lastAssistantIndex={props.lastAssistantIndex}
-                    showDeleteMessage={index() === 0}
+                    showDeleteMessage={index === 0}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onRevert={props.onRevert}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
@@ -825,18 +837,18 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onContentRendered={props.onContentRendered}
                   />
                 </Match>
-                <Match when={item.type === "tool"}>
+                <Match when={item().type === "tool"}>
                   {(() => {
-                    const toolItem = item as ToolDisplayItem
+                    const toolItem = item() as ToolDisplayItem
                     return (
                       <div class="tool-call-message" data-key={toolItem.key}>
-                        <ToolCallItem
-                          instanceId={props.instanceId}
-                          sessionId={props.sessionId}
-                          store={props.store}
-                          messageId={toolItem.messageId}
-                          partId={toolItem.partId}
-                          showDeleteMessage={index() === 0}
+                          <ToolCallItem
+                            instanceId={props.instanceId}
+                            sessionId={props.sessionId}
+                            store={props.store}
+                            messageId={toolItem.messageId}
+                            partId={toolItem.partId}
+                            showDeleteMessage={index === 0}
                           deleteHover={props.deleteHover}
                           onDeleteHoverChange={props.onDeleteHoverChange}
                           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
@@ -849,13 +861,13 @@ export default function MessageBlock(props: MessageBlockProps) {
                     )
                   })()}
                 </Match>
-                <Match when={item.type === "step-start"}>
+                <Match when={item().type === "step-start"}>
                   <StepCard
                     kind="start"
-                    part={(item as StepDisplayItem).part}
-                    messageInfo={(item as StepDisplayItem).messageInfo}
+                    part={(item() as StepDisplayItem).part}
+                    messageInfo={(item() as StepDisplayItem).messageInfo}
                     showAgentMeta
-                    showDeleteMessage={index() === 0}
+                    showDeleteMessage={index === 0}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
@@ -865,14 +877,14 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
-                <Match when={item.type === "step-finish"}>
+                <Match when={item().type === "step-finish"}>
                   <StepCard
                     kind="finish"
-                    part={(item as StepDisplayItem).part}
-                    messageInfo={(item as StepDisplayItem).messageInfo}
+                    part={(item() as StepDisplayItem).part}
+                    messageInfo={(item() as StepDisplayItem).messageInfo}
                     showUsage={props.showUsageMetrics()}
-                    borderColor={(item as StepDisplayItem).accentColor}
-                    showDeleteMessage={index() === 0}
+                    borderColor={(item() as StepDisplayItem).accentColor}
+                    showDeleteMessage={index === 0}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={props.messageId}
@@ -882,31 +894,31 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
-                <Match when={item.type === "compaction"}>
+                <Match when={item().type === "compaction"}>
                   <CompactionCard
-                    part={(item as CompactionDisplayItem).part}
-                    messageInfo={(item as CompactionDisplayItem).messageInfo}
-                    borderColor={(item as CompactionDisplayItem).accentColor}
+                    part={(item() as CompactionDisplayItem).part}
+                    messageInfo={(item() as CompactionDisplayItem).messageInfo}
+                    borderColor={(item() as CompactionDisplayItem).accentColor}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
-                    messageId={(item as CompactionDisplayItem).messageId}
-                    showDeleteMessage={index() === 0}
+                    messageId={(item() as CompactionDisplayItem).messageId}
+                    showDeleteMessage={index === 0}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                   />
                 </Match>
-                <Match when={item.type === "reasoning"}>
+                <Match when={item().type === "reasoning"}>
                   <ReasoningCard
-                    part={(item as ReasoningDisplayItem).part}
-                    messageInfo={(item as ReasoningDisplayItem).messageInfo}
+                    part={(item() as ReasoningDisplayItem).part}
+                    messageInfo={(item() as ReasoningDisplayItem).messageInfo}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
-                    messageId={(item as ReasoningDisplayItem).messageId}
-                    showAgentMeta={(item as ReasoningDisplayItem).showAgentMeta}
-                    defaultExpanded={(item as ReasoningDisplayItem).defaultExpanded}
-                    showDeleteMessage={index() === 0}
+                    messageId={(item() as ReasoningDisplayItem).messageId}
+                    showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
+                    defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
+                    showDeleteMessage={index === 0}
                     onDeleteHoverChange={props.onDeleteHoverChange}
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
@@ -916,7 +928,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 </Match>
               </Switch>
             )}
-          </For>
+          </Index>
         </div>
       )}
     </Show>
@@ -1098,17 +1110,23 @@ function StepCard(props: StepCardProps) {
       return null
     }
     const info = props.messageInfo
-    if (!info || info.role !== "assistant" || !info.tokens) {
+    const part = props.part as any
+    
+    // step-finish parts have tokens embedded; also check messageInfo
+    const partTokens = part?.tokens
+    const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
+    const tokens = partTokens ?? infoTokens
+    if (!tokens) {
       return null
     }
-    const tokens = info.tokens
+    
     return {
       input: tokens.input ?? 0,
       output: tokens.output ?? 0,
       reasoning: tokens.reasoning ?? 0,
       cacheRead: tokens.cache?.read ?? 0,
       cacheWrite: tokens.cache?.write ?? 0,
-      cost: info.cost ?? 0,
+      cost: (part?.cost ?? (info && info.role === "assistant" ? info.cost : 0)) ?? 0,
     }
   }
 
@@ -1293,13 +1311,22 @@ interface ReasoningCardProps {
   onContentRendered?: () => void
 }
 
-function ReasoningCard(props: ReasoningCardProps) {
-  const { t } = useI18n()
-  const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
+function ReasoningStreamOutput(props: {
+  text: Accessor<string>
+  scrollTopSnapshot: Accessor<number>
+  setScrollTopSnapshot: (next: number) => void
+  onContentRendered?: () => void
+  ariaLabel: string
+}) {
+  let preRef: HTMLPreElement | undefined
   let pendingRenderNotificationFrame: number | null = null
+
+  const followScroll = createFollowScroll({
+    getScrollTopSnapshot: props.scrollTopSnapshot,
+    setScrollTopSnapshot: props.setScrollTopSnapshot,
+    sentinelMarginPx: REASONING_SCROLL_SENTINEL_MARGIN_PX,
+    sentinelClassName: "reasoning-scroll-sentinel",
+  })
 
   const notifyContentRendered = () => {
     if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
@@ -1312,12 +1339,52 @@ function ReasoningCard(props: ReasoningCardProps) {
     })
   }
 
+  createEffect(() => {
+    const nextText = props.text()
+    if (preRef && preRef.textContent !== nextText) {
+      preRef.textContent = nextText
+    }
+    followScroll.restoreAfterRender()
+    notifyContentRendered()
+  })
+
   onCleanup(() => {
     if (pendingRenderNotificationFrame !== null) {
       cancelAnimationFrame(pendingRenderNotificationFrame)
       pendingRenderNotificationFrame = null
     }
   })
+
+  return (
+    <div
+      ref={followScroll.registerContainer}
+      class="message-reasoning-output"
+      role="region"
+      aria-label={props.ariaLabel}
+      onScroll={followScroll.handleScroll}
+    >
+      <pre
+        ref={(element) => {
+          preRef = element || undefined
+          if (preRef) {
+            preRef.textContent = props.text() || ""
+          }
+        }}
+        class="message-reasoning-text"
+        dir="auto"
+      />
+      {followScroll.renderSentinel()}
+    </div>
+  )
+}
+
+function ReasoningCard(props: ReasoningCardProps) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
+  const [deletingMessage, setDeletingMessage] = createSignal(false)
+  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
+  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.messageId))
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
@@ -1392,12 +1459,6 @@ function ReasoningCard(props: ReasoningCardProps) {
   })
 
   const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
-
-  createEffect(() => {
-    if (!expanded()) return
-    reasoningText()
-    notifyContentRendered()
-  })
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
@@ -1553,9 +1614,13 @@ function ReasoningCard(props: ReasoningCardProps) {
       <Show when={expanded()}>
         <div class="message-reasoning-expanded">
           <div class="message-reasoning-body">
-            <div class="message-reasoning-output" role="region" aria-label={t("messageBlock.reasoning.detailsAriaLabel")}>
-              <pre class="message-reasoning-text" dir="auto">{reasoningText() || ""}</pre>
-            </div>
+            <ReasoningStreamOutput
+              text={reasoningText}
+              scrollTopSnapshot={scrollTopSnapshot}
+              setScrollTopSnapshot={setScrollTopSnapshot}
+              onContentRendered={props.onContentRendered}
+              ariaLabel={t("messageBlock.reasoning.detailsAriaLabel")}
+            />
           </div>
         </div>
       </Show>

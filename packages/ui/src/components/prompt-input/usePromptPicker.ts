@@ -324,28 +324,6 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
     const pos = atPosition()
     if (pickerMode() === "mention" && pos !== null) {
       setIgnoredAtPositions((prev) => new Set(prev).add(pos))
-
-      // Remove the partial @mention text from the textarea when ESC is pressed
-      const textarea = options.getTextarea()
-      if (textarea) {
-        const currentPrompt = options.prompt()
-        const cursorPos = textarea.selectionStart
-        // Remove text from @ position to cursor position
-        const before = currentPrompt.substring(0, pos)
-        const after = currentPrompt.substring(cursorPos)
-        options.setPrompt(before + after)
-
-        // Restore cursor position to where @ was
-        setTimeout(() => {
-          const nextTextarea = options.getTextarea()
-          if (nextTextarea) {
-            nextTextarea.setSelectionRange(pos, pos)
-          }
-        }, 0)
-
-        // Clear ignoredAtPositions so typing @ again will work
-        setIgnoredAtPositions(new Set<number>())
-      }
     }
     setShowPicker(false)
     setAtPosition(null)

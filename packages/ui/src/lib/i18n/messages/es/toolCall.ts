@@ -18,6 +18,11 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "Modo de vista de diff",
   "toolCall.diff.viewMode.split": "Dividida",
   "toolCall.diff.viewMode.unified": "Unificada",
+  "toolCall.diff.switchToSplit": "Cambiar a vista dividida",
+  "toolCall.diff.switchToUnified": "Cambiar a vista unificada",
+  "toolCall.diff.enableWordWrap": "Activar ajuste de línea",
+  "toolCall.diff.disableWordWrap": "Desactivar ajuste de línea",
+  "toolCall.diff.copyPatch": "Copiar patch",
 
   "toolCall.diagnostics.title": "Diagnósticos",
   "toolCall.diagnostics.ariaLabel": "Diagnósticos",

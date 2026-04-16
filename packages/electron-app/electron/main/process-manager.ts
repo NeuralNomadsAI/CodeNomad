@@ -539,7 +539,7 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCliArgs(options: StartOptions, host: string): string[] {
-    const args = ["serve", "--host", host, "--generate-token", "--auth-cookie-name", this.authCookieName]
+    const args = ["serve", "--host", host, "--generate-token", "--auth-cookie-name", this.authCookieName, "--unrestricted-root"]
 
     if (options.dev) {
       // Dev: run plain HTTP + Vite dev server proxy.

@@ -18,6 +18,8 @@ export const messagingMessages = {
   "messageSection.loading.messages": "Загрузка сообщений…",
   "messageSection.scroll.toFirstAriaLabel": "Прокрутить к первому сообщению",
   "messageSection.scroll.toLatestAriaLabel": "Прокрутить к последнему сообщению",
+  "messageSection.scroll.enableHoldAriaLabel": "Включить удержание для длинных ответов ассистента",
+  "messageSection.scroll.disableHoldAriaLabel": "Выключить удержание для длинных ответов ассистента",
   "messageSection.quote.addAsQuote": "Добавить как цитату",
   "messageSection.quote.addAsCode": "Добавить как код",
   "messageSection.quote.copy": "Копировать",

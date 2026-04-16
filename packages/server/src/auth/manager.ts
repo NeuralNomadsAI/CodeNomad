@@ -104,13 +104,18 @@ export class AuthManager {
   }
 
   getSessionFromRequest(request: FastifyRequest): { username: string; sessionId: string } | null {
+    return this.getSessionFromHeaders(request.headers)
+  }
+
+  getSessionFromHeaders(headers: { cookie?: string | string[] | undefined }): { username: string; sessionId: string } | null {
     if (!this.authEnabled) {
       // When auth is disabled, treat all requests as authenticated.
       // We still return a stable username so callers can display it.
       return { username: this.init.username, sessionId: "auth-disabled" }
     }
 
-    const cookies = parseCookies(request.headers.cookie)
+    const cookieHeader = Array.isArray(headers.cookie) ? headers.cookie.join("; ") : headers.cookie
+    const cookies = parseCookies(cookieHeader)
     const sessionId = cookies[this.cookieName]
     const session = this.sessionManager.getSession(sessionId)
     if (!session) return null

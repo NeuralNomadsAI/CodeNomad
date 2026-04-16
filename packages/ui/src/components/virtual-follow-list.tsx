@@ -2,6 +2,8 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, type Accessor,
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
+const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
+const DEFAULT_HOLD_TARGET_TOP_OVERSHOOT_PX = 128
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
@@ -86,6 +88,28 @@ export interface VirtualFollowListProps<T> {
   followToken?: Accessor<string | number>
 
   /**
+   * Optional item key whose geometry can temporarily hold auto-follow when the
+   * rendered item grows taller than the viewport and reaches the top edge.
+   */
+  autoPinHoldTargetKey?: Accessor<string | null>
+
+  /**
+   * Optional resolver for the specific element inside an item wrapper that
+   * should be measured for hold-target geometry.
+   */
+  resolveAutoPinHoldElement?: (itemWrapper: HTMLDivElement, key: string) => HTMLElement | null | undefined
+
+  /**
+   * Top-edge threshold for the hold target in pixels.
+   */
+  autoPinHoldTopThresholdPx?: number
+
+  /**
+   * Temporarily suppress automatic bottom pinning while keeping follow mode enabled.
+   */
+  suspendAutoPinToBottom?: Accessor<boolean>
+
+  /**
    * Optional hooks to render content inside the scroll container.
    * Useful for empty/loading states that should scroll with the list.
    */
@@ -130,13 +154,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const scrollToBottomOnActivate = () => (props.scrollToBottomOnActivate ? props.scrollToBottomOnActivate() : true)
   const initialScrollToBottom = () => (props.initialScrollToBottom ? props.initialScrollToBottom() : true)
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
+  const externalSuspendAutoPinToBottom = () => (props.suspendAutoPinToBottom ? props.suspendAutoPinToBottom() : false)
+  const holdTargetKey = () => (props.autoPinHoldTargetKey ? props.autoPinHoldTargetKey() : null)
+  const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
 
   const [autoScroll, setAutoScroll] = createSignal(Boolean(initialAutoScroll()))
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
+  const [heldItemCount, setHeldItemCount] = createSignal<number | null>(null)
+  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom() || heldItemCount() !== null
 
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
+  const itemElements = new Map<string, HTMLDivElement>()
 
   let userScrollIntentUntil = 0
   let lastUserScrollIntentDirection: "up" | "down" | null = null
@@ -220,6 +250,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     // Sync autoScroll state based on scroll position if it was a user scroll
     if (hasUserScrollIntent()) {
+      if (atBottom && heldItemCount() !== null) {
+        setHeldItemCount(null)
+      }
       if (atBottom && !autoScroll()) {
         setAutoScroll(true)
       } else if (!atBottom && autoScroll()) {
@@ -253,6 +286,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
     }
     updateScrollButtons()
+    updateAutoPinHold()
     props.onScroll?.()
 
     // Find active key (roughly the first visible item)
@@ -270,6 +304,68 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
+  function registerItemElement(key: string, element: HTMLDivElement | null | undefined) {
+    if (!element) {
+      itemElements.delete(key)
+      return
+    }
+    itemElements.set(key, element)
+  }
+
+  function getAnchorIdForKey(key: string) {
+    return props.getAnchorId ? props.getAnchorId(key) : key
+  }
+
+  function updateAutoPinHold() {
+    const element = scrollElement()
+    const itemCount = props.items().length
+    const heldCount = heldItemCount()
+    if (!element) return
+
+    if (heldCount !== null) {
+      if (itemCount > heldCount) {
+        setHeldItemCount(null)
+        if (autoScroll()) {
+          requestAnimationFrame(() => {
+            if (!autoScroll()) return
+            scrollToBottom(false)
+          })
+        }
+        return
+      }
+
+      if (itemCount < heldCount) {
+        setHeldItemCount(null)
+        return
+      }
+
+      return
+    }
+
+    if (!autoScroll()) return
+    if (externalSuspendAutoPinToBottom()) return
+
+    const targetKey = holdTargetKey()
+    if (!targetKey) return
+
+    const itemWrapper = itemElements.get(targetKey)
+    if (!itemWrapper) return
+    const target = props.resolveAutoPinHoldElement?.(itemWrapper, targetKey) ?? itemWrapper
+
+    const containerRect = element.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const relativeTop = targetRect.top - containerRect.top
+    const exceedsViewport = targetRect.height > element.clientHeight
+
+    if (
+      exceedsViewport &&
+      relativeTop <= holdTargetTopThresholdPx() &&
+      relativeTop >= holdTargetTopThresholdPx() - DEFAULT_HOLD_TARGET_TOP_OVERSHOOT_PX
+    ) {
+      setHeldItemCount(itemCount)
+    }
+  }
+
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true, { suppressAutoAnchor: opts?.suppressAutoAnchor }),
@@ -281,7 +377,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       virtuaHandle()?.scrollToIndex(index, { align: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
     },
     notifyContentRendered: () => {
-      if (autoScroll()) {
+      updateAutoPinHold()
+      if (heldItemCount() !== null) return
+      if (autoScroll() && !effectiveSuspendAutoPinToBottom()) {
         scrollToBottom(true)
       }
     },
@@ -294,9 +392,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(() => props.registerApi?.(api))
   createEffect(() => props.registerState?.(state))
 
+  createEffect(on(() => props.resetKey?.(), () => {
+    itemElements.clear()
+    setHeldItemCount(null)
+  }))
+
   // Handle autoScroll (Follow) on items change
   createEffect(on(() => props.items().length, (len, prevLen) => {
-    if (len > (prevLen ?? 0) && autoScroll() && !suppressAutoScrollOnce) {
+    updateAutoPinHold()
+    if (len > (prevLen ?? 0) && autoScroll() && !effectiveSuspendAutoPinToBottom() && !suppressAutoScrollOnce) {
       requestAnimationFrame(() => scrollToBottom(true))
     }
     suppressAutoScrollOnce = false
@@ -304,9 +408,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   // Handle followToken change
   createEffect(on(() => props.followToken?.(), () => {
-    if (autoScroll()) {
+    updateAutoPinHold()
+    if (autoScroll() && !effectiveSuspendAutoPinToBottom()) {
       scrollToBottom(true)
     }
+  }, { defer: true }))
+
+  createEffect(on(() => holdTargetKey(), () => {
+    updateAutoPinHold()
   }, { defer: true }))
 
   // Reset state on resetKey change
@@ -329,6 +438,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     } else if (autoScroll() && scrollToBottomOnActivate()) {
       scrollToBottom(true)
     }
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const handleResize = () => updateAutoPinHold()
+    window.addEventListener("resize", handleResize)
+    onCleanup(() => window.removeEventListener("resize", handleResize))
   })
 
   return (
@@ -356,7 +472,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           bufferSize={props.overscanPx ?? 400}
           onScroll={handleScroll}
         >
-          {(item, index) => props.renderItem(item, index())}
+          {(item, index) => {
+            const key = props.getKey(item, index())
+            const anchorId = getAnchorIdForKey(key)
+            return (
+              <div id={anchorId} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>
+                {props.renderItem(item, index())}
+              </div>
+            )
+          }}
         </Virtualizer>
       </div>
 

@@ -33,6 +33,7 @@ function createInitialState(instanceId: string): InstanceMessageState {
     sessions: {},
     sessionOrder: [],
     messages: {},
+    lastAssistantMessageIds: {},
     messageInfoVersion: {},
     pendingParts: {},
     sessionRevisions: {},
@@ -218,6 +219,7 @@ export interface InstanceMessageStore {
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
+  getLastAssistantMessageId: (sessionId: string) => string | undefined
   // Index of the most recent message in the session that contains a compaction part.
   // Returns -1 if there has been no compaction.
   getLastCompactionMessageIndex: (sessionId: string) => number
@@ -233,6 +235,21 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   const TODO_TOOL_NAME = "todowrite"
 
   const messageInfoCache = new Map<string, MessageInfo>()
+
+  function findLastAssistantMessageId(messageIds: readonly string[]): string | undefined {
+    for (let index = messageIds.length - 1; index >= 0; index -= 1) {
+      const messageId = messageIds[index]
+      if (state.messages[messageId]?.role === "assistant") {
+        return messageId
+      }
+    }
+    return undefined
+  }
+
+  function recomputeLastAssistantMessageId(sessionId: string, messageIds?: readonly string[]) {
+    if (!sessionId) return
+    setState("lastAssistantMessageIds", sessionId, findLastAssistantMessageId(messageIds ?? state.sessions[sessionId]?.messageIds ?? []))
+  }
 
   function getLastCompactionMessageIndex(sessionId: string): number {
     if (!sessionId) return -1
@@ -306,6 +323,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.sessionRevisions[sessionId] ?? 0
   }
 
+  function getLastAssistantMessageIdValue(sessionId: string) {
+    return state.lastAssistantMessageIds[sessionId]
+  }
+
   function withUsageState(sessionId: string, updater: (draft: SessionUsageState) => void) {
     setState("usage", sessionId, (current) => {
       const draft = current
@@ -375,6 +396,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     if (Array.isArray(input.messageIds) && !areMessageIdListsEqual(previousIds, nextMessageIds)) {
+      recomputeLastAssistantMessageId(input.id, nextMessageIds)
       bumpSessionRevision(input.id)
     }
   }
@@ -445,6 +467,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         messageIds: incomingIds,
         updatedAt: Date.now(),
       }))
+      recomputeLastAssistantMessageId(sessionId, incomingIds)
 
       Object.values(normalizedRecords).forEach((record) => {
         maybeUpdateLatestTodoFromRecord(record)
@@ -516,6 +539,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     insertMessageIntoSession(input.sessionId, input.id)
     flushPendingParts(input.id)
+    recomputeLastAssistantMessageId(input.sessionId)
     bumpSessionRevision(input.sessionId)
   }
 
@@ -730,6 +754,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         if (state.latestTodos[sessionId]?.messageId === messageId) {
           clearLatestTodoSnapshot(sessionId)
         }
+        recomputeLastAssistantMessageId(sessionId)
         bumpSessionRevision(sessionId)
       })
     })
@@ -816,7 +841,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       affectedSessions.add(session.id)
     })
 
-    affectedSessions.forEach((sessionId) => bumpSessionRevision(sessionId))
+    affectedSessions.forEach((sessionId) => {
+      recomputeLastAssistantMessageId(sessionId)
+      bumpSessionRevision(sessionId)
+    })
 
     const infoEntry = messageInfoCache.get(options.oldId)
     if (infoEntry) {
@@ -1037,6 +1065,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       removedIds.forEach((id) => removeUsageEntry(draft, id))
     })
 
+    recomputeLastAssistantMessageId(sessionId, keptIds)
     bumpSessionRevision(sessionId)
   }
 
@@ -1128,6 +1157,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return next
       })
 
+      setState("lastAssistantMessageIds", (prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
+
       setState("scrollState", (prev) => {
         const next = { ...prev }
         const prefix = `${sessionId}:`
@@ -1190,16 +1225,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
      setSessionRevert,
      getSessionRevert,
-     rebuildUsage,
-     getSessionUsage,
-     setScrollSnapshot,
-     getScrollSnapshot,
-     getSessionRevision: getSessionRevisionValue,
-       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
-       getLastCompactionMessageIndex,
-       getMessage: (messageId: string) => state.messages[messageId],
-       getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
-       clearSession,
-       clearInstance,
-    }
-  }
+      rebuildUsage,
+      getSessionUsage,
+      setScrollSnapshot,
+      getScrollSnapshot,
+      getSessionRevision: getSessionRevisionValue,
+      getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
+      getLastAssistantMessageId: getLastAssistantMessageIdValue,
+      getLastCompactionMessageIndex,
+      getMessage: (messageId: string) => state.messages[messageId],
+      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      clearSession,
+      clearInstance,
+     }
+   }

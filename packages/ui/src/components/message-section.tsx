@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { MoreHorizontal, Trash, X } from "lucide-solid"
+import { MoreHorizontal, Pause, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
@@ -16,12 +16,14 @@ import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
+import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
 
 const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
+const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 
 export interface MessageSectionProps {
@@ -40,12 +42,40 @@ export interface MessageSectionProps {
 }
 
 export default function MessageSection(props: MessageSectionProps) {
-  const { preferences } = useConfig()
+  const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
+  const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+  const visibleMessageIds = createMemo(() => {
+    const resolvedStore = store()
+    return messageIds().filter((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return false
+
+      if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
+        return true
+      }
+
+      if (record.role !== "assistant") {
+        return false
+      }
+
+      const info = resolvedStore.getMessageInfo(messageId)
+      if (!info || info.role !== "assistant") {
+        return false
+      }
+
+      if (info.error) {
+        return true
+      }
+
+      const timeInfo = info.time as { created: number; end?: number } | undefined
+      return Boolean(timeInfo && (timeInfo.end === undefined || timeInfo.end === 0))
+    })
+  })
 
   const scrollCache = useScrollCache({
     instanceId: props.instanceId,
@@ -128,6 +158,8 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     return map
   })
+
+  const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
 
   const lastCompactionIndex = createMemo(() => {
     // Depend on a single session revision signal (not every message/part read)
@@ -315,15 +347,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const lastAssistantIndex = createMemo(() => {
-    const ids = messageIds()
-    const resolvedStore = store()
-    for (let index = ids.length - 1; index >= 0; index--) {
-      const record = resolvedStore.getMessage(ids[index])
-      if (record?.role === "assistant") {
-        return index
-      }
-    }
-    return -1
+    const messageId = lastAssistantMessageId()
+    if (!messageId) return -1
+    return messageIndexById().get(messageId) ?? -1
   })
  
   const [timelineSegments, setTimelineSegments] = createSignal<TimelineSegment[]>([])
@@ -571,7 +597,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
 
-  const followToken = createMemo(() => `${sessionRevision()}|${preferenceSignature()}`)
+  // Only preferences should force a follow-token re-anchor. Message/session
+  // revision churn at the end of a turn (message.updated, session.idle, etc.)
+  // should not trigger an immediate scroll-to-bottom.
+  const followToken = createMemo(() => preferenceSignature())
 
   const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
   const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
@@ -601,6 +630,35 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const [quoteSelection, setQuoteSelection] = createSignal<{ text: string; top: number; left: number } | null>(null)
 
+  const lastVisibleMessageId = createMemo(() => {
+    const ids = visibleMessageIds()
+    return ids[ids.length - 1] ?? null
+  })
+
+  const autoPinHoldTargetKey = createMemo(() => {
+    if (!holdLongAssistantRepliesEnabled()) return null
+    const messageId = lastVisibleMessageId()
+    return isAssistantTextMessage(messageId) ? messageId : null
+  })
+
+  function toggleHoldLongAssistantReplies() {
+    updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
+  }
+
+  function isAssistantTextMessage(messageId: string | null | undefined) {
+    if (!messageId) return false
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record || record.role !== "assistant") return false
+
+    const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
+    return orderedParts.some((part) => {
+      if ((part as any)?.type !== "text") return false
+      if (partHasRenderableText(part)) return true
+      return typeof (part as { text?: unknown }).text === "string"
+    })
+  }
+
   createEffect(() => {
     const api = listApi()
     if (!api) return
@@ -615,7 +673,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!element || !api) return
     if (props.loading) return
-    if (messageIds().length === 0) return
+    if (visibleMessageIds().length === 0) return
     if (didRestoreScroll()) return
 
     scrollCache.restore(element, {
@@ -734,88 +792,93 @@ export default function MessageSection(props: MessageSectionProps) {
     const loading = Boolean(props.loading)
     const ids = messageIds()
 
-    if (loading) {
-      handleClearTimelineSelection()
-      previousTimelineIds = []
-      setTimelineSegments([])
-      seenTimelineMessageIds.clear()
-      seenTimelineSegmentKeys.clear()
-      timelinePartCountsByMessageId.clear()
-      pendingTimelineMessagePartUpdates.clear()
-      if (pendingTimelinePartUpdateFrame !== null) {
-        cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-        pendingTimelinePartUpdateFrame = null
-      }
-      return
-    }
-
-    if (previousTimelineIds.length === 0 && ids.length > 0) {
-      seedTimeline()
-      previousTimelineIds = ids.slice()
-      return
-    }
-
-    if (ids.length < previousTimelineIds.length) {
-      seedTimeline()
-      previousTimelineIds = ids.slice()
-      return
-    }
-
-    if (ids.length === previousTimelineIds.length) {
-      let changedIndex = -1
-      let changeCount = 0
-      for (let index = 0; index < ids.length; index++) {
-        if (ids[index] !== previousTimelineIds[index]) {
-          changedIndex = index
-          changeCount += 1
-          if (changeCount > 1) break
+    // Wrap all iteration of the store-proxied `ids` array in untrack()
+    // to prevent O(n) per-element reactive subscriptions.  The effect
+    // only needs to re-run when `messageIds` (memo) changes.
+    untrack(() => {
+      if (loading) {
+        handleClearTimelineSelection()
+        previousTimelineIds = []
+        setTimelineSegments([])
+        seenTimelineMessageIds.clear()
+        seenTimelineSegmentKeys.clear()
+        timelinePartCountsByMessageId.clear()
+        pendingTimelineMessagePartUpdates.clear()
+        if (pendingTimelinePartUpdateFrame !== null) {
+          cancelAnimationFrame(pendingTimelinePartUpdateFrame)
+          pendingTimelinePartUpdateFrame = null
         }
+        return
       }
-      if (changeCount === 1 && changedIndex >= 0) {
-        const oldId = previousTimelineIds[changedIndex]
-        const newId = ids[changedIndex]
-        if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
-          seenTimelineMessageIds.delete(oldId)
-          seenTimelineMessageIds.add(newId)
-          setTimelineSegments((prev) => {
-            const next = prev.map((segment) => {
-              if (segment.messageId !== oldId) return segment
-              const updatedId = segment.id.replace(oldId, newId)
-              return { ...segment, messageId: newId, id: updatedId }
-            })
-            seenTimelineSegmentKeys.clear()
-            next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-            return next
-          })
 
-          // Keep part count tracking in sync with id replacement.
-          const existingPartCount = timelinePartCountsByMessageId.get(oldId)
-          if (existingPartCount !== undefined) {
-            timelinePartCountsByMessageId.delete(oldId)
-            timelinePartCountsByMessageId.set(newId, existingPartCount)
+      if (previousTimelineIds.length === 0 && ids.length > 0) {
+        seedTimeline()
+        previousTimelineIds = [...ids]
+        return
+      }
+
+      if (ids.length < previousTimelineIds.length) {
+        seedTimeline()
+        previousTimelineIds = [...ids]
+        return
+      }
+
+      if (ids.length === previousTimelineIds.length) {
+        let changedIndex = -1
+        let changeCount = 0
+        for (let index = 0; index < ids.length; index++) {
+          if (ids[index] !== previousTimelineIds[index]) {
+            changedIndex = index
+            changeCount += 1
+            if (changeCount > 1) break
           }
+        }
+        if (changeCount === 1 && changedIndex >= 0) {
+          const oldId = previousTimelineIds[changedIndex]
+          const newId = ids[changedIndex]
+          if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
+            seenTimelineMessageIds.delete(oldId)
+            seenTimelineMessageIds.add(newId)
+            setTimelineSegments((prev) => {
+              const next = prev.map((segment) => {
+                if (segment.messageId !== oldId) return segment
+                const updatedId = segment.id.replace(oldId, newId)
+                return { ...segment, messageId: newId, id: updatedId }
+              })
+              seenTimelineSegmentKeys.clear()
+              next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
+              return next
+            })
 
-          previousTimelineIds = ids.slice()
-          return
+            // Keep part count tracking in sync with id replacement.
+            const existingPartCount = timelinePartCountsByMessageId.get(oldId)
+            if (existingPartCount !== undefined) {
+              timelinePartCountsByMessageId.delete(oldId)
+              timelinePartCountsByMessageId.set(newId, existingPartCount)
+            }
+
+            previousTimelineIds = [...ids]
+            return
+          }
         }
       }
-    }
 
-    const newIds: string[] = []
-    ids.forEach((id) => {
-      if (!seenTimelineMessageIds.has(id)) {
-        newIds.push(id)
-      }
-    })
-
-    if (newIds.length > 0) {
-      newIds.forEach((id) => {
-        seenTimelineMessageIds.add(id)
-        appendTimelineForMessage(id)
+      const newIds: string[] = []
+      ids.forEach((id) => {
+        if (!seenTimelineMessageIds.has(id)) {
+          newIds.push(id)
+        }
       })
-    }
 
-    previousTimelineIds = ids.slice()
+      if (newIds.length > 0) {
+        newIds.forEach((id) => {
+          seenTimelineMessageIds.add(id)
+          appendTimelineForMessage(id)
+        })
+      }
+
+      previousTimelineIds = [...ids]
+    })
   })
 
   function clearPendingTimelinePartUpdateFrame() {
@@ -886,36 +949,49 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (props.loading) return
     const ids = messageIds()
-    const resolvedStore = store()
+    // Also re-run when sessionRevision bumps (covers part additions within
+    // existing messages) but read individual records inside untrack() to
+    // avoid creating O(n) fine-grained subscriptions.
+    sessionRevision()
 
-    let hasChanges = false
-    for (const messageId of ids) {
-      const record = resolvedStore.getMessage(messageId)
-      const partCount = record?.partIds.length ?? 0
-      const previousCount = timelinePartCountsByMessageId.get(messageId)
+    // Wrap the iteration in untrack() so that accessing individual elements
+    // of the store-proxied `ids` array does not create O(n) per-element
+    // reactive subscriptions.  We only need to re-run when the memo
+    // (messageIds) or sessionRevision changes — not per-element.
+    untrack(() => {
+      const resolvedStore = store()
+      const idsSet = new Set(ids)
+      let hasChanges = false
 
-      if (previousCount === undefined) {
-        timelinePartCountsByMessageId.set(messageId, partCount)
-        continue
+      for (const messageId of ids) {
+        const record = resolvedStore.getMessage(messageId)
+        const partCount = record?.partIds.length ?? 0
+        const previousCount = timelinePartCountsByMessageId.get(messageId)
+
+        if (previousCount === undefined) {
+          timelinePartCountsByMessageId.set(messageId, partCount)
+          continue
+        }
+
+        if (previousCount !== partCount) {
+          timelinePartCountsByMessageId.set(messageId, partCount)
+          pendingTimelineMessagePartUpdates.add(messageId)
+          hasChanges = true
+        }
       }
 
-      if (previousCount !== partCount) {
-        timelinePartCountsByMessageId.set(messageId, partCount)
-        pendingTimelineMessagePartUpdates.add(messageId)
-        hasChanges = true
+      // Drop tracking for ids that are no longer present.
+      // Use the Set for O(1) lookups instead of ids.includes() which is O(n).
+      for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
+        if (!idsSet.has(trackedId)) {
+          timelinePartCountsByMessageId.delete(trackedId)
+        }
       }
-    }
 
-    // Drop tracking for ids that are no longer present.
-    for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
-      if (!ids.includes(trackedId)) {
-        timelinePartCountsByMessageId.delete(trackedId)
+      if (hasChanges) {
+        scheduleTimelinePartUpdateFlush()
       }
-    }
-
-    if (hasChanges) {
-      scheduleTimelinePartUpdateFlush()
-    }
+    })
   })
 
   createEffect(() => {
@@ -989,7 +1065,7 @@ export default function MessageSection(props: MessageSectionProps) {
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
-          items={messageIds}
+          items={visibleMessageIds}
           getKey={(messageId) => messageId}
           getAnchorId={getMessageAnchorId}
           getKeyFromAnchorId={getMessageIdFromAnchorId}
@@ -1003,6 +1079,12 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
           followToken={followToken}
+          autoPinHoldTargetKey={autoPinHoldTargetKey}
+          autoPinHoldTopThresholdPx={STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX}
+          resolveAutoPinHoldElement={(itemWrapper, key) => {
+            const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"]`))
+            return candidates[candidates.length - 1] ?? null
+          }}
           onScroll={() => {
             clearQuoteSelection()
             scrollCache.persist(streamElement())
@@ -1033,9 +1115,55 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={(api) => setListApi(api)}
           registerState={(state) => setListState(state)}
+          renderControls={(state, api) => (
+            <div class="message-scroll-button-wrapper">
+              <button
+                type="button"
+                class="message-scroll-button"
+                data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
+                onClick={toggleHoldLongAssistantReplies}
+                aria-label={
+                  holdLongAssistantRepliesEnabled()
+                    ? t("messageSection.scroll.disableHoldAriaLabel")
+                    : t("messageSection.scroll.enableHoldAriaLabel")
+                }
+                title={
+                  holdLongAssistantRepliesEnabled()
+                    ? t("messageSection.scroll.disableHoldAriaLabel")
+                    : t("messageSection.scroll.enableHoldAriaLabel")
+                }
+              >
+                <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
+              </button>
+              <Show when={state.showScrollTopButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => api.scrollToTop()}
+                  aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                >
+                  <span class="message-scroll-icon" aria-hidden="true">
+                    ↑
+                  </span>
+                </button>
+              </Show>
+              <Show when={state.showScrollBottomButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => api.scrollToBottom()}
+                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                >
+                  <span class="message-scroll-icon" aria-hidden="true">
+                    ↓
+                  </span>
+                </button>
+              </Show>
+            </div>
+          )}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && messageIds().length === 0}>
+              <Show when={!props.loading && visibleMessageIds().length === 0}>
                 <div class="empty-state">
                   <div class="empty-state-content">
                     <div class="flex flex-col items-center gap-3 mb-6">

@@ -4,7 +4,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { BellRing, ChevronDown, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
@@ -187,6 +187,24 @@ const StatusTab: Component<StatusTabProps> = (props) => {
               <div class="status-process-header">
                 <span class="status-process-title">{process.title}</span>
                 <div class="status-process-meta">
+                  <span
+                    classList={{
+                      "text-success": Boolean(process.notifyEnabled),
+                      "text-tertiary": !process.notifyEnabled,
+                    }}
+                    aria-label={props.t(
+                      process.notifyEnabled
+                        ? "instanceShell.backgroundProcesses.notify.enabled"
+                        : "instanceShell.backgroundProcesses.notify.disabled",
+                    )}
+                    title={props.t(
+                      process.notifyEnabled
+                        ? "instanceShell.backgroundProcesses.notify.enabled"
+                        : "instanceShell.backgroundProcesses.notify.disabled",
+                    )}
+                  >
+                    <BellRing class="h-3.5 w-3.5" />
+                  </span>
                   <span>{props.t("instanceShell.backgroundProcesses.status", { status: process.status })}</span>
                   <Show when={typeof process.outputSizeBytes === "number"}>
                     <span>

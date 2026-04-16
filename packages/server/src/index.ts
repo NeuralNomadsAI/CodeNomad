@@ -24,6 +24,10 @@ import { resolveHttpsOptions } from "./server/tls"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
+import { SideCarManager } from "./sidecars/manager"
+import { ClientConnectionManager } from "./clients/connection-manager"
+import { PluginChannelManager } from "./plugins/channel"
+import { VoiceModeManager } from "./plugins/voice-mode"
 
 const require = createRequire(import.meta.url)
 
@@ -315,6 +319,11 @@ async function main() {
   const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
   const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
+  const sidecarManager = new SideCarManager({
+    settings,
+    eventBus,
+    logger: logger.child({ component: "sidecars" }),
+  })
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -372,6 +381,14 @@ async function main() {
 
   const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
 
+  const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
+  const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
+  const voiceModeManager = new VoiceModeManager({
+    connections: clientConnectionManager,
+    channel: pluginChannel,
+    logger: logger.child({ component: "voice-mode" }),
+  })
+
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
@@ -400,7 +417,11 @@ async function main() {
         serverMeta,
         instanceStore,
         speechService,
+        sidecarManager,
         authManager,
+        clientConnectionManager,
+        pluginChannel,
+        voiceModeManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -421,7 +442,11 @@ async function main() {
         serverMeta,
         instanceStore,
         speechService,
+        sidecarManager,
         authManager,
+        clientConnectionManager,
+        pluginChannel,
+        voiceModeManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -518,6 +543,18 @@ async function main() {
         instanceEventBridge.shutdown()
       } catch (error) {
         logger.warn({ err: error }, "Instance event bridge shutdown failed")
+      }
+
+      try {
+        await sidecarManager.shutdown()
+      } catch (error) {
+        logger.error({ err: error }, "SideCar manager shutdown failed")
+      }
+
+      try {
+        clientConnectionManager.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "Client connection manager shutdown failed")
       }
 
       try {

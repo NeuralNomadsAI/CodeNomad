@@ -18,6 +18,8 @@ export const messagingMessages = {
   "messageSection.loading.messages": "Loading messages...",
   "messageSection.scroll.toFirstAriaLabel": "Scroll to first message",
   "messageSection.scroll.toLatestAriaLabel": "Scroll to latest message",
+  "messageSection.scroll.enableHoldAriaLabel": "Enable hold for long assistant replies",
+  "messageSection.scroll.disableHoldAriaLabel": "Disable hold for long assistant replies",
   "messageSection.quote.addAsQuote": "Add as quote",
   "messageSection.quote.addAsCode": "Add as code",
   "messageSection.quote.copy": "Copy",

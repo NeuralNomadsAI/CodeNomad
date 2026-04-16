@@ -18,6 +18,11 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.ariaLabel": "diff 表示モード",
   "toolCall.diff.viewMode.split": "分割",
   "toolCall.diff.viewMode.unified": "ユニファイド",
+  "toolCall.diff.switchToSplit": "分割表示に切り替え",
+  "toolCall.diff.switchToUnified": "ユニファイド表示に切り替え",
+  "toolCall.diff.enableWordWrap": "折り返しを有効化",
+  "toolCall.diff.disableWordWrap": "折り返しを無効化",
+  "toolCall.diff.copyPatch": "パッチをコピー",
 
   "toolCall.diagnostics.title": "診断",
   "toolCall.diagnostics.ariaLabel": "診断",

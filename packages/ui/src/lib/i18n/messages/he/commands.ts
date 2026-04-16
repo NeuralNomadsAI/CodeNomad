@@ -15,17 +15,17 @@ export const commandMessages = {
   "commands.newInstance.description": "פתח בורר תיקיות ליצירת מופע חדש",
   "commands.newInstance.keywords": "תיקייה, פרויקט, סביבת עבודה",
 
-  "commands.closeInstance.label": "סגור מופע",
-  "commands.closeInstance.description": "עצור את השרת של המופע הנוכחי",
-  "commands.closeInstance.keywords": "עצור, סגור",
+  "commands.closeInstance.label": "סגור לשונית",
+  "commands.closeInstance.description": "סגור את הלשונית העליונה הנוכחית",
+  "commands.closeInstance.keywords": "עצור, סגור, לשונית",
 
-  "commands.nextInstance.label": "מופע הבא",
-  "commands.nextInstance.description": "עבור למופע הבא",
-  "commands.nextInstance.keywords": "החלף, נווט",
+  "commands.nextInstance.label": "הלשונית הבאה",
+  "commands.nextInstance.description": "עבור ללשונית העליונה הבאה",
+  "commands.nextInstance.keywords": "החלף, נווט, לשונית",
 
-  "commands.previousInstance.label": "מופע קודם",
-  "commands.previousInstance.description": "עבור למופע הקודם",
-  "commands.previousInstance.keywords": "החלף, נווט",
+  "commands.previousInstance.label": "הלשונית הקודמת",
+  "commands.previousInstance.description": "עבור ללשונית העליונה הקודמת",
+  "commands.previousInstance.keywords": "החלף, נווט, לשונית",
 
   "commands.newSession.label": "סשן חדש",
   "commands.newSession.description": "צור סשן הורה חדש",

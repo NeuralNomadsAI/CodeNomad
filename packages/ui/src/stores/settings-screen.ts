@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 
-export type SettingsSectionId = "appearance" | "notifications" | "remote" | "speech" | "opencode"
+export type SettingsSectionId = "appearance" | "notifications" | "remote" | "speech" | "opencode" | "sidecars"
 
 const [settingsOpen, setSettingsOpen] = createSignal(false)
 const [activeSettingsSection, setActiveSettingsSection] = createSignal<SettingsSectionId>("appearance")

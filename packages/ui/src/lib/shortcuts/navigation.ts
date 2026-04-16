@@ -1,5 +1,6 @@
 import { keyboardRegistry } from "../keyboard-registry"
-import { instances, activeInstanceId, setActiveInstanceId } from "../../stores/instances"
+import { activeInstanceId } from "../../stores/instances"
+import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
 
 export function registerNavigationShortcuts() {
@@ -11,14 +12,8 @@ export function registerNavigationShortcuts() {
     id: "instance-prev",
     key: "[",
     modifiers: { ctrl: !isMac(), meta: isMac() },
-    handler: () => {
-      const ids = Array.from(instances().keys())
-      if (ids.length <= 1) return
-      const current = ids.indexOf(activeInstanceId() || "")
-      const prev = current <= 0 ? ids.length - 1 : current - 1
-      if (ids[prev]) setActiveInstanceId(ids[prev])
-    },
-    description: "previous instance",
+    handler: () => selectPreviousAppTab(),
+    description: "previous tab",
     context: "global",
   })
 
@@ -26,14 +21,8 @@ export function registerNavigationShortcuts() {
     id: "instance-next",
     key: "]",
     modifiers: { ctrl: !isMac(), meta: isMac() },
-    handler: () => {
-      const ids = Array.from(instances().keys())
-      if (ids.length <= 1) return
-      const current = ids.indexOf(activeInstanceId() || "")
-      const next = (current + 1) % ids.length
-      if (ids[next]) setActiveInstanceId(ids[next])
-    },
-    description: "next instance",
+    handler: () => selectNextAppTab(),
+    description: "next tab",
     context: "global",
   })
 

@@ -242,6 +242,10 @@
   color: var(--accent-primary);
 }
 
+.message-scroll-button[data-active="false"] .message-scroll-icon--toggle {
+  color: var(--text-secondary);
+}
+
 .message-quote-popover {
   position: absolute;
   z-index: 5;

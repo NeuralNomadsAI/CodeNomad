@@ -150,6 +150,8 @@ export const instanceMessages = {
   "instanceShell.backgroundProcesses.empty": "Нет фоновых процессов.",
   "instanceShell.backgroundProcesses.status": "Статус: {status}",
   "instanceShell.backgroundProcesses.output": "Вывод: {sizeKb}KB",
+  "instanceShell.backgroundProcesses.notify.enabled": "Уведомление о завершении включено",
+  "instanceShell.backgroundProcesses.notify.disabled": "Уведомление о завершении выключено",
   "instanceShell.backgroundProcesses.actions.output": "Вывод",
   "instanceShell.backgroundProcesses.actions.stop": "Остановить",
   "instanceShell.backgroundProcesses.actions.terminate": "Завершить",

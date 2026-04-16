@@ -18,6 +18,8 @@ export const messagingMessages = {
   "messageSection.loading.messages": "メッセージを読み込み中...",
   "messageSection.scroll.toFirstAriaLabel": "最初のメッセージへスクロール",
   "messageSection.scroll.toLatestAriaLabel": "最新のメッセージへスクロール",
+  "messageSection.scroll.enableHoldAriaLabel": "長いアシスタント返信の保持を有効にする",
+  "messageSection.scroll.disableHoldAriaLabel": "長いアシスタント返信の保持を無効にする",
   "messageSection.quote.addAsQuote": "引用として追加",
   "messageSection.quote.addAsCode": "コードとして追加",
   "messageSection.quote.copy": "コピー",

@@ -10,7 +10,10 @@ import type {
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
+  SideCar,
   ServerMeta,
+  RemoteServerProbeRequest,
+  RemoteServerProbeResponse,
   VoiceModeStateResponse,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
@@ -191,8 +194,41 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
+  fetchSidecars(): Promise<{ sidecars: SideCar[] }> {
+    return request<{ sidecars: SideCar[] }>("/api/sidecars")
+  },
+  createSidecar(payload: {
+    kind: "port"
+    name: string
+    port: number
+    insecure: boolean
+    prefixMode: "strip" | "preserve"
+  }): Promise<SideCar> {
+    return request<SideCar>("/api/sidecars", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  updateSidecar(
+    id: string,
+    payload: Partial<{ name: string; port: number; insecure: boolean; prefixMode: "strip" | "preserve" }>,
+  ): Promise<SideCar> {
+    return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteSidecar(id: string): Promise<void> {
+    return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+    return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
@@ -430,4 +466,4 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   return `${url.pathname}${url.search}`
 }
 
-export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType }
+export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }

@@ -1,11 +1,12 @@
-import { instances, activeInstanceId, setActiveInstanceId } from "../stores/instances"
+import { activeInstanceId } from "../stores/instances"
+import { selectAppTabByIndex } from "../stores/app-tabs"
 import { activeSessionId, setActiveSession, getSessions, activeParentSessionId } from "../stores/sessions"
 import { keyboardRegistry } from "./keyboard-registry"
 import { isMac } from "./keyboard-utils"
 
 export function setupTabKeyboardShortcuts(
   handleNewInstance: () => void,
-  handleCloseInstance: (instanceId: string) => void,
+  handleCloseActiveTab: () => Promise<void>,
   handleNewSession: (instanceId: string) => void,
   handleCloseSession: (instanceId: string, sessionId: string) => void,
   handleCommandPalette: () => void,
@@ -35,11 +36,7 @@ export function setupTabKeyboardShortcuts(
 
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key >= "1" && e.key <= "9") {
       e.preventDefault()
-      const index = parseInt(e.key) - 1
-      const instanceIds = Array.from(instances().keys())
-      if (instanceIds[index]) {
-        setActiveInstanceId(instanceIds[index])
-      }
+      selectAppTabByIndex(parseInt(e.key) - 1)
     }
 
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key >= "1" && e.key <= "9") {
@@ -67,10 +64,7 @@ export function setupTabKeyboardShortcuts(
 
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "w") {
       e.preventDefault()
-      const instanceId = activeInstanceId()
-      if (instanceId) {
-        handleCloseInstance(instanceId)
-      }
+      void handleCloseActiveTab()
     }
 
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "w") {
