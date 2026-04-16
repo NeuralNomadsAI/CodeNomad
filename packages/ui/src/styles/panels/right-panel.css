@@ -399,16 +399,31 @@
   @apply inline-flex items-center justify-center w-5 h-5 rounded border border-base leading-none;
   background-color: var(--surface-base);
   border-color: var(--border-base);
-  color: white;
+  color: var(--text-secondary);
   padding: 0;
   position: relative;
   overflow: hidden;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 
 .git-change-row-action:hover {
   background-color: var(--surface-hover);
   border-color: var(--border-base);
-  color: white;
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.file-list-item-active .git-change-row-action,
+.git-change-list-item-bulk-selected .git-change-row-action {
+  background-color: color-mix(in srgb, var(--surface-base) 94%, white);
+  border-color: color-mix(in srgb, var(--accent-primary) 24%, var(--border-base));
+}
+
+.file-list-item-active .git-change-row-action:hover,
+.git-change-list-item-bulk-selected .git-change-row-action:hover {
+  background-color: var(--surface-base);
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-base));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 24%, transparent);
 }
 
 .git-change-row-action:focus-visible {
@@ -435,13 +450,13 @@
 }
 
 .git-change-row-action-bar-horizontal {
-  width: 14px;
-  height: 2px;
+  width: 12px;
+  height: 1.5px;
 }
 
 .git-change-row-action-bar-vertical {
-  width: 2px;
-  height: 14px;
+  width: 1.5px;
+  height: 12px;
 }
 
 @media (hover: none), (pointer: coarse) {
