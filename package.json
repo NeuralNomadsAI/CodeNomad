@@ -16,6 +16,7 @@
     "dev": "npm run dev --workspace @neuralnomads/codenomad-electron-app",
     "dev:electron": "npm run dev --workspace @neuralnomads/codenomad-electron-app",
     "dev:tauri": "npm run dev --workspace @codenomad/tauri-app",
+    "build:server":"npm run build --workspace @neuralnomads/codenomad",
     "build": "npm run build --workspace @neuralnomads/codenomad-electron-app",
     "build:tauri": "npm run build --workspace @codenomad/tauri-app",
     "build:ui": "npm run build --workspace @codenomad/ui",
