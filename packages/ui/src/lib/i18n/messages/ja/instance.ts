@@ -130,10 +130,6 @@ export const instanceMessages = {
   "instanceShell.gitChanges.loading": "Git の変更を読み込み中...",
   "instanceShell.gitChanges.empty": "Git の変更はまだありません。",
   "instanceShell.gitChanges.deleted": "削除済み",
-  "instanceShell.diff.switchToCompactGutter": "統合ガターをコンパクト表示に切り替え",
-  "instanceShell.diff.switchToClassicGutter": "統合ガターをクラシック表示に切り替え",
-  "instanceShell.diff.gutterStyleCompact": "コンパクト",
-  "instanceShell.diff.gutterStyleClassic": "クラシック",
 
   "instanceShell.filesShell.fileListTitle": "ファイル一覧",
   "instanceShell.filesShell.mobileSelectorLabel": "ファイルを選択",

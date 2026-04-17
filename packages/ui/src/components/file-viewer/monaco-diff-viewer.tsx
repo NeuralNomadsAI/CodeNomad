@@ -15,7 +15,6 @@ interface MonacoDiffViewerProps {
   viewMode?: "split" | "unified"
   contextMode?: "expanded" | "collapsed"
   wordWrap?: "on" | "off"
-  unifiedGutterStyle?: "compact" | "classic"
 }
 
 function getLineCount(value: string): number {
@@ -27,11 +26,7 @@ function getDigitCount(value: number): number {
   return String(Math.max(1, value)).length
 }
 
-function getUnifiedGutterSizing(options: {
-  unifiedGutterStyle: "compact" | "classic" | null
-  before: string
-  after: string
-}) {
+function getUnifiedGutterSizing(options: { before: string; after: string }) {
   const beforeLineCount = getLineCount(options.before)
   const afterLineCount = getLineCount(options.after)
   const beforeDigitCount = getDigitCount(beforeLineCount)
@@ -44,30 +39,12 @@ function getUnifiedGutterSizing(options: {
   const afterNumberChars = Math.max(2, afterDigitCount + 1)
   const fourDigitPenalty = Math.max(0, maxDigitCount - 3)
 
-  if (options.unifiedGutterStyle === "compact") {
-    const sharedNumberChars = Math.max(beforeNumberChars, afterNumberChars)
-    return {
-      diffEditorLineNumbersMinChars: sharedNumberChars,
-      originalLineNumbersMinChars: sharedNumberChars,
-      modifiedLineNumbersMinChars: sharedNumberChars,
-      lineDecorationsWidth: 8 + extraDigits * 4 + fourDigitPenalty * 2,
-    }
-  }
-
-  if (options.unifiedGutterStyle === "classic") {
-    return {
-      diffEditorLineNumbersMinChars: Math.max(beforeNumberChars, afterNumberChars),
-      originalLineNumbersMinChars: beforeNumberChars,
-      modifiedLineNumbersMinChars: afterNumberChars,
-      lineDecorationsWidth: 10 + extraDigits * 4 + fourDigitPenalty * 4,
-    }
-  }
-
+  const sharedNumberChars = Math.max(beforeNumberChars, afterNumberChars)
   return {
-    diffEditorLineNumbersMinChars: 4,
-    originalLineNumbersMinChars: 4,
-    modifiedLineNumbersMinChars: 4,
-    lineDecorationsWidth: 12,
+    diffEditorLineNumbersMinChars: sharedNumberChars,
+    originalLineNumbersMinChars: sharedNumberChars,
+    modifiedLineNumbersMinChars: sharedNumberChars,
+    lineDecorationsWidth: 8 + extraDigits * 4 + fourDigitPenalty * 2,
   }
 }
 
@@ -215,7 +192,6 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
   createEffect(() => {
     if (!host) return
     host.dataset.viewMode = props.viewMode === "split" ? "split" : "unified"
-    host.dataset.unifiedGutterStyle = props.unifiedGutterStyle ?? ""
   })
 
   createEffect(() => {
@@ -223,15 +199,10 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     const viewMode = props.viewMode === "unified" ? "unified" : "split"
     const contextMode = props.contextMode === "collapsed" ? "collapsed" : "expanded"
     const wordWrap = props.wordWrap === "on" ? "on" : "off"
-    const unifiedGutterStyle = viewMode === "unified" ? props.unifiedGutterStyle ?? null : null
     const { before, after } = resolvedContent()
     const sizing =
       viewMode === "unified"
-        ? getUnifiedGutterSizing({
-            unifiedGutterStyle,
-            before,
-            after,
-          })
+        ? getUnifiedGutterSizing({ before, after })
         : getSplitGutterSizing({ before, after })
     const {
       diffEditorLineNumbersMinChars,

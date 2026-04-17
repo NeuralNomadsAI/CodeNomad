@@ -130,10 +130,6 @@ export const instanceMessages = {
   "instanceShell.gitChanges.loading": "正在加载 Git 更改...",
   "instanceShell.gitChanges.empty": "暂无 Git 更改。",
   "instanceShell.gitChanges.deleted": "已删除",
-  "instanceShell.diff.switchToCompactGutter": "切换统一边栏为紧凑模式",
-  "instanceShell.diff.switchToClassicGutter": "切换统一边栏为经典模式",
-  "instanceShell.diff.gutterStyleCompact": "紧凑",
-  "instanceShell.diff.gutterStyleClassic": "经典",
 
   "instanceShell.filesShell.fileListTitle": "文件列表",
   "instanceShell.filesShell.mobileSelectorLabel": "选择文件",

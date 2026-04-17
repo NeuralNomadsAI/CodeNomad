@@ -146,10 +146,6 @@ export const instanceMessages = {
   "instanceShell.diff.switchToUnified": "Switch to unified view",
   "instanceShell.diff.enableWordWrap": "Enable word wrap",
   "instanceShell.diff.disableWordWrap": "Disable word wrap",
-  "instanceShell.diff.switchToCompactGutter": "Switch unified gutter to compact",
-  "instanceShell.diff.switchToClassicGutter": "Switch unified gutter to classic",
-  "instanceShell.diff.gutterStyleCompact": "Compact",
-  "instanceShell.diff.gutterStyleClassic": "Classic",
   "instanceShell.worktree.create": "+ Create worktree",
 
   "instanceShell.plan.noSessionSelected": "Select a session to view plan.",

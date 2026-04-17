@@ -337,12 +337,7 @@
   direction: ltr;
 }
 
-.file-viewer-content--monaco .monaco-viewer[data-unified-gutter-style="compact"] .line-numbers {
-  text-align: left !important;
-  padding-left: 4px;
-}
-
-.file-viewer-content--monaco .monaco-viewer[data-unified-gutter-style="classic"] .line-numbers {
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="unified"] .line-numbers {
   text-align: left !important;
   padding-left: 4px;
 }

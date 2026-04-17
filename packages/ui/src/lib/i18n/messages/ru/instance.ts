@@ -130,10 +130,6 @@ export const instanceMessages = {
   "instanceShell.gitChanges.loading": "Загрузка изменений Git...",
   "instanceShell.gitChanges.empty": "Изменений Git пока нет.",
   "instanceShell.gitChanges.deleted": "Удалено",
-  "instanceShell.diff.switchToCompactGutter": "Переключить объединённую область на компактный режим",
-  "instanceShell.diff.switchToClassicGutter": "Переключить объединённую область на классический режим",
-  "instanceShell.diff.gutterStyleCompact": "Компактный",
-  "instanceShell.diff.gutterStyleClassic": "Классический",
 
   "instanceShell.filesShell.fileListTitle": "Список файлов",
   "instanceShell.filesShell.mobileSelectorLabel": "Выбрать файл",

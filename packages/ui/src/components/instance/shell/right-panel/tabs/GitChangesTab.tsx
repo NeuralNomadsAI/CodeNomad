@@ -6,7 +6,6 @@ import { RefreshCw } from "lucide-solid"
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode } from "../types"
-import type { GitDiffUnifiedGutterStyle } from "../../../../../stores/preferences"
 
 const LazyMonacoDiffViewer = lazy(() =>
   import("../../../../file-viewer/monaco-diff-viewer").then((module) => ({ default: module.MonacoDiffViewer })),
@@ -33,7 +32,6 @@ interface GitChangesTabProps {
   diffViewMode: Accessor<DiffViewMode>
   diffContextMode: Accessor<DiffContextMode>
   diffWordWrapMode: Accessor<DiffWordWrapMode>
-  unifiedGutterStyle: Accessor<GitDiffUnifiedGutterStyle>
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
@@ -141,7 +139,6 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                           viewMode={props.diffViewMode()}
                           contextMode={props.diffContextMode()}
                           wordWrap={props.diffWordWrapMode()}
-                          unifiedGutterStyle={props.unifiedGutterStyle()}
                         />
                       </Suspense>
                     )}
