@@ -6,6 +6,7 @@ export interface FilePreviewerProps {
   blobUrl?: string
   mimeType?: string
   scopeKey: string
+  wordWrap?: "on" | "off"
   isDark?: boolean
   onNavigate?: (path: string) => void
   onGetBlobUrl?: (filePath: string) => Promise<string | null>

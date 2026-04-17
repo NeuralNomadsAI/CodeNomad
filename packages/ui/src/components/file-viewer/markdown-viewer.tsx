@@ -143,6 +143,7 @@ const MarkdownViewer: Component<FilePreviewerProps> = (props) => {
             scopeKey={props.scopeKey}
             path={props.path}
             content={props.content}
+            wordWrap={props.wordWrap}
             onSave={props.onSave}
             onContentChange={props.onContentChange}
           />

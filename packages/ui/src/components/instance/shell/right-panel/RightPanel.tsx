@@ -730,6 +730,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
   }
 
+  const insertSessionChangeContext = (file: string, selection: { startLine: number; endLine: number }) => {
+    const startLine = selection.startLine ?? 1
+    const endLine = selection.endLine ?? startLine
+    props.promptInputApi()?.insertComment(`Session Diff: File: ${file} : ${startLine}-${endLine}`)
+  }
+
   const toggleChangesList = () => {
     setChangesListTouched(true)
     setChangesListOpen((current) => {
@@ -921,6 +927,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onViewModeChange={setDiffViewMode}
               onContextModeChange={setDiffContextMode}
               onWordWrapModeChange={setDiffWordWrapMode}
+              onInsertContext={insertSessionChangeContext}
               listOpen={changesListOpen}
               onToggleList={toggleChangesList}
               splitWidth={changesSplitWidth}

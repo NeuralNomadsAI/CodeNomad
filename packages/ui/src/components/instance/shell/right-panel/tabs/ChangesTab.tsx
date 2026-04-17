@@ -25,6 +25,8 @@ interface ChangesTabProps {
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
 
+  onInsertContext: (file: string, selection: { startLine: number; endLine: number }) => void
+
   listOpen: Accessor<boolean>
   onToggleList: () => void
   splitWidth: Accessor<number>
@@ -129,6 +131,8 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
                     viewMode={props.diffViewMode()}
                     contextMode={props.diffContextMode()}
                     wordWrap={props.diffWordWrapMode()}
+                    insertContextLabel={props.t("instanceShell.gitChanges.actions.insertContext")}
+                    onRequestInsertContext={(selection) => props.onInsertContext(String(file().file || ""), selection)}
                   />
                 </Suspense>
             )}

@@ -1,7 +1,7 @@
 import { For, Show, Suspense, createSignal, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { RefreshCw, Save, Upload, Download, Trash2, Eye, Code } from "lucide-solid"
+import { RefreshCw, Save, Upload, Download, Trash2, Eye, Code, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
 import type { FileOperationState } from "../hooks/useFileOperations"
@@ -54,6 +54,7 @@ interface FilesTabProps {
 
 const FilesTab: Component<FilesTabProps> = (props) => {
   const [mdViewMode, setMdViewMode] = createSignal<MdViewMode>("rendered")
+  const [fileWordWrapMode, setFileWordWrapMode] = createSignal<"on" | "off">("off")
   const isMarkdownFile = () => {
     const path = props.browserSelectedPath()
     return path ? isMarkdown(path) : false
@@ -77,6 +78,12 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     })
 
     const parent = props.parentPath()
+    const selectedPreviewer = () =>
+      selectPreviewer(filePreviewers, props.browserSelectedPath() || "", props.browserSelectedMimeType() ?? undefined)
+    const showWordWrapControl = () => {
+      const previewer = selectedPreviewer()
+      return previewer?.id === "monaco" || (previewer?.id === "markdown" && mdViewMode() === "code")
+    }
 
     const headerDisplayedPath = () => props.browserSelectedPath() || props.browserPath()
 
@@ -131,6 +138,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             blobUrl={blobUrl ?? undefined}
             mimeType={mimeType ?? undefined}
             scopeKey={props.scopeKey()}
+            wordWrap={showWordWrapControl() ? fileWordWrapMode() : undefined}
             onSave={props.onSave}
             onContentChange={props.onContentChange}
             onNavigate={(navPath: string) => props.onRequestOpenFile(navPath)}
@@ -252,51 +260,63 @@ const FilesTab: Component<FilesTabProps> = (props) => {
               </Show>
               <Show when={props.browserError()}>{(err) => <span class="text-error">{err()}</span>}</Show>
             </div>
-            <Show when={isMarkdownFile()}>
-              <button
-                type="button"
-                class="files-header-icon-button md-view-toggle"
-                classList={{ active: mdViewMode() === "rendered" }}
-                title={props.t("fileViewer.markdown.rendered")}
-                aria-label={props.t("fileViewer.markdown.rendered")}
-                onClick={() => setMdViewMode("rendered")}
-              >
-                <Eye class="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                class="files-header-icon-button md-view-toggle"
-                classList={{ active: mdViewMode() === "code" }}
-                title={props.t("fileViewer.markdown.code")}
-                aria-label={props.t("fileViewer.markdown.code")}
-                onClick={() => setMdViewMode("code")}
-              >
-                <Code class="h-4 w-4" />
-              </button>
-            </Show>
-            <button
-              type="button"
-              class="files-header-icon-button"
-              title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
-              aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
-              disabled={props.browserSelectedSaving() || !props.browserSelectedDirty()}
-              style={{ "margin-inline-start": "auto" }}
-              onClick={handleSave}
-            >
-              <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>
-                <RefreshCw class="h-4 w-4 animate-spin" />
+            <div class="file-viewer-toolbar" style={{ "margin-inline-start": "auto" }}>
+              <Show when={isMarkdownFile()}>
+                <button
+                  type="button"
+                  class="files-header-icon-button md-view-toggle"
+                  classList={{ active: mdViewMode() === "rendered" }}
+                  title={props.t("fileViewer.markdown.rendered")}
+                  aria-label={props.t("fileViewer.markdown.rendered")}
+                  onClick={() => setMdViewMode("rendered")}
+                >
+                  <Eye class="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  class="files-header-icon-button md-view-toggle"
+                  classList={{ active: mdViewMode() === "code" }}
+                  title={props.t("fileViewer.markdown.code")}
+                  aria-label={props.t("fileViewer.markdown.code")}
+                  onClick={() => setMdViewMode("code")}
+                >
+                  <Code class="h-4 w-4" />
+                </button>
               </Show>
-            </button>
-            <button
-              type="button"
-              class="files-header-icon-button"
-              title={props.t("instanceShell.rightPanel.actions.refresh")}
-              aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
-              disabled={props.browserLoading()}
-              onClick={() => props.onRefresh()}
-            >
-              <RefreshCw class={`h-4 w-4${props.browserLoading() ? " animate-spin" : ""}`} />
-            </button>
+              <button
+                type="button"
+                class="files-header-icon-button"
+                title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
+                aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
+                disabled={props.browserSelectedSaving() || !props.browserSelectedDirty()}
+                onClick={handleSave}
+              >
+                <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>
+                  <RefreshCw class="h-4 w-4 animate-spin" />
+                </Show>
+              </button>
+              <button
+                type="button"
+                class="files-header-icon-button"
+                title={props.t("instanceShell.rightPanel.actions.refresh")}
+                aria-label={props.t("instanceShell.rightPanel.actions.refresh")}
+                disabled={props.browserLoading()}
+                onClick={() => props.onRefresh()}
+              >
+                <RefreshCw class={`h-4 w-4${props.browserLoading() ? " animate-spin" : ""}`} />
+              </button>
+              <Show when={showWordWrapControl()}>
+                <button
+                  type="button"
+                  class={`files-header-icon-button${fileWordWrapMode() === "on" ? " active" : ""}`}
+                  title={fileWordWrapMode() === "on" ? props.t("instanceShell.diff.disableWordWrap") : props.t("instanceShell.diff.enableWordWrap")}
+                  aria-label={fileWordWrapMode() === "on" ? props.t("instanceShell.diff.disableWordWrap") : props.t("instanceShell.diff.enableWordWrap")}
+                  onClick={() => setFileWordWrapMode(fileWordWrapMode() === "on" ? "off" : "on")}
+                >
+                  <WrapText class="h-4 w-4" />
+                </button>
+              </Show>
+            </div>
           </>
         }
         list={{ panel: renderList, overlay: renderList }}

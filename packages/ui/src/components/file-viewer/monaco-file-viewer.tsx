@@ -9,6 +9,7 @@ interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  wordWrap?: "on" | "off"
   onSave?: (content: string) => void
   onContentChange?: (content: string) => void
 }
@@ -82,6 +83,13 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
   createEffect(() => {
     if (!ready() || !monaco || !editor) return
     monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
+  })
+
+  createEffect(() => {
+    if (!ready() || !editor) return
+    editor.updateOptions({
+      wordWrap: props.wordWrap === "on" ? "on" : "off",
+    })
   })
 
   createEffect(() => {
