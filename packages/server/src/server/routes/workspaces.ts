@@ -3,7 +3,6 @@ import { z } from "zod"
 import fs from "fs"
 import path from "path"
 import { WorkspaceManager } from "../../workspaces/manager"
-import { FileSystemBrowser } from "../../filesystem/browser"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
@@ -370,8 +369,8 @@ async function resolveGitWorktreeDirectory(
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
   if (isGitMutationError(error)) {
-    reply.code((error as any).statusCode)
-    return { error: (error as any).message }
+    reply.code(error.statusCode)
+    return { error: error.message }
   }
   if (error instanceof Error && error.message === "Workspace not found") {
     reply.code(404)

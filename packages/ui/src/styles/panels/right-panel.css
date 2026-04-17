@@ -284,6 +284,34 @@
     inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 
+.file-list-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  min-width: 48px;
+  justify-content: flex-end;
+}
+
+.file-action-btn {
+  @apply inline-flex items-center justify-center w-6 h-6 rounded border border-base transition-colors;
+  background-color: var(--surface-base);
+  color: var(--text-secondary);
+}
+
+.file-action-btn:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.file-action-btn.delete {
+  color: var(--session-status-working-fg);
+}
+
+.file-action-btn.delete:hover {
+  background-color: color-mix(in srgb, var(--session-status-working-fg) 12%, var(--surface-base));
+}
+
 .file-list-item-content {
   @apply flex items-center gap-3 flex-1 min-w-0;
 }
