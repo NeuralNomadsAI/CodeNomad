@@ -10,6 +10,7 @@ import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
 import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
+import { resolveWorktreeDirectory } from "../workspaces/worktree-directory"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -54,6 +55,9 @@ interface HttpServerDeps {
   speechService: SpeechService
   sidecarManager: SideCarManager
   authManager: AuthManager
+  clientConnectionManager: ClientConnectionManager
+  pluginChannel: PluginChannelManager
+  voiceModeManager: VoiceModeManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -182,13 +186,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     logger: deps.logger.child({ component: "background-processes" }),
   })
-  const clientConnectionManager = new ClientConnectionManager(deps.logger.child({ component: "client-connections" }))
-  const pluginChannel = new PluginChannelManager(deps.logger.child({ component: "plugin-channel" }))
-  const voiceModeManager = new VoiceModeManager({
-    connections: clientConnectionManager,
-    channel: pluginChannel,
-    logger: deps.logger.child({ component: "voice-mode" }),
-  })
 
   registerAuthRoutes(app, { authManager: deps.authManager })
 
@@ -268,7 +265,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
     logger: sseLogger,
-    connectionManager: clientConnectionManager,
+    connectionManager: deps.clientConnectionManager,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
   registerStorageRoutes(app, {
@@ -289,8 +286,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
     eventBus: deps.eventBus,
     logger: proxyLogger,
-    channel: pluginChannel,
-    voiceModeManager,
+    channel: deps.pluginChannel,
+    voiceModeManager: deps.voiceModeManager,
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
@@ -356,7 +353,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     },
     stop: () => {
       closeSseClients()
-      clientConnectionManager.shutdown()
       return app.close()
     },
   }
@@ -763,52 +759,6 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   }
   const trimmed = pathSuffix.replace(/^\/+/, "")
   return trimmed.length === 0 ? "/" : `/${trimmed}`
-}
-
-type WorktreeCacheEntry = {
-  expiresAt: number
-  repoRoot: string
-  worktrees: Array<{ slug: string; directory: string }>
-}
-
-const WORKTREE_CACHE_TTL_MS = 2000
-const worktreeCache = new Map<string, WorktreeCacheEntry>()
-
-async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger: Logger }) {
-  const cached = worktreeCache.get(params.workspaceId)
-  const now = Date.now()
-  if (cached && cached.expiresAt > now) {
-    return cached
-  }
-
-  const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
-  const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
-  const entry: WorktreeCacheEntry = {
-    expiresAt: now + WORKTREE_CACHE_TTL_MS,
-    repoRoot,
-    worktrees: worktrees.map((wt) => ({ slug: wt.slug, directory: wt.directory })),
-  }
-  worktreeCache.set(params.workspaceId, entry)
-  return entry
-}
-
-async function resolveWorktreeDirectory(params: {
-  workspaceId: string
-  workspacePath: string
-  worktreeSlug: string
-  logger: Logger
-}): Promise<string | null> {
-  const { worktreeSlug } = params
-  const cached = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
-  const match = cached.worktrees.find((wt) => wt.slug === worktreeSlug)
-  if (match) {
-    return match.directory
-  }
-
-  // If the slug is new (e.g., created moments ago), refresh once.
-  worktreeCache.delete(params.workspaceId)
-  const refreshed = await getCachedWorktrees({ workspaceId: params.workspaceId, workspacePath: params.workspacePath, logger: params.logger })
-  return refreshed.worktrees.find((wt) => wt.slug === worktreeSlug)?.directory ?? null
 }
 
 function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {

@@ -1,6 +1,6 @@
 [package]
 name = "codenomad-tauri"
-version = "0.13.3"
+version = "0.14.0"
 edition = "2021"
 license = "MIT"
 
@@ -28,4 +28,4 @@ url = "2"
 tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_Security", "Win32_System_JobObjects"] }

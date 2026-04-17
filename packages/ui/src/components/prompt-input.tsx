@@ -120,6 +120,11 @@ export default function PromptInput(props: PromptInputProps) {
           insertQuotedSelection(text)
         }
       },
+      insertComment: (text: string) => {
+        const normalized = (text ?? "").replace(/\r/g, "").trim()
+        if (!normalized) return
+        insertBlockContent(`${normalized}\n\n`)
+      },
       expandTextAttachment: (attachmentId: string) => {
         const attachment = attachments().find((a) => a.id === attachmentId)
         if (!attachment) return
@@ -576,113 +581,6 @@ export default function PromptInput(props: PromptInputProps) {
                 autoCapitalize="off"
                 autocomplete="off"
               />
-              <div class="prompt-nav-buttons">
-                <div class="prompt-nav-column prompt-nav-column-left">
-                  <Show when={showVoiceInput()}>
-                    <button
-                      type="button"
-                      class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
-                      onPointerDown={(event) => {
-                        event.preventDefault()
-                        beginVoicePress(event)
-                      }}
-                      onPointerUp={(event) => {
-                        event.preventDefault()
-                        endVoicePress()
-                      }}
-                      onPointerCancel={() => endVoicePress()}
-                      onLostPointerCapture={() => endVoicePress()}
-                      onKeyDown={(event) => {
-                        if (event.repeat) return
-                        if (event.key !== " " && event.key !== "Enter") return
-                        event.preventDefault()
-                        beginVoicePress(event)
-                      }}
-                      onKeyUp={(event) => {
-                        if (event.key !== " " && event.key !== "Enter") return
-                        event.preventDefault()
-                        endVoicePress()
-                      }}
-                      onBlur={() => endVoicePress()}
-                      disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
-                      aria-label={voiceInput.buttonTitle()}
-                      title={voiceInput.buttonTitle()}
-                    >
-                      <Show
-                        when={voiceInput.isRecording()}
-                        fallback={
-                          <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
-                            <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-                          </Show>
-                        }
-                      >
-                        <Mic class="h-4 w-4" aria-hidden="true" />
-                      </Show>
-                    </button>
-                  </Show>
-                  <Show when={showConversationToggle()}>
-                    <button
-                      type="button"
-                      class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
-                      onClick={() => toggleConversationMode(props.instanceId)}
-                      disabled={!conversationModeEnabled() && !canToggleConversationMode()}
-                      aria-pressed={conversationModeEnabled()}
-                      aria-label={conversationModeButtonTitle()}
-                      title={conversationModeButtonTitle()}
-                    >
-                      <Volume2 class="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </Show>
-                  <button
-                    type="button"
-                    class="prompt-clear-button"
-                    onClick={handleClearPrompt}
-                    disabled={!canClearPrompt()}
-                    aria-label={t("promptInput.clear.ariaLabel")}
-                    title={t("promptInput.clear.title")}
-                  >
-                    <X class="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-                <div class="prompt-nav-column prompt-nav-column-right">
-                  <ExpandButton
-                    expandState={expandState}
-                    onToggleExpand={handleExpandToggle}
-                  />
-                  <Show when={hasHistory()}>
-                    <button
-                      type="button"
-                      class="prompt-history-button"
-                      onClick={() =>
-                        selectPreviousHistory({
-                          force: true,
-                          isPickerOpen: showPicker(),
-                          getTextarea: () => textareaRef,
-                        })
-                      }
-                      disabled={!canHistoryGoPrevious()}
-                      aria-label={t("promptInput.history.previousAriaLabel")}
-                    >
-                      <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      class="prompt-history-button"
-                      onClick={() =>
-                        selectNextHistory({
-                          force: true,
-                          isPickerOpen: showPicker(),
-                          getTextarea: () => textareaRef,
-                        })
-                      }
-                      disabled={!canHistoryGoNext()}
-                      aria-label={t("promptInput.history.nextAriaLabel")}
-                    >
-                      <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
-                    </button>
-                  </Show>
-                </div>
-              </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
@@ -737,6 +635,116 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
 
         <div class="prompt-input-actions">
+          <div class="prompt-nav-buttons">
+            <div class="prompt-nav-column prompt-nav-column-left">
+              <Show when={showVoiceInput()}>
+                <button
+                  type="button"
+                  class={`prompt-voice-button prompt-nav-voice-button ${voiceInput.isRecording() ? "is-recording" : ""}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    beginVoicePress(event)
+                  }}
+                  onPointerUp={(event) => {
+                    event.preventDefault()
+                    endVoicePress()
+                  }}
+                  onPointerCancel={() => endVoicePress()}
+                  onLostPointerCapture={() => endVoicePress()}
+                  onKeyDown={(event) => {
+                    if (event.repeat) return
+                    if (event.key !== " " && event.key !== "Enter") return
+                    event.preventDefault()
+                    beginVoicePress(event)
+                  }}
+                  onKeyUp={(event) => {
+                    if (event.key !== " " && event.key !== "Enter") return
+                    event.preventDefault()
+                    endVoicePress()
+                  }}
+                  onBlur={() => endVoicePress()}
+                  disabled={!voiceInput.isRecording() && (props.disabled || voiceInput.isTranscribing() || !voiceInput.canUseVoiceInput())}
+                  aria-label={voiceInput.buttonTitle()}
+                  title={voiceInput.buttonTitle()}
+                >
+                  <Show
+                    when={voiceInput.isRecording()}
+                    fallback={
+                      <Show when={voiceInput.isTranscribing()} fallback={<Mic class="h-4 w-4" aria-hidden="true" />}>
+                        <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                      </Show>
+                    }
+                  >
+                    <Mic class="h-4 w-4" aria-hidden="true" />
+                  </Show>
+                </button>
+              </Show>
+              <Show when={showConversationToggle()}>
+                <button
+                  type="button"
+                  class={`prompt-voice-button prompt-nav-voice-button prompt-conversation-button ${conversationModeEnabled() ? "is-active" : ""}`}
+                  onClick={() => toggleConversationMode(props.instanceId)}
+                  disabled={!conversationModeEnabled() && !canToggleConversationMode()}
+                  aria-pressed={conversationModeEnabled()}
+                  aria-label={conversationModeButtonTitle()}
+                  title={conversationModeButtonTitle()}
+                >
+                  <Volume2 class="h-4 w-4" aria-hidden="true" />
+                </button>
+              </Show>
+              <button
+                type="button"
+                class="prompt-clear-button"
+                onClick={handleClearPrompt}
+                disabled={!canClearPrompt()}
+                aria-label={t("promptInput.clear.ariaLabel")}
+                title={t("promptInput.clear.title")}
+              >
+                <X class="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="prompt-nav-column prompt-nav-column-right">
+              <ExpandButton
+                expandState={expandState}
+                onToggleExpand={handleExpandToggle}
+              />
+              <Show when={hasHistory()}>
+                <button
+                  type="button"
+                  class="prompt-history-button"
+                  onClick={() =>
+                    selectPreviousHistory({
+                      force: true,
+                      isPickerOpen: showPicker(),
+                      getTextarea: () => textareaRef,
+                    })
+                  }
+                  disabled={!canHistoryGoPrevious()}
+                  aria-label={t("promptInput.history.previousAriaLabel")}
+                >
+                  <ArrowBigUp class="h-5 w-5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  class="prompt-history-button"
+                  onClick={() =>
+                    selectNextHistory({
+                      force: true,
+                      isPickerOpen: showPicker(),
+                      getTextarea: () => textareaRef,
+                    })
+                  }
+                  disabled={!canHistoryGoNext()}
+                  aria-label={t("promptInput.history.nextAriaLabel")}
+                >
+                  <ArrowBigDown class="h-5 w-5" aria-hidden="true" />
+                </button>
+              </Show>
+            </div>
+          </div>
+        </div>
+
+        <div class="prompt-input-primary-actions">
           <button
             type="button"
             class="stop-button"

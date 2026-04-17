@@ -36,6 +36,7 @@ interface SessionViewProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   isActive?: boolean
+  registerSessionPromptApi?: (sessionId: string, api: PromptInputApi | null) => void
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
@@ -79,11 +80,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       requestAnimationFrame(() => scrollToBottomHandle?.())
     })
   }
-  createEffect(() => {
-    if (!props.isActive) return
-    if (!shouldScrollToBottomOnActivate()) return
-    scheduleScrollToBottom()
-  })
+  createEffect(
+    on(
+      () => props.isActive,
+      (isActive, wasActive) => {
+        if (!isActive) return
+        if (wasActive === true) return
+        if (!shouldScrollToBottomOnActivate()) return
+        scheduleScrollToBottom()
+      },
+    ),
+  )
 
   createEffect(
     on(
@@ -143,6 +150,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   function registerPromptInputApi(api: PromptInputApi) {
     promptInputApi = api
+    props.registerSessionPromptApi?.(props.sessionId, api)
 
     if (pendingPromptText) {
       api.setPromptText(pendingPromptText, { focus: true })
@@ -157,6 +165,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return () => {
       if (promptInputApi === api) {
         promptInputApi = null
+        props.registerSessionPromptApi?.(props.sessionId, null)
       }
     }
   }
@@ -332,16 +341,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
                 loading={messagesLoading()}
                 onRevert={handleRevert}
                 onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
-                onFork={handleFork}
-                isActive={props.isActive}
-                registerScrollToBottom={(fn) => {
-                  scrollToBottomHandle = fn
-                  if (props.isActive) {
-                    if (shouldScrollToBottomOnActivate()) {
-                      scheduleScrollToBottom()
-                    }
-                  }
-                }}
+                 onFork={handleFork}
+                 isActive={props.isActive}
+                 registerScrollToBottom={(fn) => {
+                   scrollToBottomHandle = fn
+                 }}
 
 
 
