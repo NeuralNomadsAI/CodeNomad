@@ -195,12 +195,9 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
       modifiedLineNumbersMinChars,
       lineDecorationsWidth,
     } = sizing
-    const compactUnifiedGutter = unifiedGutterStyle === "compact"
-
     diffEditor.updateOptions({
       renderSideBySide: viewMode === "split",
       renderSideBySideInlineBreakpoint: 0,
-      compactMode: compactUnifiedGutter,
       renderIndicators: true,
       lineNumbersMinChars: diffEditorLineNumbersMinChars,
       lineDecorationsWidth,
@@ -209,9 +206,6 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
           ? { enabled: true }
           : { enabled: false },
       wordWrap,
-      experimental: {
-        useTrueInlineView: compactUnifiedGutter,
-      },
     })
 
     try {
