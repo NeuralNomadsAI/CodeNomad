@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.13.3",
+  "version": "0.14.0",
   "description": "CodeNomad - AI coding assistant",
   "license": "MIT",
   "author": {
@@ -143,6 +143,13 @@
       "target": [
         {
           "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "AppImage",
           "arch": [
             "x64",
             "arm64"

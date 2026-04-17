@@ -212,7 +212,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in packages/electron-app/release/*.zip; do
+          for file in packages/electron-app/release/*.zip packages/electron-app/release/*.AppImage; do
             [ -f "$file" ] || continue
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
@@ -313,7 +313,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in packages/electron-app/release/*.zip; do
+          for file in packages/electron-app/release/*.zip packages/electron-app/release/*.AppImage; do
             [ -f "$file" ] || continue
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
@@ -324,7 +324,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux
-          path: packages/electron-app/release/*.zip
+          path: |
+            packages/electron-app/release/*.zip
+            packages/electron-app/release/*.AppImage
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
