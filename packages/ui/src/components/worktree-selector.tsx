@@ -214,6 +214,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     sanitized = sanitized.replace(/[A-Za-z]:[\\/][^\r\n"']+/g, "[path]")
     sanitized = sanitized.replace(/\\Users\\[^\\/\r\n]+/gi, "\\Users\\[user]")
     sanitized = sanitized.replace(/\/Users\/[^/\r\n]+/g, "/Users/[user]")
+    sanitized = sanitized.replace(/\/home\/[^/\r\n]+/g, "/home/[user]")
     sanitized = sanitized.replace(/([A-Za-z]:[\\/])?Users[\\/][^\\/\r\n]+/gi, "$1Users/[user]")
     return sanitized
   }
@@ -279,6 +280,12 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           nextStep: t("instanceShell.worktree.delete.error.nextStep.unknown"),
         }
     }
+  })
+
+  const displayDeleteError = createMemo(() => {
+    const raw = deleteError()
+    if (!raw) return null
+    return extractDeleteErrorMessage(raw)
   })
 
   const handleChange = async (value: WorktreeOption | null) => {
@@ -563,7 +570,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 </button>
               </div>
 
-              <Show when={deleteError()}>
+              <Show when={displayDeleteError()}>
                 {(message) => (
                   <div class="rounded-lg border border-danger bg-danger/10 p-3 flex flex-col gap-2">
                     <div class="flex flex-col gap-1">
