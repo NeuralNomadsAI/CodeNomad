@@ -35,18 +35,15 @@ function getUnifiedGutterSizing(options: { before: string; after: string }) {
   const afterDigitCount = getDigitCount(afterLineCount)
   const maxDigitCount = Math.max(beforeDigitCount, afterDigitCount)
   const extraDigits = Math.max(0, maxDigitCount - 2)
-  // Reserve one extra character so the number lane keeps a visible gap before
-  // the +/- indicator lane once the line numbers grow beyond trivial widths.
-  const beforeNumberChars = Math.max(2, beforeDigitCount + 1)
-  const afterNumberChars = Math.max(2, afterDigitCount + 1)
+  const beforeNumberChars = Math.max(2, beforeDigitCount)
+  const afterNumberChars = Math.max(2, afterDigitCount)
   const fourDigitPenalty = Math.max(0, maxDigitCount - 3)
 
-  const sharedNumberChars = Math.max(beforeNumberChars, afterNumberChars)
   return {
-    diffEditorLineNumbersMinChars: sharedNumberChars,
-    originalLineNumbersMinChars: sharedNumberChars,
-    modifiedLineNumbersMinChars: sharedNumberChars,
-    lineDecorationsWidth: 8 + extraDigits * 4 + fourDigitPenalty * 2,
+    diffEditorLineNumbersMinChars: Math.max(beforeNumberChars, afterNumberChars),
+    originalLineNumbersMinChars: beforeNumberChars,
+    modifiedLineNumbersMinChars: afterNumberChars,
+    lineDecorationsWidth: 6 + extraDigits * 2 + fourDigitPenalty * 2,
   }
 }
 
@@ -57,15 +54,15 @@ function getSplitGutterSizing(options: { before: string; after: string }) {
   const afterDigitCount = getDigitCount(afterLineCount)
   const maxDigitCount = Math.max(beforeDigitCount, afterDigitCount)
   const extraDigits = Math.max(0, maxDigitCount - 2)
-  const beforeNumberChars = Math.max(2, beforeDigitCount + 1)
-  const afterNumberChars = Math.max(2, afterDigitCount + 1)
+  const beforeNumberChars = Math.max(2, beforeDigitCount)
+  const afterNumberChars = Math.max(2, afterDigitCount)
   const fourDigitPenalty = Math.max(0, maxDigitCount - 3)
 
   return {
     diffEditorLineNumbersMinChars: Math.max(beforeNumberChars, afterNumberChars),
     originalLineNumbersMinChars: beforeNumberChars,
     modifiedLineNumbersMinChars: afterNumberChars,
-    lineDecorationsWidth: 10 + extraDigits * 2 + fourDigitPenalty * 2,
+    lineDecorationsWidth: 8 + extraDigits * 2 + fourDigitPenalty,
   }
 }
 
@@ -209,7 +206,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
         renderWhitespace: "selection",
         fontSize: 13,
         wordWrap: props.wordWrap === "on" ? "on" : "off",
-        glyphMargin: true,
+        glyphMargin: false,
         folding: false,
         // Keep enough gutter space so unified diffs don't overlap `+`/`-` markers.
         lineNumbersMinChars: 4,
