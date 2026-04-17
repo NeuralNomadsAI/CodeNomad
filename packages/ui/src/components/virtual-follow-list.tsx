@@ -174,6 +174,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastResetKey: string | number | undefined
   let suppressAutoScrollOnce = false
   let pendingInitialScroll = true
+  let lastObservedScrollOffset = 0
+  let lastObservedPinnedAtBottom = false
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -239,14 +241,28 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!handle || !element) return
 
     const offset = handle.scrollOffset
+    const scrolledUp = offset < lastObservedScrollOffset - 1
+    const wasPinnedAtBottom = lastObservedPinnedAtBottom
     const scrollHeight = handle.scrollSize
     const clientHeight = element.clientHeight
     const atBottom = scrollHeight - (offset + clientHeight) <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
     const atTop = offset <= (props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX)
+    lastObservedScrollOffset = offset
 
     const hasItems = props.items().length > 0
     setShowScrollBottomButton(hasItems && !atBottom)
     setShowScrollTopButton(hasItems && !atTop)
+
+    // Keyboard/PageUp scrolls can move the viewport without ever hitting our
+    // local key intent listeners (for example after dragging the native
+    // scrollbar). If follow mode stays enabled, the next render notification
+    // snaps the list straight back to bottom. A real upward viewport move away
+    // from bottom should always break follow unless a hold target is active.
+    if (wasPinnedAtBottom && scrolledUp && autoScroll() && !atBottom && heldItemCount() === null) {
+      setAutoScroll(false)
+      lastObservedPinnedAtBottom = false
+      return
+    }
 
     // Sync autoScroll state based on scroll position if it was a user scroll
     if (hasUserScrollIntent()) {
@@ -259,6 +275,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         setAutoScroll(false)
       }
     }
+
+    lastObservedPinnedAtBottom = autoScroll() && atBottom
   }
 
   function scrollToBottom(immediate = true, options?: { suppressAutoAnchor?: boolean }) {
@@ -395,6 +413,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), () => {
     itemElements.clear()
     setHeldItemCount(null)
+    lastObservedScrollOffset = 0
+    lastObservedPinnedAtBottom = false
   }))
 
   // Handle autoScroll (Follow) on items change
