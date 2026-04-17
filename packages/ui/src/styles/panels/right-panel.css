@@ -611,6 +611,40 @@
   z-index: 30;
 }
 
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="unified"] .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .line-numbers,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.modified .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .glyph-margin {
+  width: 0 !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .line-numbers {
+  left: 0 !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .cldr.delete-sign {
+  left: var(--split-original-delete-sign-left, 14px) !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-zones,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-overlays {
+  width: var(--split-original-gutter-width, 24px) !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .editor-scrollable {
+  left: var(--split-original-gutter-width, 24px) !important;
+  width: calc(100% - var(--split-original-gutter-width, 24px)) !important;
+}
+
 .file-viewer-empty {
   @apply flex flex-col items-center justify-center h-full gap-3 text-center;
   color: var(--text-muted);

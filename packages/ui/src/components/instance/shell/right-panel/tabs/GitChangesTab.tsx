@@ -384,6 +384,7 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
                 onContextModeChange={props.onContextModeChange}
                 onWordWrapModeChange={props.onWordWrapModeChange}
               />
+
             </>
           }
         list={{ panel: renderGroupedList, overlay: renderGroupedList }}
