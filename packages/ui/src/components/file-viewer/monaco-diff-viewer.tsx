@@ -96,6 +96,7 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
   let diffEditor: any = null
   let monaco: any = null
+  let splitLayoutFrame: number | null = null
   const [ready, setReady] = createSignal(false)
 
   const resolvedContent = createMemo(() => {
@@ -120,6 +121,44 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
       // ignore
     }
     diffEditor = null
+  }
+
+  const clearSplitLayoutVariables = () => {
+    if (!host) return
+    host.style.removeProperty("--split-original-line-number-width")
+    host.style.removeProperty("--split-original-delete-sign-left")
+    host.style.removeProperty("--split-original-gutter-width")
+  }
+
+  const syncSplitLayoutVariables = (options: {
+    viewMode: "split" | "unified"
+    originalLineNumbersMinChars: number
+    lineDecorationsWidth: number
+  }) => {
+    if (!host) return
+    if (splitLayoutFrame !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(splitLayoutFrame)
+      splitLayoutFrame = null
+    }
+    if (options.viewMode !== "split" || typeof window === "undefined") {
+      clearSplitLayoutVariables()
+      return
+    }
+
+    splitLayoutFrame = window.requestAnimationFrame(() => {
+      splitLayoutFrame = null
+      if (!host) return
+      const originalLineNumbers = host.querySelector<HTMLElement>(".editor.original .line-numbers")
+      const measuredWidth = originalLineNumbers?.getBoundingClientRect().width ?? 0
+      const lineNumberWidth =
+        measuredWidth > 0 ? measuredWidth : Math.max(12, options.originalLineNumbersMinChars * 6)
+      host.style.setProperty("--split-original-line-number-width", `${lineNumberWidth}px`)
+      host.style.setProperty("--split-original-delete-sign-left", `${lineNumberWidth}px`)
+      host.style.setProperty(
+        "--split-original-gutter-width",
+        `${lineNumberWidth + options.lineDecorationsWidth}px`,
+      )
+    })
   }
 
   onMount(() => {
@@ -158,6 +197,11 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
 
     onCleanup(() => {
       cancelled = true
+      if (splitLayoutFrame !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(splitLayoutFrame)
+        splitLayoutFrame = null
+      }
+      clearSplitLayoutVariables()
       setReady(false)
       disposeEditor()
     })
@@ -227,6 +271,12 @@ export function MonacoDiffViewer(props: MonacoDiffViewerProps) {
     } catch {
       // ignore
     }
+
+    syncSplitLayoutVariables({
+      viewMode,
+      originalLineNumbersMinChars,
+      lineDecorationsWidth,
+    })
   })
 
   createEffect(() => {

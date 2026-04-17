@@ -21,7 +21,7 @@ import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
-import { preferences, setGitDiffUnifiedGutterStyle } from "../../../../stores/preferences"
+import { preferences } from "../../../../stores/preferences"
 
 import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
@@ -926,7 +926,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onViewModeChange={setDiffViewMode}
               onContextModeChange={setDiffContextMode}
               onWordWrapModeChange={setDiffWordWrapMode}
-              onUnifiedGutterStyleChange={setGitDiffUnifiedGutterStyle}
               onOpenFile={(path: string) => void openGitFile(path)}
               onRefresh={() => void refreshGitStatus()}
               listOpen={gitChangesListOpen}

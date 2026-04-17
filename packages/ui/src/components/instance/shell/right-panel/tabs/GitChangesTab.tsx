@@ -37,7 +37,6 @@ interface GitChangesTabProps {
   onViewModeChange: (mode: DiffViewMode) => void
   onContextModeChange: (mode: DiffContextMode) => void
   onWordWrapModeChange: (mode: DiffWordWrapMode) => void
-  onUnifiedGutterStyleChange: (style: GitDiffUnifiedGutterStyle) => void
 
   onOpenFile: (path: string) => void
   onRefresh: () => void

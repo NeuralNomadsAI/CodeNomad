@@ -362,18 +362,18 @@
 }
 
 .file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .cldr.delete-sign {
-  left: 14px !important;
+  left: var(--split-original-delete-sign-left, 14px) !important;
 }
 
 .file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin,
 .file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-zones,
 .file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-overlays {
-  width: 24px !important;
+  width: var(--split-original-gutter-width, 24px) !important;
 }
 
 .file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .editor-scrollable {
-  left: 24px !important;
-  width: calc(100% - 24px) !important;
+  left: var(--split-original-gutter-width, 24px) !important;
+  width: calc(100% - var(--split-original-gutter-width, 24px)) !important;
 }
 
 .file-viewer-empty {
