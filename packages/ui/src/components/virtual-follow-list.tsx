@@ -3,7 +3,6 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
-const DEFAULT_HOLD_TARGET_TOP_OVERSHOOT_PX = 128
 const USER_SCROLL_INTENT_WINDOW_MS = 600
 const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
@@ -375,11 +374,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const relativeTop = targetRect.top - containerRect.top
     const exceedsViewport = targetRect.height > element.clientHeight
 
-    if (
-      exceedsViewport &&
-      relativeTop <= holdTargetTopThresholdPx() &&
-      relativeTop >= holdTargetTopThresholdPx() - DEFAULT_HOLD_TARGET_TOP_OVERSHOOT_PX
-    ) {
+    if (exceedsViewport && relativeTop < 0) {
+      const alignDelta = relativeTop - holdTargetTopThresholdPx()
+      if (Math.abs(alignDelta) > 1) {
+        element.scrollTop = Math.max(0, element.scrollTop + alignDelta)
+      }
       setHeldItemCount(itemCount)
     }
   }
