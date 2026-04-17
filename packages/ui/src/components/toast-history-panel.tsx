@@ -346,13 +346,20 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                           <Show when={index() > 0 && isNewDayGroup(item, group.items[index() - 1])}>
                             {/* 分隔線 / Divider */}
                           </Show>
-                          <button
-                            type="button"
+                          <div
+                            role="row"
+                            tabIndex={0}
                             class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] rounded-[var(--radius-lg)] border-none bg-surface-secondary relative w-full text-start font-inherit text-inherit cursor-pointer"
                             classList={{
                               "toast-history-item-unread": !item.read,
                             }}
                             onClick={() => handleItemClick(item)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                handleItemClick(item);
+                              }
+                            }}
                           >
                             <span
                               class={`w-2 h-2 rounded-full flex-shrink-0 mt-[0.35rem] toast-history-indicator ${VARIANT_INDICATOR_CLASS[item.variant]}`}
@@ -394,7 +401,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                             <Show when={!item.read}>
                               <span class="toast-history-item-unread-dot absolute top-[var(--space-sm)] right-[var(--space-sm)] w-2 h-2 rounded-full" aria-hidden="true" />
                             </Show>
-                          </button>
+                          </div>
                         </>
                       )}
                     </For>
