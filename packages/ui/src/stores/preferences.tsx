@@ -466,9 +466,22 @@ function updateEnvironmentVariables(envVars: Record<string, string>): void {
   )
 }
 
-function addEnvironmentVariable(key: string, value: string): void {
+function addEnvironmentVariable(key: string, value: string, secure: boolean = true): void {
   const current = serverSettings().environmentVariables
   updateEnvironmentVariables({ ...current, [key]: value })
+
+  // 如果 secure 為 true，則將該變數加入 secureEnvVars
+  if (secure) {
+    const secureList = serverSettings().secureEnvVars
+    const upperKey = key.toUpperCase()
+    const exists = secureList.some((name) => name.toUpperCase() === upperKey)
+    if (!exists) {
+      const next = [...secureList, key]
+      void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
+        log.error("Failed to add secure env var", error),
+      )
+    }
+  }
 }
 
 function removeEnvironmentVariable(key: string): void {

@@ -20,6 +20,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
   const [envVars, setEnvVars] = createSignal<Record<string, string>>(serverSettings().environmentVariables || {})
   const [newKey, setNewKey] = createSignal("")
   const [newValue, setNewValue] = createSignal("")
+  const [newVarSecure, setNewVarSecure] = createSignal(true)
 
   const entries = () => Object.entries(envVars())
 
@@ -29,10 +30,11 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
 
     if (!key) return
 
-    addEnvironmentVariable(key, value)
+    addEnvironmentVariable(key, value, newVarSecure())
     setEnvVars({ ...envVars(), [key]: value })
     setNewKey("")
     setNewValue("")
+    setNewVarSecure(true) // 重置為預設值（secure）
   }
 
   function handleRemoveVariable(key: string) {
@@ -135,15 +137,28 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
-            type="text"
+            type={newVarSecure() ? "password" : "text"}
             value={newValue()}
             onInput={(e) => setNewValue(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
             class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.value.placeholder")}
+            autocomplete="new-password"
           />
         </div>
+        <button
+          onClick={() => setNewVarSecure(!newVarSecure())}
+          disabled={props.disabled}
+          class={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            newVarSecure()
+              ? "icon-accent-hover text-accent"
+              : "icon-muted icon-accent-hover"
+          }`}
+          title={newVarSecure() ? t("envEditor.fields.secure.enabled") : t("envEditor.fields.secure.disabled")}
+        >
+          {newVarSecure() ? <Shield class="w-3.5 h-3.5" /> : <ShieldOff class="w-3.5 h-3.5" />}
+        </button>
         <button
           onClick={handleAddVariable}
           disabled={props.disabled || !newKey().trim()}
