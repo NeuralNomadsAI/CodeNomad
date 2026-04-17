@@ -905,7 +905,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto">
+      <div class="flex-1 min-h-0 overflow-hidden">
         <Show when={rightPanelTab() === "changes"}>
           <Suspense fallback={<RightPanelTabFallback />}>
             <LazyChangesTab

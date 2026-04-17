@@ -83,14 +83,23 @@
 .files-split {
   display: grid;
   grid-template-columns: var(--files-pane-width, 320px) 10px minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
 }
 
 .file-viewer-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.file-viewer-cell > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .file-split-handle {
@@ -596,6 +605,7 @@
 /* File viewer panel */
 .file-viewer-panel {
   @apply flex flex-col min-h-0;
+  flex: 1 1 auto;
   background-color: transparent;
 }
 
@@ -652,6 +662,8 @@
 
 .file-viewer-content--monaco {
   @apply flex-1 overflow-hidden min-h-0;
+  display: flex;
+  flex-direction: column;
   padding: 0;
 }
 
