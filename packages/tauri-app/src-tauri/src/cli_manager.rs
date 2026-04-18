@@ -630,6 +630,21 @@ impl CliProcessManager {
 
         let use_user_shell = supports_user_shell();
 
+        if use_user_shell {
+            let shell = default_shell();
+            if !shell_can_resolve_program(&shell, &resolution.node_binary) {
+                return Err(anyhow::anyhow!(
+                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                    resolution.node_binary
+                ));
+            }
+        } else if which::which(&resolution.node_binary).is_err() {
+            return Err(anyhow::anyhow!(
+                "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                resolution.node_binary
+            ));
+        }
+
         let command_info = if use_user_shell {
             log_line("spawning via user shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
@@ -640,14 +655,6 @@ impl CliProcessManager {
                 args: resolution.runner_args(&args),
             })
         };
-
-        if !use_user_shell {
-            if which::which(&resolution.node_binary).is_err() {
-                return Err(anyhow::anyhow!(
-                    "Node binary not found. Make sure Node.js is installed."
-                ));
-            }
-        }
 
         let child = match &command_info {
             ShellCommandType::UserShell(cmd) => {
@@ -1290,6 +1297,17 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
 
     let _ = shell_name;
     vec!["-l".into(), "-c".into(), command.into()]
+}
+
+fn shell_can_resolve_program(shell: &str, program: &str) -> bool {
+    let probe = format!("command -v {} >/dev/null 2>&1", shell_escape(program));
+    let mut command = Command::new(shell);
+    command.args(build_shell_args(shell, &probe));
+    configure_spawn(&mut command);
+    command
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
