@@ -309,7 +309,9 @@ async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Res
     let tls_config = match cert_manager::ensure_local_cert() {
         Ok(local_cert) => {
             if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.cert_der) {
-                eprintln!("[tauri] failed to trust proxy cert: {err}");
+                return Err(format!(
+                    "Failed to trust the local proxy certificate. Accept the certificate installation prompt and try again: {err}"
+                ));
             }
             Some(ProxyTlsConfig {
                 cert_pem: local_cert.cert_pem,
