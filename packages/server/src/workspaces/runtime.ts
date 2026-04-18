@@ -1,5 +1,6 @@
 import { ChildProcess, spawn, spawnSync } from "child_process"
 import { existsSync, statSync } from "fs"
+import { createServer } from "net"
 import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
@@ -9,6 +10,9 @@ export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
+const OPENCODE_SERVER_HOST = "127.0.0.1"
+const OPENCODE_SERVER_PORT_ENV = "OPENCODE_SERVER_PORT"
+const OPENCODE_SERVER_BASE_URL_ENV = "OPENCODE_SERVER_BASE_URL"
 
 export function buildSpawnSpec(binaryPath: string, args: string[]) {
   if (process.platform !== "win32") {
@@ -111,6 +115,30 @@ function redactEnvironment(env: Record<string, string | undefined>): Record<stri
   return redacted
 }
 
+async function reserveLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+
+    server.once("error", reject)
+    server.listen(0, OPENCODE_SERVER_HOST, () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to reserve a loopback port for the OpenCode server")))
+        return
+      }
+
+      const { port } = address
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(port)
+      })
+    })
+  })
+}
+
 interface LaunchOptions {
   workspaceId: string
   folder: string
@@ -140,9 +168,15 @@ export class WorkspaceRuntime {
   async launch(options: LaunchOptions): Promise<{ pid: number; port: number; exitPromise: Promise<ProcessExitInfo>; getLastOutput: () => string }> {
     this.validateFolder(options.folder)
 
+    const serverPort = await reserveLoopbackPort()
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
-    const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
-    const env = { ...process.env, ...(options.environment ?? {}) }
+    const args = ["serve", "--port", String(serverPort), "--print-logs", "--log-level", logLevel]
+    const env = {
+      ...process.env,
+      ...(options.environment ?? {}),
+      [OPENCODE_SERVER_PORT_ENV]: String(serverPort),
+      [OPENCODE_SERVER_BASE_URL_ENV]: `http://${OPENCODE_SERVER_HOST}:${serverPort}`,
+    }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null
     const exitPromise = new Promise<ProcessExitInfo>((resolveExit) => {
