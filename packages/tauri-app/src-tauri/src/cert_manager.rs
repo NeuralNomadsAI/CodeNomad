@@ -1,126 +1,177 @@
-use rcgen::{CertificateParams, DnType, KeyPair, SanType};
+use base64::Engine;
+use std::env;
 use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
 
-const CERT_DIR_NAME: &str = "proxy-certs";
-const CERT_PEM_FILE: &str = "proxy.crt";
-const KEY_PEM_FILE: &str = "proxy.key";
-const CERT_DER_FILE: &str = "proxy.der";
-const TRUSTED_MARKER: &str = ".trusted";
+const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
+const TLS_DIR_NAME: &str = "tls";
+const CA_CERT_FILE: &str = "ca-cert.pem";
+const SERVER_CERT_FILE: &str = "server-cert.pem";
+const SERVER_KEY_FILE: &str = "server-key.pem";
+const TRUSTED_MARKER: &str = "server-ca.trusted";
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
 
-/// Holds PEM-encoded certificate and private key for the local HTTPS proxy.
+/// Holds the PEM-encoded certificate/key pair used by the local HTTPS proxy,
+/// plus the CA certificate DER used for trust-store installation.
 pub struct LocalCert {
     pub cert_pem: String,
     pub key_pem: String,
-    pub cert_der: Vec<u8>,
+    pub ca_cert_der: Vec<u8>,
 }
 
-/// Returns the directory where proxy certificates are stored.
-fn cert_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| "Cannot determine local app data directory".to_string())?;
-    #[cfg(windows)]
-    {
-        return Ok(base.join(WINDOWS_APP_USER_MODEL_ID).join(CERT_DIR_NAME));
-    }
-
-    #[cfg(not(windows))]
-    {
-        Ok(base.join("codenomad").join(CERT_DIR_NAME))
-    }
+struct TlsAssetPaths {
+    cert_path: PathBuf,
+    key_path: PathBuf,
+    trust_path: PathBuf,
+    append_ca_to_cert: bool,
 }
 
-/// Ensures a self-signed certificate exists on disk, generating one if needed.
-/// Returns the PEM cert, PEM key, and DER cert bytes.
+/// Loads the TLS assets already managed by `packages/server`.
 pub fn ensure_local_cert() -> Result<LocalCert, String> {
-    let dir = cert_dir()?;
-    let cert_pem_path = dir.join(CERT_PEM_FILE);
-    let key_pem_path = dir.join(KEY_PEM_FILE);
-    let cert_der_path = dir.join(CERT_DER_FILE);
+    let assets = resolve_tls_asset_paths()?;
+    let mut cert_pem = read_pem_file(&assets.cert_path)?;
+    let key_pem = read_pem_file(&assets.key_path)?;
+    let trust_pem = read_pem_file(&assets.trust_path)?;
 
-    // If all files exist, load from disk
-    if cert_pem_path.exists() && key_pem_path.exists() && cert_der_path.exists() {
-        let cert_pem = fs::read_to_string(&cert_pem_path)
-            .map_err(|e| format!("Failed to read {}: {e}", cert_pem_path.display()))?;
-        let key_pem = fs::read_to_string(&key_pem_path)
-            .map_err(|e| format!("Failed to read {}: {e}", key_pem_path.display()))?;
-        let cert_der = fs::read(&cert_der_path)
-            .map_err(|e| format!("Failed to read {}: {e}", cert_der_path.display()))?;
-        return Ok(LocalCert {
-            cert_pem,
-            key_pem,
-            cert_der,
-        });
+    if assets.append_ca_to_cert {
+        cert_pem = format!("{}\n{}\n", cert_pem.trim(), trust_pem.trim());
     }
 
-    // Generate a new self-signed certificate
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create cert dir {}: {e}", dir.display()))?;
-
-    let mut params = CertificateParams::default();
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "CodeNomad Local Proxy");
-    params.subject_alt_names = vec![
-        SanType::DnsName("localhost".try_into().map_err(|e| format!("{e}"))?),
-        SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-    ];
-
-    // Valid for 10 years
-    params.not_before = rcgen::date_time_ymd(2024, 1, 1);
-    let ten_years = Duration::from_secs(10 * 365 * 24 * 3600);
-    params.not_after = params.not_before + ten_years;
-
-    let key_pair = KeyPair::generate().map_err(|e| format!("Key generation failed: {e}"))?;
-    let cert = params
-        .self_signed(&key_pair)
-        .map_err(|e| format!("Certificate generation failed: {e}"))?;
-
-    let cert_pem = cert.pem();
-    let key_pem = key_pair.serialize_pem();
-    let cert_der = cert.der().to_vec();
-
-    fs::write(&cert_pem_path, &cert_pem)
-        .map_err(|e| format!("Failed to write {}: {e}", cert_pem_path.display()))?;
-    fs::write(&key_pem_path, &key_pem)
-        .map_err(|e| format!("Failed to write {}: {e}", key_pem_path.display()))?;
-    fs::write(&cert_der_path, &cert_der)
-        .map_err(|e| format!("Failed to write {}: {e}", cert_der_path.display()))?;
-
-    // Remove the trusted marker since this is a new cert
-    let marker = dir.join(TRUSTED_MARKER);
-    let _ = fs::remove_file(&marker);
+    let ca_cert_der = pem_to_der(&trust_pem)?;
 
     Ok(LocalCert {
         cert_pem,
         key_pem,
-        cert_der,
+        ca_cert_der,
     })
 }
 
+fn read_pem_file(path: &Path) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))
+}
+
+fn server_tls_dir() -> Result<PathBuf, String> {
+    Ok(resolve_server_config_base_dir()?.join(TLS_DIR_NAME))
+}
+
+fn resolve_tls_asset_paths() -> Result<TlsAssetPaths, String> {
+    let tls_key_path = env::var("CLI_TLS_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| resolve_path_like_server(&value))
+        .transpose()?;
+    let tls_cert_path = env::var("CLI_TLS_CERT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| resolve_path_like_server(&value))
+        .transpose()?;
+    let tls_ca_path = env::var("CLI_TLS_CA")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| resolve_path_like_server(&value))
+        .transpose()?;
+
+    match (tls_key_path, tls_cert_path) {
+        (Some(key_path), Some(cert_path)) => {
+            let append_ca_to_cert = tls_ca_path.is_some();
+            let trust_path = tls_ca_path.unwrap_or_else(|| cert_path.clone());
+            Ok(TlsAssetPaths {
+                cert_path,
+                key_path,
+                trust_path,
+                append_ca_to_cert,
+            })
+        }
+        (Some(_), None) | (None, Some(_)) => Err(
+            "CLI_TLS_KEY and CLI_TLS_CERT must both be set when using custom TLS files"
+                .to_string(),
+        ),
+        (None, None) => {
+            let tls_dir = server_tls_dir()?;
+            Ok(TlsAssetPaths {
+                cert_path: tls_dir.join(SERVER_CERT_FILE),
+                key_path: tls_dir.join(SERVER_KEY_FILE),
+                trust_path: tls_dir.join(CA_CERT_FILE),
+                append_ca_to_cert: true,
+            })
+        }
+    }
+}
+
+fn resolve_server_config_base_dir() -> Result<PathBuf, String> {
+    let raw = env::var("CLI_CONFIG")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
+    let expanded = resolve_path_like_server(&raw)?;
+    let lower = raw.trim().to_lowercase();
+
+    if lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".json") {
+        return expanded
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("Failed to determine config base dir from {}", expanded.display()));
+    }
+
+    Ok(expanded)
+}
+
+fn resolve_path_like_server(path: &str) -> Result<PathBuf, String> {
+    if path.starts_with("~/") {
+        let home = dirs::home_dir().or_else(|| env::var("HOME").ok().map(PathBuf::from));
+        let home = home.ok_or_else(|| "Cannot determine home directory".to_string())?;
+        return Ok(home.join(path.trim_start_matches("~/")));
+    }
+
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    let cwd = env::current_dir().map_err(|e| format!("Failed to read current dir: {e}"))?;
+    Ok(cwd.join(path))
+}
+
 fn trusted_marker_path() -> Result<PathBuf, String> {
-    Ok(cert_dir()?.join(TRUSTED_MARKER))
+    let base = dirs::data_local_dir()
+        .ok_or_else(|| "Cannot determine local app data directory".to_string())?;
+
+    #[cfg(windows)]
+    {
+        return Ok(base.join(WINDOWS_APP_USER_MODEL_ID).join(TRUSTED_MARKER));
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(base.join("codenomad").join(TRUSTED_MARKER))
+    }
 }
 
-fn write_trusted_marker() -> Result<(), String> {
-    fs::write(trusted_marker_path()?, "trusted")
-        .map_err(|e| format!("Failed to write trust marker: {e}"))
+fn trusted_marker_value(cert_der: &[u8]) -> String {
+    cert_der.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Returns true if the certificate has already been added to the OS trust store
-/// (indicated by the `.trusted` marker file).
-pub fn is_cert_trusted() -> bool {
+fn has_matching_trusted_marker(cert_der: &[u8]) -> bool {
     trusted_marker_path()
-        .map(|path| path.exists())
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|value| value.trim() == trusted_marker_value(cert_der))
         .unwrap_or(false)
 }
 
-/// Adds the DER-encoded certificate to the Windows `CurrentUser\Root` store.
-/// This will show a one-time Windows security confirmation dialog.
-/// After success, writes a `.trusted` marker file to avoid re-prompting.
+fn write_trusted_marker(cert_der: &[u8]) -> Result<(), String> {
+    let path = trusted_marker_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create trust state dir {}: {e}", parent.display()))?;
+    }
+    fs::write(path, trusted_marker_value(cert_der))
+        .map_err(|e| format!("Failed to write trust marker: {e}"))
+}
+
+/// Adds the DER-encoded CA certificate to the Windows `CurrentUser\Root` store.
+/// This will show a one-time Windows security confirmation dialog when needed.
 #[cfg(windows)]
 pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     use windows_sys::Win32::Security::Cryptography::{
@@ -128,11 +179,10 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
         CERT_STORE_ADD_REPLACE_EXISTING, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
     };
 
-    if is_cert_trusted() {
+    if has_matching_trusted_marker(cert_der) {
         return Ok(());
     }
 
-    // "Root" in UTF-16
     let store_name: Vec<u16> = "Root\0".encode_utf16().collect();
 
     unsafe {
@@ -154,13 +204,14 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
         CertCloseStore(store, 0);
 
         if result == 0 {
-            return Err("Failed to add certificate to trust store. \
-                 The user may have declined the security dialog."
-                .into());
+            return Err(
+                "Failed to add certificate to trust store. The user may have declined the security dialog."
+                    .into(),
+            );
         }
     }
 
-    write_trusted_marker()?;
+    write_trusted_marker(cert_der)?;
     Ok(())
 }
 
@@ -168,4 +219,30 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
 pub fn trust_cert_in_store(_cert_der: &[u8]) -> Result<(), String> {
     // Non-Windows platforms use native webview-specific handling instead of OS trust-store writes.
     Ok(())
+}
+
+fn pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
+    let mut body = String::new();
+    let mut in_block = false;
+
+    for line in pem.lines() {
+        if line.starts_with("-----BEGIN CERTIFICATE-----") {
+            in_block = true;
+            continue;
+        }
+        if line.starts_with("-----END CERTIFICATE-----") {
+            break;
+        }
+        if in_block {
+            body.push_str(line.trim());
+        }
+    }
+
+    if body.is_empty() {
+        return Err("No certificate found in PEM file".to_string());
+    }
+
+    base64::engine::general_purpose::STANDARD
+        .decode(body)
+        .map_err(|e| format!("Failed to decode certificate PEM: {e}"))
 }
