@@ -231,4 +231,23 @@ export const settingsMessages = {
   "sidecars.refresh": "Refresh",
   "sidecars.path": "Path",
   "sidecars.go": "Go",
+
+  // Toast History Panel
+  "toastHistory.title": "Notification History",
+  "toastHistory.empty": "No notifications yet",
+  "toastHistory.clearAll": "Clear all",
+  "toastHistory.markAllRead": "Mark all read",
+  "toastHistory.filter.label": "Filter notifications",
+  "toastHistory.filter.all": "All",
+  "toastHistory.filter.info": "Info",
+  "toastHistory.filter.success": "Success",
+  "toastHistory.filter.warning": "Warning",
+  "toastHistory.filter.error": "Error",
+  "toastHistory.today": "Today",
+  "toastHistory.yesterday": "Yesterday",
+  "toastHistory.earlier": "Earlier",
+  "toastHistory.unread": "{count} unread",
+  "toastHistory.viewSettings": "Settings",
+  "toastHistory.close": "Close",
+  "toastHistory.deleteItem": "Delete notification",
 } as const
