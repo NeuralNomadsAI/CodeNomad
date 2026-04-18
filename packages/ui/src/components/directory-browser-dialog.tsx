@@ -256,9 +256,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   createEffect(() => {
     const absolutePath = currentAbsolutePath()
-    if (absolutePath) {
-      setPathInput(absolutePath)
-    }
+    setPathInput(absolutePath)
   })
 
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))

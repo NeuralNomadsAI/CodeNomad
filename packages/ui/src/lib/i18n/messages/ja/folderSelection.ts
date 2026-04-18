@@ -20,6 +20,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.subtitle": "コンピュータ上の任意のフォルダを選択",
   "folderSelection.browse.button": "フォルダを参照",
   "folderSelection.browse.buttonOpening": "開いています...",
+  "folderSelection.browse.wslButton": "WSL / UNC パスを参照",
   "folderSelection.actions.title": "フォルダを開くかサーバーに接続",
   "folderSelection.actions.subtitle": "ローカルフォルダを開くか CodeNomad サーバーに接続します",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
