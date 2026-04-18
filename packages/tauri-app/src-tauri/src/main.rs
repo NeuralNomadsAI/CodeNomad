@@ -308,9 +308,9 @@ async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Res
     #[cfg(not(target_os = "linux"))]
     let tls_config = match cert_manager::ensure_local_cert() {
         Ok(local_cert) => {
-            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.cert_der) {
+            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
                 return Err(format!(
-                    "Failed to trust the local proxy certificate. Accept the certificate installation prompt and try again: {err}"
+                    "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
                 ));
             }
             Some(ProxyTlsConfig {
