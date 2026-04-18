@@ -87,6 +87,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
+  let latestNavigationId = 0
 
   function resetState() {
     setRootPath("")
@@ -124,11 +125,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   async function initialize() {
     setLoading(true)
     try {
-      const metadata = await loadDirectory()
-      applyMetadata(metadata)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
-      setError(message)
+      await navigateTo()
     } finally {
       setLoading(false)
     }
@@ -212,12 +209,19 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   }
 
   async function navigateTo(path?: string) {
+    const navigationId = ++latestNavigationId
     setError(null)
     try {
       const metadata = await loadDirectory(path)
+      if (navigationId !== latestNavigationId) {
+        return null
+      }
       applyMetadata(metadata)
       return metadata
     } catch (err) {
+      if (navigationId !== latestNavigationId) {
+        return null
+      }
       const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
       setError(message)
       return null

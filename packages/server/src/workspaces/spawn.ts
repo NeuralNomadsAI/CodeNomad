@@ -235,7 +235,9 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
   const byName = new Map(entries.map((entry) => [entry.split("/")[0] ?? entry, entry]))
 
   for (const key of keysToPropagate) {
-    if (byName.has(key)) {
+    const existingEntry = byName.get(key)
+    if (existingEntry) {
+      byName.set(key, ensureWslenvEntry(existingEntry, WSL_PATH_ENV_KEYS.has(key)))
       continue
     }
     byName.set(key, WSL_PATH_ENV_KEYS.has(key) ? `${key}/p` : key)
@@ -243,4 +245,17 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
 
   next.WSLENV = Array.from(byName.values()).join(":")
   return next
+}
+
+function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): string {
+  if (!requiresPathTranslation) {
+    return entry
+  }
+
+  const [name, rawFlags = ""] = entry.split("/")
+  if (rawFlags.includes("p")) {
+    return entry
+  }
+
+  return rawFlags.length > 0 ? `${name}/${rawFlags}p` : `${name}/p`
 }

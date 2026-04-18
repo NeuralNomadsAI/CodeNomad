@@ -78,6 +78,22 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_PASSWORD")
   })
 
+  it("upgrades existing WSLENV path entries to include /p", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      {
+        env: {
+          OPENCODE_CONFIG_DIR: String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\opencode-config`,
+          WSLENV: "OPENCODE_CONFIG_DIR:CODENOMAD_INSTANCE_ID/u",
+        },
+        propagateEnvKeys: ["OPENCODE_CONFIG_DIR", "CODENOMAD_INSTANCE_ID"],
+      },
+    )
+
+    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID/u")
+  })
+
   it("uses wslpath for Windows workspace folders instead of assuming /mnt", () => {
     const spec = buildWindowsSpawnSpec(
       String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
