@@ -67,6 +67,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [rootPath, setRootPath] = createSignal("")
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
+  const [pathInput, setPathInput] = createSignal("")
   const [creatingFolder, setCreatingFolder] = createSignal(false)
   const [directoryChildren, setDirectoryChildren] = createSignal<Map<string, FileSystemEntry[]>>(new Map())
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
@@ -77,10 +78,12 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
 
   function resetState() {
+    setRootPath("")
     setDirectoryChildren(new Map<string, FileSystemEntry[]>())
     setLoadingPaths(new Set<string>())
     setCurrentPathKey(null)
     setCurrentMetadata(null)
+    setPathInput("")
     metadataCache.clear()
     inFlightRequests.clear()
     setError(null)
@@ -249,7 +252,36 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     return metadata.displayPath
   })
 
+  createEffect(() => {
+    const absolutePath = currentAbsolutePath()
+    if (absolutePath) {
+      setPathInput(absolutePath)
+    }
+  })
+
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
+  const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
+
+  async function handlePathSubmit() {
+    const target = pathInput().trim()
+    if (!target) {
+      return
+    }
+    await navigateTo(target)
+  }
+
+  async function handleSelectCurrent() {
+    const target = pathInput().trim()
+    if (target && target !== currentAbsolutePath()) {
+      await navigateTo(target)
+      return
+    }
+
+    const absolute = currentAbsolutePath()
+    if (absolute) {
+      props.onSelect(absolute)
+    }
+  }
 
   function handleEntrySelect(entry: FileSystemEntry) {
     const absolutePath = entry.absolutePath
@@ -338,19 +370,26 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                 <div class="directory-browser-current">
                   <div class="directory-browser-current-meta">
                     <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
-                    <span class="directory-browser-current-path">{currentAbsolutePath()}</span>
+                    <input
+                      type="text"
+                      value={pathInput()}
+                      onInput={(event) => setPathInput(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault()
+                          void handlePathSubmit()
+                        }
+                      }}
+                      spellcheck={false}
+                      class="selector-input directory-browser-current-path"
+                    />
                   </div>
                   <div class="directory-browser-current-actions">
                     <button
                       type="button"
                       class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                      disabled={!canSelectCurrent() || creatingFolder()}
-                      onClick={() => {
-                        const absolute = currentAbsolutePath()
-                        if (absolute) {
-                          props.onSelect(absolute)
-                        }
-                      }}
+                      disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
+                      onClick={() => void handleSelectCurrent()}
                     >
                       {t("directoryBrowser.selectCurrent")}
                     </button>
