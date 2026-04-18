@@ -1297,12 +1297,6 @@ fn wrap_command_for_shell(command: &str, shell: &str) -> String {
         );
     }
 
-    if shell_name.contains("zsh") {
-        return format!(
-            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {command}"
-        );
-    }
-
     command.to_string()
 }
 
