@@ -20,10 +20,24 @@ function getDefaultShellPath(): string {
   return "/bin/bash"
 }
 
+function wrapCommandForShell(command: string, shellPath: string): string {
+  const shellName = path.basename(shellPath)
+
+  if (shellName.includes("bash")) {
+    return 'if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; ' + command
+  }
+
+  if (shellName.includes("zsh")) {
+    return 'if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; ' + command
+  }
+
+  return command
+}
+
 function buildShellArgs(shellPath: string): string[] {
   const shellName = path.basename(shellPath)
-  if (shellName.includes("zsh") || shellName.includes("bash")) {
-    return ["-i", "-l", "-c"]
+  if (shellName.includes("zsh")) {
+    return ["-l", "-i", "-c"]
   }
   return ["-l", "-c"]
 }
@@ -45,11 +59,12 @@ export function buildUserShellCommand(userCommand: string): ShellCommand {
   }
 
   const shellPath = getDefaultShellPath()
+  const script = wrapCommandForShell(userCommand, shellPath)
   const args = buildShellArgs(shellPath)
 
   return {
     command: shellPath,
-    args: [...args, userCommand],
+    args: [...args, script],
   }
 }
 
