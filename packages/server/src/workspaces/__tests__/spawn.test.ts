@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildWindowsSpawnSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
+import { buildWindowsSpawnSpec, buildWslSignalSpec, parseWslUncPath, resolveWslWorkingDirectory } from "../spawn"
 
 describe("parseWslUncPath", () => {
   it("parses WSL UNC paths into distro and linux path", () => {
@@ -156,5 +156,38 @@ describe("buildWindowsSpawnSpec", () => {
       "/home/dev/.opencode/bin/opencode",
       "serve",
     ])
+  })
+
+  it("can wrap WSL launches to emit the Linux PID marker", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      {
+        cwd: String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`,
+        wslPidMarker: "__CODENOMAD_WSL_PID__:",
+      },
+    )
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, [
+      "--distribution",
+      "Ubuntu",
+      "--exec",
+      "sh",
+      "-lc",
+      `printf '%s%s\\n' '__CODENOMAD_WSL_PID__:' "$$" && cd "$1" && shift && exec "$@"`,
+      "codenomad-wsl-launch",
+      "/home/dev/workspace",
+      "/home/dev/.opencode/bin/opencode",
+      "serve",
+    ])
+    assert.equal(spec.wsl?.pidMarker, "__CODENOMAD_WSL_PID__:")
+  })
+
+  it("builds the WSL kill command for tracked Linux PIDs", () => {
+    const spec = buildWslSignalSpec("Ubuntu", 4321, "SIGTERM")
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, ["--distribution", "Ubuntu", "--exec", "kill", "-TERM", "4321"])
   })
 })

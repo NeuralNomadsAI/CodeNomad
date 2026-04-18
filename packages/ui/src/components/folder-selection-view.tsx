@@ -152,11 +152,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     if (isBrowseShortcut) {
       e.preventDefault()
-      if (nativeDialogsAvailable && isWindowsPlatform()) {
-        openManualFolderBrowser()
-      } else {
-        void handleBrowse()
-      }
+      void handleBrowse()
       return
     }
 

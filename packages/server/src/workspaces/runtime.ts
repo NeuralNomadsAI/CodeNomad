@@ -4,9 +4,10 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-import { buildSpawnSpec } from "./spawn"
+import { buildSpawnSpec, buildWslSignalSpec } from "./spawn"
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
+const WSL_PID_MARKER = "__CODENOMAD_WSL_PID__:"
 
 function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const redacted: Record<string, string | undefined> = {}
@@ -39,6 +40,10 @@ export interface ProcessExitInfo {
 interface ManagedProcess {
   child: ChildProcess
   requestedStop: boolean
+  wsl?: {
+    distro: string
+    linuxPid: number | null
+  }
 }
 
 export class WorkspaceRuntime {
@@ -81,6 +86,7 @@ export class WorkspaceRuntime {
         cwd: options.folder,
         env,
         propagateEnvKeys: propagatedEnvKeys,
+        wslPidMarker: WSL_PID_MARKER,
       })
       const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
@@ -118,7 +124,11 @@ export class WorkspaceRuntime {
         ...spec.options,
       })
 
-      const managed: ManagedProcess = { child, requestedStop: false }
+      const managed: ManagedProcess = {
+        child,
+        requestedStop: false,
+        ...(spec.wsl ? { wsl: { distro: spec.wsl.distro, linuxPid: null } } : {}),
+      }
       this.processes.set(options.workspaceId, managed)
 
       let stdoutBuffer = ""
@@ -197,6 +207,15 @@ export class WorkspaceRuntime {
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed) continue
+
+          if (managed.wsl && trimmed.startsWith(WSL_PID_MARKER)) {
+            const linuxPid = Number.parseInt(trimmed.slice(WSL_PID_MARKER.length), 10)
+            if (Number.isFinite(linuxPid) && linuxPid > 0) {
+              managed.wsl.linuxPid = linuxPid
+              this.logger.debug({ workspaceId: options.workspaceId, linuxPid }, "Captured WSL OpenCode PID")
+            }
+            continue
+          }
 
           recentStdout.push(trimmed)
           if (recentStdout.length > MAX_OUTPUT_LINES) {
@@ -312,11 +331,44 @@ export class WorkspaceRuntime {
       }
     }
 
+    const trySignalWslProcess = (signal: NodeJS.Signals) => {
+      if (process.platform !== "win32" || !managed.wsl?.linuxPid) {
+        return false
+      }
+
+      try {
+        const spec = buildWslSignalSpec(managed.wsl.distro, managed.wsl.linuxPid, signal)
+        const result = spawnSync(spec.command, spec.args, { encoding: "utf8" })
+        const exitCode = result.status
+        if (exitCode === 0) {
+          return true
+        }
+
+        const stderr = (result.stderr ?? "").toString().toLowerCase()
+        const stdout = (result.stdout ?? "").toString().toLowerCase()
+        const combined = `${stdout}\n${stderr}`
+        if (combined.includes("no such process") || combined.includes("not found")) {
+          return true
+        }
+
+        this.logger.debug(
+          { workspaceId, pid, linuxPid: managed.wsl.linuxPid, distro: managed.wsl.distro, exitCode, stderr: result.stderr, stdout: result.stdout },
+          "WSL kill failed",
+        )
+        return false
+      } catch (error) {
+        this.logger.debug({ workspaceId, pid, linuxPid: managed.wsl.linuxPid, distro: managed.wsl.distro, err: error }, "WSL kill failed to execute")
+        return false
+      }
+    }
+
     const sendStopSignal = (signal: NodeJS.Signals) => {
       if (process.platform === "win32") {
-        // Best-effort: terminate the whole process tree rooted at pid.
-        // Use /F only for escalation.
-        tryTaskkill(signal === "SIGKILL")
+        // WSL-backed launches need a Linux signal first because the tracked Windows PID belongs to wsl.exe.
+        if (!trySignalWslProcess(signal)) {
+          // Fallback to the Windows process tree rooted at pid. Use /F only for escalation.
+          tryTaskkill(signal === "SIGKILL")
+        }
         return
       }
 

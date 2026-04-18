@@ -16,12 +16,17 @@ export interface SpawnSpec {
   }
   cwd?: string
   env?: NodeJS.ProcessEnv
+  wsl?: {
+    distro: string
+    pidMarker?: string
+  }
 }
 
 interface BuildSpawnSpecOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
   propagateEnvKeys?: string[]
+  wslPidMarker?: string
 }
 
 interface WslPath {
@@ -117,6 +122,15 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   return buildWindowsSpawnSpec(binaryPath, args, options)
 }
 
+export function buildWslSignalSpec(distro: string, linuxPid: number, signal: NodeJS.Signals): SpawnSpec {
+  return {
+    command: "wsl.exe",
+    args: ["--distribution", distro, "--exec", "kill", signal === "SIGKILL" ? "-KILL" : "-TERM", String(linuxPid)],
+    options: {},
+    wsl: { distro },
+  }
+}
+
 export function probeBinaryVersion(binaryPath: string): {
   valid: boolean
   version?: string
@@ -180,18 +194,25 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   }
 
   const wslArgs = ["--distribution", wslPath.distro]
-  if (workingDirectory?.kind === "linux") {
+  const shouldWrapWithShell = Boolean(options.wslPidMarker) || workingDirectory?.kind === "windows"
+
+  if (!shouldWrapWithShell && workingDirectory?.kind === "linux") {
     wslArgs.push("--cd", workingDirectory.path)
   }
 
-  if (workingDirectory?.kind === "windows") {
+  if (shouldWrapWithShell) {
+    const launchScript = buildWslLaunchScript(workingDirectory ?? undefined, options.wslPidMarker)
     wslArgs.push(
       "--exec",
       "sh",
       "-lc",
-      'cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      launchScript,
       "codenomad-wsl-launch",
-      workingDirectory.path,
+    )
+    if (workingDirectory) {
+      wslArgs.push(workingDirectory.path)
+    }
+    wslArgs.push(
       wslPath.linuxPath,
       ...args,
     )
@@ -204,7 +225,27 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
     args: wslArgs,
     options: {},
     env: buildWslEnvironment(options.env, options.propagateEnvKeys),
+    wsl: { distro: wslPath.distro, pidMarker: options.wslPidMarker },
   }
+}
+
+function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined, pidMarker: string | undefined): string {
+  const steps: string[] = []
+
+  if (pidMarker) {
+    steps.push(`printf '%s%s\\n' '${pidMarker}' "$$"`)
+  }
+
+  if (workingDirectory?.kind === "linux") {
+    steps.push('cd "$1"')
+    steps.push("shift")
+  } else if (workingDirectory?.kind === "windows") {
+    steps.push('cd "$(wslpath -au "$1")"')
+    steps.push("shift")
+  }
+
+  steps.push('exec "$@"')
+  return steps.join(" && ")
 }
 
 function normalizeWindowsPath(input: string): string | null {
