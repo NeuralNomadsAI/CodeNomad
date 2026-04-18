@@ -304,12 +304,20 @@ const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
 struct PreferencesConfig {
     #[serde(rename = "listeningMode")]
     listening_mode: Option<String>,
+    #[serde(rename = "httpPort")]
+    http_port: Option<u16>,
+    #[serde(rename = "httpsPort")]
+    https_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ServerConfig {
     #[serde(rename = "listeningMode")]
     listening_mode: Option<String>,
+    #[serde(rename = "httpPort")]
+    http_port: Option<u16>,
+    #[serde(rename = "httpsPort")]
+    https_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,57 +364,67 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn resolve_listening_mode() -> String {
+fn read_app_config() -> Option<AppConfig> {
     let (yaml_path, json_path) = resolve_config_locations();
 
     if let Ok(content) = fs::read_to_string(&yaml_path) {
         if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
-            let mode = config
-                .server
-                .as_ref()
-                .and_then(|srv| srv.listening_mode.as_ref())
-                .or_else(|| {
-                    config
-                        .preferences
-                        .as_ref()
-                        .and_then(|prefs| prefs.listening_mode.as_ref())
-                });
-
-            if let Some(mode) = mode {
-                if mode == "local" {
-                    return "local".to_string();
-                }
-                if mode == "all" {
-                    return "all".to_string();
-                }
-            }
+            return Some(config);
         }
     }
 
-    // Legacy fallback.
     if let Ok(content) = fs::read_to_string(&json_path) {
         if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
-            let mode = config
-                .server
-                .as_ref()
-                .and_then(|srv| srv.listening_mode.as_ref())
-                .or_else(|| {
-                    config
-                        .preferences
-                        .as_ref()
-                        .and_then(|prefs| prefs.listening_mode.as_ref())
-                });
-            if let Some(mode) = mode {
-                if mode == "local" {
-                    return "local".to_string();
-                }
-                if mode == "all" {
-                    return "all".to_string();
-                }
+            return Some(config);
+        }
+    }
+
+    None
+}
+
+fn resolve_listening_mode() -> String {
+    if let Some(config) = read_app_config() {
+        let mode = config
+            .server
+            .as_ref()
+            .and_then(|srv| srv.listening_mode.as_ref())
+            .or_else(|| {
+                config
+                    .preferences
+                    .as_ref()
+                    .and_then(|prefs| prefs.listening_mode.as_ref())
+            });
+
+        if let Some(mode) = mode {
+            if mode == "local" {
+                return "local".to_string();
+            }
+            if mode == "all" {
+                return "all".to_string();
             }
         }
     }
+
     "local".to_string()
+}
+
+fn resolve_configured_ports() -> (Option<u16>, Option<u16>) {
+    let Some(config) = read_app_config() else {
+        return (None, None);
+    };
+
+    let https_port = config
+        .server
+        .as_ref()
+        .and_then(|srv| srv.https_port)
+        .or_else(|| config.preferences.as_ref().and_then(|prefs| prefs.https_port));
+    let http_port = config
+        .server
+        .as_ref()
+        .and_then(|srv| srv.http_port)
+        .or_else(|| config.preferences.as_ref().and_then(|prefs| prefs.http_port));
+
+    (https_port, http_port)
 }
 
 fn resolve_listening_host() -> String {
@@ -1134,6 +1152,28 @@ impl CliEntry {
             args.push("true".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
+
+            let https_port_env = std::env::var("CLI_HTTPS_PORT")
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            let http_port_env = std::env::var("CLI_HTTP_PORT")
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            let (configured_https_port, configured_http_port) = resolve_configured_ports();
+
+            if https_port_env.is_none() {
+                if let Some(port) = configured_https_port {
+                    args.push("--https-port".to_string());
+                    args.push(port.to_string());
+                }
+            }
+
+            if http_port_env.is_none() {
+                if let Some(port) = configured_http_port {
+                    args.push("--http-port".to_string());
+                    args.push(port.to_string());
+                }
+            }
         }
         args
     }
