@@ -188,9 +188,38 @@ async fn proxy_request(
 
 fn build_upstream_url(base_url: &Url, uri: &Uri) -> Result<Url, url::ParseError> {
     let mut url = base_url.clone();
-    url.set_path(uri.path());
+    url.set_path(&rewrite_request_path(base_url, uri.path()));
     url.set_query(strip_proxy_token_query(uri.query()).as_deref());
     Ok(url)
+}
+
+fn rewrite_request_path(base_url: &Url, request_path: &str) -> String {
+    let base_path = normalized_base_path(base_url);
+    if base_path == "/" {
+        return request_path.to_string();
+    }
+
+    if request_path == "/" {
+        return base_path.to_string();
+    }
+
+    if path_has_base_prefix(base_path, request_path) {
+        return request_path.to_string();
+    }
+
+    format!("{base_path}{request_path}")
+}
+
+fn normalized_base_path(base_url: &Url) -> &str {
+    let path = base_url.path();
+    if path.is_empty() { "/" } else { path }
+}
+
+fn path_has_base_prefix(base_path: &str, request_path: &str) -> bool {
+    request_path == base_path
+        || request_path
+            .strip_prefix(base_path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn generate_session_token() -> String {
@@ -284,7 +313,7 @@ fn rewrite_referer_header(headers: &HeaderMap, target_base_url: &Url) -> Option<
     let parsed = Url::parse(referer).ok()?;
 
     let mut rewritten = target_base_url.clone();
-    rewritten.set_path(parsed.path());
+    rewritten.set_path(&rewrite_request_path(target_base_url, parsed.path()));
     rewritten.set_query(parsed.query());
     rewritten.set_fragment(parsed.fragment());
     Some(rewritten.to_string())
@@ -379,4 +408,53 @@ fn is_hop_by_hop_header(name: &HeaderName) -> bool {
             ])
         })
         .contains(name.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_upstream_url_prefixes_root_relative_requests_under_base_path() {
+        let base = Url::parse("https://example.com/app").unwrap();
+        let uri = "/api/auth/status?foo=bar".parse::<Uri>().unwrap();
+
+        let upstream = build_upstream_url(&base, &uri).unwrap();
+
+        assert_eq!(upstream.as_str(), "https://example.com/app/api/auth/status?foo=bar");
+    }
+
+    #[test]
+    fn build_upstream_url_keeps_requests_already_under_base_path() {
+        let base = Url::parse("https://example.com/app").unwrap();
+        let uri = "/app/api/auth/status?foo=bar".parse::<Uri>().unwrap();
+
+        let upstream = build_upstream_url(&base, &uri).unwrap();
+
+        assert_eq!(upstream.as_str(), "https://example.com/app/api/auth/status?foo=bar");
+    }
+
+    #[test]
+    fn build_upstream_url_maps_root_to_base_path() {
+        let base = Url::parse("https://example.com/app").unwrap();
+        let uri = "/".parse::<Uri>().unwrap();
+
+        let upstream = build_upstream_url(&base, &uri).unwrap();
+
+        assert_eq!(upstream.as_str(), "https://example.com/app");
+    }
+
+    #[test]
+    fn rewrite_referer_header_prefixes_root_relative_path_under_base_path() {
+        let target = Url::parse("https://example.com/app").unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::REFERER,
+            HeaderValue::from_static("https://127.0.0.1:3000/api/auth/status?foo=bar"),
+        );
+
+        let referer = rewrite_referer_header(&headers, &target).unwrap();
+
+        assert_eq!(referer, "https://example.com/app/api/auth/status?foo=bar");
+    }
 }
