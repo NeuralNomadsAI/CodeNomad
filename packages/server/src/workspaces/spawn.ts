@@ -30,6 +30,10 @@ interface WslPath {
   linuxPath: string
 }
 
+export type WslWorkingDirectory =
+  | { kind: "linux"; path: string }
+  | { kind: "windows"; path: string }
+
 export function parseWslUncPath(input: string): WslPath | null {
   const normalized = input.trim().replace(/\//g, "\\")
   const match = normalized.match(WSL_UNC_PATH_REGEX)
@@ -47,13 +51,14 @@ export function parseWslUncPath(input: string): WslPath | null {
   }
 }
 
-export function resolveWslWorkingDirectory(folder: string, distro: string): string | null {
+export function resolveWslWorkingDirectory(folder: string, distro: string): WslWorkingDirectory | null {
   const wslFolder = parseWslUncPath(folder)
   if (wslFolder) {
-    return wslFolder.distro.toLowerCase() === distro.toLowerCase() ? wslFolder.linuxPath : null
+    return wslFolder.distro.toLowerCase() === distro.toLowerCase() ? { kind: "linux", path: wslFolder.linuxPath } : null
   }
 
-  return translateWindowsDrivePath(folder)
+  const windowsFolder = normalizeWindowsDrivePath(folder)
+  return windowsFolder ? { kind: "windows", path: windowsFolder } : null
 }
 
 export function buildWindowsSpawnSpec(binaryPath: string, args: string[], options: BuildSpawnSpecOptions = {}): SpawnSpec {
@@ -168,18 +173,32 @@ export function probeBinaryVersion(binaryPath: string): {
 }
 
 function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawnSpecOptions): SpawnSpec {
-  const linuxCwd = options.cwd ? resolveWslWorkingDirectory(options.cwd, wslPath.distro) : undefined
-  if (options.cwd && !linuxCwd) {
+  const workingDirectory = options.cwd ? resolveWslWorkingDirectory(options.cwd, wslPath.distro) : undefined
+  if (options.cwd && !workingDirectory) {
     throw new Error(
       `Unable to translate workspace folder for WSL binary in distro "${wslPath.distro}": ${options.cwd}`,
     )
   }
 
   const wslArgs = ["--distribution", wslPath.distro]
-  if (linuxCwd) {
-    wslArgs.push("--cd", linuxCwd)
+  if (workingDirectory?.kind === "linux") {
+    wslArgs.push("--cd", workingDirectory.path)
   }
-  wslArgs.push("--exec", wslPath.linuxPath, ...args)
+
+  if (workingDirectory?.kind === "windows") {
+    wslArgs.push(
+      "--exec",
+      "sh",
+      "-lc",
+      'cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      "codenomad-wsl-launch",
+      workingDirectory.path,
+      wslPath.linuxPath,
+      ...args,
+    )
+  } else {
+    wslArgs.push("--exec", wslPath.linuxPath, ...args)
+  }
 
   return {
     command: "wsl.exe",
@@ -189,18 +208,18 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   }
 }
 
-function translateWindowsDrivePath(input: string): string | null {
+function normalizeWindowsDrivePath(input: string): string | null {
   const normalized = input.trim().replace(/\//g, "\\")
   const match = normalized.match(WINDOWS_DRIVE_PATH_REGEX)
   if (!match) {
     return null
   }
 
-  const driveLetter = (match[1] ?? "").toLowerCase()
+  const driveLetter = (match[1] ?? "").toUpperCase()
   const remainder = match[2] ?? ""
   const segments = remainder.split(/\\+/).filter((segment) => segment.length > 0)
 
-  return segments.length > 0 ? `/mnt/${driveLetter}/${segments.join("/")}` : `/mnt/${driveLetter}`
+  return segments.length > 0 ? `${driveLetter}:\\${segments.join("\\")}` : `${driveLetter}:\\`
 }
 
 function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKeys: string[] | undefined): NodeJS.ProcessEnv | undefined {

@@ -58,6 +58,16 @@ function resolveAbsolutePath(root: string, relativePath: string) {
   return `${trimmedRoot}${normalized}`
 }
 
+function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null) {
+  if (!metadata || metadata.pathKind === "drives") {
+    return ""
+  }
+  if (metadata.pathKind === "relative") {
+    return resolveAbsolutePath(metadata.rootPath, metadata.currentPath)
+  }
+  return metadata.displayPath
+}
+
 type FolderRow =
   | { type: "up"; path: string }
   | { type: "folder"; entry: FileSystemEntry }
@@ -204,9 +214,11 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     try {
       const metadata = await loadDirectory(path)
       applyMetadata(metadata)
+      return metadata
     } catch (err) {
       const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
       setError(message)
+      return null
     }
   }
 
@@ -239,17 +251,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   }
 
   const currentAbsolutePath = createMemo(() => {
-    const metadata = currentMetadata()
-    if (!metadata) {
-      return ""
-    }
-    if (metadata.pathKind === "drives") {
-      return ""
-    }
-    if (metadata.pathKind === "relative") {
-      return resolveAbsolutePath(metadata.rootPath, metadata.currentPath)
-    }
-    return metadata.displayPath
+    return getAbsolutePathFromMetadata(currentMetadata())
   })
 
   createEffect(() => {
@@ -272,12 +274,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   async function handleSelectCurrent() {
     const target = pathInput().trim()
-    if (target && target !== currentAbsolutePath()) {
-      await navigateTo(target)
-      return
-    }
-
-    const absolute = currentAbsolutePath()
+    const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
+    const absolute = getAbsolutePathFromMetadata(metadata)
     if (absolute) {
       props.onSelect(absolute)
     }

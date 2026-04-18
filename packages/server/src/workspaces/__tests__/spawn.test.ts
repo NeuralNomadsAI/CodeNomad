@@ -22,13 +22,16 @@ describe("parseWslUncPath", () => {
 describe("resolveWslWorkingDirectory", () => {
   it("keeps WSL workspace folders in the same distro", () => {
     assert.equal(
-      resolveWslWorkingDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu"),
-      "/home/dev/workspace",
+      JSON.stringify(resolveWslWorkingDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu")),
+      JSON.stringify({ kind: "linux", path: "/home/dev/workspace" }),
     )
   })
 
-  it("maps Windows drive paths into /mnt when launching through WSL", () => {
-    assert.equal(resolveWslWorkingDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu"), "/mnt/c/Users/dev/workspace")
+  it("keeps Windows drive paths so WSL can resolve them with wslpath", () => {
+    assert.equal(
+      JSON.stringify(resolveWslWorkingDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu")),
+      JSON.stringify({ kind: "windows", path: String.raw`C:\Users\dev\workspace` }),
+    )
   })
 
   it("rejects WSL workspace folders from a different distro", () => {
@@ -66,5 +69,31 @@ describe("buildWindowsSpawnSpec", () => {
     ])
     assert.equal(spec.cwd, undefined)
     assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_PASSWORD")
+  })
+
+  it("uses wslpath for Windows workspace folders instead of assuming /mnt", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve", "--port", "0"],
+      {
+        cwd: String.raw`C:\Users\dev\workspace`,
+      },
+    )
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, [
+      "--distribution",
+      "Ubuntu",
+      "--exec",
+      "sh",
+      "-lc",
+      'cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      "codenomad-wsl-launch",
+      String.raw`C:\Users\dev\workspace`,
+      "/home/dev/.opencode/bin/opencode",
+      "serve",
+      "--port",
+      "0",
+    ])
   })
 })
