@@ -612,6 +612,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "webkit2gtk",
  "which",
  "windows-sys 0.59.0",
 ]
