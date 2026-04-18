@@ -101,11 +101,20 @@ pub fn ensure_local_cert() -> Result<LocalCert, String> {
     })
 }
 
-/// Returns true if the certificate has already been added to the Windows trust
-/// store (indicated by the `.trusted` marker file).
+fn trusted_marker_path() -> Result<PathBuf, String> {
+    Ok(cert_dir()?.join(TRUSTED_MARKER))
+}
+
+fn write_trusted_marker() -> Result<(), String> {
+    fs::write(trusted_marker_path()?, "trusted")
+        .map_err(|e| format!("Failed to write trust marker: {e}"))
+}
+
+/// Returns true if the certificate has already been added to the OS trust store
+/// (indicated by the `.trusted` marker file).
 pub fn is_cert_trusted() -> bool {
-    cert_dir()
-        .map(|dir| dir.join(TRUSTED_MARKER).exists())
+    trusted_marker_path()
+        .map(|path| path.exists())
         .unwrap_or(false)
 }
 
@@ -151,17 +160,12 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
         }
     }
 
-    // Write marker file
-    let dir = cert_dir()?;
-    fs::write(dir.join(TRUSTED_MARKER), "trusted")
-        .map_err(|e| format!("Failed to write trust marker: {e}"))?;
-
+    write_trusted_marker()?;
     Ok(())
 }
 
 #[cfg(not(windows))]
 pub fn trust_cert_in_store(_cert_der: &[u8]) -> Result<(), String> {
-    // On non-Windows platforms, certificate trust is not yet implemented.
-    // The proxy will still work but the browser may show a warning.
+    // Non-Windows platforms use native webview-specific handling instead of OS trust-store writes.
     Ok(())
 }

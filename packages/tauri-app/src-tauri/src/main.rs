@@ -1,15 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 mod cert_manager;
 mod cli_manager;
+#[cfg(target_os = "linux")]
+mod linux_tls;
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 mod remote_proxy;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
-use remote_proxy::{start_remote_proxy, ProxyTlsConfig, RemoteProxyHandle};
+#[cfg(not(target_os = "linux"))]
+use remote_proxy::start_remote_proxy;
+use remote_proxy::{ProxyTlsConfig, RemoteProxyHandle};
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,6 +54,8 @@ pub struct AppState {
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
+    pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
+    pub remote_tls_handlers: Mutex<HashSet<String>>,
     pub remote_proxies: Mutex<HashMap<String, RemoteProxyHandle>>,
 }
 
@@ -174,7 +182,7 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
 async fn open_remote_window_impl(
     app: AppHandle,
     payload: RemoteWindowPayload,
-    tls_config: Option<ProxyTlsConfig>,
+    _tls_config: Option<ProxyTlsConfig>,
 ) -> Result<(), String> {
     let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
@@ -184,41 +192,55 @@ async fn open_remote_window_impl(
         parsed.host_str().unwrap_or(payload.base_url.as_str())
     );
 
-    let state = app.state::<AppState>();
-    let reuses_existing_proxy = {
-        let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-        proxies
-            .get(&label)
-            .map(|existing| existing.matches(&parsed, payload.skip_tls_verify))
-            .unwrap_or(false)
-    };
+    #[cfg(target_os = "linux")]
+    let window_url = parsed.clone();
 
-    let local_url = if reuses_existing_proxy {
-        let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-        proxies
-            .get(&label)
-            .map(|handle| handle.entry_url().clone())
-            .ok_or_else(|| "Remote proxy disappeared before reuse".to_string())?
-    } else {
-        let new_proxy =
-            start_remote_proxy(parsed.clone(), payload.skip_tls_verify, tls_config).await?;
-        let local_url = new_proxy.entry_url().clone();
-        let mut proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-        if let Some(existing) = proxies.remove(&label) {
-            existing.shutdown();
+    #[cfg(not(target_os = "linux"))]
+    let window_url = {
+        let state = app.state::<AppState>();
+        let reuses_existing_proxy = {
+            let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+            proxies
+                .get(&label)
+                .map(|existing| existing.matches(&parsed, payload.skip_tls_verify))
+                .unwrap_or(false)
+        };
+
+        if reuses_existing_proxy {
+            let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+            proxies
+                .get(&label)
+                .map(|handle| handle.entry_url().clone())
+                .ok_or_else(|| "Remote proxy disappeared before reuse".to_string())?
+        } else {
+            let new_proxy =
+                start_remote_proxy(parsed.clone(), payload.skip_tls_verify, _tls_config).await?;
+            let local_url = new_proxy.entry_url().clone();
+            let mut proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
+            if let Some(existing) = proxies.remove(&label) {
+                existing.shutdown();
+            }
+            proxies.insert(label.clone(), new_proxy);
+            local_url
         }
-        proxies.insert(label.clone(), new_proxy);
-        local_url
     };
 
     app.state::<AppState>()
         .remote_origins
         .lock()
         .map_err(|err| err.to_string())?
-        .insert(label.clone(), local_url.origin().ascii_serialization());
+        .insert(label.clone(), window_url.origin().ascii_serialization());
+    app.state::<AppState>()
+        .remote_skip_tls_verify
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), payload.skip_tls_verify);
 
     if let Some(existing) = app.get_webview_window(&label) {
-        let _ = existing.navigate(local_url.clone());
+        #[cfg(target_os = "linux")]
+        linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
+
+        let _ = existing.navigate(window_url.clone());
         let _ = existing.set_title(&title);
         let _ = existing.show();
         let _ = existing.unminimize();
@@ -226,12 +248,31 @@ async fn open_remote_window_impl(
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(local_url))
+    #[cfg(target_os = "linux")]
+    let initial_url = if linux_tls::should_bootstrap_tls_navigation(&window_url, payload.skip_tls_verify)
+    {
+        Url::parse("about:blank").map_err(|err| err.to_string())?
+    } else {
+        window_url.clone()
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let initial_url = window_url.clone();
+
+    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(initial_url.clone()))
         .title(title)
         .inner_size(1400.0, 900.0)
         .min_inner_size(800.0, 600.0)
         .build()
         .map_err(|err| err.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_tls::ensure_remote_window_tls_handler(&window, &app, &label)?;
+        if initial_url != window_url {
+            let _ = window.navigate(window_url.clone());
+        }
+    }
 
     let app_handle = app.clone();
     let label_for_cleanup = label.clone();
@@ -239,6 +280,12 @@ async fn open_remote_window_impl(
         if let WindowEvent::Destroyed = event {
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
                 origins.remove(&label_for_cleanup);
+            }
+            if let Ok(mut values) = app_handle.state::<AppState>().remote_skip_tls_verify.lock() {
+                values.remove(&label_for_cleanup);
+            }
+            if let Ok(mut handlers) = app_handle.state::<AppState>().remote_tls_handlers.lock() {
+                handlers.remove(&label_for_cleanup);
             }
             if let Ok(mut proxies) = app_handle.state::<AppState>().remote_proxies.lock() {
                 if let Some(handle) = proxies.remove(&label_for_cleanup) {
@@ -253,6 +300,12 @@ async fn open_remote_window_impl(
 
 #[tauri::command]
 async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        return open_remote_window_impl(app, payload, None).await;
+    }
+
+    #[cfg(not(target_os = "linux"))]
     let tls_config = match cert_manager::ensure_local_cert() {
         Ok(local_cert) => {
             if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.cert_der) {
@@ -269,6 +322,7 @@ async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Res
         }
     };
 
+    #[cfg(not(target_os = "linux"))]
     open_remote_window_impl(app, payload, tls_config).await
 }
 
@@ -428,6 +482,8 @@ fn main() {
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
+            remote_skip_tls_verify: Mutex::new(HashMap::new()),
+            remote_tls_handlers: Mutex::new(HashSet::new()),
             remote_proxies: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
