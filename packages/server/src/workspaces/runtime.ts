@@ -4,7 +4,98 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-import { buildSpawnSpec } from "./spawn"
+
+export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
+export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
+
+const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
+
+export function buildSpawnSpec(binaryPath: string, args: string[]) {
+  if (process.platform !== "win32") {
+    return { command: binaryPath, args, options: {} as const }
+  }
+
+  const extension = path.extname(binaryPath).toLowerCase()
+
+  if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
+    const comspec = process.env.ComSpec || "cmd.exe"
+    // cmd.exe requires the full command as a single string.
+    // Using the ""<script> <args>"" pattern ensures paths with spaces are handled.
+    const commandLine = `""${binaryPath}" ${args.join(" ")}"`
+
+    return {
+      command: comspec,
+      args: ["/d", "/s", "/c", commandLine],
+      options: { windowsVerbatimArguments: true } as const,
+    }
+  }
+
+  if (WINDOWS_POWERSHELL_EXTENSIONS.has(extension)) {
+    // powershell.exe ships with Windows. (pwsh may not.)
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", binaryPath, ...args],
+      options: {} as const,
+    }
+  }
+
+  return { command: binaryPath, args, options: {} as const }
+}
+
+export function probeBinaryVersion(binaryPath: string): {
+  valid: boolean
+  version?: string
+  reported?: string
+  error?: string
+} {
+  if (!binaryPath) {
+    return { valid: false, error: "Missing binary path" }
+  }
+
+  const spec = buildSpawnSpec(binaryPath, ["--version"])
+
+  try {
+    const result = spawnSync(spec.command, spec.args, {
+      encoding: "utf8",
+      windowsVerbatimArguments: Boolean(
+        (spec.options as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments,
+      ),
+    })
+
+    if (result.error) {
+      return { valid: false, error: result.error.message }
+    }
+
+    if (result.status !== 0) {
+      const stderr = result.stderr?.trim()
+      const stdout = result.stdout?.trim()
+      const combined = stderr || stdout
+      const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
+      return { valid: false, error }
+    }
+
+    const stdoutLines = String(result.stdout ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+    const stderrLines = String(result.stderr ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    // Prefer stdout; fall back to stderr (some tools report version there).
+    const reported = stdoutLines[0] ?? stderrLines[0]
+    if (!reported) {
+      return { valid: true }
+    }
+
+    const versionMatch = reported.match(VERSION_REGEX)
+    const version = versionMatch?.[1]
+    return { valid: true, version, reported }
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
 
@@ -76,12 +167,7 @@ export class WorkspaceRuntime {
     }
 
     return new Promise((resolve, reject) => {
-      const propagatedEnvKeys = Object.keys(options.environment ?? {})
-      const spec = buildSpawnSpec(options.binaryPath, args, {
-        cwd: options.folder,
-        env,
-        propagateEnvKeys: propagatedEnvKeys,
-      })
+      const spec = buildSpawnSpec(options.binaryPath, args)
       const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
         {
@@ -111,8 +197,8 @@ export class WorkspaceRuntime {
       )
       const detached = process.platform !== "win32"
       const child = spawn(spec.command, spec.args, {
-        cwd: spec.cwd,
-        env: spec.env,
+        cwd: options.folder,
+        env,
         stdio: ["ignore", "pipe", "pipe"],
         detached,
         ...spec.options,

@@ -58,14 +58,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
   const nativeDialogsAvailable = supportsNativeDialogs()
-  const prefersBuiltInFolderBrowser = () => {
-    if (!nativeDialogsAvailable || typeof navigator === "undefined") {
-      return false
-    }
-
-    const platform = ((navigator as any).userAgentData?.platform as string | undefined) ?? navigator.platform ?? navigator.userAgent
-    return /win/i.test(platform)
-  }
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -388,7 +380,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   async function handleBrowse() {
     if (isLoading()) return
     setFocusMode("new")
-    if (nativeDialogsAvailable && !prefersBuiltInFolderBrowser()) {
+    if (nativeDialogsAvailable) {
       const fallbackPath = folders()[0]?.path
       const selected = await openNativeFolderDialog({
         title: t("folderSelection.dialog.title"),

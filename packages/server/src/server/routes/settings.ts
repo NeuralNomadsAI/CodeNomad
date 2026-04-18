@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { probeBinaryVersion } from "../../workspaces/spawn"
+import { probeBinaryVersion } from "../../workspaces/runtime"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
