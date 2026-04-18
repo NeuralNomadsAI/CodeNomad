@@ -339,7 +339,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
               {(group) => (
                 <div class="p-[var(--space-sm)]">
                   <div class="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--font-size-xs)] font-semibold text-muted uppercase tracking-wide">{t(group.labelKey)}</div>
-                  <div class="flex flex-col gap-[var(--space-xs)]" role="list">
+                  <div class="flex flex-col gap-[var(--space-xs)]">
                     <For each={group.items}>
                       {(item, index) => (
                         <>
