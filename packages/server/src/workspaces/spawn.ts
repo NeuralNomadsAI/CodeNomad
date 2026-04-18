@@ -225,7 +225,12 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
     return env
   }
 
-  const keysToPropagate = (propagateEnvKeys ?? []).filter((key) => env[key] !== undefined)
+  const keysToPropagate = Array.from(
+    new Set([
+      ...(propagateEnvKeys ?? []).filter((key) => env[key] !== undefined),
+      ...Array.from(WSL_PATH_ENV_KEYS).filter((key) => env[key] !== undefined),
+    ]),
+  )
   if (keysToPropagate.length === 0) {
     return env
   }

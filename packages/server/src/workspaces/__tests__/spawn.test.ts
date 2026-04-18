@@ -94,6 +94,20 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID/u")
   })
 
+  it("propagates inherited known path variables even when they are not explicitly requested", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      {
+        env: {
+          NODE_EXTRA_CA_CERTS: String.raw`C:\certs\root.pem`,
+        },
+      },
+    )
+
+    assert.equal(spec.env?.WSLENV, "NODE_EXTRA_CA_CERTS/p")
+  })
+
   it("uses wslpath for Windows workspace folders instead of assuming /mnt", () => {
     const spec = buildWindowsSpawnSpec(
       String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,

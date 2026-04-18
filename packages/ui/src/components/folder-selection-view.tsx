@@ -152,7 +152,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     if (isBrowseShortcut) {
       e.preventDefault()
-      void handleBrowse()
+      if (nativeDialogsAvailable && isWindowsPlatform()) {
+        openManualFolderBrowser()
+      } else {
+        void handleBrowse()
+      }
       return
     }
 
@@ -399,6 +403,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       }
       return
     }
+    openManualFolderBrowser()
+  }
+
+  function openManualFolderBrowser() {
+    if (isLoading()) return
+    setFocusMode("new")
     setIsFolderBrowserOpen(true)
   }
  
@@ -874,7 +884,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <Show when={nativeDialogsAvailable && isWindowsPlatform()}>
                     <button
                       type="button"
-                      onClick={() => setIsFolderBrowserOpen(true)}
+                      onClick={openManualFolderBrowser}
                       disabled={props.isLoading}
                       class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2 text-sm disabled:cursor-not-allowed"
                       onMouseEnter={() => setFocusMode("new")}

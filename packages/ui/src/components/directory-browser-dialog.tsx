@@ -310,10 +310,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   async function handleCreateFolder() {
     if (creatingFolder()) return
-    const metadata = currentMetadata()
+    const target = pathInput().trim()
+    const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
     if (!metadata || metadata.pathKind === "drives") {
       return
     }
+    setPathInputDirty(false)
+    setPathInput(getAbsolutePathFromMetadata(metadata))
 
     const name =
       (await showPromptDialog(t("directoryBrowser.createFolder.promptMessage"), {
