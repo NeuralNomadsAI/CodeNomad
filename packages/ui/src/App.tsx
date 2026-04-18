@@ -93,6 +93,7 @@ const App: Component = () => {
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
   const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
+  const [leftDrawerTitleVisibility, setLeftDrawerTitleVisibility] = createSignal<Record<string, boolean>>({})
 
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
@@ -247,6 +248,22 @@ const App: Component = () => {
     const instance = activeInstance()
     if (!instance) return null
     return activeSessionId().get(instance.id) || null
+  })
+
+  const activeSessionTitleForInstance = createMemo(() => {
+    const instance = activeInstance()
+    const sessionId = activeSessionIdForInstance()
+    if (!instance || !sessionId || sessionId === "info") return null
+
+    const session = getSessions(instance.id).find((entry) => entry.id === sessionId)
+    const title = session?.title?.trim()
+    return title || t("sessionList.session.untitled")
+  })
+
+  const showActiveSessionTitleInTabs = createMemo(() => {
+    const instance = activeInstance()
+    if (!instance) return false
+    return leftDrawerTitleVisibility()[instance.id] ?? false
   })
 
   const launchErrorPath = () => {
@@ -539,6 +556,8 @@ const App: Component = () => {
                 <InstanceTabs
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
+                  activeSessionTitle={activeSessionTitleForInstance()}
+                  showActiveSessionTitle={showActiveSessionTitleInTabs()}
                   onSelect={selectAppTab}
                   onClose={(tabId) => void handleCloseAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
@@ -568,6 +587,8 @@ const App: Component = () => {
                           handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
                           handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
                           onExecuteCommand={executeCommand}
+                          onLeftDrawerTitleVisibilityChange={(instanceId, visible) =>
+                            setLeftDrawerTitleVisibility((current) => ({ ...current, [instanceId]: visible }))}
                           tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
                           mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
                           onEnterMobileFullscreen={() => void enterMobileFullscreen()}

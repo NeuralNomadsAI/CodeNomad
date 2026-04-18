@@ -86,6 +86,7 @@ interface InstanceShellProps {
   mobileFullscreenMode: boolean
   onEnterMobileFullscreen: () => void
   onExitMobileFullscreen: () => void
+  onLeftDrawerTitleVisibilityChange?: (instanceId: string, visible: boolean) => void
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
@@ -182,6 +183,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  createEffect(() => {
+    props.onLeftDrawerTitleVisibilityChange?.(props.instance.id, leftDrawerState() === "floating-closed")
+  })
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -364,14 +369,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const activeSessionTitle = createMemo(() => {
-    const activeSessionId = activeSessionIdForInstance()
-    if (!activeSessionId || activeSessionId === "info") return null
-
-    const title = activeSessionForInstance()?.title?.trim()
-    return title || t("sessionList.session.untitled")
-  })
-
   const renderYoloModePill = () => {
     if (!yoloModeEnabled()) return null
     return (
@@ -397,20 +394,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </Show>
     </div>
   )
-
-  const renderSessionHeaderMeta = (compact = false) => {
-    const title = activeSessionTitle()
-    if (!title) return renderSessionHeaderIndicators()
-
-    return (
-      <div class={`session-header-meta ${compact ? "session-header-meta--compact" : ""}`}>
-        <div class="session-header-title" dir="auto" title={title}>
-          {title}
-        </div>
-        {renderSessionHeaderIndicators()}
-      </div>
-    )
-  }
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
@@ -739,7 +722,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </Show>
 
                     <div class="flex-1 flex items-center justify-center min-w-0">
-                      {renderSessionHeaderMeta(true)}
+                      {renderSessionHeaderIndicators()}
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-1">
@@ -830,8 +813,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   />
                 </Show>
 
-                <div class="ml-auto flex items-center session-header-hints min-w-0">
-                  {renderSessionHeaderMeta()}
+                <div class="ml-auto flex items-center session-header-hints">
+                  {renderSessionHeaderIndicators()}
                 </div>
               </div>
 

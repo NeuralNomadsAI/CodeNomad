@@ -13,6 +13,8 @@ import type { AppTabRecord } from "../stores/app-tabs"
 interface InstanceTabsProps {
   tabs: AppTabRecord[]
   activeTabId: string | null
+  activeSessionTitle?: string | null
+  showActiveSessionTitle?: boolean
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
   onNew: () => void
@@ -70,6 +72,11 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               >
                 <Plus class="w-4 h-4" />
               </button>
+              <Show when={props.showActiveSessionTitle && props.activeSessionTitle}>
+                <div class="tab-bar-session-title" dir="auto" title={props.activeSessionTitle ?? undefined}>
+                  {props.activeSessionTitle}
+                </div>
+              </Show>
             </div>
             <div class="tab-strip-spacer" />
             <Show when={props.tabs.length > 1}>
