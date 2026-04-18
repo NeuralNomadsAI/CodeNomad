@@ -1285,18 +1285,7 @@ fn shell_escape(input: &str) -> String {
 }
 
 fn wrap_command_for_shell(command: &str, shell: &str) -> String {
-    let shell_name = std::path::Path::new(shell)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("")
-        .to_lowercase();
-
-    if shell_name.contains("bash") {
-        return format!(
-            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {command}"
-        );
-    }
-
+    let _ = shell;
     command.to_string()
 }
 
