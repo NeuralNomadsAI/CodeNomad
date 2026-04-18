@@ -6,7 +6,6 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WINDOWS_DRIVE_PATH_REGEX = /^([A-Za-z]):[\\/]*(.*)$/
 const WSL_PATH_ENV_KEYS = new Set(["OPENCODE_CONFIG_DIR", "NODE_EXTRA_CA_CERTS"])
 
 export interface SpawnSpec {
@@ -57,7 +56,7 @@ export function resolveWslWorkingDirectory(folder: string, distro: string): WslW
     return wslFolder.distro.toLowerCase() === distro.toLowerCase() ? { kind: "linux", path: wslFolder.linuxPath } : null
   }
 
-  const windowsFolder = normalizeWindowsDrivePath(folder)
+  const windowsFolder = normalizeWindowsPath(folder)
   return windowsFolder ? { kind: "windows", path: windowsFolder } : null
 }
 
@@ -208,18 +207,17 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   }
 }
 
-function normalizeWindowsDrivePath(input: string): string | null {
-  const normalized = input.trim().replace(/\//g, "\\")
-  const match = normalized.match(WINDOWS_DRIVE_PATH_REGEX)
-  if (!match) {
+function normalizeWindowsPath(input: string): string | null {
+  const normalized = path.win32.normalize(input.trim().replace(/\//g, "\\"))
+  if (!normalized) {
     return null
   }
 
-  const driveLetter = (match[1] ?? "").toUpperCase()
-  const remainder = match[2] ?? ""
-  const segments = remainder.split(/\\+/).filter((segment) => segment.length > 0)
+  if (/^[A-Za-z]:/.test(normalized) || normalized.startsWith("\\\\")) {
+    return normalized
+  }
 
-  return segments.length > 0 ? `${driveLetter}:\\${segments.join("\\")}` : `${driveLetter}:\\`
+  return null
 }
 
 function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKeys: string[] | undefined): NodeJS.ProcessEnv | undefined {

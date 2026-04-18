@@ -34,6 +34,13 @@ describe("resolveWslWorkingDirectory", () => {
     )
   })
 
+  it("keeps UNC network paths so WSL can resolve them with wslpath", () => {
+    assert.equal(
+      JSON.stringify(resolveWslWorkingDirectory(String.raw`\\server\share\workspace`, "Ubuntu")),
+      JSON.stringify({ kind: "windows", path: String.raw`\\server\share\workspace` }),
+    )
+  })
+
   it("rejects WSL workspace folders from a different distro", () => {
     assert.equal(resolveWslWorkingDirectory(String.raw`\\wsl.localhost\Debian\home\dev\workspace`, "Ubuntu"), null)
   })
@@ -94,6 +101,30 @@ describe("buildWindowsSpawnSpec", () => {
       "serve",
       "--port",
       "0",
+    ])
+  })
+
+  it("uses wslpath for UNC network workspace folders", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      {
+        cwd: String.raw`\\server\share\workspace`,
+      },
+    )
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, [
+      "--distribution",
+      "Ubuntu",
+      "--exec",
+      "sh",
+      "-lc",
+      'cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      "codenomad-wsl-launch",
+      String.raw`\\server\share\workspace`,
+      "/home/dev/.opencode/bin/opencode",
+      "serve",
     ])
   })
 })
