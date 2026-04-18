@@ -1248,10 +1248,7 @@ fn build_shell_command_string(
     for arg in entry.runner_args(cli_args) {
         quoted.push(shell_escape(&arg));
     }
-    let command = wrap_command_for_shell(
-        &format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" ")),
-        &shell,
-    );
+    let command = format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" "));
     let args = build_shell_args(&shell, &command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
@@ -1282,11 +1279,6 @@ fn shell_escape(input: &str) -> String {
         let escaped = input.replace('\'', "'\\''");
         format!("'{}'", escaped)
     }
-}
-
-fn wrap_command_for_shell(command: &str, shell: &str) -> String {
-    let _ = shell;
-    command.to_string()
 }
 
 fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
