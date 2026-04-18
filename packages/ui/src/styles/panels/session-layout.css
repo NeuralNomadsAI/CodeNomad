@@ -144,6 +144,30 @@ session-sidebar-controls .selector-trigger-primary {
   @apply flex-shrink-0;
 }
 
+.session-header-meta {
+  @apply flex items-center gap-2 min-w-0;
+}
+
+.session-header-meta--compact {
+  @apply flex-col gap-1.5 w-full;
+}
+
+.session-header-title {
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  max-width: min(32rem, 40vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-header-meta--compact .session-header-title {
+  max-width: 100%;
+  text-align: center;
+}
+
 .session-sidebar-separator {
   background-color: var(--border-base);
   height: 1px;
