@@ -1248,7 +1248,10 @@ fn build_shell_command_string(
     for arg in entry.runner_args(cli_args) {
         quoted.push(shell_escape(&arg));
     }
-    let command = format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" "));
+    let command = wrap_command_for_shell(
+        &format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" ")),
+        &shell,
+    );
     let args = build_shell_args(&shell, &command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
@@ -1281,6 +1284,28 @@ fn shell_escape(input: &str) -> String {
     }
 }
 
+fn wrap_command_for_shell(command: &str, shell: &str) -> String {
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_lowercase();
+
+    if shell_name.contains("bash") {
+        return format!(
+            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {command}"
+        );
+    }
+
+    if shell_name.contains("zsh") {
+        return format!(
+            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {command}"
+        );
+    }
+
+    command.to_string()
+}
+
 fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
     let shell_name = std::path::Path::new(shell)
         .file_name()
@@ -1288,7 +1313,10 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    let _ = shell_name;
+    if shell_name.contains("zsh") {
+        return vec!["-l".into(), "-i".into(), "-c".into(), command.into()];
+    }
+
     vec!["-l".into(), "-c".into(), command.into()]
 }
 
