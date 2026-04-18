@@ -1,0 +1,8 @@
+[Desktop Entry]
+Categories=
+Exec=codenomad-tauri
+StartupWMClass=codenomad-tauri
+Icon=codenomad-tauri
+Name=CodeNomad
+Terminal=false
+Type=Application
