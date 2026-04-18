@@ -319,8 +319,9 @@ async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Res
             })
         }
         Err(err) => {
-            eprintln!("[tauri] failed to generate proxy cert, falling back to HTTP: {err}");
-            None
+            return Err(format!(
+                "Failed to create the local HTTPS proxy certificate. This remote HTTPS connection cannot fall back to HTTP because secure cookies would break: {err}"
+            ));
         }
     };
 
