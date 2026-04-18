@@ -357,7 +357,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const pill = activeSessionStatusPill()
     if (!pill) return null
     return (
-      <span class={`status-indicator session-status session-status-list ${pill.className}`} title={pill.title}>
+      <span
+        class={`status-indicator session-status session-status-list ${pill.className} notranslate`}
+        title={pill.title}
+        translate="no"
+      >
         {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
         {pill.text}
       </span>

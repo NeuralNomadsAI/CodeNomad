@@ -520,7 +520,11 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
                 </span>
               </Show>
-              <span class={`status-indicator session-status session-status-list ${statusClassName()}`} title={statusTooltip()}>
+              <span
+                class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
+                title={statusTooltip()}
+                translate="no"
+              >
                 {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
                 {statusText()}
               </span>
@@ -736,7 +740,9 @@ const SessionList: Component<SessionListProps> = (props) => {
         <div class="session-list-header p-3 border-b border-base">
           {props.headerContent ?? (
             <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold text-primary">{t("sessionList.header.title")}</h3>
+              <h3 class="text-sm font-semibold text-primary notranslate" translate="no">
+                {t("sessionList.header.title")}
+              </h3>
               <KeyboardHint
                 shortcuts={[keyboardRegistry.get("session-prev")!, keyboardRegistry.get("session-next")!].filter(Boolean)}
               />
