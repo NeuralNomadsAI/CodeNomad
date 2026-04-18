@@ -366,14 +366,17 @@ fn expand_home(path: &str) -> PathBuf {
 
 fn read_app_config() -> Option<AppConfig> {
     let (yaml_path, json_path) = resolve_config_locations();
+    read_app_config_from_paths(&yaml_path, &json_path)
+}
 
-    if let Ok(content) = fs::read_to_string(&yaml_path) {
+fn read_app_config_from_paths(yaml_path: &PathBuf, json_path: &PathBuf) -> Option<AppConfig> {
+    if let Ok(content) = fs::read_to_string(yaml_path) {
         if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
             return Some(config);
         }
     }
 
-    if let Ok(content) = fs::read_to_string(&json_path) {
+    if let Ok(content) = fs::read_to_string(json_path) {
         if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
             return Some(config);
         }
@@ -413,6 +416,10 @@ fn resolve_configured_ports() -> (Option<u16>, Option<u16>) {
         return (None, None);
     };
 
+    resolve_configured_ports_from_config(&config)
+}
+
+fn resolve_configured_ports_from_config(config: &AppConfig) -> (Option<u16>, Option<u16>) {
     let https_port = config
         .server
         .as_ref()
@@ -425,6 +432,31 @@ fn resolve_configured_ports() -> (Option<u16>, Option<u16>) {
         .or_else(|| config.preferences.as_ref().and_then(|prefs| prefs.http_port));
 
     (https_port, http_port)
+}
+
+fn apply_configured_ports(
+    args: &mut Vec<String>,
+    https_port_env: Option<&str>,
+    http_port_env: Option<&str>,
+    configured_https_port: Option<u16>,
+    configured_http_port: Option<u16>,
+) {
+    let https_env_present = https_port_env.is_some_and(|value| !value.trim().is_empty());
+    let http_env_present = http_port_env.is_some_and(|value| !value.trim().is_empty());
+
+    if !https_env_present {
+        if let Some(port) = configured_https_port {
+            args.push("--https-port".to_string());
+            args.push(port.to_string());
+        }
+    }
+
+    if !http_env_present {
+        if let Some(port) = configured_http_port {
+            args.push("--http-port".to_string());
+            args.push(port.to_string());
+        }
+    }
 }
 
 fn resolve_listening_host() -> String {
@@ -1160,20 +1192,13 @@ impl CliEntry {
                 .ok()
                 .filter(|value| !value.trim().is_empty());
             let (configured_https_port, configured_http_port) = resolve_configured_ports();
-
-            if https_port_env.is_none() {
-                if let Some(port) = configured_https_port {
-                    args.push("--https-port".to_string());
-                    args.push(port.to_string());
-                }
-            }
-
-            if http_port_env.is_none() {
-                if let Some(port) = configured_http_port {
-                    args.push("--http-port".to_string());
-                    args.push(port.to_string());
-                }
-            }
+            apply_configured_ports(
+                &mut args,
+                https_port_env.as_deref(),
+                http_port_env.as_deref(),
+                configured_https_port,
+                configured_http_port,
+            );
         }
         args
     }
@@ -1390,5 +1415,74 @@ fn normalize_path(path: PathBuf) -> String {
         stripped.to_string()
     } else {
         rendered
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("codenomad-{name}-{nanos}"))
+    }
+
+    #[test]
+    fn resolve_configured_ports_prefers_server_values() {
+        let config = AppConfig {
+            preferences: Some(PreferencesConfig {
+                listening_mode: None,
+                http_port: Some(3000),
+                https_port: Some(3443),
+            }),
+            server: Some(ServerConfig {
+                listening_mode: None,
+                http_port: Some(4000),
+                https_port: Some(4443),
+            }),
+        };
+
+        let ports = resolve_configured_ports_from_config(&config);
+
+        assert_eq!(ports, (Some(4443), Some(4000)));
+    }
+
+    #[test]
+    fn apply_configured_ports_keeps_env_override_priority() {
+        let mut args = vec!["serve".to_string()];
+
+        apply_configured_ports(&mut args, Some("8443"), None, Some(4443), Some(4000));
+
+        assert_eq!(args, vec!["serve", "--http-port", "4000"]);
+    }
+
+    #[test]
+    fn resolve_configured_ports_reads_yaml_config() {
+        let _guard = env_lock().lock().unwrap();
+        let dir = unique_temp_dir("cli-config");
+        fs::create_dir_all(&dir).unwrap();
+        let yaml_path = dir.join("config.yaml");
+        let json_path = dir.join("config.json");
+
+        fs::write(
+            &yaml_path,
+            "server:\n  httpsPort: 60598\n  httpPort: 60599\npreferences:\n  httpsPort: 7443\n  httpPort: 7000\n",
+        )
+        .unwrap();
+
+        let config = read_app_config_from_paths(&yaml_path, &json_path).unwrap();
+
+        assert_eq!(resolve_configured_ports_from_config(&config), (Some(60598), Some(60599)));
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
