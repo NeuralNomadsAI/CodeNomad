@@ -38,6 +38,7 @@ use windows_sys::Win32::System::JobObjects::{
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
 
 #[cfg(windows)]
 #[derive(Debug)]
@@ -630,15 +631,7 @@ impl CliProcessManager {
 
         let use_user_shell = supports_user_shell();
 
-        if use_user_shell {
-            let shell = default_shell();
-            if !shell_can_resolve_program(&shell, &resolution.node_binary) {
-                return Err(anyhow::anyhow!(
-                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
-                    resolution.node_binary
-                ));
-            }
-        } else if which::which(&resolution.node_binary).is_err() {
+        if !use_user_shell && which::which(&resolution.node_binary).is_err() {
             return Err(anyhow::anyhow!(
                 "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
                 resolution.node_binary
@@ -924,6 +917,17 @@ impl CliProcessManager {
                         log_line(&format!("[cli][{}] {}", stream, line));
 
                         if ready.load(Ordering::SeqCst) {
+                            continue;
+                        }
+
+                        if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
+                            let mut locked = status.lock();
+                            if locked.error.is_none() {
+                                locked.error = Some(format!(
+                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                                    node_binary.trim()
+                                ));
+                            }
                             continue;
                         }
 
@@ -1255,7 +1259,13 @@ fn build_shell_command_string(
     for arg in entry.runner_args(cli_args) {
         quoted.push(shell_escape(&arg));
     }
-    let command = format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" "));
+    let command = format!(
+        "if command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {} >&2; exit 127; fi",
+        shell_escape(&entry.node_binary),
+        quoted.join(" "),
+        MISSING_NODE_PREFIX,
+        shell_escape(&entry.node_binary),
+    );
     let args = build_shell_args(&shell, &command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
@@ -1297,17 +1307,6 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
 
     let _ = shell_name;
     vec!["-l".into(), "-c".into(), command.into()]
-}
-
-fn shell_can_resolve_program(shell: &str, program: &str) -> bool {
-    let probe = format!("command -v {} >/dev/null 2>&1", shell_escape(program));
-    let mut command = Command::new(shell);
-    command.args(build_shell_args(shell, &probe));
-    configure_spawn(&mut command);
-    command
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
 }
 
 fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
