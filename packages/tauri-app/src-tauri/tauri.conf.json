@@ -9,6 +9,7 @@
     "frontendDist": "resources/ui-loading"
   },
   "app": {
+    "enableGTKAppId": true,
     "withGlobalTauri": true,
     "windows": [
       {
@@ -41,6 +42,35 @@
   },
   "bundle": {
     "active": true,
+    "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop"
+        }
+      },
+      "deb": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop",
+          "/usr/share/icons/hicolor/32x32/apps/codenomad-tauri.png": "icons/linux/32x32.png",
+          "/usr/share/icons/hicolor/48x48/apps/codenomad-tauri.png": "icons/linux/48x48.png",
+          "/usr/share/icons/hicolor/64x64/apps/codenomad-tauri.png": "icons/linux/64x64.png",
+          "/usr/share/icons/hicolor/128x128/apps/codenomad-tauri.png": "icons/linux/128x128.png",
+          "/usr/share/icons/hicolor/256x256/apps/codenomad-tauri.png": "icons/linux/256x256.png",
+          "/usr/share/icons/hicolor/512x512/apps/codenomad-tauri.png": "icons/linux/512x512.png"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop",
+          "/usr/share/icons/hicolor/32x32/apps/codenomad-tauri.png": "icons/linux/32x32.png",
+          "/usr/share/icons/hicolor/48x48/apps/codenomad-tauri.png": "icons/linux/48x48.png",
+          "/usr/share/icons/hicolor/64x64/apps/codenomad-tauri.png": "icons/linux/64x64.png",
+          "/usr/share/icons/hicolor/128x128/apps/codenomad-tauri.png": "icons/linux/128x128.png",
+          "/usr/share/icons/hicolor/256x256/apps/codenomad-tauri.png": "icons/linux/256x256.png",
+          "/usr/share/icons/hicolor/512x512/apps/codenomad-tauri.png": "icons/linux/512x512.png"
+        }
+      }
+    },
     "resources": [
       "resources/server",
       "resources/ui-loading"
