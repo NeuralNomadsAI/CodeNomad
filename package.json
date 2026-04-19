@@ -30,5 +30,12 @@
   },
   "devDependencies": {
     "baseline-browser-mapping": "^2.9.11"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-arm64": "4.52.5",
+    "@rollup/rollup-darwin-x64": "4.52.5",
+    "@rollup/rollup-linux-arm64-gnu": "4.52.5",
+    "@rollup/rollup-linux-x64-gnu": "4.52.5",
+    "@rollup/rollup-win32-x64-msvc": "4.52.5"
   }
 }
