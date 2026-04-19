@@ -142,6 +142,7 @@ function ensureRollupPlatformBinary() {
     "linux-arm64": "@rollup/rollup-linux-arm64-gnu",
     "darwin-arm64": "@rollup/rollup-darwin-arm64",
     "darwin-x64": "@rollup/rollup-darwin-x64",
+    "win32-arm64": "@rollup/rollup-win32-arm64-msvc",
     "win32-x64": "@rollup/rollup-win32-x64-msvc",
   }
 
