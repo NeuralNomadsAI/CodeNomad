@@ -37,6 +37,12 @@ const braceExpansionPath = path.join(
   "package.json",
 )
 
+const serverBuildDependencyPaths = [
+  path.join(serverRoot, "node_modules", "typescript", "package.json"),
+  path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
+  path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
+]
+
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
 
 async function ensureMonacoAssets() {
@@ -98,7 +104,7 @@ function syncServerUiBundle() {
 }
 
 function ensureServerDevDependencies() {
-  if (fs.existsSync(braceExpansionPath)) {
+  if (serverBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
     return
   }
 

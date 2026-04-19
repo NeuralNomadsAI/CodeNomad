@@ -1,12 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[allow(dead_code)]
+mod cert_manager;
 mod cli_manager;
+#[cfg(target_os = "linux")]
+mod linux_tls;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +20,7 @@ use tauri::webview::Webview;
 use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -45,6 +50,9 @@ pub struct AppState {
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
+    pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
+    pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
+    pub remote_tls_handlers: Mutex<HashSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +61,85 @@ struct RemoteWindowPayload {
     id: String,
     name: String,
     base_url: String,
+    entry_url: Option<String>,
+    proxy_session_id: Option<String>,
+    #[allow(dead_code)]
     skip_tls_verify: bool,
+}
+
+fn schedule_remote_proxy_session_cleanup(app: AppHandle, session_id: String) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = cleanup_remote_proxy_session(&app, &session_id).await {
+            eprintln!(
+                "[tauri] failed to clean up remote proxy session {}: {}",
+                session_id, err
+            );
+        }
+    });
+}
+
+async fn confirm_local_certificate_install(app: &AppHandle) -> Result<bool, String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+
+    let mut dialog = app
+        .dialog()
+        .message(
+            "CodeNomad needs to install a local certificate to open self-signed HTTPS remote windows. This certificate is only used for local desktop proxy traffic on your machine. Your operating system may show a second certificate prompt after this.",
+        )
+        .title("Install Local Certificate")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Continue".into(),
+            "Cancel".into(),
+        ));
+
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.parent(&window);
+    }
+
+    dialog.show(move |accepted| {
+        let _ = sender.send(accepted);
+    });
+
+    tauri::async_runtime::spawn_blocking(move || receiver.recv().unwrap_or(false))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let status = app.state::<AppState>().manager.status();
+    let Some(base_url) = status.url else {
+        return Ok(());
+    };
+
+    let mut cleanup_url = Url::parse(&base_url).map_err(|err| err.to_string())?;
+    cleanup_url.set_path(&format!("/api/remote-proxy/sessions/{session_id}"));
+    cleanup_url.set_query(None);
+    cleanup_url.set_fragment(None);
+
+    let client = if cleanup_url.scheme() == "https" {
+        let local_cert = cert_manager::ensure_local_cert()?;
+        let ca_cert = reqwest::Certificate::from_der(&local_cert.ca_cert_der)
+            .map_err(|err| err.to_string())?;
+        reqwest::Client::builder()
+            .add_root_certificate(ca_cert)
+            .build()
+            .map_err(|err| err.to_string())?
+    } else {
+        reqwest::Client::new()
+    };
+
+    let response = client
+        .delete(cleanup_url.as_str())
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+
+    Err(format!("unexpected status {}", response.status()))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -119,7 +205,7 @@ fn is_dev_mode() -> bool {
 
 fn should_allow_internal(url: &Url) -> bool {
     match url.scheme() {
-        "tauri" | "asset" | "file" => true,
+        "tauri" | "asset" | "file" | "about" => true,
         // On Windows/WebView2, Tauri serves the app assets from `tauri.localhost`.
         // This must be treated as an internal origin or the navigation guard will
         // redirect it to the system browser and the app will appear blank.
@@ -167,25 +253,61 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     false
 }
 
-#[tauri::command]
-fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
-    if payload.skip_tls_verify && payload.base_url.starts_with("https://") {
-        return Err(
-            "Tauri cannot bypass self-signed HTTPS certificates automatically yet. Trust the certificate in your OS first, then reconnect, or use the CodeNomad Electron app."
-                .to_string(),
-        );
-    }
-
-    let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
+async fn open_remote_window_impl(
+    app: AppHandle,
+    payload: RemoteWindowPayload,
+) -> Result<(), String> {
+    let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+    let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
     let title = format!(
         "{} - {}",
         payload.name,
-        parsed.host_str().unwrap_or(payload.base_url.as_str())
+        Url::parse(&payload.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .unwrap_or_else(|| payload.base_url.clone())
     );
 
+    let window_url = parsed.clone();
+
+    let allow_linux_tls_certificate =
+        parsed.scheme() == "https" && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
+
+    app.state::<AppState>()
+        .remote_origins
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), window_url.origin().ascii_serialization());
+    app.state::<AppState>()
+        .remote_skip_tls_verify
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), allow_linux_tls_certificate);
+
+    let replaced_session = {
+        let state = app.state::<AppState>();
+        let mut sessions = state
+            .remote_proxy_sessions
+            .lock()
+            .map_err(|err| err.to_string())?;
+        match payload.proxy_session_id.clone() {
+            Some(session_id) => sessions.insert(label.clone(), session_id),
+            None => sessions.remove(&label),
+        }
+    };
+
+    if let Some(previous) = replaced_session {
+        if payload.proxy_session_id.as_deref() != Some(previous.as_str()) {
+            schedule_remote_proxy_session_cleanup(app.clone(), previous);
+        }
+    }
+
     if let Some(existing) = app.get_webview_window(&label) {
-        let _ = existing.navigate(parsed.clone());
+        #[cfg(target_os = "linux")]
+        linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
+
+        let _ = existing.navigate(window_url.clone());
         let _ = existing.set_title(&title);
         let _ = existing.show();
         let _ = existing.unminimize();
@@ -193,30 +315,90 @@ fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<()
         return Ok(());
     }
 
-    app.state::<AppState>()
-        .remote_origins
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(label.clone(), parsed.origin().ascii_serialization());
+    #[cfg(target_os = "linux")]
+    let initial_url = if linux_tls::should_bootstrap_tls_navigation(
+        &window_url,
+        allow_linux_tls_certificate,
+    ) {
+        Url::parse("about:blank").map_err(|err| err.to_string())?
+    } else {
+        window_url.clone()
+    };
 
-    let window =
-        WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(parsed.clone()))
-            .title(title)
-            .inner_size(1400.0, 900.0)
-            .min_inner_size(800.0, 600.0)
-            .build()
-            .map_err(|err| err.to_string())?;
+    #[cfg(not(target_os = "linux"))]
+    let initial_url = window_url.clone();
+
+    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(initial_url.clone()))
+        .title(title)
+        .inner_size(1400.0, 900.0)
+        .min_inner_size(800.0, 600.0)
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_tls::ensure_remote_window_tls_handler(&window, &app, &label)?;
+        if initial_url != window_url {
+            let _ = window.navigate(window_url.clone());
+        }
+    }
 
     let app_handle = app.clone();
+    let label_for_cleanup = label.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
-                origins.remove(&label);
+                origins.remove(&label_for_cleanup);
+            }
+            if let Ok(mut sessions) = app_handle.state::<AppState>().remote_proxy_sessions.lock() {
+                if let Some(session_id) = sessions.remove(&label_for_cleanup) {
+                    schedule_remote_proxy_session_cleanup(app_handle.clone(), session_id);
+                }
+            }
+            if let Ok(mut values) = app_handle.state::<AppState>().remote_skip_tls_verify.lock() {
+                values.remove(&label_for_cleanup);
+            }
+            if let Ok(mut handlers) = app_handle.state::<AppState>().remote_tls_handlers.lock() {
+                handlers.remove(&label_for_cleanup);
             }
         }
     });
 
     Ok(())
+}
+
+#[tauri::command]
+async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+        let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
+        if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
+            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                format!(
+                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                )
+            })?;
+            if cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
+                format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
+            })? {
+                let accepted = confirm_local_certificate_install(&app).await?;
+                if !accepted {
+                    return Err(
+                        "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows."
+                            .to_string(),
+                    );
+                }
+            }
+            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
+                return Err(format!(
+                    "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
+                ));
+            }
+        }
+    }
+
+    open_remote_window_impl(app, payload).await
 }
 
 fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -346,6 +528,8 @@ fn set_windows_app_user_model_id() {
 fn set_windows_app_user_model_id() {}
 
 fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
         .on_navigation(|webview, url| intercept_navigation(webview, url))
         .build();
@@ -373,6 +557,9 @@ fn main() {
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
+            remote_proxy_sessions: Mutex::new(HashMap::new()),
+            remote_skip_tls_verify: Mutex::new(HashMap::new()),
+            remote_tls_handlers: Mutex::new(HashSet::new()),
         })
         .setup(|app| {
             set_windows_app_user_model_id();

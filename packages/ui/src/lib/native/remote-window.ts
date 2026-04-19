@@ -6,14 +6,22 @@ export interface RemoteWindowOpenPayload {
   id: string
   name: string
   baseUrl: string
+  entryUrl?: string
+  proxySessionId?: string
   skipTlsVerify: boolean
 }
 
-export async function openRemoteServerWindow(profile: Pick<RemoteServerProfile, "id" | "name" | "baseUrl" | "skipTlsVerify">): Promise<void> {
+export async function openRemoteServerWindow(
+  profile: Pick<RemoteServerProfile, "id" | "name" | "baseUrl" | "skipTlsVerify">,
+  entryUrl?: string,
+  proxySessionId?: string,
+): Promise<void> {
   const payload: RemoteWindowOpenPayload = {
     id: profile.id,
     name: profile.name,
     baseUrl: profile.baseUrl,
+    entryUrl,
+    proxySessionId,
     skipTlsVerify: profile.skipTlsVerify,
   }
 
