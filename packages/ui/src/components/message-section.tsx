@@ -638,18 +638,25 @@ export default function MessageSection(props: MessageSectionProps) {
   const autoPinHoldTargetKey = createMemo(() => {
     if (!holdLongAssistantRepliesEnabled()) return null
     const messageId = lastVisibleMessageId()
-    return isAssistantTextMessage(messageId) ? messageId : null
+    return isStreamingAssistantTextMessage(messageId) ? messageId : null
   })
 
   function toggleHoldLongAssistantReplies() {
     updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
   }
 
-  function isAssistantTextMessage(messageId: string | null | undefined) {
+  function isStreamingAssistantTextMessage(messageId: string | null | undefined) {
     if (!messageId) return false
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record || record.role !== "assistant") return false
+    if (record.status !== "streaming") return false
+
+    const info = resolvedStore.getMessageInfo(messageId)
+    if (!info) return false
+    const timeInfo = info?.time as { end?: number } | undefined
+    const isStreaming = timeInfo?.end === undefined || timeInfo.end === 0
+    if (!isStreaming) return false
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
     return orderedParts.some((part) => {
