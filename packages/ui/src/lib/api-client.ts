@@ -12,6 +12,8 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   ServerMeta,
+  RemoteProxySessionCreateRequest,
+  RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
@@ -255,6 +257,15 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify(payload),
     })
+  },
+  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteRemoteProxySession(id: string): Promise<void> {
+    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")

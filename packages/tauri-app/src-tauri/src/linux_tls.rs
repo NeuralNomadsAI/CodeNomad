@@ -3,8 +3,8 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 use url::Url;
 use webkit2gtk::{WebContextExt, WebView, WebViewExt};
 
-pub fn should_bootstrap_tls_navigation(target_url: &Url, skip_tls_verify: bool) -> bool {
-    skip_tls_verify && target_url.scheme() == "https"
+pub fn should_bootstrap_tls_navigation(target_url: &Url, allow_tls_certificate: bool) -> bool {
+    allow_tls_certificate && target_url.scheme() == "https"
 }
 
 pub fn ensure_remote_window_tls_handler(

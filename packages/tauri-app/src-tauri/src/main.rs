@@ -1,18 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
 #[cfg(target_os = "linux")]
 mod linux_tls;
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-mod remote_proxy;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
-#[cfg(not(target_os = "linux"))]
-use remote_proxy::start_remote_proxy;
-use remote_proxy::{ProxyTlsConfig, RemoteProxyHandle};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -54,9 +49,9 @@ pub struct AppState {
     pub wake_lock: Mutex<Option<KeepAwake>>,
     pub zoom_level: Mutex<f64>,
     pub remote_origins: Mutex<HashMap<String, String>>,
+    pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
     pub remote_tls_handlers: Mutex<HashSet<String>>,
-    pub remote_proxies: Mutex<HashMap<String, RemoteProxyHandle>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,7 +60,57 @@ struct RemoteWindowPayload {
     id: String,
     name: String,
     base_url: String,
+    entry_url: Option<String>,
+    proxy_session_id: Option<String>,
+    #[allow(dead_code)]
     skip_tls_verify: bool,
+}
+
+fn schedule_remote_proxy_session_cleanup(app: AppHandle, session_id: String) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = cleanup_remote_proxy_session(&app, &session_id).await {
+            eprintln!(
+                "[tauri] failed to clean up remote proxy session {}: {}",
+                session_id, err
+            );
+        }
+    });
+}
+
+async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let status = app.state::<AppState>().manager.status();
+    let Some(base_url) = status.url else {
+        return Ok(());
+    };
+
+    let mut cleanup_url = Url::parse(&base_url).map_err(|err| err.to_string())?;
+    cleanup_url.set_path(&format!("/api/remote-proxy/sessions/{session_id}"));
+    cleanup_url.set_query(None);
+    cleanup_url.set_fragment(None);
+
+    let client = if cleanup_url.scheme() == "https" {
+        let local_cert = cert_manager::ensure_local_cert()?;
+        let ca_cert = reqwest::Certificate::from_der(&local_cert.ca_cert_der)
+            .map_err(|err| err.to_string())?;
+        reqwest::Client::builder()
+            .add_root_certificate(ca_cert)
+            .build()
+            .map_err(|err| err.to_string())?
+    } else {
+        reqwest::Client::new()
+    };
+
+    let response = client
+        .delete(cleanup_url.as_str())
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+
+    Err(format!("unexpected status {}", response.status()))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -182,48 +227,23 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
 async fn open_remote_window_impl(
     app: AppHandle,
     payload: RemoteWindowPayload,
-    _tls_config: Option<ProxyTlsConfig>,
 ) -> Result<(), String> {
-    let parsed = Url::parse(&payload.base_url).map_err(|err| err.to_string())?;
+    let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+    let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
     let title = format!(
         "{} - {}",
         payload.name,
-        parsed.host_str().unwrap_or(payload.base_url.as_str())
+        Url::parse(&payload.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .unwrap_or_else(|| payload.base_url.clone())
     );
 
-    #[cfg(target_os = "linux")]
     let window_url = parsed.clone();
 
-    #[cfg(not(target_os = "linux"))]
-    let window_url = {
-        let state = app.state::<AppState>();
-        let reuses_existing_proxy = {
-            let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-            proxies
-                .get(&label)
-                .map(|existing| existing.matches(&parsed, payload.skip_tls_verify))
-                .unwrap_or(false)
-        };
-
-        if reuses_existing_proxy {
-            let proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-            proxies
-                .get(&label)
-                .map(|handle| handle.entry_url().clone())
-                .ok_or_else(|| "Remote proxy disappeared before reuse".to_string())?
-        } else {
-            let new_proxy =
-                start_remote_proxy(parsed.clone(), payload.skip_tls_verify, _tls_config).await?;
-            let local_url = new_proxy.entry_url().clone();
-            let mut proxies = state.remote_proxies.lock().map_err(|err| err.to_string())?;
-            if let Some(existing) = proxies.remove(&label) {
-                existing.shutdown();
-            }
-            proxies.insert(label.clone(), new_proxy);
-            local_url
-        }
-    };
+    let allow_linux_tls_certificate =
+        parsed.scheme() == "https" && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
 
     app.state::<AppState>()
         .remote_origins
@@ -234,7 +254,25 @@ async fn open_remote_window_impl(
         .remote_skip_tls_verify
         .lock()
         .map_err(|err| err.to_string())?
-        .insert(label.clone(), payload.skip_tls_verify);
+        .insert(label.clone(), allow_linux_tls_certificate);
+
+    let replaced_session = {
+        let state = app.state::<AppState>();
+        let mut sessions = state
+            .remote_proxy_sessions
+            .lock()
+            .map_err(|err| err.to_string())?;
+        match payload.proxy_session_id.clone() {
+            Some(session_id) => sessions.insert(label.clone(), session_id),
+            None => sessions.remove(&label),
+        }
+    };
+
+    if let Some(previous) = replaced_session {
+        if payload.proxy_session_id.as_deref() != Some(previous.as_str()) {
+            schedule_remote_proxy_session_cleanup(app.clone(), previous);
+        }
+    }
 
     if let Some(existing) = app.get_webview_window(&label) {
         #[cfg(target_os = "linux")]
@@ -249,8 +287,10 @@ async fn open_remote_window_impl(
     }
 
     #[cfg(target_os = "linux")]
-    let initial_url = if linux_tls::should_bootstrap_tls_navigation(&window_url, payload.skip_tls_verify)
-    {
+    let initial_url = if linux_tls::should_bootstrap_tls_navigation(
+        &window_url,
+        allow_linux_tls_certificate,
+    ) {
         Url::parse("about:blank").map_err(|err| err.to_string())?
     } else {
         window_url.clone()
@@ -281,16 +321,16 @@ async fn open_remote_window_impl(
             if let Ok(mut origins) = app_handle.state::<AppState>().remote_origins.lock() {
                 origins.remove(&label_for_cleanup);
             }
+            if let Ok(mut sessions) = app_handle.state::<AppState>().remote_proxy_sessions.lock() {
+                if let Some(session_id) = sessions.remove(&label_for_cleanup) {
+                    schedule_remote_proxy_session_cleanup(app_handle.clone(), session_id);
+                }
+            }
             if let Ok(mut values) = app_handle.state::<AppState>().remote_skip_tls_verify.lock() {
                 values.remove(&label_for_cleanup);
             }
             if let Ok(mut handlers) = app_handle.state::<AppState>().remote_tls_handlers.lock() {
                 handlers.remove(&label_for_cleanup);
-            }
-            if let Ok(mut proxies) = app_handle.state::<AppState>().remote_proxies.lock() {
-                if let Some(handle) = proxies.remove(&label_for_cleanup) {
-                    handle.shutdown();
-                }
             }
         }
     });
@@ -300,33 +340,25 @@ async fn open_remote_window_impl(
 
 #[tauri::command]
 async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        return open_remote_window_impl(app, payload, None).await;
-    }
-
     #[cfg(not(target_os = "linux"))]
-    let tls_config = match cert_manager::ensure_local_cert() {
-        Ok(local_cert) => {
+    {
+        let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+        let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
+        if parsed.scheme() == "https" {
+            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                format!(
+                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                )
+            })?;
             if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
                 return Err(format!(
                     "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
                 ));
             }
-            Some(ProxyTlsConfig {
-                cert_pem: local_cert.cert_pem,
-                key_pem: local_cert.key_pem,
-            })
         }
-        Err(err) => {
-            return Err(format!(
-                "Failed to create the local HTTPS proxy certificate. This remote HTTPS connection cannot fall back to HTTP because secure cookies would break: {err}"
-            ));
-        }
-    };
+    }
 
-    #[cfg(not(target_os = "linux"))]
-    open_remote_window_impl(app, payload, tls_config).await
+    open_remote_window_impl(app, payload).await
 }
 
 fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -485,9 +517,9 @@ fn main() {
             wake_lock: Mutex::new(None),
             zoom_level: Mutex::new(DEFAULT_ZOOM_LEVEL),
             remote_origins: Mutex::new(HashMap::new()),
+            remote_proxy_sessions: Mutex::new(HashMap::new()),
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
             remote_tls_handlers: Mutex::new(HashSet::new()),
-            remote_proxies: Mutex::new(HashMap::new()),
         })
         .setup(|app| {
             set_windows_app_user_model_id();

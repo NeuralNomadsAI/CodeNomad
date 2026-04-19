@@ -337,6 +337,16 @@ export interface RemoteServerProbeResponse {
   errorCode?: string
 }
 
+export interface RemoteProxySessionCreateRequest {
+  baseUrl: string
+  skipTlsVerify?: boolean
+}
+
+export interface RemoteProxySessionCreateResponse {
+  sessionId: string
+  windowUrl: string
+}
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"

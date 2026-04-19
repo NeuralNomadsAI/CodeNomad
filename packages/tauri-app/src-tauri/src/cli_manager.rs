@@ -1094,7 +1094,8 @@ impl CliEntry {
         ];
 
         if dev {
-            // Dev: plain HTTP + Vite dev server proxy.
+            // Dev: keep loopback HTTP for the Vite proxy, but also enable HTTPS so
+            // remote proxy sessions can still spin up secure local windows.
             let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
@@ -1111,7 +1112,7 @@ impl CliEntry {
                 .unwrap_or_else(|| "info".to_string());
 
             args.push("--https".to_string());
-            args.push("false".to_string());
+            args.push("true".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
             args.push("--http-port".to_string());

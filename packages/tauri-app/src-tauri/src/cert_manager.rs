@@ -170,8 +170,6 @@ fn write_trusted_marker(cert_der: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Failed to write trust marker: {e}"))
 }
 
-/// Adds the DER-encoded CA certificate to the Windows `CurrentUser\Root` store.
-/// This will show a one-time Windows security confirmation dialog when needed.
 #[cfg(windows)]
 pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     use windows_sys::Win32::Security::Cryptography::{
@@ -215,7 +213,50 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
+    use std::process::Command;
+
+    if has_matching_trusted_marker(cert_der) {
+        return Ok(());
+    }
+
+    let temp_path = env::temp_dir().join(format!(
+        "codenomad-server-ca-{}.cer",
+        trusted_marker_value(cert_der)
+    ));
+    fs::write(&temp_path, cert_der)
+        .map_err(|e| format!("Failed to write temporary certificate {}: {e}", temp_path.display()))?;
+
+    let mut command = Command::new("/usr/bin/security");
+    // Let macOS target the current user default keychain instead of assuming login.keychain-db.
+    command.args(["add-trusted-cert", "-r", "trustRoot"]);
+
+    let output = command.arg(&temp_path).output().map_err(|e| {
+        format!(
+            "Failed to launch macOS security tool to trust the local CA certificate: {e}"
+        )
+    })?;
+
+    let _ = fs::remove_file(&temp_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("security exited with status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "Failed to add the local CodeNomad CA certificate to the macOS trust settings: {detail}"
+        ));
+    }
+
+    write_trusted_marker(cert_der)?;
+    Ok(())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn trust_cert_in_store(_cert_der: &[u8]) -> Result<(), String> {
     // Non-Windows platforms use native webview-specific handling instead of OS trust-store writes.
     Ok(())
