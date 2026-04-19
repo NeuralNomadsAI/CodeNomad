@@ -152,6 +152,10 @@ fn trusted_marker_value(cert_der: &[u8]) -> String {
     cert_der.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn trusted_marker_file_suffix(cert_der: &[u8]) -> String {
+    trusted_marker_value(cert_der).chars().take(16).collect()
+}
+
 fn has_matching_trusted_marker(cert_der: &[u8]) -> bool {
     trusted_marker_path()
         .ok()
@@ -217,20 +221,22 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
 pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     use std::process::Command;
 
-    if has_matching_trusted_marker(cert_der) {
+    if has_matching_trusted_marker(cert_der) && macos_cert_is_trusted(cert_der)? {
         return Ok(());
     }
 
     let temp_path = env::temp_dir().join(format!(
         "codenomad-server-ca-{}.cer",
-        trusted_marker_value(cert_der)
+        trusted_marker_file_suffix(cert_der)
     ));
     fs::write(&temp_path, cert_der)
         .map_err(|e| format!("Failed to write temporary certificate {}: {e}", temp_path.display()))?;
 
+    let keychain_path = resolve_macos_user_keychain()?;
+
     let mut command = Command::new("/usr/bin/security");
-    // Let macOS target the current user default keychain instead of assuming login.keychain-db.
-    command.args(["add-trusted-cert", "-r", "trustRoot"]);
+    command.args(["add-trusted-cert", "-r", "trustRoot", "-k"]);
+    command.arg(&keychain_path);
 
     let output = command.arg(&temp_path).output().map_err(|e| {
         format!(
@@ -252,8 +258,114 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
         ));
     }
 
+    if !macos_cert_is_trusted(cert_der)? {
+        return Err(format!(
+            "Added the local CodeNomad CA certificate to {} but could not verify that macOS trusts it",
+            keychain_path.display()
+        ));
+    }
+
     write_trusted_marker(cert_der)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_macos_user_keychain() -> Result<PathBuf, String> {
+    let output = std::process::Command::new("/usr/bin/security")
+        .args(["default-keychain", "-d", "user"])
+        .output()
+        .map_err(|e| format!("Failed to resolve macOS default user keychain: {e}"))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let trimmed = stdout.trim().trim_matches('"');
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    let home = dirs::home_dir().or_else(|| env::var("HOME").ok().map(PathBuf::from));
+    let home = home.ok_or_else(|| "Cannot determine home directory for macOS keychain lookup".to_string())?;
+    Ok(home.join("Library/Keychains/login.keychain-db"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cert_is_trusted(cert_der: &[u8]) -> Result<bool, String> {
+    use std::process::Command;
+
+    let temp_path = env::temp_dir().join(format!(
+        "codenomad-server-ca-verify-{}.cer",
+        trusted_marker_file_suffix(cert_der)
+    ));
+    fs::write(&temp_path, cert_der)
+        .map_err(|e| format!("Failed to write temporary certificate {}: {e}", temp_path.display()))?;
+
+    let keychain_path = resolve_macos_user_keychain()?;
+    let fingerprint = macos_cert_sha256(&temp_path)?;
+    let find_output = Command::new("/usr/bin/security")
+        .args(["find-certificate", "-a", "-Z", "-c", "CodeNomad Local CA"])
+        .arg(&keychain_path)
+        .output()
+        .map_err(|e| format!("Failed to query macOS keychain certificates: {e}"))?;
+
+    if !find_output.status.success() {
+        let _ = fs::remove_file(&temp_path);
+        let stderr = String::from_utf8_lossy(&find_output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("security exited with status {}", find_output.status)
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "Failed to inspect the macOS keychain for the local CodeNomad CA certificate: {detail}"
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&find_output.stdout);
+    if !stdout.to_ascii_uppercase().contains(&fingerprint) {
+        let _ = fs::remove_file(&temp_path);
+        return Ok(false);
+    }
+
+    let verify_output = Command::new("/usr/bin/security")
+        .args(["verify-cert", "-q", "-L", "-l", "-p", "basic", "-c"])
+        .arg(&temp_path)
+        .args(["-k"])
+        .arg(&keychain_path)
+        .output()
+        .map_err(|e| format!("Failed to verify macOS trust for the local CodeNomad CA certificate: {e}"))?;
+
+    let _ = fs::remove_file(&temp_path);
+    Ok(verify_output.status.success())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cert_sha256(cert_path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("/usr/bin/shasum")
+        .args(["-a", "256"])
+        .arg(cert_path)
+        .output()
+        .map_err(|e| format!("Failed to compute SHA-256 for {}: {e}", cert_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("shasum exited with status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "Failed to compute SHA-256 for {}: {detail}",
+            cert_path.display()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hash = stdout
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("Failed to parse SHA-256 output for {}", cert_path.display()))?;
+    Ok(hash.to_ascii_uppercase())
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
