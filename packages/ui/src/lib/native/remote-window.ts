@@ -6,14 +6,19 @@ export interface RemoteWindowOpenPayload {
   id: string
   name: string
   baseUrl: string
+  entryUrl?: string
   skipTlsVerify: boolean
 }
 
-export async function openRemoteServerWindow(profile: Pick<RemoteServerProfile, "id" | "name" | "baseUrl" | "skipTlsVerify">): Promise<void> {
+export async function openRemoteServerWindow(
+  profile: Pick<RemoteServerProfile, "id" | "name" | "baseUrl" | "skipTlsVerify">,
+  entryUrl?: string,
+): Promise<void> {
   const payload: RemoteWindowOpenPayload = {
     id: profile.id,
     name: profile.name,
     baseUrl: profile.baseUrl,
+    entryUrl,
     skipTlsVerify: profile.skipTlsVerify,
   }
 

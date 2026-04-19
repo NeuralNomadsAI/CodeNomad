@@ -16,6 +16,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
+import { runtimeEnv } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
@@ -332,7 +333,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     })
 
     if (openWindow) {
-      await openRemoteServerWindow(profile)
+      const windowUrl =
+        runtimeEnv.host === "tauri"
+          ? (await serverApi.createRemoteProxySession({
+              baseUrl: profile.baseUrl,
+              skipTlsVerify: profile.skipTlsVerify,
+            })).windowUrl
+          : undefined
+
+      await openRemoteServerWindow(profile, windowUrl)
       await markRemoteServerConnected(profile.id)
     }
 

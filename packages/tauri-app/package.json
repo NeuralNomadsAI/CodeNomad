@@ -14,6 +14,7 @@
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.4"
+    "@tauri-apps/cli": "^2.9.4",
+    "@tauri-apps/cli-darwin-arm64": "^2.9.4"
   }
 }

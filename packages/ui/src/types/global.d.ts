@@ -37,6 +37,7 @@ declare global {
       id: string
       name: string
       baseUrl: string
+      entryUrl?: string
       skipTlsVerify: boolean
     }) => Promise<{ ok: boolean }>
   }

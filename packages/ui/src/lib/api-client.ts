@@ -12,6 +12,8 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   ServerMeta,
+  RemoteProxySessionCreateRequest,
+  RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
@@ -252,6 +254,12 @@ export const serverApi = {
   },
   probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
     return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
       method: "POST",
       body: JSON.stringify(payload),
     })

@@ -29,6 +29,8 @@
     "google-auth-library": "^10.5.0"
   },
   "devDependencies": {
+    "@esbuild/darwin-arm64": "^0.28.0",
+    "@rollup/rollup-darwin-arm64": "^4.60.2",
     "baseline-browser-mapping": "^2.9.11"
   }
 }

@@ -21,6 +21,7 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
+import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
@@ -383,6 +384,11 @@ async function main() {
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
+  const remoteProxySessionManager = new RemoteProxySessionManager({
+    authManager,
+    logger: logger.child({ component: "remote-proxy" }),
+    httpsOptions: tlsResolution?.httpsOptions,
+  })
   const voiceModeManager = new VoiceModeManager({
     connections: clientConnectionManager,
     channel: pluginChannel,
@@ -422,6 +428,7 @@ async function main() {
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -447,6 +454,7 @@ async function main() {
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
