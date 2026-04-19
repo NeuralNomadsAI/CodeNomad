@@ -175,13 +175,18 @@ fn write_trusted_marker(cert_der: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+pub fn needs_trust_in_store(cert_der: &[u8]) -> Result<bool, String> {
+    Ok(!windows_cert_is_trusted(cert_der)?)
+}
+
+#[cfg(windows)]
 pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     use windows_sys::Win32::Security::Cryptography::{
         CertAddEncodedCertificateToStore, CertCloseStore, CertOpenSystemStoreW,
         CERT_STORE_ADD_REPLACE_EXISTING, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
     };
 
-    if has_matching_trusted_marker(cert_der) {
+    if !needs_trust_in_store(cert_der)? {
         return Ok(());
     }
 
@@ -218,10 +223,15 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+pub fn needs_trust_in_store(cert_der: &[u8]) -> Result<bool, String> {
+    Ok(!(has_matching_trusted_marker(cert_der) && macos_cert_is_trusted(cert_der)?))
+}
+
+#[cfg(target_os = "macos")]
 pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
     use std::process::Command;
 
-    if has_matching_trusted_marker(cert_der) && macos_cert_is_trusted(cert_der)? {
+    if !needs_trust_in_store(cert_der)? {
         return Ok(());
     }
 
@@ -267,6 +277,39 @@ pub fn trust_cert_in_store(cert_der: &[u8]) -> Result<(), String> {
 
     write_trusted_marker(cert_der)?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn windows_cert_is_trusted(cert_der: &[u8]) -> Result<bool, String> {
+    use windows_sys::Win32::Security::Cryptography::{
+        CertCloseStore, CertEnumCertificatesInStore, CertOpenSystemStoreW,
+    };
+
+    let store_name: Vec<u16> = "Root\0".encode_utf16().collect();
+
+    unsafe {
+        let store = CertOpenSystemStoreW(0, store_name.as_ptr());
+        if store.is_null() {
+            return Err("Failed to open CurrentUser\\Root certificate store".into());
+        }
+
+        let mut context = CertEnumCertificatesInStore(store, std::ptr::null());
+        while !context.is_null() {
+            let encoded = std::slice::from_raw_parts(
+                (*context).pbCertEncoded,
+                (*context).cbCertEncoded as usize,
+            );
+            if encoded == cert_der {
+                CertCloseStore(store, 0);
+                return Ok(true);
+            }
+
+            context = CertEnumCertificatesInStore(store, context);
+        }
+
+        CertCloseStore(store, 0);
+        Ok(false)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -366,6 +409,11 @@ fn macos_cert_sha256(cert_path: &Path) -> Result<String, String> {
         .next()
         .ok_or_else(|| format!("Failed to parse SHA-256 output for {}", cert_path.display()))?;
     Ok(hash.to_ascii_uppercase())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub fn needs_trust_in_store(_cert_der: &[u8]) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]

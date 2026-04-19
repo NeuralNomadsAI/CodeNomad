@@ -334,7 +334,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     if (openWindow) {
       const remoteProxySession =
-        runtimeEnv.host === "tauri"
+        runtimeEnv.host === "tauri" && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
           ? await serverApi.createRemoteProxySession({
               baseUrl: profile.baseUrl,
               skipTlsVerify: profile.skipTlsVerify,

@@ -1306,8 +1306,11 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    let _ = shell_name;
-    vec!["-l".into(), "-c".into(), command.into()]
+    if shell_name.contains("zsh") || shell_name.contains("bash") {
+        vec!["-i".into(), "-l".into(), "-c".into(), command.into()]
+    } else {
+        vec!["-l".into(), "-c".into(), command.into()]
+    }
 }
 
 fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {
