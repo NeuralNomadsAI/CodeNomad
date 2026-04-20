@@ -87,6 +87,10 @@ function ensureStandaloneServerBuild() {
   })
 }
 
+function shouldBuildStandaloneServer() {
+  return process.platform !== "linux"
+}
+
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
@@ -347,7 +351,11 @@ function copyUiLoadingAssets() {
   ensureEsbuildPlatformBinary()
   ensureServerDependencies()
   ensureServerBuild()
-  ensureStandaloneServerBuild()
+  if (shouldBuildStandaloneServer()) {
+    ensureStandaloneServerBuild()
+  } else {
+    console.log("[prebuild] skipping standalone server executable for Linux packaging; linuxdeploy fails on the bundled ELF")
+  }
   ensureUiBuild()
   syncServerUiBundle()
   copyServerArtifacts()
