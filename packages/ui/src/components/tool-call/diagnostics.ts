@@ -17,6 +17,8 @@ interface LspDiagnostic {
   range?: LspRange
 }
 
+export type DiagnosticsMap = Record<string, LspDiagnostic[] | undefined>
+
 export interface DiagnosticEntry {
   id: string
   severity: number
@@ -30,7 +32,7 @@ export interface DiagnosticEntry {
   column: number
 }
 
-function normalizeDiagnosticPath(path: string) {
+export function normalizeDiagnosticPath(path: string) {
   return path.replace(/\\/g, "/")
 }
 
@@ -53,49 +55,71 @@ export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntr
 
   const metadata = (state.metadata || {}) as Record<string, unknown>
   const input = (state.input || {}) as Record<string, unknown>
-  const diagnosticsMap = metadata?.diagnostics as Record<string, LspDiagnostic[] | undefined> | undefined
+  const diagnosticsMap = metadata?.diagnostics as DiagnosticsMap | undefined
   if (!diagnosticsMap) return []
 
-  const preferredPath = [input.filePath, metadata.filePath, metadata.filepath, input.path].find(
-    (value) => typeof value === "string" && value.length > 0,
-  ) as string | undefined
+  return buildDiagnosticEntries(diagnosticsMap, [input.filePath, metadata.filePath, metadata.filepath, input.path])
+}
 
-  const normalizedPreferred = preferredPath ? normalizeDiagnosticPath(preferredPath) : undefined
-  if (!normalizedPreferred) return []
-  const candidateEntries = Object.entries(diagnosticsMap).filter(([, items]) => Array.isArray(items) && items.length > 0)
-  if (candidateEntries.length === 0) return []
+export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): string | undefined {
+  if (Object.keys(diagnostics).length === 0) return undefined
 
-  const prioritizedEntries = candidateEntries.filter(([path]) => {
-    const normalized = normalizeDiagnosticPath(path)
-    return normalized === normalizedPreferred
-  })
+  const normalizedPreferred = preferredPaths
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => normalizeDiagnosticPath(value))
 
-  if (prioritizedEntries.length === 0) return []
+  if (normalizedPreferred.length === 0) return undefined
+
+  for (const preferred of normalizedPreferred) {
+    if (diagnostics[preferred]) return preferred
+  }
+
+  const keys = Object.keys(diagnostics)
+
+  for (const preferred of normalizedPreferred) {
+    const direct = keys.find((key) => normalizeDiagnosticPath(key) === preferred)
+    if (direct) return direct
+  }
+
+  for (const preferred of normalizedPreferred) {
+    const suffixMatch = keys.find((key) => {
+      const normalized = normalizeDiagnosticPath(key)
+      return normalized === preferred || normalized.endsWith("/" + preferred)
+    })
+    if (suffixMatch) return suffixMatch
+  }
+
+  return undefined
+}
+
+export function buildDiagnosticEntries(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): DiagnosticEntry[] {
+  const key = resolveDiagnosticsKey(diagnostics, preferredPaths)
+  if (!key) return []
+
+  const list = diagnostics[key]
+  if (!Array.isArray(list) || list.length === 0) return []
 
   const entries: DiagnosticEntry[] = []
-  for (const [pathKey, list] of prioritizedEntries) {
-    if (!Array.isArray(list)) continue
-    const normalizedPath = normalizeDiagnosticPath(pathKey)
-    for (let index = 0; index < list.length; index++) {
-      const diagnostic = list[index]
-      if (!diagnostic || typeof diagnostic.message !== "string") continue
-      const tone = determineSeverityTone(typeof diagnostic.severity === "number" ? diagnostic.severity : undefined)
-      const severityMeta = getSeverityMeta(tone)
-      const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
-      const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
-      entries.push({
-        id: `${normalizedPath}-${index}-${diagnostic.message}`,
-        severity: severityMeta.rank,
-        tone,
-        label: severityMeta.label,
-        icon: severityMeta.icon,
-        message: diagnostic.message,
-        filePath: normalizedPath,
-        displayPath: getRelativePath(normalizedPath),
-        line,
-        column,
-      })
-    }
+  const normalizedPath = normalizeDiagnosticPath(key)
+  for (let index = 0; index < list.length; index++) {
+    const diagnostic = list[index]
+    if (!diagnostic || typeof diagnostic.message !== "string") continue
+    const tone = determineSeverityTone(typeof diagnostic.severity === "number" ? diagnostic.severity : undefined)
+    const severityMeta = getSeverityMeta(tone)
+    const line = typeof diagnostic.range?.start?.line === "number" ? diagnostic.range.start.line + 1 : 0
+    const column = typeof diagnostic.range?.start?.character === "number" ? diagnostic.range.start.character + 1 : 0
+    entries.push({
+      id: `${normalizedPath}-${index}-${diagnostic.message}`,
+      severity: severityMeta.rank,
+      tone,
+      label: severityMeta.label,
+      icon: severityMeta.icon,
+      message: diagnostic.message,
+      filePath: normalizedPath,
+      displayPath: getRelativePath(normalizedPath),
+      line,
+      column,
+    })
   }
 
   return entries.sort((a, b) => a.severity - b.severity)
