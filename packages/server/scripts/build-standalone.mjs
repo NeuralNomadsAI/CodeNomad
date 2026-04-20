@@ -16,6 +16,25 @@ const outputName = (explicitTarget?.includes("windows") || process.platform === 
 const outputPath = path.join(distDir, outputName)
 const packageJsonPath = path.join(cliRoot, "package.json")
 
+function resolveBunCommand() {
+  const executableName = process.platform === "win32" ? "bun.exe" : "bun"
+  const localBinName = process.platform === "win32" ? "bun.cmd" : "bun"
+  const candidates = [
+    path.join(cliRoot, "node_modules", ".bin", localBinName),
+    path.join(cliRoot, "..", "..", "node_modules", ".bin", localBinName),
+    path.join(cliRoot, "node_modules", "bun", "bin", executableName),
+    path.join(cliRoot, "..", "..", "node_modules", "bun", "bin", executableName),
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return "bun"
+}
+
 function fail(message) {
   console.error(`[build-standalone] ${message}`)
   process.exit(1)
@@ -28,9 +47,9 @@ function ensureArtifacts() {
     fail(`Missing required build artifacts: ${missing.join(", ")}. Run npm run build first.`)
   }
 
-  const bunResult = spawnSync("bun", ["-v"], { cwd: cliRoot, encoding: "utf-8" })
+  const bunResult = spawnSync(resolveBunCommand(), ["-v"], { cwd: cliRoot, encoding: "utf-8", shell: process.platform === "win32" })
   if (bunResult.status !== 0) {
-    fail("Bun is required to build the standalone server executable.")
+    fail("Bun is required to build the standalone server executable. Install dependencies so the local Bun binary is available.")
   }
 }
 
@@ -42,6 +61,7 @@ function syncStandaloneAuthPages() {
 
 function buildStandaloneExecutable() {
   fs.rmSync(outputPath, { force: true })
+  const bunCommand = resolveBunCommand()
 
   const args = ["build", "--compile"]
   if (explicitTarget) {
@@ -49,9 +69,10 @@ function buildStandaloneExecutable() {
   }
   args.push(path.join(cliRoot, "src", "index.ts"), "--outfile", outputPath)
 
-  const result = spawnSync("bun", args, {
+  const result = spawnSync(bunCommand, args, {
     cwd: cliRoot,
     stdio: "inherit",
+    shell: process.platform === "win32",
   })
 
   if (result.status !== 0) {
