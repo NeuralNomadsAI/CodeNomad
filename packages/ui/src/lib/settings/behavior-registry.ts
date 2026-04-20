@@ -6,7 +6,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { runtimeEnv } from "../runtime-env"
+import { isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -84,7 +84,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
-      disabled: () => runtimeEnv.host === "web",
+      disabled: () => isWebHost(),
     },
     {
       kind: "toggle",
@@ -337,13 +337,13 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
         ),
       description: () =>
         tGlobal(
-          runtimeEnv.host === "web"
+          isWebHost()
             ? "commands.keyboardShortcutHints.description.disabledWeb"
             : "commands.keyboardShortcutHints.description",
         ),
       category: "System",
       keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
-      disabled: () => runtimeEnv.host === "web",
+      disabled: () => isWebHost(),
       action: actions.toggleKeyboardShortcutHints,
     },
     {

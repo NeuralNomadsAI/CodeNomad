@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
-import { runtimeEnv } from "../runtime-env"
+import { isElectronHost, isTauriHost } from "../runtime-env"
 import { getLogger } from "../logger"
 
 const log = getLogger("actions")
@@ -56,11 +56,11 @@ async function setWebWakeLock(enabled: boolean): Promise<boolean> {
 
 function hasAnyWakeLockSupport(): boolean {
   if (typeof window === "undefined") return false
-  if (runtimeEnv.host === "electron") {
+  if (isElectronHost()) {
     const api = (window as any).electronAPI
     if (api?.setWakeLock) return true
   }
-  if (runtimeEnv.host === "tauri") {
+  if (isTauriHost()) {
     return typeof window.__TAURI__?.core?.invoke === "function"
   }
   return Boolean((navigator as any)?.wakeLock?.request)
@@ -106,13 +106,13 @@ async function setTauriWakeLock(enabled: boolean): Promise<boolean> {
 async function applyWakeLock(enabled: boolean): Promise<boolean> {
   if (typeof window === "undefined") return false
 
-  if (runtimeEnv.host === "electron") {
+  if (isElectronHost()) {
     const ok = await setElectronWakeLock(enabled)
     if (ok || !enabled) return ok
     // fallback to web API if electron preload didn't expose it
   }
 
-  if (runtimeEnv.host === "tauri") {
+  if (isTauriHost()) {
     const ok = await setTauriWakeLock(enabled)
     if (ok || !enabled) return ok
     // fallback to web API if tauri command isn't available

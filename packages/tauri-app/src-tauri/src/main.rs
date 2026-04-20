@@ -40,6 +40,8 @@ const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
 const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
+const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -300,6 +302,7 @@ async fn open_remote_window_impl(
     let initial_url = window_url.clone();
 
     let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(initial_url.clone()))
+        .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
         .title(title)
         .inner_size(1400.0, 900.0)
         .min_inner_size(800.0, 600.0)
@@ -542,6 +545,9 @@ fn main() {
         .setup(|app| {
             set_windows_app_user_model_id();
             build_menu(&app.handle())?;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.eval(LOCAL_WINDOW_CONTEXT_SCRIPT);
+            }
             if let Some(shortcut) = fullscreen_shortcut() {
                 let shortcut_manager = app.handle().global_shortcut();
                 let _ = shortcut_manager.register(shortcut.clone());

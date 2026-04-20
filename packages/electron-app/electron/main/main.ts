@@ -277,6 +277,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=local"],
     },
   })
 
@@ -440,6 +441,7 @@ async function openRemoteWindow(payload: { id: string; name: string; baseUrl: st
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=remote"],
     },
   })
 
