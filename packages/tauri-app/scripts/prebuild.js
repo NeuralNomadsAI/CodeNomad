@@ -131,15 +131,30 @@ function ensureServerDevDependencies() {
 }
 
 function ensureServerDependencies() {
-  if (fs.existsSync(braceExpansionPath)) {
-    return
-  }
-
-  console.log("[prebuild] ensuring server production dependencies...")
-  execSync(serverInstallCommand, {
+  console.log("[prebuild] pruning server to production dependencies...")
+  execSync("npm prune --omit=dev --ignore-scripts --workspaces=false --fund=false --audit=false", {
     cwd: serverRoot,
     stdio: "inherit",
   })
+
+  if (!fs.existsSync(braceExpansionPath)) {
+    console.log("[prebuild] restoring missing server production dependencies...")
+    execSync(serverInstallCommand, {
+      cwd: serverRoot,
+      stdio: "inherit",
+    })
+  }
+}
+
+function removeStaleStandaloneServerBuild() {
+  const staleNames = ["codenomad-server", "codenomad-server.exe"]
+  for (const name of staleNames) {
+    const stalePath = path.join(serverRoot, "dist", name)
+    if (fs.existsSync(stalePath)) {
+      fs.rmSync(stalePath, { force: true })
+      console.log(`[prebuild] removed stale standalone server artifact ${stalePath}`)
+    }
+  }
 }
 
 function ensureUiDevDependencies() {
@@ -349,13 +364,14 @@ function copyUiLoadingAssets() {
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
   ensureEsbuildPlatformBinary()
-  ensureServerDependencies()
   ensureServerBuild()
   if (shouldBuildStandaloneServer()) {
     ensureStandaloneServerBuild()
   } else {
+    removeStaleStandaloneServerBuild()
     console.log("[prebuild] skipping standalone server executable for Linux packaging; linuxdeploy fails on the bundled ELF")
   }
+  ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
   copyServerArtifacts()
