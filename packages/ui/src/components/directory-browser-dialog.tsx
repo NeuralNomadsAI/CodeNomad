@@ -58,6 +58,16 @@ function resolveAbsolutePath(root: string, relativePath: string) {
   return `${trimmedRoot}${normalized}`
 }
 
+function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null) {
+  if (!metadata || metadata.pathKind === "drives") {
+    return ""
+  }
+  if (metadata.pathKind === "relative") {
+    return resolveAbsolutePath(metadata.rootPath, metadata.currentPath)
+  }
+  return metadata.displayPath
+}
+
 type FolderRow =
   | { type: "up"; path: string }
   | { type: "folder"; entry: FileSystemEntry }
@@ -67,6 +77,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [rootPath, setRootPath] = createSignal("")
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
+  const [pathInput, setPathInput] = createSignal("")
+  const [pathInputDirty, setPathInputDirty] = createSignal(false)
   const [creatingFolder, setCreatingFolder] = createSignal(false)
   const [directoryChildren, setDirectoryChildren] = createSignal<Map<string, FileSystemEntry[]>>(new Map())
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
@@ -75,12 +87,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
+  let latestNavigationId = 0
 
   function resetState() {
+    setRootPath("")
     setDirectoryChildren(new Map<string, FileSystemEntry[]>())
     setLoadingPaths(new Set<string>())
     setCurrentPathKey(null)
     setCurrentMetadata(null)
+    setPathInput("")
+    setPathInputDirty(false)
     metadataCache.clear()
     inFlightRequests.clear()
     setError(null)
@@ -109,11 +125,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   async function initialize() {
     setLoading(true)
     try {
-      const metadata = await loadDirectory()
-      applyMetadata(metadata)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
-      setError(message)
+      await navigateTo()
     } finally {
       setLoading(false)
     }
@@ -197,13 +209,22 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   }
 
   async function navigateTo(path?: string) {
+    const navigationId = ++latestNavigationId
     setError(null)
     try {
       const metadata = await loadDirectory(path)
+      if (navigationId !== latestNavigationId) {
+        return null
+      }
       applyMetadata(metadata)
+      return metadata
     } catch (err) {
+      if (navigationId !== latestNavigationId) {
+        return null
+      }
       const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
       setError(message)
+      return null
     }
   }
 
@@ -225,31 +246,58 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   })
 
   function handleNavigateTo(path: string) {
+    setPathInputDirty(false)
     void navigateTo(path)
   }
 
   function handleNavigateUp() {
     const parent = currentMetadata()?.parentPath
     if (parent) {
+      setPathInputDirty(false)
       void navigateTo(parent)
     }
   }
 
   const currentAbsolutePath = createMemo(() => {
-    const metadata = currentMetadata()
-    if (!metadata) {
-      return ""
+    return getAbsolutePathFromMetadata(currentMetadata())
+  })
+
+  createEffect(() => {
+    const absolutePath = currentAbsolutePath()
+    if (!pathInputDirty()) {
+      setPathInput(absolutePath)
     }
-    if (metadata.pathKind === "drives") {
-      return ""
-    }
-    if (metadata.pathKind === "relative") {
-      return resolveAbsolutePath(metadata.rootPath, metadata.currentPath)
-    }
-    return metadata.displayPath
   })
 
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
+  const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
+
+  async function handlePathSubmit() {
+    const target = pathInput().trim()
+    if (!target) {
+      return
+    }
+    const metadata = await navigateTo(target)
+    if (!metadata) {
+      return
+    }
+    setPathInputDirty(false)
+    setPathInput(getAbsolutePathFromMetadata(metadata))
+  }
+
+  async function handleSelectCurrent() {
+    const target = pathInput().trim()
+    const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
+    if (!metadata) {
+      return
+    }
+    setPathInputDirty(false)
+    const absolute = getAbsolutePathFromMetadata(metadata)
+    if (absolute) {
+      setPathInput(absolute)
+      props.onSelect(absolute)
+    }
+  }
 
   function handleEntrySelect(entry: FileSystemEntry) {
     const absolutePath = entry.absolutePath
@@ -262,10 +310,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   async function handleCreateFolder() {
     if (creatingFolder()) return
-    const metadata = currentMetadata()
+    const target = pathInput().trim()
+    const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
     if (!metadata || metadata.pathKind === "drives") {
       return
     }
+    setPathInputDirty(false)
+    setPathInput(getAbsolutePathFromMetadata(metadata))
 
     const name =
       (await showPromptDialog(t("directoryBrowser.createFolder.promptMessage"), {
@@ -338,19 +389,29 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                 <div class="directory-browser-current">
                   <div class="directory-browser-current-meta">
                     <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
-                    <span class="directory-browser-current-path">{currentAbsolutePath()}</span>
+                    <input
+                      type="text"
+                      value={pathInput()}
+                      onInput={(event) => {
+                        setPathInput(event.currentTarget.value)
+                        setPathInputDirty(true)
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault()
+                          void handlePathSubmit()
+                        }
+                      }}
+                      spellcheck={false}
+                      class="selector-input directory-browser-current-path"
+                    />
                   </div>
                   <div class="directory-browser-current-actions">
                     <button
                       type="button"
                       class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                      disabled={!canSelectCurrent() || creatingFolder()}
-                      onClick={() => {
-                        const absolute = currentAbsolutePath()
-                        if (absolute) {
-                          props.onSelect(absolute)
-                        }
-                      }}
+                      disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
+                      onClick={() => void handleSelectCurrent()}
                     >
                       {t("directoryBrowser.selectCurrent")}
                     </button>
