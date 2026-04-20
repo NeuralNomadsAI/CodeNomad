@@ -63,10 +63,12 @@ declare global {
   }
 
   interface Window {
-     __CODENOMAD_API_BASE__?: string
-     __CODENOMAD_EVENTS_URL__?: string
-     electronAPI?: ElectronAPI
-     __TAURI__?: TauriBridge
-     codenomadLogger?: LoggerControls
+      __CODENOMAD_API_BASE__?: string
+      __CODENOMAD_EVENTS_URL__?: string
+      __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
+      __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+      electronAPI?: ElectronAPI
+      __TAURI__?: TauriBridge
+      codenomadLogger?: LoggerControls
    }
  }

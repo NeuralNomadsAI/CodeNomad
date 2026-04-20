@@ -3,7 +3,7 @@ import { FolderOpen, Trash2, Check, AlertCircle, Loader2, Plus } from "lucide-so
 import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
 import FileSystemBrowserDialog from "./filesystem-browser-dialog"
-import { openNativeFileDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { openNativeFileDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("actions")
@@ -38,7 +38,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   const [versionInfo, setVersionInfo] = createSignal<Map<string, string>>(new Map<string, string>())
   const [validatingPaths, setValidatingPaths] = createSignal<Set<string>>(new Set<string>())
   const [isBinaryBrowserOpen, setIsBinaryBrowserOpen] = createSignal(false)
-  const nativeDialogsAvailable = supportsNativeDialogs()
  
   const binaries = () => opencodeBinaries()
 
@@ -139,7 +138,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   async function handleBrowseBinary() {
     if (props.disabled) return
     setValidationError(null)
-    if (nativeDialogsAvailable) {
+    if (supportsNativeDialogsInCurrentWindow()) {
       const selected = await openNativeFileDialog({
         title: t("opencodeBinarySelector.dialog.title"),
       })

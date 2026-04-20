@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { showConfirmDialog } from "../../stores/alerts"
 import { tGlobal } from "../i18n"
-import { runtimeEnv } from "../runtime-env"
+import { canOpenRemoteWindows, isElectronHost, isTauriHost } from "../runtime-env"
 
 export interface RemoteWindowOpenPayload {
   id: string
@@ -18,6 +18,10 @@ export async function openRemoteServerWindow(
   entryUrl?: string,
   proxySessionId?: string,
 ): Promise<void> {
+  if (!canOpenRemoteWindows()) {
+    throw new Error("Remote server windows can only be opened from a local desktop window")
+  }
+
   const payload: RemoteWindowOpenPayload = {
     id: profile.id,
     name: profile.name,
@@ -27,7 +31,7 @@ export async function openRemoteServerWindow(
     skipTlsVerify: profile.skipTlsVerify,
   }
 
-  if (runtimeEnv.host === "electron") {
+  if (isElectronHost()) {
     const api = (window as Window & { electronAPI?: ElectronAPI }).electronAPI
     if (typeof api?.openRemoteWindow === "function") {
       await api.openRemoteWindow(payload)
@@ -35,7 +39,7 @@ export async function openRemoteServerWindow(
     }
   }
 
-  if (runtimeEnv.host === "tauri") {
+  if (isTauriHost()) {
     const requiresLocalCertificate =
       proxySessionId !== undefined && (entryUrl ?? profile.baseUrl).startsWith("https://")
 
