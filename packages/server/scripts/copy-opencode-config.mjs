@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "child_process"
-import { cpSync, existsSync, mkdirSync, rmSync } from "fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 
@@ -13,6 +13,43 @@ const nodeModulesDir = path.resolve(sourceDir, "node_modules")
 const selfLinkDir = path.resolve(nodeModulesDir, "@codenomad", "opencode-config")
 const npmExecPath = process.env.npm_execpath
 const npmNodeExecPath = process.env.npm_node_execpath
+
+function stripNodeModuleBins(rootDir) {
+  const root = path.join(rootDir, "node_modules")
+  if (!existsSync(root)) {
+    return 0
+  }
+
+  const stack = [root]
+  let removed = 0
+
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) break
+
+    let entries
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      if (entry.name === ".bin") {
+        rmSync(full, { recursive: true, force: true })
+        removed += 1
+        continue
+      }
+
+      if (entry.isDirectory()) {
+        stack.push(full)
+      }
+    }
+  }
+
+  return removed
+}
 
 if (!existsSync(sourceDir)) {
   console.error(`[copy-opencode-config] Missing source directory at ${sourceDir}`)
@@ -57,5 +94,10 @@ rmSync(selfLinkDir, { recursive: true, force: true })
 rmSync(targetDir, { recursive: true, force: true })
 mkdirSync(path.dirname(targetDir), { recursive: true })
 cpSync(sourceDir, targetDir, { recursive: true })
+
+const removedBins = stripNodeModuleBins(targetDir)
+if (removedBins > 0) {
+  console.log(`[copy-opencode-config] Removed ${removedBins} node_modules/.bin directories`)
+}
 
 console.log(`[copy-opencode-config] Copied ${sourceDir} -> ${targetDir}`)
