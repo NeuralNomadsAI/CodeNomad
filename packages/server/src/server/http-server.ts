@@ -5,6 +5,8 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { connect as connectTcp, type Socket } from "net"
 import path from "path"
+import { Readable } from "stream"
+import { pipeline } from "stream/promises"
 import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -626,57 +628,57 @@ async function proxyWorkspaceRequest(args: {
     logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
   }
 
-  return reply.from(targetUrl, {
-    rewriteRequestHeaders: (_originalRequest, headers) => {
-      if (instanceAuthHeader) {
-        headers.authorization = instanceAuthHeader
-      }
+  const headers = buildWorkspaceInstanceProxyHeaders(request.headers, instanceAuthHeader, directory)
 
-      // OpenCode expects the *full* path; we send it via header to avoid query tampering.
-      const isNonASCII = /[^\x00-\x7F]/.test(directory)
-      const encodedDirectory = isNonASCII ? encodeURIComponent(directory) : directory
+  if (logger.isLevelEnabled("trace")) {
+    logger.trace(
+      {
+        workspaceId,
+        method: request.method,
+        targetUrl,
+        worktreeSlug,
+        directory,
+        contentType: request.headers["content-type"],
+        body: bodyToJson(request.body),
+        headers: redactProxyHeadersForLogs(headers),
+      },
+      "Proxy -> OpenCode request",
+    )
+  }
 
-      // Overwrite any client-provided value (case-insensitive headers are normalized by Node).
-      ;(headers as Record<string, unknown>)["x-opencode-directory"] = encodedDirectory
+  const init: any = {
+    method: request.method,
+    headers,
+    redirect: "manual",
+  }
 
-      if (logger.isLevelEnabled("trace")) {
-        const outgoing: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-          outgoing[key] = value
-        }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const body = toProxyRequestBody(request.body)
+    if (body !== undefined) {
+      init.body = body
+      init.duplex = "half"
+    }
+  }
 
-        // Redact sensitive headers.
-        for (const key of Object.keys(outgoing)) {
-          const lower = key.toLowerCase()
-          if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
-            outgoing[key] = "<redacted>"
-          }
-        }
+  try {
+    const response = await fetch(targetUrl, init)
+    reply.code(response.status)
+    applyInstanceProxyResponseHeaders(reply, response)
 
-        logger.trace(
-          {
-            workspaceId,
-            method: request.method,
-            targetUrl,
-            worktreeSlug,
-            directory,
-            contentType: request.headers["content-type"],
-            body: bodyToJson(request.body),
-            headers: outgoing,
-          },
-          "Proxy -> OpenCode request",
-        )
-      }
+    if (!response.body || request.method === "HEAD") {
+      reply.send()
+      return
+    }
 
-      return headers
-    },
-    onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
-      if (!proxyReply.sent) {
-        proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
-      }
-    },
-  })
+    reply.hijack()
+    reply.raw.writeHead(reply.statusCode, toOutgoingHeaders(reply.getHeaders()))
+    await pipeline(Readable.fromWeb(response.body as any), reply.raw)
+  } catch (error) {
+    logger.error({ err: error, workspaceId, targetUrl }, "Failed to proxy workspace request")
+    if (!reply.sent) {
+      reply.code(502).send({ error: "Workspace instance proxy failed" })
+    }
+  }
 }
 
 function extractOpencodeDirectoryOverride(pathSuffix: string | undefined): {
@@ -871,6 +873,64 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
+}
+
+function toProxyRequestBody(body: unknown): any {
+  if (body == null) {
+    return undefined
+  }
+  if (Buffer.isBuffer(body) || typeof body === "string" || body instanceof Uint8Array) {
+    return body
+  }
+  return JSON.stringify(body)
+}
+
+function buildWorkspaceInstanceProxyHeaders(
+  headers: FastifyRequest["headers"],
+  instanceAuthHeader: string | undefined,
+  directory: string,
+): Record<string, string> {
+  const next = buildProxyHeaders(headers)
+  if (instanceAuthHeader) {
+    next.authorization = instanceAuthHeader
+  }
+
+  const isNonASCII = /[^\x00-\x7F]/.test(directory)
+  next["x-opencode-directory"] = isNonASCII ? encodeURIComponent(directory) : directory
+  return next
+}
+
+function redactProxyHeadersForLogs(headers: Record<string, string>): Record<string, string> {
+  const outgoing = { ...headers }
+  for (const key of Object.keys(outgoing)) {
+    const lower = key.toLowerCase()
+    if (lower === "authorization" || lower === "cookie" || lower === "set-cookie") {
+      outgoing[key] = "<redacted>"
+    }
+  }
+  return outgoing
+}
+
+function applyInstanceProxyResponseHeaders(reply: FastifyReply, response: any) {
+  response.headers.forEach((value: string, key: string) => {
+    const lower = key.toLowerCase()
+    if (lower === "content-length" || lower === "content-encoding") {
+      return
+    }
+
+    reply.header(key, value)
+  })
+}
+
+function toOutgoingHeaders(headers: ReturnType<FastifyReply["getHeaders"]>): Record<string, string | string[]> {
+  const next: Record<string, string | string[]> = {}
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) {
+      continue
+    }
+    next[key] = Array.isArray(value) ? value.map(String) : String(value)
+  }
+  return next
 }
 
 async function proxySideCarRequest(args: {
