@@ -248,43 +248,6 @@ function ensureEsbuildPlatformBinary() {
   })
 }
 
-function ensureTauriCliPlatformBinary() {
-  const platformKey = `${process.platform}-${process.arch}`
-  const platformPackages = {
-    "darwin-arm64": "@tauri-apps/cli-darwin-arm64",
-    "darwin-x64": "@tauri-apps/cli-darwin-x64",
-    "linux-arm64": "@tauri-apps/cli-linux-arm64-gnu",
-    "linux-x64": "@tauri-apps/cli-linux-x64-gnu",
-    "win32-arm64": "@tauri-apps/cli-win32-arm64-msvc",
-    "win32-x64": "@tauri-apps/cli-win32-x64-msvc",
-  }
-
-  const pkgName = platformPackages[platformKey]
-  if (!pkgName) {
-    return
-  }
-
-  const platformPackagePath = path.join(workspaceRoot, "node_modules", ...pkgName.split("/"))
-  if (fs.existsSync(platformPackagePath)) {
-    return
-  }
-
-  let cliVersion = ""
-  try {
-    cliVersion = require(path.join(root, "node_modules", "@tauri-apps", "cli", "package.json")).version
-  } catch {
-    // leave version empty; fallback install will use latest compatible
-  }
-
-  const packageSpec = cliVersion ? `${pkgName}@${cliVersion}` : pkgName
-
-  console.log("[prebuild] installing tauri CLI platform binary (optional dep workaround)...")
-  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-  })
-}
-
 function copyServerArtifacts() {
   fs.rmSync(serverDest, { recursive: true, force: true })
   fs.mkdirSync(serverDest, { recursive: true })
@@ -377,7 +340,6 @@ function copyUiLoadingAssets() {
   copyServerArtifacts()
   stripNodeModuleBins()
   copyUiLoadingAssets()
-  ensureTauriCliPlatformBinary()
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)
