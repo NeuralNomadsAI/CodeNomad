@@ -614,7 +614,6 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             pkg-config \
-            xdg-utils \
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
@@ -652,8 +651,6 @@ jobs:
 
       - name: Build Linux bundle (Tauri)
         working-directory: packages/tauri-app
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (Linux)
