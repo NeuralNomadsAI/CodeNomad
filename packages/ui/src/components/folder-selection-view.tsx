@@ -124,17 +124,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const normalizedKey = e.key.toLowerCase()
     const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
-    const blockedKeys = [
-      "ArrowDown",
-      "ArrowUp",
-      "PageDown",
-      "PageUp",
-      "Home",
-      "End",
-      "Enter",
-      "Backspace",
-      "Delete",
-    ]
+    const blockedKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Enter"]
 
     if (isLoading()) {
       if (isBrowseShortcut || blockedKeys.includes(e.key)) {
@@ -192,21 +182,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } else if (e.key === "Enter") {
       e.preventDefault()
       handleEnterKey()
-    } else if (e.key === "Backspace" || e.key === "Delete") {
-      e.preventDefault()
-      if (listLength > 0 && focusMode() === "recent") {
-        if (activeTab() === "local") {
-          const folder = folders()[selectedIndex()]
-          if (folder) {
-            handleRemove(folder.path)
-          }
-        } else {
-          const server = serverList()[selectedIndex()]
-          if (server) {
-            removeRemoteServerProfile(server.id)
-          }
-        }
-      }
     }
   }
 
@@ -952,10 +927,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <div class="flex items-center gap-1.5">
                     <kbd class="kbd">Enter</kbd>
                     <span>{t("folderSelection.hints.select")}</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    <kbd class="kbd">Del</kbd>
-                    <span>{t("folderSelection.hints.remove")}</span>
                   </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
