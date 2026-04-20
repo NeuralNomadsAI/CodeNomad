@@ -29,7 +29,20 @@ function detectWindowContext(): WindowContextKind {
     return "remote"
   }
 
+  if (window.__CODENOMAD_WINDOW_CONTEXT__ === "remote") {
+    return "remote"
+  }
+
   if (window.__CODENOMAD_WINDOW_CONTEXT__ === "local") {
+    return "local"
+  }
+
+  const win = window as Window & { electronAPI?: unknown }
+  if (typeof win.electronAPI !== "undefined" || typeof win.__TAURI__ !== "undefined") {
+    return "local"
+  }
+
+  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) {
     return "local"
   }
 
