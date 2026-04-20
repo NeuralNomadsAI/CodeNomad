@@ -869,7 +869,8 @@ function isApiRequest(rawUrl: string | null | undefined) {
 function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, string> {
   const result: Record<string, string> = {}
   for (const [key, value] of Object.entries(headers ?? {})) {
-    if (!value || key.toLowerCase() === "host") continue
+    const lower = key.toLowerCase()
+    if (!value || lower === "host" || isHopByHopHeader(lower)) continue
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
@@ -878,6 +879,12 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
 function toProxyRequestBody(body: unknown): any {
   if (body == null) {
     return undefined
+  }
+  if (typeof (body as { pipe?: unknown }).pipe === "function") {
+    return body
+  }
+  if (typeof (body as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
+    return body
   }
   if (Buffer.isBuffer(body) || typeof body === "string" || body instanceof Uint8Array) {
     return body
@@ -914,7 +921,7 @@ function redactProxyHeadersForLogs(headers: Record<string, string>): Record<stri
 function applyInstanceProxyResponseHeaders(reply: FastifyReply, response: any) {
   response.headers.forEach((value: string, key: string) => {
     const lower = key.toLowerCase()
-    if (lower === "content-length" || lower === "content-encoding") {
+    if (isHopByHopHeader(lower) || lower === "content-length" || lower === "content-encoding") {
       return
     }
 
@@ -931,6 +938,19 @@ function toOutgoingHeaders(headers: ReturnType<FastifyReply["getHeaders"]>): Rec
     next[key] = Array.isArray(value) ? value.map(String) : String(value)
   }
   return next
+}
+
+function isHopByHopHeader(name: string): boolean {
+  return new Set([
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ]).has(name)
 }
 
 async function proxySideCarRequest(args: {
