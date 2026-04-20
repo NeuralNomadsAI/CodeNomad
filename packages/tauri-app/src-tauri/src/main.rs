@@ -20,7 +20,6 @@ use tauri::webview::Webview;
 use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -76,34 +75,6 @@ fn schedule_remote_proxy_session_cleanup(app: AppHandle, session_id: String) {
             );
         }
     });
-}
-
-async fn confirm_local_certificate_install(app: &AppHandle) -> Result<bool, String> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-
-    let mut dialog = app
-        .dialog()
-        .message(
-            "CodeNomad needs to install a local certificate to open self-signed HTTPS remote windows. This certificate is only used for local desktop proxy traffic on your machine. Your operating system may show a second certificate prompt after this.",
-        )
-        .title("Install Local Certificate")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Continue".into(),
-            "Cancel".into(),
-        ));
-
-    if let Some(window) = app.get_webview_window("main") {
-        dialog = dialog.parent(&window);
-    }
-
-    dialog.show(move |accepted| {
-        let _ = sender.send(accepted);
-    });
-
-    tauri::async_runtime::spawn_blocking(move || receiver.recv().unwrap_or(false))
-        .await
-        .map_err(|err| err.to_string())
 }
 
 async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
@@ -368,6 +339,24 @@ async fn open_remote_window_impl(
 }
 
 #[tauri::command]
+fn needs_local_certificate_install() -> Result<bool, String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+            format!("Failed to load the local HTTPS certificate for the remote proxy window: {err}")
+        })?;
+        return cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
+            format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
     #[cfg(not(target_os = "linux"))]
     {
@@ -379,17 +368,6 @@ async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Res
                     "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
                 )
             })?;
-            if cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
-                format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
-            })? {
-                let accepted = confirm_local_certificate_install(&app).await?;
-                if !accepted {
-                    return Err(
-                        "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows."
-                            .to_string(),
-                    );
-                }
-            }
             if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
                 return Err(format!(
                     "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
@@ -598,6 +576,7 @@ fn main() {
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
+            needs_local_certificate_install,
             open_remote_window
         ])
         .on_menu_event(|app_handle, event| {

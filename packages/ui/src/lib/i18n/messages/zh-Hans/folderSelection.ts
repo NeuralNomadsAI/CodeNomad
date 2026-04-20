@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "连接中...",
   "folderSelection.servers.dialog.errorRequired": "服务器名称和 URL 为必填项。",
   "folderSelection.servers.dialog.errorConnect": "无法连接到远程服务器。",
+  "folderSelection.servers.certificateInstall.title": "安装本地证书",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad 需要安装本地证书，才能打开使用自签名 HTTPS 的远程窗口。此证书仅用于你这台设备上的本地桌面代理流量。之后你的操作系统可能还会显示第二个证书提示。",
+  "folderSelection.servers.certificateInstall.confirmLabel": "继续",
+  "folderSelection.servers.certificateInstall.cancelLabel": "取消",
+  "folderSelection.servers.certificateInstall.cancelled": "CodeNomad 需要先信任本地证书，才能打开使用自签名 HTTPS 的远程窗口。",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const

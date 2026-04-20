@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
+import { showConfirmDialog } from "../../stores/alerts"
+import { tGlobal } from "../i18n"
 import { runtimeEnv } from "../runtime-env"
 
 export interface RemoteWindowOpenPayload {
@@ -34,6 +36,28 @@ export async function openRemoteServerWindow(
   }
 
   if (runtimeEnv.host === "tauri") {
+    const requiresLocalCertificate =
+      proxySessionId !== undefined && (entryUrl ?? profile.baseUrl).startsWith("https://")
+
+    if (requiresLocalCertificate) {
+      const needsInstall = await invoke<boolean>("needs_local_certificate_install")
+      if (needsInstall) {
+        const accepted = await showConfirmDialog(
+          tGlobal("folderSelection.servers.certificateInstall.confirmMessage"),
+          {
+            title: tGlobal("folderSelection.servers.certificateInstall.title"),
+            variant: "warning",
+            confirmLabel: tGlobal("folderSelection.servers.certificateInstall.confirmLabel"),
+            cancelLabel: tGlobal("folderSelection.servers.certificateInstall.cancelLabel"),
+          },
+        )
+
+        if (!accepted) {
+          throw new Error(tGlobal("folderSelection.servers.certificateInstall.cancelled"))
+        }
+      }
+    }
+
     await invoke("open_remote_window", { payload })
     return
   }

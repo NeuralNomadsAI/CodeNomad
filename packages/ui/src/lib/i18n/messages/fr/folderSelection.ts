@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Connexion...",
   "folderSelection.servers.dialog.errorRequired": "Le nom du serveur et l'URL sont requis.",
   "folderSelection.servers.dialog.errorConnect": "Impossible de se connecter au serveur distant.",
+  "folderSelection.servers.certificateInstall.title": "Installer le certificat local",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad doit installer un certificat local pour ouvrir des fenetres distantes HTTPS auto-signees. Ce certificat est utilise uniquement pour le trafic du proxy local de bureau sur votre machine. Votre systeme d'exploitation peut afficher une seconde invite de certificat apres cela.",
+  "folderSelection.servers.certificateInstall.confirmLabel": "Continuer",
+  "folderSelection.servers.certificateInstall.cancelLabel": "Annuler",
+  "folderSelection.servers.certificateInstall.cancelled": "CodeNomad a besoin que le certificat local soit approuve avant de pouvoir ouvrir des fenetres distantes HTTPS auto-signees.",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const

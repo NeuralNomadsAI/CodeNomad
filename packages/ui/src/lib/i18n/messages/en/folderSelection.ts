@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Connecting...",
   "folderSelection.servers.dialog.errorRequired": "Server name and URL are required.",
   "folderSelection.servers.dialog.errorConnect": "Could not connect to the remote server.",
+  "folderSelection.servers.certificateInstall.title": "Install Local Certificate",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad needs to install a local certificate to open self-signed HTTPS remote windows. This certificate is only used for local desktop proxy traffic on your machine. Your operating system may show a second certificate prompt after this.",
+  "folderSelection.servers.certificateInstall.confirmLabel": "Continue",
+  "folderSelection.servers.certificateInstall.cancelLabel": "Cancel",
+  "folderSelection.servers.certificateInstall.cancelled": "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows.",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const

@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "מתחבר...",
   "folderSelection.servers.dialog.errorRequired": "שם השרת והכתובת הם שדות חובה.",
   "folderSelection.servers.dialog.errorConnect": "לא ניתן היה להתחבר לשרת המרוחק.",
+  "folderSelection.servers.certificateInstall.title": "התקנת אישור מקומי",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad צריך להתקין אישור מקומי כדי לפתוח חלונות HTTPS מרוחקים עם אישור בחתימה עצמית. האישור הזה משמש רק לתעבורת ה-proxy המקומי של האפליקציה במחשב שלך. ייתכן שמערכת ההפעלה תציג לאחר מכן בקשת אישור נוספת.",
+  "folderSelection.servers.certificateInstall.confirmLabel": "המשך",
+  "folderSelection.servers.certificateInstall.cancelLabel": "ביטול",
+  "folderSelection.servers.certificateInstall.cancelled": "CodeNomad צריך שהאישור המקומי יהיה מהימן לפני שיוכל לפתוח חלונות HTTPS מרוחקים עם אישור בחתימה עצמית.",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const

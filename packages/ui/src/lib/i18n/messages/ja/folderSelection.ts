@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "接続中...",
   "folderSelection.servers.dialog.errorRequired": "サーバー名と URL は必須です。",
   "folderSelection.servers.dialog.errorConnect": "リモートサーバーに接続できませんでした。",
+  "folderSelection.servers.certificateInstall.title": "ローカル証明書をインストール",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad は自己署名 HTTPS のリモートウィンドウを開くために、ローカル証明書をインストールする必要があります。この証明書は、このマシン上のローカルデスクトッププロキシ通信にのみ使用されます。この後、OS が追加の証明書プロンプトを表示する場合があります。",
+  "folderSelection.servers.certificateInstall.confirmLabel": "続行",
+  "folderSelection.servers.certificateInstall.cancelLabel": "キャンセル",
+  "folderSelection.servers.certificateInstall.cancelled": "自己署名 HTTPS のリモートウィンドウを開くには、CodeNomad のローカル証明書を信頼する必要があります。",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const
