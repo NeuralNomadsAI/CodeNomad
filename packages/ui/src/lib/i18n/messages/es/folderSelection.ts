@@ -20,7 +20,6 @@ export const folderSelectionMessages = {
   "folderSelection.browse.subtitle": "Selecciona cualquier carpeta en tu ordenador",
   "folderSelection.browse.button": "Buscar carpetas",
   "folderSelection.browse.buttonOpening": "Abriendo...",
-  "folderSelection.browse.wslButton": "Explorar rutas WSL / UNC",
   "folderSelection.actions.title": "Abrir carpeta o conectar servidor",
   "folderSelection.actions.subtitle": "Abre una carpeta local o conéctate a un servidor de CodeNomad",
   "folderSelection.actions.connectButton": "Conectar servidor CodeNomad",

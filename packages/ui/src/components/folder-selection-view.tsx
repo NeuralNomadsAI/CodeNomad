@@ -58,14 +58,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
   const nativeDialogsAvailable = supportsNativeDialogs()
-  const isWindowsPlatform = () => {
-    if (typeof navigator === "undefined") {
-      return false
-    }
-
-    const platform = ((navigator as any).userAgentData?.platform as string | undefined) ?? navigator.platform ?? navigator.userAgent
-    return /win/i.test(platform)
-  }
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -399,12 +391,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       }
       return
     }
-    openManualFolderBrowser()
-  }
-
-  function openManualFolderBrowser() {
-    if (isLoading()) return
-    setFocusMode("new")
     setIsFolderBrowserOpen(true)
   }
  
@@ -876,19 +862,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                     <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
                   </button>
-
-                  <Show when={nativeDialogsAvailable && isWindowsPlatform()}>
-                    <button
-                      type="button"
-                      onClick={openManualFolderBrowser}
-                      disabled={props.isLoading}
-                      class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2 text-sm disabled:cursor-not-allowed"
-                      onMouseEnter={() => setFocusMode("new")}
-                    >
-                      <FolderPlus class="w-4 h-4" />
-                      <span>{t("folderSelection.browse.wslButton")}</span>
-                    </button>
-                  </Show>
 
                   <button
                     type="button"
