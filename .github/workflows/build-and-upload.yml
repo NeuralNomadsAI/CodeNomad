@@ -643,7 +643,8 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.10.1 @tauri-apps/cli-linux-x64-gnu@2.10.1 --no-save --no-audit --no-fund --workspaces=false
+            # Tauri CLI 2.10.1 regresses Linux AppImage bundling in CI; keep Linux on the last known-good CLI.
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
