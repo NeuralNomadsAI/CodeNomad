@@ -635,12 +635,12 @@ impl CliProcessManager {
 
         let use_user_shell = supports_user_shell();
 
-        if resolution.runner != Runner::Standalone
+        if resolution.runner == Runner::Tsx
             && !use_user_shell
             && which::which(&resolution.node_binary).is_err()
         {
             return Err(anyhow::anyhow!(
-                "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                "Node binary '{}' not found. CodeNomad development mode requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
                 resolution.node_binary
             ));
         }
@@ -943,7 +943,7 @@ impl CliProcessManager {
                             let mut locked = status.lock();
                             if locked.error.is_none() {
                                 locked.error = Some(format!(
-                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad development mode requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
                                     node_binary.trim()
                                 ));
                             }
@@ -1066,7 +1066,6 @@ struct CliEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Runner {
-    Node,
     Standalone,
     Tsx,
 }
@@ -1097,17 +1096,8 @@ impl CliEntry {
             });
         }
 
-        if let Some(entry) = resolve_dist_entry(app) {
-            return Ok(Self {
-                entry,
-                runner: Runner::Node,
-                runner_path: None,
-                node_binary,
-            });
-        }
-
         Err(anyhow::anyhow!(
-            "Unable to locate CodeNomad CLI build. Please run `npm run build --workspace @neuralnomads/codenomad`."
+            "Unable to locate the packaged CodeNomad standalone server. Please rebuild the desktop bundle."
         ))
     }
 
@@ -1268,52 +1258,6 @@ fn resolve_standalone_entry(_app: &AppHandle) -> Option<String> {
                 candidates.push(Some(
                     root.join("resources/server/dist").join(executable_name),
                 ));
-            }
-        }
-    }
-
-    first_existing(candidates)
-}
-
-fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
-    let base = workspace_root();
-    let mut candidates: Vec<Option<PathBuf>> = vec![
-        base.as_ref().map(|p| p.join("packages/server/dist/bin.js")),
-        base.as_ref()
-            .map(|p| p.join("packages/server/dist/index.js")),
-        base.as_ref().map(|p| p.join("server/dist/bin.js")),
-        base.as_ref().map(|p| p.join("server/dist/index.js")),
-    ];
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(Some(dir.join("resources/server/dist/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/index.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/index.js")));
-
-            let resources = dir.join("../Resources");
-            candidates.push(Some(resources.join("server/dist/bin.js")));
-            candidates.push(Some(resources.join("server/dist/index.js")));
-            candidates.push(Some(resources.join("server/dist/server/bin.js")));
-            candidates.push(Some(resources.join("server/dist/server/index.js")));
-            candidates.push(Some(resources.join("resources/server/dist/bin.js")));
-            candidates.push(Some(resources.join("resources/server/dist/index.js")));
-            candidates.push(Some(resources.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(
-                resources.join("resources/server/dist/server/index.js"),
-            ));
-
-            let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
-            for root in linux_resource_roots {
-                candidates.push(Some(root.join("server/dist/bin.js")));
-                candidates.push(Some(root.join("server/dist/index.js")));
-                candidates.push(Some(root.join("server/dist/server/bin.js")));
-                candidates.push(Some(root.join("server/dist/server/index.js")));
-                candidates.push(Some(root.join("resources/server/dist/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/index.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/index.js")));
             }
         }
     }

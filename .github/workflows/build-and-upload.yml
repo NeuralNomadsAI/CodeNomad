@@ -652,42 +652,7 @@ jobs:
 
       - name: Build Linux bundle (Tauri)
         working-directory: packages/tauri-app
-        shell: bash
-        env:
-          RUST_BACKTRACE: full
-          RUST_LOG: tauri_bundler=trace
-          TAURI_LOG_LEVEL: debug
-        run: |
-          set -uo pipefail
-
-          build_log="$RUNNER_TEMP/tauri-linux-build.log"
-          status=0
-
-          npm exec -- tauri build 2>&1 | tee "$build_log" || status=$?
-
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-
-          echo "Tauri Linux bundle failed with exit code $status" >&2
-
-          echo "::group::Tauri build log tail"
-          tail -n 200 "$build_log" || true
-          echo "::endgroup::"
-
-          echo "::group::Bundle output tree"
-          find target -maxdepth 6 \( -type d -o -type f \) | sort || true
-          echo "::endgroup::"
-
-          echo "::group::Likely linuxdeploy temp files"
-          find /tmp -maxdepth 3 \( -iname '*linuxdeploy*' -o -iname '*appimage*' -o -iname '*.desktop' -o -iname '*.log' \) | sort || true
-          echo "::endgroup::"
-
-          echo "::group::Bundle metadata files"
-          find target -maxdepth 8 -type f \( -name '*.desktop' -o -name 'AppRun' -o -name '*.AppImage' -o -name '*.log' -o -name '*.json' \) | sort || true
-          echo "::endgroup::"
-
-          exit "$status"
+        run: npm exec -- tauri build
 
       - name: Package Tauri artifacts (Linux)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}

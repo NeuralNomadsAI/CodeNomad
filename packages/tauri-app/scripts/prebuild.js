@@ -87,10 +87,6 @@ function ensureStandaloneServerBuild() {
   })
 }
 
-function shouldBuildStandaloneServer() {
-  return process.platform !== "linux"
-}
-
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
@@ -143,17 +139,6 @@ function ensureServerDependencies() {
       cwd: serverRoot,
       stdio: "inherit",
     })
-  }
-}
-
-function removeStaleStandaloneServerBuild() {
-  const staleNames = ["codenomad-server", "codenomad-server.exe"]
-  for (const name of staleNames) {
-    const stalePath = path.join(serverRoot, "dist", name)
-    if (fs.existsSync(stalePath)) {
-      fs.rmSync(stalePath, { force: true })
-      console.log(`[prebuild] removed stale standalone server artifact ${stalePath}`)
-    }
   }
 }
 
@@ -328,12 +313,7 @@ function copyUiLoadingAssets() {
   ensureRollupPlatformBinary()
   ensureEsbuildPlatformBinary()
   ensureServerBuild()
-  if (shouldBuildStandaloneServer()) {
-    ensureStandaloneServerBuild()
-  } else {
-    removeStaleStandaloneServerBuild()
-    console.log("[prebuild] skipping standalone server executable for Linux packaging; linuxdeploy fails on the bundled ELF")
-  }
+  ensureStandaloneServerBuild()
   ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
