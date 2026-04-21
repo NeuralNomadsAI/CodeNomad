@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NODE_VERSION: 22
+      PUBLISH_NPM_VERSION: 11.5.1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,8 +60,15 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
 
-      - name: Ensure npm >=11.5.1
-        run: npm install -g npm@latest
+      - name: Prepare pinned npm CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/publish-npm"
+          mkdir -p "$tool_dir"
+          npm install --prefix "$tool_dir" "npm@${PUBLISH_NPM_VERSION}" --no-audit --no-fund
+          echo "$tool_dir/node_modules/npm/bin" >> "$GITHUB_PATH"
+          "$tool_dir/node_modules/npm/bin/npm-cli.js" --version
 
       - name: Install dependencies
         run: npm ci --workspaces
