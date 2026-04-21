@@ -38,7 +38,7 @@ interface StartOptions {
 
 interface CliEntryResolution {
   entry: string
-  runner: "node" | "tsx" | "standalone"
+  runner: "node" | "tsx"
   runnerPath?: string
 }
 
@@ -148,15 +148,15 @@ export class CliProcessManager extends EventEmitter {
     const listeningMode = this.resolveListeningMode()
     const host = resolveHostForMode(listeningMode)
     const args = this.buildCliArgs(options, host)
-    const cliEntry = this.resolveCliEntry(options)
 
     let child: ManagedChild
 
-    if (this.shouldUsePackagedShellSupervisor(options, cliEntry)) {
+    if (this.shouldUsePackagedShellSupervisor(options)) {
+      const runtimePath = this.resolveShellNodeCommand()
+      const entryPath = this.resolveBundledProdEntry()
       const supervisorPath = this.resolveCliSupervisorPath()
       const shellEnv = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-      const shellTarget = cliEntry.runner === "standalone" ? this.buildExecutableCommand(cliEntry.entry, args) : this.buildCommand(cliEntry, args)
-      const shellCommand = buildUserShellCommand(`exec ${shellTarget}`)
+      const shellCommand = buildUserShellCommand(`exec ${this.buildExecutableCommand(runtimePath, [entryPath, ...args])}`)
       const supervisorPayload = JSON.stringify({
         command: shellCommand.command,
         args: shellCommand.args,
@@ -164,33 +164,28 @@ export class CliProcessManager extends EventEmitter {
       })
 
       console.info(
-        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) via utility supervisor using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
+        `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) via utility supervisor using node at ${runtimePath} (host=${host})`,
       )
       console.info(`[cli] utility supervisor: ${supervisorPath}`)
       console.info(`[cli] shell command: ${shellCommand.command} ${shellCommand.args.join(" ")}`)
 
       child = utilityProcess.fork(supervisorPath, [supervisorPayload], {
-        env: cliEntry.runner === "standalone" ? shellEnv : { ...shellEnv, ELECTRON_RUN_AS_NODE: "1" },
+        env: shellEnv,
         stdio: "pipe",
         serviceName: "CodeNomad CLI Supervisor",
       })
       this.childLaunchMode = "utility"
     } else {
+      const cliEntry = this.resolveCliEntry(options)
       console.info(
         `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
       )
 
       const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-      if (cliEntry.runner !== "standalone") {
-        env.ELECTRON_RUN_AS_NODE = "1"
-      }
+      env.ELECTRON_RUN_AS_NODE = "1"
 
       const spawnDetails = supportsUserShell()
-        ? buildUserShellCommand(
-            `${cliEntry.runner === "standalone" ? "" : "ELECTRON_RUN_AS_NODE=1 "}exec ${
-              cliEntry.runner === "standalone" ? this.buildExecutableCommand(cliEntry.entry, args) : this.buildCommand(cliEntry, args)
-            }`,
-          )
+        ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
         : this.buildDirectSpawn(cliEntry, args)
 
       const detached = process.platform !== "win32"
@@ -568,10 +563,6 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCommand(cliEntry: CliEntryResolution, args: string[]): string {
-    if (cliEntry.runner === "standalone") {
-      return this.buildExecutableCommand(cliEntry.entry, args)
-    }
-
     const parts = [JSON.stringify(process.execPath)]
     if (cliEntry.runner === "tsx" && cliEntry.runnerPath) {
       parts.push(JSON.stringify(cliEntry.runnerPath))
@@ -586,10 +577,6 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
-    if (cliEntry.runner === "standalone") {
-      return { command: cliEntry.entry, args }
-    }
-
     if (cliEntry.runner === "tsx") {
       return { command: process.execPath, args: [cliEntry.runnerPath!, cliEntry.entry, ...args] }
     }
@@ -606,8 +593,9 @@ export class CliProcessManager extends EventEmitter {
       const devEntry = this.resolveDevEntry()
       return { entry: devEntry, runner: "tsx", runnerPath: tsxPath }
     }
-
-    return { entry: this.resolveStandaloneProdEntry(), runner: "standalone" }
+ 
+    const distEntry = this.resolveProdEntry()
+    return { entry: distEntry, runner: "node" }
   }
  
   private resolveTsx(): string | null {
@@ -647,25 +635,20 @@ export class CliProcessManager extends EventEmitter {
     return entry
   }
  
-  private resolveStandaloneProdEntry(): string {
-    const executableName = process.platform === "win32" ? "codenomad-server.exe" : "codenomad-server"
-    const candidates = [
-      path.join(process.resourcesPath, "server", "dist", executableName),
-      path.join(mainDirname, "../resources/server/dist", executableName),
-      path.resolve(process.cwd(), "..", "server", "dist", executableName),
-    ]
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate
+  private resolveProdEntry(): string {
+    try {
+      const entry = nodeRequire.resolve("@neuralnomads/codenomad/dist/bin.js")
+      if (existsSync(entry)) {
+        return entry
       }
+    } catch {
+      // fall through to error below
     }
-
-    throw new Error(`Unable to locate standalone CodeNomad server executable (${executableName}). Run npm run build:standalone --workspace @neuralnomads/codenomad.`)
+    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
   }
 
-  private shouldUsePackagedShellSupervisor(options: StartOptions, cliEntry: CliEntryResolution): boolean {
-    return !options.dev && app.isPackaged && process.platform === "darwin" && cliEntry.runner !== "standalone"
+  private shouldUsePackagedShellSupervisor(options: StartOptions): boolean {
+    return !options.dev && app.isPackaged && process.platform === "darwin"
   }
 
   private resolveCliSupervisorPath(): string {
@@ -681,6 +664,26 @@ export class CliProcessManager extends EventEmitter {
     }
 
     throw new Error("Unable to locate CodeNomad CLI supervisor script.")
+  }
+
+  private resolveShellNodeCommand(): string {
+    const configured = process.env.NODE_BINARY?.trim()
+    return configured && configured.length > 0 ? configured : "node"
+  }
+
+  private resolveBundledProdEntry(): string {
+    const candidates = [
+      path.join(process.resourcesPath, "server", "dist", "bin.js"),
+      path.join(mainDirname, "../resources/server/dist/bin.js"),
+    ]
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    throw new Error("Unable to locate bundled CodeNomad CLI build in app resources.")
   }
 
   private describeUtilityProcessError(error: unknown): string {

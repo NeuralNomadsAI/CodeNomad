@@ -118,8 +118,6 @@ function loadLoadingScreen(window: BrowserWindow) {
   loader.catch((error) => {
     console.error("[cli] failed to load loading screen:", error)
   })
-
-  return loader
 }
 
 function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
@@ -294,7 +292,7 @@ function createWindow() {
   showingLoadingScreen = true
   currentCliUrl = null
   clearWindowAllowedOrigin(window)
-  const loadingReady = loadLoadingScreen(window)
+  loadLoadingScreen(window)
 
   if (process.env.NODE_ENV === "development") {
     window.webContents.openDevTools({ mode: "detach" })
@@ -313,7 +311,11 @@ function createWindow() {
     showingLoadingScreen = false
   })
 
-  return loadingReady
+  if (pendingCliUrl) {
+    const url = pendingCliUrl
+    pendingCliUrl = null
+    startCliPreload(url)
+  }
 }
 
 function showLoadingScreen(force = false) {
@@ -620,8 +622,7 @@ app.whenReady().then(() => {
     // ignore
   }
 
-  const loadingReady = createWindow()
-  ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
+  startCli()
 
   if (isMac) {
     session.defaultSession.setSpellCheckerEnabled(false)
@@ -638,11 +639,8 @@ app.whenReady().then(() => {
     }
   }
 
-  void loadingReady.finally(() => {
-    setTimeout(() => {
-      void startCli()
-    }, 0)
-  })
+  createWindow()
+  ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
 
   app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
     if (isInsecureOriginAllowed(url)) {

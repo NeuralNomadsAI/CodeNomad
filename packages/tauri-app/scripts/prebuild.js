@@ -21,7 +21,6 @@ const serverDevInstallCommand =
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
-const serverStandaloneBuildCommand = "npm run build:standalone --workspace @neuralnomads/codenomad"
 
 const envWithRootBin = {
   ...process.env,
@@ -78,15 +77,6 @@ function ensureServerBuild() {
   }
 }
 
-function ensureStandaloneServerBuild() {
-  console.log("[prebuild] building standalone server executable...")
-  execSync(serverStandaloneBuildCommand, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-    env: envWithRootBin,
-  })
-}
-
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
@@ -127,19 +117,15 @@ function ensureServerDevDependencies() {
 }
 
 function ensureServerDependencies() {
-  console.log("[prebuild] pruning server to production dependencies...")
-  execSync("npm prune --omit=dev --ignore-scripts --workspaces=false --fund=false --audit=false", {
+  if (fs.existsSync(braceExpansionPath)) {
+    return
+  }
+
+  console.log("[prebuild] ensuring server production dependencies...")
+  execSync(serverInstallCommand, {
     cwd: serverRoot,
     stdio: "inherit",
   })
-
-  if (!fs.existsSync(braceExpansionPath)) {
-    console.log("[prebuild] restoring missing server production dependencies...")
-    execSync(serverInstallCommand, {
-      cwd: serverRoot,
-      stdio: "inherit",
-    })
-  }
 }
 
 function ensureUiDevDependencies() {
@@ -186,47 +172,6 @@ function ensureRollupPlatformBinary() {
   const packageSpec = rollupVersion ? `${pkgName}@${rollupVersion}` : pkgName
 
   console.log("[prebuild] installing rollup platform binary (optional dep workaround)...")
-  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-  })
-}
-
-function ensureEsbuildPlatformBinary() {
-  const platformKey = `${process.platform}-${process.arch}`
-  const platformPackages = {
-    "linux-x64": "@esbuild/linux-x64",
-    "linux-arm64": "@esbuild/linux-arm64",
-    "darwin-arm64": "@esbuild/darwin-arm64",
-    "darwin-x64": "@esbuild/darwin-x64",
-    "win32-arm64": "@esbuild/win32-arm64",
-    "win32-x64": "@esbuild/win32-x64",
-  }
-
-  const pkgName = platformPackages[platformKey]
-  if (!pkgName) {
-    return
-  }
-
-  const platformPackagePath = path.join(workspaceRoot, "node_modules", ...pkgName.split("/"))
-  if (fs.existsSync(platformPackagePath)) {
-    return
-  }
-
-  let esbuildVersion = ""
-  try {
-    esbuildVersion = require(path.join(workspaceRoot, "node_modules", "esbuild", "package.json")).version
-  } catch {
-    try {
-      esbuildVersion = require(path.join(workspaceRoot, "node_modules", "vite", "node_modules", "esbuild", "package.json")).version
-    } catch {
-      // leave version empty; fallback install will use latest compatible
-    }
-  }
-
-  const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
-
-  console.log("[prebuild] installing esbuild platform binary (optional dep workaround)...")
   execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
     cwd: workspaceRoot,
     stdio: "inherit",
@@ -311,10 +256,8 @@ function copyUiLoadingAssets() {
   ensureUiDevDependencies()
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
-  ensureEsbuildPlatformBinary()
-  ensureServerBuild()
-  ensureStandaloneServerBuild()
   ensureServerDependencies()
+  ensureServerBuild()
   ensureUiBuild()
   syncServerUiBundle()
   copyServerArtifacts()
