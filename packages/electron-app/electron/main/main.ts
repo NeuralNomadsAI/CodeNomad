@@ -116,8 +116,20 @@ function loadLoadingScreen(window: BrowserWindow) {
       : window.loadFile(target.source)
 
   loader.catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to load loading screen:", error)
   })
+}
+
+function isIgnorableNavigationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+  return code === "ERR_ABORTED" || code === "ERR_FAILED"
 }
 
 function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
@@ -386,6 +398,9 @@ function startCliPreload(url: string) {
   })
 
   view.webContents.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to preload CLI view:", error)
     if (preloadingView === view) {
       destroyPreloadingView(view)
@@ -406,7 +421,12 @@ function finalizeCliSwap(url: string) {
   currentCliUrl = url
   setWindowAllowedOrigin(window, url)
   pendingCliUrl = null
-  window.loadURL(url).catch((error) => console.error("[cli] failed to load CLI view:", error))
+  window.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
+    console.error("[cli] failed to load CLI view:", error)
+  })
 }
 
 function buildRemoteWindowTitle(name: string, baseUrl: string) {

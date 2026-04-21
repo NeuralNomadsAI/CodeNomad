@@ -1,3 +1,4 @@
+use crate::managed_node::ensure_managed_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -642,7 +643,11 @@ impl CliProcessManager {
             log_line("spawning via user shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
         } else {
-            log_line("spawning directly with node");
+            log_line(if resolution.runner == Runner::Tsx {
+                "spawning directly with node + tsx"
+            } else {
+                "spawning directly with node"
+            });
             ShellCommandType::Direct(DirectCommand {
                 program: resolution.node_binary.clone(),
                 args: resolution.runner_args(&args),
@@ -1043,6 +1048,7 @@ struct CliEntry {
     runner: Runner,
     runner_path: Option<String>,
     node_binary: String,
+    node_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1053,9 +1059,8 @@ enum Runner {
 
 impl CliEntry {
     fn resolve(app: &AppHandle, dev: bool) -> anyhow::Result<Self> {
-        let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
-
         if dev {
+            let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
             if let Some(tsx_path) = resolve_tsx(app) {
                 if let Some(entry) = resolve_dev_entry(app) {
                     return Ok(Self {
@@ -1063,22 +1068,24 @@ impl CliEntry {
                         runner: Runner::Tsx,
                         runner_path: Some(tsx_path),
                         node_binary,
+                        node_args: Vec::new(),
                     });
                 }
             }
         }
 
-        if let Some(entry) = resolve_dist_entry(app) {
+        if let Some(entry) = resolve_prod_entry(app) {
             return Ok(Self {
                 entry,
                 runner: Runner::Node,
                 runner_path: None,
-                node_binary,
+                node_binary: ensure_managed_node_binary(app)?,
+                node_args: Vec::new(),
             });
         }
 
         Err(anyhow::anyhow!(
-            "Unable to locate CodeNomad CLI build (dist/bin.js). Please build @neuralnomads/codenomad."
+            "Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Please rebuild the desktop bundle."
         ))
     }
 
@@ -1133,6 +1140,9 @@ impl CliEntry {
 
     fn runner_args(&self, cli_args: &[String]) -> Vec<String> {
         let mut args = VecDeque::new();
+        for arg in &self.node_args {
+            args.push_back(arg.clone());
+        }
         if self.runner == Runner::Tsx {
             if let Some(path) = &self.runner_path {
                 args.push_back(path.clone());
@@ -1204,45 +1214,24 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
     first_existing(candidates)
 }
 
-fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
+fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
     let base = workspace_root();
-    let mut candidates: Vec<Option<PathBuf>> = vec![
-        base.as_ref().map(|p| p.join("packages/server/dist/bin.js")),
-        base.as_ref()
-            .map(|p| p.join("packages/server/dist/index.js")),
-        base.as_ref().map(|p| p.join("server/dist/bin.js")),
-        base.as_ref().map(|p| p.join("server/dist/index.js")),
-    ];
+    let mut candidates = vec![base
+        .as_ref()
+        .map(|p| p.join("packages/server/dist/bin.js"))];
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(Some(dir.join("resources/server/dist/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/index.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/index.js")));
 
             let resources = dir.join("../Resources");
             candidates.push(Some(resources.join("server/dist/bin.js")));
-            candidates.push(Some(resources.join("server/dist/index.js")));
-            candidates.push(Some(resources.join("server/dist/server/bin.js")));
-            candidates.push(Some(resources.join("server/dist/server/index.js")));
             candidates.push(Some(resources.join("resources/server/dist/bin.js")));
-            candidates.push(Some(resources.join("resources/server/dist/index.js")));
-            candidates.push(Some(resources.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(
-                resources.join("resources/server/dist/server/index.js"),
-            ));
 
             let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
             for root in linux_resource_roots {
                 candidates.push(Some(root.join("server/dist/bin.js")));
-                candidates.push(Some(root.join("server/dist/index.js")));
-                candidates.push(Some(root.join("server/dist/server/bin.js")));
-                candidates.push(Some(root.join("server/dist/server/index.js")));
                 candidates.push(Some(root.join("resources/server/dist/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/index.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/index.js")));
             }
         }
     }
@@ -1261,13 +1250,14 @@ fn build_shell_command_string(
         quoted.push(shell_escape(&arg));
     }
     let command = format!(
-        "if command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {} >&2; exit 127; fi",
+        "if [ -x {} ]; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
         shell_escape(&entry.node_binary),
         quoted.join(" "),
         MISSING_NODE_PREFIX,
         shell_escape(&entry.node_binary),
     );
-    let args = build_shell_args(&shell, &command);
+    let wrapped_command = wrap_command_for_shell(&command, &shell);
+    let args = build_shell_args(&shell, &wrapped_command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
 }
@@ -1283,6 +1273,30 @@ fn default_shell() -> String {
     } else {
         "/bin/bash".to_string()
     }
+}
+
+fn wrap_command_for_shell(command: &str, shell: &str) -> String {
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_lowercase();
+
+    if shell_name.contains("bash") {
+        return format!(
+            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    if shell_name.contains("zsh") {
+        return format!(
+            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    command.to_string()
 }
 
 fn shell_escape(input: &str) -> String {
