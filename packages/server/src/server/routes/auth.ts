@@ -3,6 +3,7 @@ import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
 import { isLoopbackAddress } from "../../auth/http-auth"
+import { resolveAuthTemplatePath } from "../../runtime-paths"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -21,21 +22,21 @@ const PasswordSchema = z.object({
   password: z.string().min(8),
 })
 
-const LOGIN_TEMPLATE_URL = new URL("./auth-pages/login.html", import.meta.url)
-const TOKEN_TEMPLATE_URL = new URL("./auth-pages/token.html", import.meta.url)
+const LOGIN_TEMPLATE_PATH = resolveAuthTemplatePath(import.meta.url, "login.html")
+const TOKEN_TEMPLATE_PATH = resolveAuthTemplatePath(import.meta.url, "token.html")
 
 let cachedLoginTemplate: string | null = null
 let cachedTokenTemplate: string | null = null
 
-function readTemplate(url: URL, cache: string | null): string {
+function readTemplate(filePath: string, cache: string | null): string {
   if (cache) return cache
-  const content = fs.readFileSync(url, "utf-8")
+  const content = fs.readFileSync(filePath, "utf-8")
   return content
 }
 
 function getLoginHtml(defaultUsername: string): string {
   if (!cachedLoginTemplate) {
-    cachedLoginTemplate = readTemplate(LOGIN_TEMPLATE_URL, null)
+    cachedLoginTemplate = readTemplate(LOGIN_TEMPLATE_PATH, null)
   }
 
   const escapedUsername = escapeHtml(defaultUsername)
@@ -44,7 +45,7 @@ function getLoginHtml(defaultUsername: string): string {
 
 function getTokenHtml(): string {
   if (!cachedTokenTemplate) {
-    cachedTokenTemplate = readTemplate(TOKEN_TEMPLATE_URL, null)
+    cachedTokenTemplate = readTemplate(TOKEN_TEMPLATE_PATH, null)
   }
 
   return cachedTokenTemplate

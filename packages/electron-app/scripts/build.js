@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "child_process"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import path, { join } from "path"
 import { fileURLToPath } from "url"
 
@@ -13,6 +13,46 @@ const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
 const nodeModulesPath = join(appDir, "node_modules")
 const workspaceNodeModulesPath = join(workspaceRoot, "node_modules")
+
+function getPlatformEsbuildPackage() {
+  const platformKey = `${process.platform}-${process.arch}`
+  const platformPackages = {
+    "linux-x64": "@esbuild/linux-x64",
+    "linux-arm64": "@esbuild/linux-arm64",
+    "darwin-arm64": "@esbuild/darwin-arm64",
+    "darwin-x64": "@esbuild/darwin-x64",
+    "win32-arm64": "@esbuild/win32-arm64",
+    "win32-x64": "@esbuild/win32-x64",
+  }
+
+  return platformPackages[platformKey] ?? null
+}
+
+async function ensureEsbuildPlatformBinary() {
+  const pkgName = getPlatformEsbuildPackage()
+  if (!pkgName) {
+    return
+  }
+
+  const platformPackagePath = join(workspaceNodeModulesPath, ...pkgName.split("/"))
+  if (existsSync(platformPackagePath)) {
+    return
+  }
+
+  let esbuildVersion = ""
+  try {
+    esbuildVersion = JSON.parse(readFileSync(join(workspaceNodeModulesPath, "esbuild", "package.json"), "utf-8")).version ?? ""
+  } catch {
+    // leave version empty; fallback install will use latest compatible
+  }
+
+  const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
+  console.log("📦 Step 0/3: Restoring esbuild platform binary...\n")
+  await run(npmCmd, ["install", packageSpec, "--no-save", "--ignore-scripts", "--fund=false", "--audit=false"], {
+    cwd: workspaceRoot,
+    env: { NODE_PATH: workspaceNodeModulesPath },
+  })
+}
 
 const platforms = {
   mac: {
@@ -105,6 +145,8 @@ async function build(platform) {
   console.log(`\n🔨 Building for: ${config.description}\n`)
 
   try {
+    await ensureEsbuildPlatformBinary()
+
     console.log("📦 Step 1/3: Building CLI dependency...\n")
     await run(npmCmd, ["run", "build", "--workspace", "@neuralnomads/codenomad"], {
       cwd: workspaceRoot,

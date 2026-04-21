@@ -21,6 +21,70 @@ import {
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
+function defaultShellPath(): string {
+  const configured = process.env.SHELL?.trim()
+  if (configured) {
+    return configured
+  }
+
+  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"
+}
+
+function shellEscape(input: string): string {
+  if (!input) return "''"
+  return `'${input.replace(/'/g, `'\\''`)}'`
+}
+
+function wrapCommandForShell(command: string, shellPath: string): string {
+  const shellName = path.basename(shellPath).toLowerCase()
+
+  if (shellName.includes("bash")) {
+    return `if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; ${command}`
+  }
+
+  if (shellName.includes("zsh")) {
+    return `if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; ${command}`
+  }
+
+  return command
+}
+
+function buildShellArgs(shellPath: string, command: string): string[] {
+  const shellName = path.basename(shellPath).toLowerCase()
+  if (shellName.includes("zsh")) {
+    return ["-l", "-i", "-c", command]
+  }
+  return ["-l", "-c", command]
+}
+
+function resolveBinaryPathFromUserShell(identifier: string): string | null {
+  if (process.platform === "win32") {
+    return null
+  }
+
+  const shellPath = defaultShellPath()
+  const lookupCommand = wrapCommandForShell(`command -v ${shellEscape(identifier)}`, shellPath)
+  const result = spawnSync(shellPath, buildShellArgs(shellPath, lookupCommand), {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      npm_config_prefix: undefined,
+      NPM_CONFIG_PREFIX: undefined,
+    },
+  })
+
+  if (result.status !== 0) {
+    return null
+  }
+
+  const resolved = String(result.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+
+  return resolved ?? null
+}
+
 interface WorkspaceManagerOptions {
   rootDir: string
   settings: SettingsService
@@ -264,6 +328,12 @@ export class WorkspaceManager {
       }
     } catch (error) {
       this.options.logger.warn({ identifier, err: error }, "Failed to resolve binary path from system PATH")
+    }
+
+    const shellResolved = resolveBinaryPathFromUserShell(identifier)
+    if (shellResolved) {
+      this.options.logger.debug({ identifier, resolved: shellResolved }, "Resolved binary path from user shell")
+      return shellResolved
     }
 
     return identifier

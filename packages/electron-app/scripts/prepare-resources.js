@@ -16,6 +16,7 @@ const npmNodeExecPath = process.env.npm_node_execpath
 
 const serverSources = ["dist", "public", "node_modules", "package.json"]
 const serverDepsMarker = join(serverRoot, "node_modules", "fastify", "package.json")
+const standaloneMarker = join(serverRoot, "dist", process.platform === "win32" ? "codenomad-server.exe" : "codenomad-server")
 
 function log(message) {
   console.log(`[prepare-resources] ${message}`)
@@ -26,6 +27,34 @@ function ensureServerBuild() {
   const publicPath = join(serverRoot, "public")
   if (!fs.existsSync(distPath) || !fs.existsSync(publicPath)) {
     throw new Error("Server build artifacts are missing. Run the server build before packaging Electron.")
+  }
+}
+
+function ensureStandaloneServerBuild() {
+  log("building standalone server executable")
+  const result = spawnSync(
+    "npm",
+    ["run", "build:standalone", "--workspace", "@neuralnomads/codenomad"],
+    {
+      cwd: workspaceRoot,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PATH: `${join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+      shell: process.platform === "win32",
+    },
+  )
+
+  if (result.status !== 0) {
+    if (result.error) {
+      throw result.error
+    }
+    throw new Error(`standalone server build exited with code ${result.status ?? 1}`)
+  }
+
+  if (!fs.existsSync(standaloneMarker)) {
+    throw new Error(`Standalone server executable missing after build: ${standaloneMarker}`)
   }
 }
 
@@ -62,6 +91,51 @@ function ensureServerDependencies() {
       throw result.error
     }
     throw new Error(`npm install exited with code ${result.status ?? 1}`)
+  }
+}
+
+function ensureEsbuildPlatformBinary() {
+  const platformKey = `${process.platform}-${process.arch}`
+  const platformPackages = {
+    "linux-x64": "@esbuild/linux-x64",
+    "linux-arm64": "@esbuild/linux-arm64",
+    "darwin-arm64": "@esbuild/darwin-arm64",
+    "darwin-x64": "@esbuild/darwin-x64",
+    "win32-arm64": "@esbuild/win32-arm64",
+    "win32-x64": "@esbuild/win32-x64",
+  }
+
+  const pkgName = platformPackages[platformKey]
+  if (!pkgName) {
+    return
+  }
+
+  const platformPackagePath = join(workspaceRoot, "node_modules", ...pkgName.split("/"))
+  if (fs.existsSync(platformPackagePath)) {
+    return
+  }
+
+  let esbuildVersion = ""
+  try {
+    esbuildVersion = JSON.parse(fs.readFileSync(join(workspaceRoot, "node_modules", "esbuild", "package.json"), "utf-8")).version ?? ""
+  } catch {
+    // leave version empty; fallback install will use latest compatible
+  }
+
+  const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
+  log("installing esbuild platform binary (optional dep workaround)")
+
+  const result = spawnSync("npm", ["install", packageSpec, "--no-save", "--ignore-scripts", "--fund=false", "--audit=false"], {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  })
+
+  if (result.status !== 0) {
+    if (result.error) {
+      throw result.error
+    }
+    throw new Error(`esbuild platform install exited with code ${result.status ?? 1}`)
   }
 }
 
@@ -121,7 +195,9 @@ function stripNodeModuleBins() {
 
 async function main() {
   ensureServerBuild()
+  ensureStandaloneServerBuild()
   ensureServerDependencies()
+  ensureEsbuildPlatformBinary()
   copyServerArtifacts()
   stripNodeModuleBins()
 }
