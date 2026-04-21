@@ -50,7 +50,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 
-import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
+import { hasWakeLockEligibleWork } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import {
   closeSidecarTab,
@@ -204,8 +204,7 @@ const App: Component = () => {
   const shouldHoldWakeLock = createMemo(() => {
     const map = instances()
     for (const id of map.keys()) {
-      const status = getInstanceSessionIndicatorStatus(id)
-      if (status !== "idle") {
+      if (hasWakeLockEligibleWork(id)) {
         return true
       }
     }

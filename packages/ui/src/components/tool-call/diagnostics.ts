@@ -58,7 +58,9 @@ export function extractDiagnostics(state: ToolState | undefined): DiagnosticEntr
   const diagnosticsMap = metadata?.diagnostics as DiagnosticsMap | undefined
   if (!diagnosticsMap) return []
 
-  return buildDiagnosticEntries(diagnosticsMap, [input.filePath, metadata.filePath, metadata.filepath, input.path])
+  return buildDiagnosticEntries(diagnosticsMap, [input.filePath, metadata.filePath, metadata.filepath, input.path].map((value) =>
+    typeof value === "string" ? value : undefined,
+  ))
 }
 
 export function resolveDiagnosticsKey(diagnostics: DiagnosticsMap, preferredPaths: Array<string | undefined>): string | undefined {

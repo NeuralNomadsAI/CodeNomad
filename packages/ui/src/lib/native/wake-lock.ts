@@ -9,51 +9,6 @@ let inFlight: Promise<boolean> | null = null
 
 let applied = false
 
-let webWakeLock: any = null
-
-async function setWebWakeLock(enabled: boolean): Promise<boolean> {
-  if (typeof navigator === "undefined") return false
-
-  const api = (navigator as any).wakeLock
-  if (!api?.request) {
-    return false
-  }
-
-  try {
-    if (enabled) {
-      if (webWakeLock) {
-        return true
-      }
-      webWakeLock = await api.request("screen")
-      try {
-        webWakeLock.addEventListener?.("release", () => {
-          // If the lock is released by the UA (e.g., tab hidden), clear local state.
-          webWakeLock = null
-          if (desired) {
-            // Re-acquire best-effort.
-            queueMicrotask(() => {
-              void setWakeLockDesired(true)
-            })
-          }
-        })
-      } catch {
-        // optional
-      }
-      return true
-    }
-
-    if (webWakeLock) {
-      await webWakeLock.release?.()
-    }
-    webWakeLock = null
-    return false
-  } catch (error) {
-    log.log("[wake-lock] web wake lock failed", error)
-    webWakeLock = null
-    return false
-  }
-}
-
 function hasAnyWakeLockSupport(): boolean {
   if (typeof window === "undefined") return false
   if (isElectronHost()) {
@@ -63,7 +18,7 @@ function hasAnyWakeLockSupport(): boolean {
   if (isTauriHost()) {
     return typeof window.__TAURI__?.core?.invoke === "function"
   }
-  return Boolean((navigator as any)?.wakeLock?.request)
+  return false
 }
 
 async function setElectronWakeLock(enabled: boolean): Promise<boolean> {
@@ -89,9 +44,7 @@ async function setTauriWakeLock(enabled: boolean): Promise<boolean> {
     }
 
     if (enabled) {
-      // Match Electron's prevent-display-sleep behavior by keeping the display
-      // awake without blocking explicit system sleep requests.
-      await invoke("wake_lock_start", { config: { display: true, idle: false, sleep: false } })
+      await invoke("wake_lock_start", { config: { display: false, idle: true, sleep: false } })
       return true
     }
 
@@ -108,17 +61,15 @@ async function applyWakeLock(enabled: boolean): Promise<boolean> {
 
   if (isElectronHost()) {
     const ok = await setElectronWakeLock(enabled)
-    if (ok || !enabled) return ok
-    // fallback to web API if electron preload didn't expose it
+    return ok
   }
 
   if (isTauriHost()) {
     const ok = await setTauriWakeLock(enabled)
-    if (ok || !enabled) return ok
-    // fallback to web API if tauri command isn't available
+    return ok
   }
 
-  return await setWebWakeLock(enabled)
+  return false
 }
 
 export function setWakeLockDesired(nextDesired: boolean): Promise<boolean> {

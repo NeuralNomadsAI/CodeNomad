@@ -145,8 +145,8 @@ fn wake_lock_start(
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
     let config = config.unwrap_or(WakeLockConfig {
-        display: true,
-        idle: false,
+        display: false,
+        idle: true,
         sleep: false,
     });
 
