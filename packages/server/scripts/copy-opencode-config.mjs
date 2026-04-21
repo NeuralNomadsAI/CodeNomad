@@ -51,6 +51,30 @@ function stripNodeModuleBins(rootDir) {
   return removed
 }
 
+function stripOptionalNativeAddons(rootDir) {
+  const nodeModulesRoot = path.join(rootDir, "node_modules")
+  if (!existsSync(nodeModulesRoot)) {
+    return 0
+  }
+
+  const removablePaths = [
+    path.join(nodeModulesRoot, "@msgpackr-extract"),
+    path.join(nodeModulesRoot, "msgpackr-extract"),
+  ]
+
+  let removed = 0
+  for (const targetPath of removablePaths) {
+    if (!existsSync(targetPath)) {
+      continue
+    }
+
+    rmSync(targetPath, { recursive: true, force: true })
+    removed += 1
+  }
+
+  return removed
+}
+
 if (!existsSync(sourceDir)) {
   console.error(`[copy-opencode-config] Missing source directory at ${sourceDir}`)
   process.exit(1)
@@ -98,6 +122,11 @@ cpSync(sourceDir, targetDir, { recursive: true })
 const removedBins = stripNodeModuleBins(targetDir)
 if (removedBins > 0) {
   console.log(`[copy-opencode-config] Removed ${removedBins} node_modules/.bin directories`)
+}
+
+const removedNativeAddons = stripOptionalNativeAddons(targetDir)
+if (removedNativeAddons > 0) {
+  console.log(`[copy-opencode-config] Removed ${removedNativeAddons} optional native addon package paths`)
 }
 
 console.log(`[copy-opencode-config] Copied ${sourceDir} -> ${targetDir}`)
