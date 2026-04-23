@@ -1,9 +1,11 @@
-import { For, Show, Suspense, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createEffect, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { RefreshCw, Save } from "lucide-solid"
+import { Copy, RefreshCw, Save, Search } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
+import { copyToClipboard } from "../../../../../lib/clipboard"
+import { showToastNotification } from "../../../../../lib/notifications"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
@@ -42,11 +44,27 @@ interface FilesTabProps {
 }
 
 const FilesTab: Component<FilesTabProps> = (props) => {
+  const [filterQuery, setFilterQuery] = createSignal("")
+
+  createEffect(() => {
+    props.browserPath()
+    setFilterQuery("")
+  })
+
   const handleSave = () => {
     const content = props.browserSelectedContent()
     if (content !== undefined && content !== null) {
       props.onSave(content)
     }
+  }
+
+  const handleCopyPath = async (path: string, event?: MouseEvent) => {
+    event?.stopPropagation()
+    const ok = await copyToClipboard(path)
+    showToastNotification({
+      message: ok ? props.t("instanceShell.filesShell.toast.copyPathSuccess") : props.t("instanceShell.filesShell.toast.copyPathError"),
+      variant: ok ? "success" : "error",
+    })
   }
 
   const renderContent = (): JSX.Element => {
@@ -58,6 +76,16 @@ const FilesTab: Component<FilesTabProps> = (props) => {
       if (aDir !== bDir) return aDir - bDir
       return String(a.name || "").localeCompare(String(b.name || ""))
     })
+    const normalizedQuery = filterQuery().trim().toLowerCase()
+    const filtered = normalizedQuery
+      ? sorted.filter((item) => {
+          const name = String(item.name || "").toLowerCase()
+          const path = String(item.path || "").toLowerCase()
+          return name.includes(normalizedQuery) || path.includes(normalizedQuery)
+        })
+      : sorted
+    const listEmptyMessage = () =>
+      normalizedQuery ? props.t("instanceShell.filesShell.search.empty") : props.t("instanceShell.filesShell.listEmpty")
 
     const parent = props.parentPath()
 
@@ -127,6 +155,27 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
     const renderList = () => (
       <>
+        <div class="file-list-header">
+          <span class="file-list-title">{props.t("instanceShell.filesShell.fileListTitle")}</span>
+          <span class="file-list-count">{filtered.length}</span>
+        </div>
+
+        <div class="px-2 py-2 border-b border-base">
+          <div class="selector-input-group">
+            <div class="flex items-center gap-2 px-3 text-muted">
+              <Search class="w-4 h-4" />
+            </div>
+            <input
+              type="text"
+              value={filterQuery()}
+              onInput={(event) => setFilterQuery(event.currentTarget.value)}
+              placeholder={props.t("instanceShell.filesShell.search.placeholder")}
+              aria-label={props.t("instanceShell.filesShell.search.ariaLabel")}
+              class="selector-input"
+            />
+          </div>
+        </div>
+
         <Show when={parent}>
           {(p) => (
             <div class="file-list-item" onClick={() => props.onLoadEntries(p())}>
@@ -143,7 +192,8 @@ const FilesTab: Component<FilesTabProps> = (props) => {
           <div class="p-3 text-xs text-secondary">{props.t("instanceInfo.loading")}</div>
         </Show>
 
-        <For each={sorted}>
+        <Show when={filtered.length > 0} fallback={<div class="p-3 text-xs text-secondary">{listEmptyMessage()}</div>}>
+          <For each={filtered}>
           {(item) => (
             <div
               class={`file-list-item ${props.browserSelectedPath() === item.path ? "file-list-item-active" : ""}`}
@@ -160,13 +210,25 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                 <div class="file-list-item-path" title={item.path}>
                   <span class="file-path-text">{item.name}</span>
                 </div>
-                <div class="file-list-item-stats">
-                  <span class="text-[10px] text-secondary">{item.type}</span>
+                <div class="flex items-center gap-2 shrink-0">
+                  <div class="file-list-item-stats">
+                    <span class="text-[10px] text-secondary">{item.type}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="git-change-row-action"
+                    title={props.t("instanceShell.filesShell.actions.copyPath")}
+                    aria-label={props.t("instanceShell.filesShell.actions.copyPath")}
+                    onClick={(event) => void handleCopyPath(item.path, event)}
+                  >
+                    <Copy class="w-3 h-3" />
+                  </button>
                 </div>
               </div>
             </div>
           )}
-        </For>
+          </For>
+        </Show>
       </>
     )
 

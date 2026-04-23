@@ -148,6 +148,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "Просмотр изменений",
   "instanceShell.filesShell.viewerPlaceholder": "Подробный рендер изменений будет добавлен на следующем этапе.",
   "instanceShell.filesShell.viewerEmpty": "Файл не выбран.",
+  "instanceShell.filesShell.listEmpty": "В этой папке нет файлов.",
+  "instanceShell.filesShell.search.placeholder": "Фильтровать файлы в этой папке",
+  "instanceShell.filesShell.search.ariaLabel": "Фильтровать файлы в этой папке",
+  "instanceShell.filesShell.search.empty": "Совпадающих файлов нет.",
+  "instanceShell.filesShell.actions.copyPath": "Скопировать путь",
+  "instanceShell.filesShell.toast.copyPathSuccess": "Путь скопирован",
+  "instanceShell.filesShell.toast.copyPathError": "Не удалось скопировать путь",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",
