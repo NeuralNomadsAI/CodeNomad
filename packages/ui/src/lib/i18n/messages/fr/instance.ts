@@ -155,6 +155,10 @@ export const instanceMessages = {
   "instanceShell.filesShell.actions.copyPath": "Copier le chemin",
   "instanceShell.filesShell.toast.copyPathSuccess": "Chemin copié",
   "instanceShell.filesShell.toast.copyPathError": "Impossible de copier le chemin",
+  "instanceShell.filesShell.previewMarkdown": "Aperçu Markdown",
+  "instanceShell.filesShell.showSource": "Afficher la source",
+  "instanceShell.filesShell.enableWordWrap": "Activer le retour à la ligne",
+  "instanceShell.filesShell.disableWordWrap": "Désactiver le retour à la ligne",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

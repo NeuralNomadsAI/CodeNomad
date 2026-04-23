@@ -1,15 +1,22 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
-import { Copy, RefreshCw, Save, Search } from "lucide-solid"
+import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
 
 import SplitFilePanel from "../components/SplitFilePanel"
+import { Markdown } from "../../../../markdown"
 import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
+import { useTheme } from "../../../../../lib/theme"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
 )
+
+function isMarkdownPath(path: string | null | undefined): boolean {
+  if (!path) return false
+  return /\.(md|markdown|mdown|mkdn|mdx)$/i.test(path)
+}
 
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -45,6 +52,9 @@ interface FilesTabProps {
 
 const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
+  const { isDark } = useTheme()
+  const [wordWrap, setWordWrap] = createSignal<"on" | "off">("off")
+  const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
 
   createEffect(() => {
     props.browserPath()
@@ -78,6 +88,14 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   const listEmptyMessage = () =>
     normalizedQuery() ? props.t("instanceShell.filesShell.search.empty") : props.t("instanceShell.filesShell.listEmpty")
 
+  const selectedMarkdownFile = createMemo(() => isMarkdownPath(props.browserSelectedPath()))
+  const showingMarkdownPreview = createMemo(() => selectedMarkdownFile() && markdownPreviewEnabled())
+
+  createEffect(() => {
+    if (!selectedMarkdownFile()) {
+      setMarkdownPreviewEnabled(false)
+    }
+  })
   const handleSave = () => {
     const content = props.browserSelectedContent()
     if (content !== undefined && content !== null) {
@@ -192,7 +210,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
     const renderViewer = () => (
       <div class="file-viewer-panel flex-1">
-        <div class="file-viewer-content file-viewer-content--monaco">
+        <div class={showingMarkdownPreview() ? "file-viewer-content" : "file-viewer-content file-viewer-content--monaco"}>
           <Show
             when={props.browserSelectedLoading()}
             fallback={
@@ -212,21 +230,29 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                     }
                   >
                     {(payload) => (
-                      <Suspense
+                      <Show
+                        when={showingMarkdownPreview()}
                         fallback={
-                          <div class="file-viewer-empty">
-                            <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
-                          </div>
+                          <Suspense
+                            fallback={
+                              <div class="file-viewer-empty">
+                                <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                              </div>
+                            }
+                          >
+                            <LazyMonacoFileViewer
+                              scopeKey={props.scopeKey()}
+                              path={payload().path}
+                              content={payload().content}
+                              wordWrap={wordWrap()}
+                              onSave={props.onSave}
+                              onContentChange={props.onContentChange}
+                            />
+                          </Suspense>
                         }
                       >
-                        <LazyMonacoFileViewer
-                          scopeKey={props.scopeKey()}
-                          path={payload().path}
-                          content={payload().content}
-                          onSave={props.onSave}
-                          onContentChange={props.onContentChange}
-                        />
-                      </Suspense>
+                        <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} />
+                      </Show>
                     )}
                   </Show>
                 }
@@ -264,11 +290,31 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             </div>
             <button
               type="button"
+              class={`file-viewer-toolbar-button${showingMarkdownPreview() ? " active" : ""}`}
+              disabled={!selectedMarkdownFile()}
+              style={{ "margin-inline-start": "auto" }}
+              onClick={() => selectedMarkdownFile() && setMarkdownPreviewEnabled((prev) => !prev)}
+            >
+              {showingMarkdownPreview()
+                ? props.t("instanceShell.filesShell.showSource")
+                : props.t("instanceShell.filesShell.previewMarkdown")}
+            </button>
+            <button
+              type="button"
+              class={`file-viewer-toolbar-icon-button${wordWrap() === "on" ? " active" : ""}`}
+              title={wordWrap() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+              aria-label={wordWrap() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+              disabled={showingMarkdownPreview()}
+              onClick={() => setWordWrap((prev) => (prev === "on" ? "off" : "on"))}
+            >
+              <WrapText class="h-4 w-4" />
+            </button>
+            <button
+              type="button"
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
               aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
               disabled={props.browserSelectedSaving() || !props.browserSelectedDirty()}
-              style={{ "margin-inline-start": "auto" }}
               onClick={handleSave}
             >
               <Show when={props.browserSelectedSaving()} fallback={<Save class="h-4 w-4" />}>

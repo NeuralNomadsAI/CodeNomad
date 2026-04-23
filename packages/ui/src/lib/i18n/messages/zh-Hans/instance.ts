@@ -155,6 +155,10 @@ export const instanceMessages = {
   "instanceShell.filesShell.actions.copyPath": "复制路径",
   "instanceShell.filesShell.toast.copyPathSuccess": "路径已复制",
   "instanceShell.filesShell.toast.copyPathError": "无法复制路径",
+  "instanceShell.filesShell.previewMarkdown": "Markdown 预览",
+  "instanceShell.filesShell.showSource": "显示源码",
+  "instanceShell.filesShell.enableWordWrap": "启用自动换行",
+  "instanceShell.filesShell.disableWordWrap": "禁用自动换行",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",

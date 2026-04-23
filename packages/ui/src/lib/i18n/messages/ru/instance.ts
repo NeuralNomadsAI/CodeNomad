@@ -155,6 +155,10 @@ export const instanceMessages = {
   "instanceShell.filesShell.actions.copyPath": "Скопировать путь",
   "instanceShell.filesShell.toast.copyPathSuccess": "Путь скопирован",
   "instanceShell.filesShell.toast.copyPathError": "Не удалось скопировать путь",
+  "instanceShell.filesShell.previewMarkdown": "Предпросмотр Markdown",
+  "instanceShell.filesShell.showSource": "Показать исходник",
+  "instanceShell.filesShell.enableWordWrap": "Включить перенос строк",
+  "instanceShell.filesShell.disableWordWrap": "Отключить перенос строк",
 
   "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
   "instanceShell.plan.empty": "Пока ничего не запланировано.",
