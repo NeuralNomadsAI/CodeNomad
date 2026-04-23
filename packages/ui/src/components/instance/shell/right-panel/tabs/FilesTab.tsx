@@ -15,7 +15,7 @@ const LazyMonacoFileViewer = lazy(() =>
 
 function isMarkdownPath(path: string | null | undefined): boolean {
   if (!path) return false
-  return /\.(md|markdown|mdown|mkdn|mdx)$/i.test(path)
+  return /\.(md|markdown|mdown|mkdn)$/i.test(path)
 }
 
 interface FilesTabProps {
@@ -32,6 +32,7 @@ interface FilesTabProps {
   browserSelectedError: Accessor<string | null>
   browserSelectedDirty: Accessor<boolean>
   browserSelectedSaving: Accessor<boolean>
+  wordWrapMode: Accessor<"on" | "off">
 
   parentPath: Accessor<string | null>
   scopeKey: Accessor<string>
@@ -41,6 +42,7 @@ interface FilesTabProps {
   onRefresh: () => void
   onSave: (content: string) => void
   onContentChange: (content: string) => void
+  onWordWrapModeChange: (mode: "on" | "off") => void
 
   listOpen: Accessor<boolean>
   onToggleList: () => void
@@ -53,7 +55,6 @@ interface FilesTabProps {
 const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
   const { isDark } = useTheme()
-  const [wordWrap, setWordWrap] = createSignal<"on" | "off">("off")
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
 
   createEffect(() => {
@@ -244,14 +245,14 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                               scopeKey={props.scopeKey()}
                               path={payload().path}
                               content={payload().content}
-                              wordWrap={wordWrap()}
+                              wordWrap={props.wordWrapMode()}
                               onSave={props.onSave}
                               onContentChange={props.onContentChange}
                             />
                           </Suspense>
                         }
                       >
-                        <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} />
+                        <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} escapeRawHtml />
                       </Show>
                     )}
                   </Show>
@@ -301,11 +302,11 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             </button>
             <button
               type="button"
-              class={`file-viewer-toolbar-icon-button${wordWrap() === "on" ? " active" : ""}`}
-              title={wordWrap() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
-              aria-label={wordWrap() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+              class={`file-viewer-toolbar-icon-button${props.wordWrapMode() === "on" ? " active" : ""}`}
+              title={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+              aria-label={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
               disabled={showingMarkdownPreview()}
-              onClick={() => setWordWrap((prev) => (prev === "on" ? "off" : "on"))}
+              onClick={() => props.onWordWrapModeChange(props.wordWrapMode() === "on" ? "off" : "on")}
             >
               <WrapText class="h-4 w-4" />
             </button>

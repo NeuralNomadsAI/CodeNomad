@@ -42,6 +42,7 @@ import {
   RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY,
+  RIGHT_PANEL_FILES_WORD_WRAP_KEY,
   RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY,
@@ -130,6 +131,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   )
   const [diffWordWrapMode, setDiffWordWrapMode] = createSignal<DiffWordWrapMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, ["on", "off"] as const) ?? "on",
+  )
+  const [filesWordWrapMode, setFilesWordWrapMode] = createSignal<DiffWordWrapMode>(
+    readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) ?? "off",
   )
 
   const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
@@ -252,6 +256,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RIGHT_PANEL_FILES_WORD_WRAP_KEY, filesWordWrapMode())
   })
 
   const clampSplitWidth = (value: number) => {
@@ -912,6 +921,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedError={browserSelectedError}
               browserSelectedDirty={browserSelectedDirty}
               browserSelectedSaving={browserSelectedSaving}
+              wordWrapMode={filesWordWrapMode}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
@@ -919,6 +929,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onRefresh={() => void refreshFilesTab()}
               onSave={(content: string) => void saveBrowserFile(content)}
               onContentChange={(content: string) => handleBrowserFileChange(content)}
+              onWordWrapModeChange={setFilesWordWrapMode}
               listOpen={filesListOpen}
               onToggleList={toggleFilesList}
               splitWidth={filesSplitWidth}
