@@ -152,7 +152,7 @@ export interface FileSystemEntry {
 }
 
 export type FileSystemScope = "restricted" | "unrestricted"
-export type FileSystemPathKind = "relative" | "absolute" | "drives"
+export type FileSystemPathKind = "relative" | "absolute" | "drives" | "roots"
 
 export interface FileSystemListingMetadata {
   scope: FileSystemScope
@@ -196,6 +196,7 @@ export interface FileSystemCreateFolderResponse {
 }
 
 export const WINDOWS_DRIVES_ROOT = "__drives__"
+export const MULTI_ROOTS_ROOT = "__roots__"
 
 export interface WorkspaceFileResponse {
   workspaceId: string

@@ -6,11 +6,20 @@ import {
   FileSystemEntry,
   FileSystemListResponse,
   FileSystemListingMetadata,
+  MULTI_ROOTS_ROOT,
   WINDOWS_DRIVES_ROOT,
 } from "../api-types"
 
 interface FileSystemBrowserOptions {
   rootDir: string
+  /**
+   * Optional list of additional root directories. When set with 2+ entries,
+   * the browser operates in "multi-root" mode: the top-level listing is a
+   * virtual view of these roots, and every absolute path must fall under one
+   * of them. Single-root behaviour is strictly unchanged when this is omitted
+   * or has fewer than 2 entries.
+   */
+  rootDirs?: string[]
   unrestricted?: boolean
 }
 
@@ -24,12 +33,25 @@ const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCh
 
 export class FileSystemBrowser {
   private readonly root: string
+  private readonly roots: string[]
+  private readonly multiRoot: boolean
   private readonly unrestricted: boolean
   private readonly homeDir: string
   private readonly isWindows: boolean
 
   constructor(options: FileSystemBrowserOptions) {
     this.root = path.resolve(options.rootDir)
+    const extra = (options.rootDirs ?? []).map((entry) => path.resolve(entry))
+    const combined = [this.root, ...extra]
+    // Deduplicate (case-insensitive on Windows) while preserving order.
+    const seen = new Set<string>()
+    this.roots = combined.filter((entry) => {
+      const key = process.platform === "win32" ? entry.toLowerCase() : entry
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    this.multiRoot = this.roots.length > 1
     this.unrestricted = Boolean(options.unrestricted)
     this.homeDir = os.homedir()
     this.isWindows = process.platform === "win32"
@@ -54,6 +76,9 @@ export class FileSystemBrowser {
     if (this.unrestricted) {
       return this.listUnrestricted(targetPath, includeFiles)
     }
+    if (this.multiRoot) {
+      return this.listMultiRoot(targetPath, includeFiles)
+    }
     return this.listRestrictedWithMetadata(targetPath, includeFiles)
   }
 
@@ -67,6 +92,19 @@ export class FileSystemBrowser {
       }
       this.assertDirectoryExists(resolvedParent)
       const absolutePath = this.resolveAbsoluteChild(resolvedParent, name)
+      fs.mkdirSync(absolutePath)
+      return { path: absolutePath, absolutePath }
+    }
+
+    if (this.multiRoot) {
+      const resolvedParent = this.resolveMultiRootPath(parentPath)
+      if (resolvedParent === MULTI_ROOTS_ROOT) {
+        throw new Error("Cannot create folders at the workspace roots view")
+      }
+      this.assertWithinAnyRoot(resolvedParent)
+      this.assertDirectoryExists(resolvedParent)
+      const absolutePath = this.resolveAbsoluteChild(resolvedParent, name)
+      this.assertWithinAnyRoot(absolutePath)
       fs.mkdirSync(absolutePath)
       return { path: absolutePath, absolutePath }
     }
@@ -145,6 +183,106 @@ export class FileSystemBrowser {
     }
 
     return { entries, metadata }
+  }
+
+  private listMultiRoot(targetPath: string | undefined, includeFiles: boolean): FileSystemListResponse {
+    const resolvedPath = this.resolveMultiRootPath(targetPath)
+
+    if (resolvedPath === MULTI_ROOTS_ROOT) {
+      return this.listRootsView()
+    }
+
+    this.assertWithinAnyRoot(resolvedPath)
+
+    const entries = this.readDirectoryEntries(resolvedPath, {
+      includeFiles,
+      formatPath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
+      formatAbsolutePath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
+    })
+
+    const parentPath = this.getMultiRootParent(resolvedPath)
+
+    const metadata: FileSystemListingMetadata = {
+      scope: "restricted",
+      currentPath: resolvedPath,
+      parentPath,
+      rootPath: this.root,
+      homePath: this.homeDir,
+      displayPath: resolvedPath,
+      pathKind: "absolute",
+    }
+
+    return { entries, metadata }
+  }
+
+  private listRootsView(): FileSystemListResponse {
+    const entries: FileSystemEntry[] = this.roots.map((rootPath) => ({
+      name: path.basename(rootPath) || rootPath,
+      path: rootPath,
+      absolutePath: rootPath,
+      type: "directory",
+    }))
+
+    const metadata: FileSystemListingMetadata = {
+      scope: "restricted",
+      currentPath: MULTI_ROOTS_ROOT,
+      parentPath: undefined,
+      rootPath: this.root,
+      homePath: this.homeDir,
+      displayPath: "Workspace roots",
+      pathKind: "roots",
+    }
+
+    return { entries, metadata }
+  }
+
+  private resolveMultiRootPath(input: string | undefined): string {
+    if (!input || input === "." || input === "./" || input === MULTI_ROOTS_ROOT) {
+      return MULTI_ROOTS_ROOT
+    }
+    if (this.isWindows) {
+      const normalized = path.win32.normalize(input)
+      if (/^[a-zA-Z]:/.test(normalized) || normalized.startsWith("\\\\")) {
+        return normalized
+      }
+      // Relative input: interpret against the primary root.
+      return path.win32.resolve(this.root, normalized)
+    }
+    if (input.startsWith("/")) {
+      return path.posix.normalize(input)
+    }
+    return path.posix.resolve(this.root, input)
+  }
+
+  private isPathWithinRoot(absolutePath: string, rootPath: string): boolean {
+    if (absolutePath === rootPath) return true
+    const rel = path.relative(rootPath, absolutePath)
+    if (!rel || rel === "") return true
+    if (rel.startsWith("..")) return false
+    if (path.isAbsolute(rel)) return false
+    return true
+  }
+
+  private findContainingRoot(absolutePath: string): string | undefined {
+    return this.roots.find((rootPath) => this.isPathWithinRoot(absolutePath, rootPath))
+  }
+
+  private assertWithinAnyRoot(absolutePath: string) {
+    if (!this.findContainingRoot(absolutePath)) {
+      throw new Error("Access outside of configured workspace roots is not allowed")
+    }
+  }
+
+  private getMultiRootParent(currentPath: string): string | undefined {
+    // If we are exactly at one of the configured roots, parent is the virtual roots view.
+    if (this.roots.some((rootPath) => rootPath === currentPath)) {
+      return MULTI_ROOTS_ROOT
+    }
+    const parent = this.isWindows ? path.win32.dirname(currentPath) : path.posix.dirname(currentPath)
+    if (parent === currentPath) {
+      return MULTI_ROOTS_ROOT
+    }
+    return parent
   }
 
   private listWindowsDrives(): FileSystemListResponse {

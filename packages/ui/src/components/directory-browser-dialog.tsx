@@ -60,7 +60,7 @@ function resolveAbsolutePath(root: string, relativePath: string) {
 }
 
 function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null) {
-  if (!metadata || metadata.pathKind === "drives") {
+  if (!metadata || metadata.pathKind === "drives" || metadata.pathKind === "roots") {
     return ""
   }
   if (metadata.pathKind === "relative") {
@@ -314,7 +314,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     if (creatingFolder()) return
     const target = pathInput().trim()
     const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
-    if (!metadata || metadata.pathKind === "drives") {
+    if (!metadata || metadata.pathKind === "drives" || metadata.pathKind === "roots") {
       return
     }
     setPathInputDirty(false)
