@@ -176,6 +176,14 @@ function parseCliOptions(argv: string[]): CliOptions {
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
 
+  for (const entry of resolvedRootDirs) {
+    if (!path.isAbsolute(entry)) {
+      throw new InvalidArgumentError(
+        `--workspace-roots entries must be absolute paths; received "${entry}"`,
+      )
+    }
+  }
+
   const normalizedHost = resolveHost(parsed.host)
 
   const autoUpdateString = (parsed.uiAutoUpdate ?? "true").trim().toLowerCase()

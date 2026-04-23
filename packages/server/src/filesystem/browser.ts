@@ -216,12 +216,24 @@ export class FileSystemBrowser {
   }
 
   private listRootsView(): FileSystemListResponse {
-    const entries: FileSystemEntry[] = this.roots.map((rootPath) => ({
-      name: path.basename(rootPath) || rootPath,
-      path: rootPath,
-      absolutePath: rootPath,
-      type: "directory",
-    }))
+    // Disambiguate labels only when two or more configured roots share the same basename.
+    // Single-basename cases keep the short label; colliding ones fall back to the full path.
+    const basenameCounts = new Map<string, number>()
+    for (const rootPath of this.roots) {
+      const base = path.basename(rootPath) || rootPath
+      basenameCounts.set(base, (basenameCounts.get(base) ?? 0) + 1)
+    }
+
+    const entries: FileSystemEntry[] = this.roots.map((rootPath) => {
+      const base = path.basename(rootPath) || rootPath
+      const collides = (basenameCounts.get(base) ?? 0) > 1
+      return {
+        name: collides ? rootPath : base,
+        path: rootPath,
+        absolutePath: rootPath,
+        type: "directory",
+      }
+    })
 
     const metadata: FileSystemListingMetadata = {
       scope: "restricted",

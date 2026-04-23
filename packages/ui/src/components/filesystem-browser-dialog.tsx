@@ -9,23 +9,31 @@ const log = getLogger("actions")
 
 const MAX_RESULTS = 200
 
+function isAbsolutePathLike(input: string): boolean {
+  return input.startsWith("/") || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")
+}
+
 function normalizeEntryPath(path: string | undefined): string {
   if (!path || path === "." || path === "./") {
     return "."
+  }
+  // Preserve absolute paths as-is (POSIX "/...", Windows "C:\..." or UNC "\\...").
+  // The server accepts absolute paths for unrestricted and multi-root listings,
+  // and stripping the leading "/" would make it resolve as relative to the root.
+  if (isAbsolutePathLike(path)) {
+    // Only collapse duplicate slashes in POSIX absolute paths; leave Windows
+    // and UNC separators untouched so the server can round-trip them.
+    if (path.startsWith("/")) {
+      return path.replace(/\/+/g, "/")
+    }
+    return path
   }
   let cleaned = path.replace(/\\/g, "/")
   if (cleaned.startsWith("./")) {
     cleaned = cleaned.replace(/^\.\/+/, "")
   }
-  if (cleaned.startsWith("/")) {
-    cleaned = cleaned.replace(/^\/+/, "")
-  }
   cleaned = cleaned.replace(/\/+/g, "/")
   return cleaned === "" ? "." : cleaned
-}
-
-function isAbsolutePathLike(input: string): boolean {
-  return input.startsWith("/") || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")
 }
 
 function resolveAbsolutePath(root: string, relativePath: string): string {
