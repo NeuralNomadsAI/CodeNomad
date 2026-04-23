@@ -17,6 +17,7 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
+import { formatElapsedClock, getMessageStartedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
 
 function DeleteUpToIcon() {
   return (
@@ -548,6 +549,7 @@ type ReasoningDisplayItem = {
   key: string
   part: ClientPart
   messageInfo?: MessageInfo
+  durationMs?: number
   showAgentMeta?: boolean
   defaultExpanded: boolean
   messageId: string
@@ -769,6 +771,7 @@ export default function MessageBlock(props: MessageBlockProps) {
             key,
             part,
             messageInfo: info,
+            durationMs: inferReasoningDurationMs(orderedParts, part, info, current.status),
             showAgentMeta,
             defaultExpanded: props.thinkingDefaultExpanded(),
             messageId: current.id,
@@ -913,6 +916,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                   <ReasoningCard
                     part={(item() as ReasoningDisplayItem).part}
                     messageInfo={(item() as ReasoningDisplayItem).messageInfo}
+                    durationMs={(item() as ReasoningDisplayItem).durationMs}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as ReasoningDisplayItem).messageId}
@@ -1298,6 +1302,7 @@ function formatCostValue(value: number) {
 interface ReasoningCardProps {
   part: ClientPart
   messageInfo?: MessageInfo
+  durationMs?: number
   instanceId: string
   sessionId: string
   messageId: string
@@ -1391,10 +1396,12 @@ function ReasoningCard(props: ReasoningCardProps) {
   })
 
   const timestamp = () => {
-    const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
+    const value = getPartStartedAt(props.part) ?? getMessageStartedAt(props.messageInfo) ?? Date.now()
     const date = new Date(value)
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   }
+
+  const durationLabel = () => formatElapsedClock(props.durationMs)
 
   const agentIdentifier = () => {
     const info = props.messageInfo
@@ -1590,7 +1597,12 @@ function ReasoningCard(props: ReasoningCardProps) {
             </button>
           </Show>
 
-          <span class="message-reasoning-time">{timestamp()}</span>
+          <div class="message-reasoning-timing">
+            <span class="message-reasoning-time">{timestamp()}</span>
+            <Show when={durationLabel()}>
+              {(value) => <span class="message-reasoning-duration">{value()}</span>}
+            </Show>
+          </div>
         </div>
       </div>
 

@@ -117,6 +117,17 @@
   @apply text-[11px] text-[var(--text-muted)];
 }
 
+.message-meta-timing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.message-duration {
+  @apply text-[11px] text-[var(--text-muted)];
+  font-variant-numeric: tabular-nums;
+}
+
 .assistant-message {
   /* gap: 0.25rem; */
   padding: 0.6rem 0.65rem;
@@ -513,6 +524,18 @@
 .message-reasoning-time {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.message-reasoning-timing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.message-reasoning-duration {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .message-reasoning-expanded {
