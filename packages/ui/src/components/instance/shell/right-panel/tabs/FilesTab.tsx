@@ -193,7 +193,16 @@ const FilesTab: Component<FilesTabProps> = (props) => {
           <div class="p-3 text-xs text-secondary">{props.t("instanceInfo.loading")}</div>
         </Show>
 
-        <Show when={!initialListLoading && filtered.length > 0} fallback={!initialListLoading ? <div class="p-3 text-xs text-secondary">{listEmptyMessage()}</div> : undefined}>
+        <Show
+          when={!props.browserError() && !initialListLoading && filtered.length > 0}
+          fallback={
+            !initialListLoading
+              ? props.browserError()
+                ? <div class="p-3 text-xs text-error">{props.browserError()}</div>
+                : <div class="p-3 text-xs text-secondary">{listEmptyMessage()}</div>
+              : undefined
+          }
+        >
           <For each={filtered}>
           {(item) => (
             <div
