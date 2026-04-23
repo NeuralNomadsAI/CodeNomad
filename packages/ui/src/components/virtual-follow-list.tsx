@@ -312,6 +312,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function scrollToBottom(immediate = true, options?: { suppressAutoAnchor?: boolean }) {
     const handle = virtuaHandle()
     if (!handle) return
+    clearPendingUpwardBreak()
     if (options?.suppressAutoAnchor ?? !immediate) {
       suppressAutoScrollOnce = true
     }
@@ -420,7 +421,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         scrollToBottom(true)
       }
     },
-    setAutoScroll: (enabled) => setAutoScroll(Boolean(enabled)),
+    setAutoScroll: (enabled) => {
+      const nextEnabled = Boolean(enabled)
+      if (nextEnabled) {
+        clearPendingUpwardBreak()
+      }
+      setAutoScroll(nextEnabled)
+    },
     getAutoScroll: () => autoScroll(),
     getScrollElement: () => scrollElement(),
     getShellElement: () => shellElement(),
