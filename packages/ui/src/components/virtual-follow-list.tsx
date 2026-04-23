@@ -190,6 +190,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     userScrollIntentUntil = now + USER_SCROLL_INTENT_WINDOW_MS
     if (direction) {
       lastUserScrollIntentDirection = direction
+      if (direction === "up" && autoScroll() && activeHoldTargetKey() === null) {
+        // Streaming renders can re-pin before the scroll event is observed.
+        // Break follow immediately on an explicit upward user intent.
+        setAutoScroll(false)
+        lastObservedPinnedAtBottom = false
+        suppressAutoScrollOnce = true
+      }
     }
   }
 
