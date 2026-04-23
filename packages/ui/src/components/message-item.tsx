@@ -15,8 +15,14 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { agents, sessions, updateSessionAgent } from "../stores/sessions"
 
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+function extractMentionTokens(text: string): string[] {
+  const matches = text.matchAll(/@(\S+)/g)
+  const tokens: string[] = []
+  for (const match of matches) {
+    const value = match[1]?.replace(/[),.:;!?\]\}"']+$/g, "")
+    if (value) tokens.push(value)
+  }
+  return tokens
 }
 
 function DeleteUpToIcon() {
@@ -313,15 +319,15 @@ export default function MessageItem(props: MessageItemProps) {
     if (!isUser()) return []
     const text = getRawContent()
     if (!text) return []
+    const mentionTokens = new Set(extractMentionTokens(text).map((token) => token.toLowerCase()))
     const availableAgents = agents().get(props.instanceId) || []
     const currentSessionAgent = sessions().get(props.instanceId)?.get(props.sessionId)?.agent || ""
     const matches: string[] = []
 
     for (const agent of availableAgents) {
       const name = agent?.name?.trim()
-      if (!name || name === currentSessionAgent) continue
-      const pattern = new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=\\s|$)`, "i")
-      if (!pattern.test(text)) continue
+      if (!name || agent.hidden || name === currentSessionAgent) continue
+      if (!mentionTokens.has(name.toLowerCase())) continue
       if (!matches.includes(name)) {
         matches.push(name)
       }
