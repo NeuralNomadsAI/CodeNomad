@@ -173,6 +173,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let detachScrollIntentListeners: (() => void) | undefined
   let lastResetKey: string | number | undefined
   let suppressAutoScrollOnce = false
+  let pendingUpwardBreakUntil = 0
   let pendingInitialScroll = true
   let lastObservedScrollOffset = 0
   let lastObservedPinnedAtBottom = false
@@ -192,9 +193,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       lastUserScrollIntentDirection = direction
       if (direction === "up" && autoScroll() && activeHoldTargetKey() === null) {
         // Streaming renders can re-pin before the scroll event is observed.
-        // Break follow immediately on an explicit upward user intent.
-        setAutoScroll(false)
-        lastObservedPinnedAtBottom = false
+        // Suppress the next automatic bottom pin, but only break follow once a
+        // real upward movement away from bottom is confirmed.
+        pendingUpwardBreakUntil = now + USER_SCROLL_INTENT_WINDOW_MS
         suppressAutoScrollOnce = true
       }
     }
@@ -202,6 +203,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function hasUserScrollIntent() {
     return performance.now() <= userScrollIntentUntil
+  }
+
+  function hasPendingUpwardBreak() {
+    return performance.now() <= pendingUpwardBreakUntil
+  }
+
+  function clearPendingUpwardBreak() {
+    pendingUpwardBreakUntil = 0
   }
 
   function clearAutoPinHold(options?: { resumeBottom?: boolean }) {
@@ -276,8 +285,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // scrollbar). If follow mode stays enabled, the next render notification
     // snaps the list straight back to bottom. A real upward viewport move away
     // from bottom should always break follow unless a hold target is active.
-    if (wasPinnedAtBottom && scrolledUp && autoScroll() && !atBottom && activeHoldTargetKey() === null) {
+    if (wasPinnedAtBottom && scrolledUp && (autoScroll() || hasPendingUpwardBreak()) && !atBottom && activeHoldTargetKey() === null) {
       setAutoScroll(false)
+      clearPendingUpwardBreak()
       lastObservedPinnedAtBottom = false
       return
     }
@@ -290,6 +300,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       } else if (!atBottom && autoScroll()) {
         setAutoScroll(false)
       }
+    }
+
+    if (atBottom && !hasUserScrollIntent()) {
+      clearPendingUpwardBreak()
     }
 
     lastObservedPinnedAtBottom = autoScroll() && atBottom
@@ -401,6 +415,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     notifyContentRendered: () => {
       updateAutoPinHold()
       if (activeHoldTargetKey() !== null) return
+      if (hasPendingUpwardBreak()) return
       if (autoScroll() && !effectiveSuspendAutoPinToBottom()) {
         scrollToBottom(true)
       }
@@ -418,6 +433,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     itemElements.clear()
     setActiveHoldTargetKey(null)
     setDidTriggerHoldForCurrentTarget(false)
+    clearPendingUpwardBreak()
     lastObservedScrollOffset = 0
     lastObservedPinnedAtBottom = false
   }))
@@ -433,7 +449,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   // Handle autoScroll (Follow) on items change
   createEffect(on(() => props.items().length, (len, prevLen) => {
-    if (len > (prevLen ?? 0) && autoScroll() && !effectiveSuspendAutoPinToBottom() && !suppressAutoScrollOnce) {
+    if (len > (prevLen ?? 0) && autoScroll() && !effectiveSuspendAutoPinToBottom() && !suppressAutoScrollOnce && !hasPendingUpwardBreak()) {
       requestAnimationFrame(() => scrollToBottom(true))
     }
     suppressAutoScrollOnce = false
@@ -441,7 +457,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   // Handle followToken change
   createEffect(on(() => props.followToken?.(), () => {
-    if (autoScroll() && !effectiveSuspendAutoPinToBottom()) {
+    if (autoScroll() && !effectiveSuspendAutoPinToBottom() && !hasPendingUpwardBreak()) {
       scrollToBottom(true)
     }
   }, { defer: true }))
