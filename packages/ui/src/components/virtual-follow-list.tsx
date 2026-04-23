@@ -295,8 +295,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // Sync autoScroll state based on scroll position if it was a user scroll
     if (hasUserScrollIntent()) {
       clearAutoPinHold()
-      if (atBottom && !autoScroll()) {
-        setAutoScroll(true)
+      if (atBottom) {
+        clearPendingUpwardBreak()
+        if (!autoScroll()) {
+          setAutoScroll(true)
+        }
       } else if (!atBottom && autoScroll()) {
         setAutoScroll(false)
       }
