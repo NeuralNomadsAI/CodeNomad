@@ -20,6 +20,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.subtitle": "选择你电脑上的任意文件夹",
   "folderSelection.browse.button": "浏览文件夹",
   "folderSelection.browse.buttonOpening": "正在打开...",
+  "folderSelection.browse.enterPath": "手动输入路径",
   "folderSelection.actions.title": "打开文件夹或连接服务器",
   "folderSelection.actions.subtitle": "打开本地文件夹或连接到 CodeNomad 服务器",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",

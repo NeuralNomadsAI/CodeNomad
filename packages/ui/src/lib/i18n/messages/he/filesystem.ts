@@ -2,6 +2,8 @@ export const filesystemMessages = {
   "directoryBrowser.defaultDescription": "עיון בתיקיות תחת שורש סביבת העבודה המוגדר.",
   "directoryBrowser.close": "סגור",
   "directoryBrowser.currentFolder": "תיקייה נוכחית",
+  "directoryBrowser.currentFolder.inputAriaLabel": "נתיב התיקייה",
+  "directoryBrowser.currentFolder.inputPlaceholder": "הקלד או הדבק נתיב מוחלט והקש Enter",
   "directoryBrowser.selectCurrent": "בחר נוכחית",
   "directoryBrowser.newFolder": "תיקייה חדשה",
   "directoryBrowser.creating": "יוצר…",

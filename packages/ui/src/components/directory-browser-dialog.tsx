@@ -403,6 +403,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                         }
                       }}
                       spellcheck={false}
+                      placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
+                      aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
                       class="selector-input directory-browser-current-path"
                     />
                   </div>

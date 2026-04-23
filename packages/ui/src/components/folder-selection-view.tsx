@@ -400,6 +400,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsFolderBrowserOpen(false)
     handleFolderSelect(path)
   }
+
+  function handleEnterPathManually() {
+    if (isLoading()) return
+    setFocusMode("new")
+    setIsFolderBrowserOpen(true)
+  }
  
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
@@ -869,6 +875,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       </span>
                     </div>
                     <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleEnterPathManually()}
+                    disabled={props.isLoading}
+                    class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 self-center disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {t("folderSelection.browse.enterPath")}
                   </button>
 
                   <button

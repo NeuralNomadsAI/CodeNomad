@@ -20,6 +20,7 @@ export const folderSelectionMessages = {
   "folderSelection.browse.subtitle": "בחר כל תיקייה במחשב שלך",
   "folderSelection.browse.button": "עיון בתיקיות",
   "folderSelection.browse.buttonOpening": "פותח...",
+  "folderSelection.browse.enterPath": "הזן נתיב ידנית",
   "folderSelection.actions.title": "פתח תיקייה או התחבר לשרת",
   "folderSelection.actions.subtitle": "פתח תיקייה מקומית או התחבר לשרת CodeNomad",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
