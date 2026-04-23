@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, onCleanup, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
 import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
@@ -56,6 +56,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
   const { isDark } = useTheme()
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = createSignal(false)
+  let markdownPreviewRef: HTMLDivElement | undefined
 
   createEffect(() => {
     props.browserPath()
@@ -115,16 +116,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
 
   createEffect(() => {
     if (!showingMarkdownPreview()) return
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return
-      if (props.browserSelectedSaving() || !props.browserSelectedDirty()) return
-      event.preventDefault()
-      handleSave()
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    onCleanup(() => window.removeEventListener("keydown", handleKeyDown))
+    requestAnimationFrame(() => markdownPreviewRef?.focus())
   })
 
   const FileList: Component = () => (
@@ -215,6 +207,13 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     </>
   )
 
+  const handleMarkdownPreviewKeyDown = (event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return
+    if (props.browserSelectedSaving() || !props.browserSelectedDirty()) return
+    event.preventDefault()
+    handleSave()
+  }
+
   const renderContent = (): JSX.Element => {
     const headerDisplayedPath = () => props.browserSelectedPath() || props.browserPath()
 
@@ -266,7 +265,15 @@ const FilesTab: Component<FilesTabProps> = (props) => {
                           </Suspense>
                         }
                       >
-                        <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} escapeRawHtml />
+                        <div
+                          ref={markdownPreviewRef}
+                          class="h-full outline-none"
+                          tabIndex={0}
+                          onKeyDown={handleMarkdownPreviewKeyDown}
+                          onMouseDown={() => markdownPreviewRef?.focus()}
+                        >
+                          <Markdown part={{ type: "text", text: payload().content }} isDark={isDark()} escapeRawHtml />
+                        </div>
                       </Show>
                     )}
                   </Show>

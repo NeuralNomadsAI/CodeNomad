@@ -16,6 +16,128 @@ let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
 
+const ALLOWED_RAW_HTML_TAGS = new Set([
+  "a",
+  "blockquote",
+  "br",
+  "code",
+  "del",
+  "details",
+  "div",
+  "em",
+  "img",
+  "kbd",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+])
+
+const DROP_RAW_HTML_TAGS = new Set(["script", "style", "iframe", "object", "embed", "meta", "link"])
+
+function sanitizeUrlAttribute(tagName: string, attrName: string, value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  if (attrName === "src" && tagName === "img") {
+    if (/^(https?:|file:|data:image\/|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
+    return null
+  }
+
+  if (attrName === "href" && tagName === "a") {
+    if (/^(https?:|mailto:|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
+    return null
+  }
+
+  return null
+}
+
+function sanitizeRawHtmlFragment(html: string): string {
+  const decoded = decodeHtmlEntities(html)
+  if (typeof document === "undefined") {
+    return escapeHtml(decoded)
+  }
+
+  const template = document.createElement("template")
+  template.innerHTML = decoded
+
+  const sanitizeElement = (element: Element) => {
+    const tagName = element.tagName.toLowerCase()
+    if (DROP_RAW_HTML_TAGS.has(tagName)) {
+      element.remove()
+      return
+    }
+
+    if (!ALLOWED_RAW_HTML_TAGS.has(tagName)) {
+      element.replaceWith(...Array.from(element.childNodes))
+      return
+    }
+
+    for (const attr of Array.from(element.attributes)) {
+      const attrName = attr.name.toLowerCase()
+      if (attrName.startsWith("on") || attrName === "style") {
+        element.removeAttribute(attr.name)
+        continue
+      }
+
+      if (attrName === "href" || attrName === "src") {
+        const sanitized = sanitizeUrlAttribute(tagName, attrName, attr.value)
+        if (sanitized) {
+          element.setAttribute(attr.name, sanitized)
+          continue
+        }
+        element.removeAttribute(attr.name)
+        continue
+      }
+
+      if (
+        attrName === "alt" ||
+        attrName === "title" ||
+        attrName === "width" ||
+        attrName === "height" ||
+        attrName === "open" ||
+        attrName === "id" ||
+        attrName === "class" ||
+        attrName === "name" ||
+        attrName.startsWith("aria-") ||
+        attrName.startsWith("data-")
+      ) {
+        continue
+      }
+
+      element.removeAttribute(attr.name)
+    }
+
+    if (tagName === "a") {
+      element.setAttribute("target", "_blank")
+      element.setAttribute("rel", "noopener noreferrer")
+    }
+  }
+
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT)
+  const elements: Element[] = []
+  while (walker.nextNode()) {
+    elements.push(walker.currentNode as Element)
+  }
+  for (const element of elements.reverse()) {
+    sanitizeElement(element)
+  }
+
+  return template.innerHTML
+}
+
 // Track loaded languages and queue for on-demand loading
 const loadedLanguages = new Set<string>()
 const queuedLanguages = new Set<string>()
@@ -318,7 +440,7 @@ function setupRenderer(isDark: boolean) {
       return html
     }
 
-    return escapeHtml(decodeHtmlEntities(html))
+    return sanitizeRawHtmlFragment(html)
   }
 
   marked.use({ renderer })
