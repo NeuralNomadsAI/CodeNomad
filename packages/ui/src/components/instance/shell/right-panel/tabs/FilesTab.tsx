@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, onCleanup, type Accessor, type Component, type JSX } from "solid-js"
 import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
 import { Copy, RefreshCw, Save, Search, WrapText } from "lucide-solid"
@@ -112,6 +112,20 @@ const FilesTab: Component<FilesTabProps> = (props) => {
       variant: ok ? "success" : "error",
     })
   }
+
+  createEffect(() => {
+    if (!showingMarkdownPreview()) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return
+      if (props.browserSelectedSaving() || !props.browserSelectedDirty()) return
+      event.preventDefault()
+      handleSave()
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown))
+  })
 
   const FileList: Component = () => (
     <>
