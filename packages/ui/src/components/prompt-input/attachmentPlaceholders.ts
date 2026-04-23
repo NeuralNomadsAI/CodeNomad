@@ -1,3 +1,5 @@
+import type { Agent } from "../../types/session"
+
 export function formatPastedPlaceholder(value: string | number) {
   return `[pasted #${value}]`
 }
@@ -16,6 +18,36 @@ export function createImagePlaceholderRegex() {
 
 export function createMentionRegex() {
   return /@(\S+)/g
+}
+
+export function normalizeMentionToken(value: string) {
+  return value.replace(/[),.:;!?\]\}"']+$/g, "")
+}
+
+export function extractMentionTokens(text: string): string[] {
+  const matches = text.matchAll(createMentionRegex())
+  const tokens: string[] = []
+  for (const match of matches) {
+    const normalized = normalizeMentionToken(match[1] ?? "")
+    if (normalized) tokens.push(normalized)
+  }
+  return tokens
+}
+
+export function findMentionedVisibleAgents(text: string, availableAgents: Agent[], currentAgent: string): string[] {
+  const mentionTokens = new Set(extractMentionTokens(text).map((token) => token.toLowerCase()))
+  const matches: string[] = []
+
+  for (const agent of availableAgents) {
+    const name = agent?.name?.trim()
+    if (!name || agent.hidden || name === currentAgent) continue
+    if (!mentionTokens.has(name.toLowerCase())) continue
+    if (!matches.includes(name)) {
+      matches.push(name)
+    }
+  }
+
+  return matches
 }
 
 export const pastedDisplayCounterRegex = /pasted #(\d+)/i
