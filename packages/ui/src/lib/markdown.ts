@@ -25,6 +25,13 @@ const ALLOWED_RAW_HTML_TAGS = new Set([
   "details",
   "div",
   "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
   "img",
   "kbd",
   "li",
@@ -52,7 +59,7 @@ function sanitizeUrlAttribute(tagName: string, attrName: string, value: string):
   if (!trimmed) return null
 
   if (attrName === "src" && tagName === "img") {
-    if (/^(https?:|file:|data:image\/|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
+    if (/^(https?:|data:image\/|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
     return null
   }
 
