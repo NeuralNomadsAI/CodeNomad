@@ -84,6 +84,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
           return name.includes(normalizedQuery) || path.includes(normalizedQuery)
         })
       : sorted
+    const initialListLoading = props.browserLoading() && entriesValue === null
     const listEmptyMessage = () =>
       normalizedQuery ? props.t("instanceShell.filesShell.search.empty") : props.t("instanceShell.filesShell.listEmpty")
 
@@ -192,7 +193,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
           <div class="p-3 text-xs text-secondary">{props.t("instanceInfo.loading")}</div>
         </Show>
 
-        <Show when={filtered.length > 0} fallback={<div class="p-3 text-xs text-secondary">{listEmptyMessage()}</div>}>
+        <Show when={!initialListLoading && filtered.length > 0} fallback={!initialListLoading ? <div class="p-3 text-xs text-secondary">{listEmptyMessage()}</div> : undefined}>
           <For each={filtered}>
           {(item) => (
             <div
