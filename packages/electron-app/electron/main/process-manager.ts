@@ -2,13 +2,12 @@ import { spawn, spawnSync, type ChildProcess } from "child_process"
 import { app, utilityProcess, type UtilityProcess } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
-import { existsSync, readFileSync } from "fs"
-import os from "os"
+import { existsSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
+import { applyConfiguredPorts, readListeningModeFromConfig, resolveConfiguredPorts, type ListeningMode } from "./cli-config"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -18,7 +17,6 @@ const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
 
 type CliState = "starting" | "ready" | "error" | "stopped"
-type ListeningMode = "local" | "all"
 
 export interface CliStatus {
   state: CliState
@@ -48,73 +46,8 @@ interface CliEntryResolution {
 type ManagedChild = ChildProcess | UtilityProcess
 type ChildLaunchMode = "spawn" | "utility"
 
-const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
-
-function isYamlPath(filePath: string): boolean {
-  const lower = filePath.toLowerCase()
-  return lower.endsWith(".yaml") || lower.endsWith(".yml")
-}
-
-function isJsonPath(filePath: string): boolean {
-  return filePath.toLowerCase().endsWith(".json")
-}
-
-function resolveConfigPaths(raw?: string): { configYamlPath: string; legacyJsonPath: string } {
-  const target = raw && raw.trim().length > 0 ? raw.trim() : DEFAULT_CONFIG_PATH
-  const resolved = resolveConfigPath(target)
-
-  if (isYamlPath(resolved)) {
-    const baseDir = path.dirname(resolved)
-    return { configYamlPath: resolved, legacyJsonPath: path.join(baseDir, "config.json") }
-  }
-
-  if (isJsonPath(resolved)) {
-    const baseDir = path.dirname(resolved)
-    return { configYamlPath: path.join(baseDir, "config.yaml"), legacyJsonPath: resolved }
-  }
-
-  // Treat as directory.
-  return {
-    configYamlPath: path.join(resolved, "config.yaml"),
-    legacyJsonPath: path.join(resolved, "config.json"),
-  }
-}
-
-function resolveConfigPath(configPath?: string): string {
-  const target = configPath && configPath.trim().length > 0 ? configPath : DEFAULT_CONFIG_PATH
-  if (target.startsWith("~/")) {
-    return path.join(os.homedir(), target.slice(2))
-  }
-  return path.resolve(target)
-}
-
 function resolveHostForMode(mode: ListeningMode): string {
   return mode === "local" ? "127.0.0.1" : "0.0.0.0"
-}
-
-function readListeningModeFromConfig(): ListeningMode {
-  try {
-    const { configYamlPath, legacyJsonPath } = resolveConfigPaths(process.env.CLI_CONFIG)
-
-    let parsed: any = null
-    if (existsSync(configYamlPath)) {
-      const content = readFileSync(configYamlPath, "utf-8")
-      parsed = parseYaml(content)
-    } else if (existsSync(legacyJsonPath)) {
-      const content = readFileSync(legacyJsonPath, "utf-8")
-      parsed = JSON.parse(content)
-    } else {
-      return "local"
-    }
-
-    const mode = parsed?.server?.listeningMode ?? parsed?.preferences?.listeningMode
-    if (mode === "local" || mode === "all") {
-      return mode
-    }
-  } catch (error) {
-    console.warn("[cli] failed to read listening mode from config", error)
-  }
-  return "local"
 }
 
 export declare interface CliProcessManager {
@@ -554,6 +487,14 @@ export class CliProcessManager extends EventEmitter {
     } else {
       // Prod desktop: always keep loopback HTTP enabled.
       args.push("--https", "true", "--http", "true")
+
+      const [configuredHttpsPort, configuredHttpPort] = resolveConfiguredPorts()
+      applyConfiguredPorts(args, {
+        httpsPortEnv: process.env.CLI_HTTPS_PORT,
+        httpPortEnv: process.env.CLI_HTTP_PORT,
+        configuredHttpsPort,
+        configuredHttpPort,
+      })
     }
 
     if (options.dev) {
