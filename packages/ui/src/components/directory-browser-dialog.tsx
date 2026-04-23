@@ -38,6 +38,7 @@ interface DirectoryBrowserDialogProps {
   open: boolean
   title: string
   description?: string
+  initialPath?: string
   onSelect: (absolutePath: string) => void
   onClose: () => void
 }
@@ -125,7 +126,8 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   async function initialize() {
     setLoading(true)
     try {
-      await navigateTo()
+      const startPath = props.initialPath?.trim()
+      await navigateTo(startPath || undefined)
     } finally {
       setLoading(false)
     }
