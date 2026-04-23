@@ -13,6 +13,11 @@ import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
+import { agents, sessions, updateSessionAgent } from "../stores/sessions"
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
 
 function DeleteUpToIcon() {
   return (
@@ -45,6 +50,7 @@ export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const [switchingAgent, setSwitchingAgent] = createSignal<string | null>(null)
 
   type ImagePreviewState = {
     url: string
@@ -303,6 +309,27 @@ export default function MessageItem(props: MessageItemProps) {
 
   const canSpeakMessage = () => getRawContent().trim().length > 0 && speech.canUseSpeech()
 
+  const mentionedAgents = () => {
+    if (!isUser()) return []
+    const text = getRawContent()
+    if (!text) return []
+    const availableAgents = agents().get(props.instanceId) || []
+    const currentSessionAgent = sessions().get(props.instanceId)?.get(props.sessionId)?.agent || ""
+    const matches: string[] = []
+
+    for (const agent of availableAgents) {
+      const name = agent?.name?.trim()
+      if (!name || name === currentSessionAgent) continue
+      const pattern = new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=\\s|$)`, "i")
+      if (!pattern.test(text)) continue
+      if (!matches.includes(name)) {
+        matches.push(name)
+      }
+    }
+
+    return matches
+  }
+
   const handleCopy = async () => {
     const content = getRawContent()
     if (!content) return
@@ -335,6 +362,21 @@ export default function MessageItem(props: MessageItemProps) {
       await props.onDeleteMessagesUpTo(props.record.id)
     } finally {
       setDeletingUpTo(false)
+    }
+  }
+
+  const handleSwitchAgent = async (agent: string) => {
+    if (!agent || switchingAgent()) return
+    setSwitchingAgent(agent)
+    try {
+      await updateSessionAgent(props.instanceId, props.sessionId, agent)
+    } catch (error) {
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("messageItem.agentMention.switchToAgent", { agent }),
+        variant: "error",
+      })
+    } finally {
+      setSwitchingAgent(null)
     }
   }
 
@@ -652,6 +694,25 @@ export default function MessageItem(props: MessageItemProps) {
                   </div>
                 )
               }}
+            </For>
+          </div>
+        </Show>
+
+        <Show when={mentionedAgents().length > 0}>
+          <div class="message-attachments mt-1">
+            <For each={mentionedAgents()}>
+              {(agent) => (
+                <button
+                  type="button"
+                  class="attachment-chip"
+                  onClick={() => void handleSwitchAgent(agent)}
+                  disabled={switchingAgent() === agent}
+                  title={t("messageItem.agentMention.switchToAgent", { agent })}
+                  aria-label={t("messageItem.agentMention.switchToAgent", { agent })}
+                >
+                  {t("messageItem.agentMention.switchToAgent", { agent })}
+                </button>
+              )}
             </For>
           </div>
         </Show>

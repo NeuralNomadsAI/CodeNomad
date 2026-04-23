@@ -120,6 +120,7 @@ export const messagingMessages = {
   "messageItem.attachment.downloadAriaLabel": "下载 {name}",
   "messageItem.agentMeta.agentLabel": "智能体：{agent}",
   "messageItem.agentMeta.modelLabel": "模型：{model}",
+  "messageItem.agentMention.switchToAgent": "切换到 {agent}",
   "messageItem.errors.authenticationFallback": "认证错误",
   "messageItem.errors.outputLengthExceeded": "消息输出长度超限",
   "messageItem.errors.requestAborted": "请求已中止",

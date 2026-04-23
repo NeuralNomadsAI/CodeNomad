@@ -120,6 +120,7 @@ export const messagingMessages = {
   "messageItem.attachment.downloadAriaLabel": "Télécharger {name}",
   "messageItem.agentMeta.agentLabel": "Agent : {agent}",
   "messageItem.agentMeta.modelLabel": "Modèle : {model}",
+  "messageItem.agentMention.switchToAgent": "Basculer vers {agent}",
   "messageItem.errors.authenticationFallback": "Erreur d'authentification",
   "messageItem.errors.outputLengthExceeded": "Longueur de sortie du message dépassée",
   "messageItem.errors.requestAborted": "La requête a été annulée",

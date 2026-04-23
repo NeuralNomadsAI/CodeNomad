@@ -120,6 +120,7 @@ export const messagingMessages = {
   "messageItem.attachment.downloadAriaLabel": "Скачать {name}",
   "messageItem.agentMeta.agentLabel": "Агент: {agent}",
   "messageItem.agentMeta.modelLabel": "Модель: {model}",
+  "messageItem.agentMention.switchToAgent": "Переключиться на {agent}",
   "messageItem.errors.authenticationFallback": "Ошибка аутентификации",
   "messageItem.errors.outputLengthExceeded": "Превышена длина вывода сообщения",
   "messageItem.errors.requestAborted": "Запрос был прерван",

@@ -118,6 +118,7 @@ export const messagingMessages = {
   "messageItem.attachment.downloadAriaLabel": "הורד {name}",
   "messageItem.agentMeta.agentLabel": "סוכן: {agent}",
   "messageItem.agentMeta.modelLabel": "מודל: {model}",
+  "messageItem.agentMention.switchToAgent": "עבור אל {agent}",
   "messageItem.errors.authenticationFallback": "שגיאת אימות",
   "messageItem.errors.outputLengthExceeded": "אורך פלט ההודעה חרג מהמגבלה",
   "messageItem.errors.requestAborted": "הבקשה בוטלה",

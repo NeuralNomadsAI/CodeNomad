@@ -120,6 +120,7 @@ export const messagingMessages = {
   "messageItem.attachment.downloadAriaLabel": "{name} をダウンロード",
   "messageItem.agentMeta.agentLabel": "エージェント: {agent}",
   "messageItem.agentMeta.modelLabel": "モデル: {model}",
+  "messageItem.agentMention.switchToAgent": "{agent} に切り替え",
   "messageItem.errors.authenticationFallback": "認証エラー",
   "messageItem.errors.outputLengthExceeded": "メッセージ出力が長すぎます",
   "messageItem.errors.requestAborted": "リクエストが中断されました",
