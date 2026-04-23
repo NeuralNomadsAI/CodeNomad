@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { extractMentionTokens, findMentionedVisibleAgents } from "./attachmentPlaceholders"
+import { extractMentionTokens, findMentionedVisibleAgents } from "./attachmentPlaceholders.ts"
 
 describe("extractMentionTokens", () => {
   it("keeps punctuation-delimited mentions usable", () => {
