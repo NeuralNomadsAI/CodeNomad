@@ -24,17 +24,30 @@ function normalizeEntryPath(path: string | undefined): string {
   return cleaned === "" ? "." : cleaned
 }
 
+function isAbsolutePathLike(input: string): boolean {
+  return input.startsWith("/") || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")
+}
+
 function resolveAbsolutePath(root: string, relativePath: string): string {
-  if (!root) {
-    return relativePath
-  }
   if (!relativePath || relativePath === "." || relativePath === "./") {
     return root
+  }
+  if (isAbsolutePathLike(relativePath)) {
+    return relativePath
+  }
+  if (!root) {
+    return relativePath
   }
   const separator = root.includes("\\") ? "\\" : "/"
   const trimmedRoot = root.endsWith(separator) ? root : `${root}${separator}`
   const normalized = relativePath.replace(/[\\/]+/g, separator).replace(/^[\\/]+/, "")
   return `${trimmedRoot}${normalized}`
+}
+
+function entryAbsolutePath(root: string, entry: FileSystemEntry): string {
+  if (entry.absolutePath) return entry.absolutePath
+  if (isAbsolutePathLike(entry.path)) return entry.path
+  return resolveAbsolutePath(root, entry.path)
 }
 
 
@@ -158,6 +171,9 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
     if (!metadata) {
       return rootPath()
     }
+    if (metadata.pathKind === "drives" || metadata.pathKind === "roots") {
+      return ""
+    }
     if (metadata.pathKind === "relative") {
       return resolveAbsolutePath(rootPath(), metadata.currentPath)
     }
@@ -171,8 +187,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
   }
 
   function handleEntrySelect(entry: FileSystemEntry) {
-    const absolute = resolveAbsolutePath(rootPath(), entry.path)
-    props.onSelect(absolute)
+    props.onSelect(entryAbsolutePath(rootPath(), entry))
   }
 
   function handleNavigateTo(path: string) {
@@ -197,7 +212,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
       return subset
     }
     return subset.filter((entry) => {
-      const absolute = resolveAbsolutePath(rootPath(), entry.path)
+      const absolute = entryAbsolutePath(rootPath(), entry)
       return absolute.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query)
     })
   })
@@ -325,7 +340,11 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
                   <button
                     type="button"
                     class="selector-button selector-button-secondary whitespace-nowrap"
-                    onClick={() => props.onSelect(currentAbsolutePath())}
+                    disabled={!currentAbsolutePath()}
+                    onClick={() => {
+                      const abs = currentAbsolutePath()
+                      if (abs) props.onSelect(abs)
+                    }}
                   >
                     {t("filesystemBrowser.currentFolder.selectCurrent")}
                   </button>
@@ -408,7 +427,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
                               <div class="directory-browser-row-text">
                                 <span class="directory-browser-row-name">{entry.name || entry.path}</span>
                                 <span class="directory-browser-row-sub">
-                                  {resolveAbsolutePath(rootPath(), entry.path)}
+                                  {entryAbsolutePath(rootPath(), entry)}
                                 </span>
                               </div>
                             </button>

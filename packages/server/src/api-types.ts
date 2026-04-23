@@ -141,9 +141,13 @@ export interface WorkspaceLogEntry {
 
 export interface FileSystemEntry {
   name: string
-  /** Path relative to the CLI server root ("." represents the root itself). */
+  /**
+   * Path identifier for the entry. Relative to the server root in restricted
+   * single-root listings ("." represents the root itself); absolute in
+   * unrestricted, drives, and multi-root top-level listings.
+   */
   path: string
-  /** Absolute path when available (unrestricted listings). */
+  /** Absolute path when available (unrestricted and multi-root listings). */
   absolutePath?: string
   type: "file" | "directory"
   size?: number
@@ -156,7 +160,13 @@ export type FileSystemPathKind = "relative" | "absolute" | "drives" | "roots"
 
 export interface FileSystemListingMetadata {
   scope: FileSystemScope
-  /** Canonical identifier of the current view ("." for restricted roots, absolute paths otherwise). */
+  /**
+   * Canonical identifier of the current view:
+   * - "." for restricted single-root listings
+   * - WINDOWS_DRIVES_ROOT for the Windows drives pseudo-root
+   * - MULTI_ROOTS_ROOT for the multi-root top-level pseudo-view
+   * - absolute path otherwise
+   */
   currentPath: string
   /** Optional parent path if navigation upward is allowed. */
   parentPath?: string
@@ -166,7 +176,7 @@ export interface FileSystemListingMetadata {
   homePath: string
   /** Human-friendly label for the current path. */
   displayPath: string
-  /** Indicates whether entry paths are relative, absolute, or represent drive roots. */
+  /** Indicates whether entry paths are relative, absolute, or represent drive/root pseudo-views. */
   pathKind: FileSystemPathKind
 }
 
@@ -188,7 +198,7 @@ export interface FileSystemCreateFolderRequest {
 export interface FileSystemCreateFolderResponse {
   /**
    * Path identifier that can be passed back to `/api/filesystem` to browse the new folder.
-   * Relative for restricted listings, absolute for unrestricted.
+   * Absolute for unrestricted, multi-root, and newly-created restricted folders.
    */
   path: string
   /** Absolute folder path on the server host. */

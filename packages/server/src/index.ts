@@ -92,7 +92,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     .addOption(
       new Option(
         "--workspace-roots <paths>",
-        "Additional workspace roots (comma-separated absolute paths). When 2+ roots are configured in total, the picker lists them as top-level entries.",
+        "Extra workspace roots added alongside --workspace-root (comma-separated absolute paths). The picker lists all roots when 2+ are configured in total.",
       ).env("CLI_WORKSPACE_ROOTS"),
     )
     .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))

@@ -127,7 +127,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     setLoading(true)
     try {
       const startPath = props.initialPath?.trim()
-      await navigateTo(startPath || undefined)
+      if (startPath) {
+        const metadata = await navigateTo(startPath)
+        if (metadata) {
+          return
+        }
+        // initialPath was rejected (e.g. no longer under an allowed root);
+        // silently fall back to the default root so the dialog stays usable.
+        setError(null)
+      }
+      await navigateTo(undefined)
     } finally {
       setLoading(false)
     }
