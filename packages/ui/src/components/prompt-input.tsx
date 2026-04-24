@@ -19,6 +19,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import { runtimeEnv } from "../lib/runtime-env"
 import {
   canUseConversationMode,
   clearConversationPlaybackForInstance,
@@ -27,6 +28,38 @@ import {
 } from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
+const PERF330_SAMPLE_INPUT = "abcdefghijklmnopqrstuvwxyz"
+let perf330PromptBenchStarted = false
+
+function isPerf330PromptTarget(): boolean {
+  if (!import.meta.env.DEV) return false
+  if (runtimeEnv.host !== "tauri") return false
+  if (typeof navigator === "undefined") return false
+  return /linux/i.test(navigator.userAgent)
+}
+
+function waitForAnimationFrames(frames: number): Promise<void> {
+  return new Promise((resolve) => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) {
+        resolve()
+        return
+      }
+      requestAnimationFrame(() => step(remaining - 1))
+    }
+    step(frames)
+  })
+}
+
+async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
+  if (runtimeEnv.host !== "tauri") return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("perf_log", { payload: JSON.stringify(payload) })
+  } catch (error) {
+    log.warn("Failed to emit prompt perf benchmark log", error)
+  }
+}
 
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
@@ -222,6 +255,52 @@ export default function PromptInput(props: PromptInputProps) {
     if (typeof window === "undefined") return false
     return Boolean(window.matchMedia?.("(pointer: coarse)")?.matches)
   }
+
+  createEffect(() => {
+    if (isPerf330PromptTarget()) {
+      void emitPerf330Log({
+        stage: "prompt-input-visible-check",
+        instanceId: props.instanceId,
+        sessionId: props.sessionId,
+        isActive: props.isActive ?? null,
+        disabled: props.disabled,
+        hasTextareaRef: Boolean(textareaRef),
+      })
+    }
+
+    if (!isPerf330PromptTarget()) return
+    if (perf330PromptBenchStarted) return
+    if (props.isActive === false) return
+    if (props.disabled) return
+    if (!textareaRef) return
+
+    perf330PromptBenchStarted = true
+
+    queueMicrotask(() => {
+      const textarea = textareaRef
+      if (!textarea || textarea.disabled) return
+
+      void (async () => {
+        const originalPrompt = textarea.value
+        const inputSamples: number[] = []
+        for (const char of PERF330_SAMPLE_INPUT) {
+          const start = performance.now()
+          const next = textarea.value + char
+          textarea.value = next
+          textarea.setSelectionRange(next.length, next.length)
+          textarea.dispatchEvent(new Event("input", { bubbles: true }))
+          await waitForAnimationFrames(2)
+          inputSamples.push(performance.now() - start)
+        }
+
+        textarea.value = originalPrompt
+        textarea.setSelectionRange(originalPrompt.length, originalPrompt.length)
+        textarea.dispatchEvent(new Event("input", { bubbles: true }))
+
+        await emitPerf330Log({ stage: "prompt-input-done", samples: inputSamples })
+      })()
+    })
+  })
 
   createEffect(() => {
     // Scope global "type-to-focus" behavior to the active, visible prompt only.

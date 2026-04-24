@@ -33,6 +33,22 @@ body {
   background-color: var(--surface-base);
 }
 
+html[data-runtime-host="tauri"][data-runtime-os="linux"] * {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
+html[data-runtime-host="tauri"][data-runtime-os="linux"] * {
+  backdrop-filter: none !important;
+}
+
+html[data-runtime-host="tauri"][data-runtime-os="linux"] .message-timeline-shell,
+html[data-runtime-host="tauri"][data-runtime-os="linux"] .message-section-main,
+html[data-runtime-host="tauri"][data-runtime-os="linux"] .permission-center-modal,
+html[data-runtime-host="tauri"][data-runtime-os="linux"] .folder-drop-card,
+html[data-runtime-host="tauri"][data-runtime-os="linux"] .folder-loading-indicator {
+  box-shadow: none !important;
+}
 
 
 

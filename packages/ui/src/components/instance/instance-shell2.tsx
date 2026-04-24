@@ -58,6 +58,7 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
+import { runtimeEnv } from "../../lib/runtime-env"
 import { getPermissionSessionId } from "../../types/permission"
 import {
   canAutoRespondPermission,
@@ -67,6 +68,17 @@ import {
 } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
+
+async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
+  if (!import.meta.env.DEV) return
+  if (runtimeEnv.host !== "tauri") return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("perf_log", { payload: JSON.stringify(payload) })
+  } catch (error) {
+    log.warn("Failed to emit instance-shell perf benchmark log", error)
+  }
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -687,6 +699,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const hasSessions = createMemo(() => activeSessions().size > 0)
 
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+
+  createEffect(() => {
+    void emitPerf330Log({
+      stage: "instance-shell-state",
+      instanceId: props.instance.id,
+      isActiveInstance: props.isActiveInstance ?? null,
+      activeSessionId: activeSessionIdForInstance(),
+      activeSessionsSize: activeSessions().size,
+      hasSessions: hasSessions(),
+      showingInfoView: showingInfoView(),
+      cachedSessionIds: cachedSessionIds(),
+    })
+  })
 
   const sessionLayout = (
     <div

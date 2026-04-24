@@ -18,8 +18,18 @@ if (!root) {
 const mount = root
 
 if (typeof document !== "undefined") {
+  const runtimeOs = typeof navigator !== "undefined"
+    ? /linux/i.test(navigator.userAgent)
+      ? "linux"
+      : /windows/i.test(navigator.userAgent)
+        ? "windows"
+        : /mac/i.test(navigator.userAgent)
+          ? "macos"
+          : "unknown"
+    : "unknown"
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
+  document.documentElement.dataset.runtimeOs = runtimeOs
 }
 
 async function bootstrap() {

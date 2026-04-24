@@ -17,8 +17,20 @@ import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
+import { runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
+
+async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
+  if (!import.meta.env.DEV) return
+  if (runtimeEnv.host !== "tauri") return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("perf_log", { payload: JSON.stringify(payload) })
+  } catch (error) {
+    log.warn("Failed to emit session perf benchmark log", error)
+  }
+}
 
 function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text: string } {
   return part?.type === "text" && typeof (part as any).text === "string"
@@ -144,6 +156,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   createEffect(() => {
     const currentSession = session()
     if (currentSession) {
+      void emitPerf330Log({
+        stage: "session-view-ready",
+        sessionId: currentSession.id,
+        instanceId: props.instanceId,
+        isActive: props.isActive ?? null,
+        disabled: sessionNeedsInput(),
+      })
       loadMessages(props.instanceId, currentSession.id).catch((error) => log.error("Failed to load messages", error))
     }
   })

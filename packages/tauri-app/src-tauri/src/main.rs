@@ -172,6 +172,11 @@ fn wake_lock_stop(state: tauri::State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn perf_log(payload: String) {
+    println!("[perf330] {payload}");
+}
+
 fn is_dev_mode() -> bool {
     cfg!(debug_assertions) || std::env::var("TAURI_DEV").is_ok()
 }
@@ -583,6 +588,7 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             needs_local_certificate_install,
+            perf_log,
             open_remote_window
         ])
         .on_menu_event(|app_handle, event| {

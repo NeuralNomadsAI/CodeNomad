@@ -70,12 +70,82 @@ import {
 } from "./stores/app-tabs"
 
 const log = getLogger("actions")
+const PERF330_SAMPLE_INPUT = "abcdefghijklmnopqrstuvwxyz"
+let perf330BenchStarted = false
+
+type Perf330Summary = {
+  average: number
+  p95: number
+  max: number
+  count: number
+}
+
+function isPerf330TargetHost(): boolean {
+  if (!import.meta.env.DEV) return false
+  if (runtimeEnv.host !== "tauri") return false
+  if (typeof navigator === "undefined") return false
+  return /linux/i.test(navigator.userAgent)
+}
+
+function roundMetric(value: number): number {
+  return Math.round(value * 10) / 10
+}
+
+function summarizePerfSamples(samples: number[]): Perf330Summary {
+  if (samples.length === 0) {
+    return { average: 0, p95: 0, max: 0, count: 0 }
+  }
+
+  const sorted = [...samples].sort((left, right) => left - right)
+  const average = samples.reduce((sum, value) => sum + value, 0) / samples.length
+  const p95Index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1))
+
+  return {
+    average: roundMetric(average),
+    p95: roundMetric(sorted[p95Index]),
+    max: roundMetric(sorted[sorted.length - 1]),
+    count: samples.length,
+  }
+}
+
+function waitForAnimationFrames(frames: number): Promise<void> {
+  return new Promise((resolve) => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) {
+        resolve()
+        return
+      }
+      requestAnimationFrame(() => step(remaining - 1))
+    }
+    step(frames)
+  })
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 8000): Promise<boolean> {
+  const start = performance.now()
+  while (performance.now() - start < timeoutMs) {
+    if (predicate()) return true
+    await waitForAnimationFrames(1)
+  }
+  return predicate()
+}
+
+async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
+  if (runtimeEnv.host !== "tauri") return
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("perf_log", { payload: JSON.stringify(payload) })
+  } catch (error) {
+    log.warn("Failed to emit perf benchmark log", error)
+  }
+}
 
 const App: Component = () => {
   const { t } = useI18n()
   const {
     preferences,
     serverSettings,
+    recentFolders,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
     toggleKeyboardShortcutHints,
@@ -231,6 +301,7 @@ const App: Component = () => {
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
     onCleanup(() => window.removeEventListener("resize", handleResize))
+    void runPerf330Benchmark()
   })
 
   createEffect(() => {
@@ -247,6 +318,122 @@ const App: Component = () => {
     if (!instance) return null
     return activeSessionId().get(instance.id) || null
   })
+
+  const runPerf330Benchmark = async () => {
+    if (!isPerf330TargetHost()) return
+    if (typeof window === "undefined" || typeof document === "undefined") return
+    if (perf330BenchStarted) return
+    perf330BenchStarted = true
+
+    await emitPerf330Log({ stage: "start" })
+
+    if (!activeInstance() && recentFolders().length > 0) {
+      const fallbackFolder = recentFolders()[0]?.path
+      const fallbackBinary = serverSettings().opencodeBinary || "opencode"
+      if (fallbackFolder) {
+        await emitPerf330Log({ stage: "bootstrap-instance", folder: fallbackFolder, binaryPath: fallbackBinary })
+        await handleSelectFolder(fallbackFolder, fallbackBinary)
+      }
+    }
+
+    if (!(await waitForCondition(() => appTabs().length > 0 && Boolean(activeInstance()), 10000))) {
+      await emitPerf330Log({ stage: "no-ready-instance" })
+      return
+    }
+
+    const initialInstance = activeInstance()
+    if (!initialInstance) {
+      await emitPerf330Log({ stage: "no-active-instance" })
+      return
+    }
+
+    const binaryPath = initialInstance.binaryPath || serverSettings().opencodeBinary || "opencode"
+    await emitPerf330Log({ stage: "instance-ready", tabCount: appTabs().length, binaryPath })
+
+    while (appTabs().filter((tab) => tab.kind === "instance").length < 2) {
+      await emitPerf330Log({
+        stage: "create-instance",
+        currentInstanceTabs: appTabs().filter((tab) => tab.kind === "instance").length,
+      })
+      await createInstance(initialInstance.folder, binaryPath)
+      const ready = await waitForCondition(() => appTabs().filter((tab) => tab.kind === "instance").length >= 2, 15000)
+      if (!ready) {
+        await emitPerf330Log({ stage: "instance-setup-timeout" })
+        return
+      }
+    }
+
+    const instanceTabIds = appTabs()
+      .filter((tab) => tab.kind === "instance")
+      .slice(0, 2)
+      .map((tab) => tab.id)
+
+    if (instanceTabIds.length < 2) {
+      await emitPerf330Log({ stage: "not-enough-tabs", tabIds: instanceTabIds })
+      return
+    }
+
+    await emitPerf330Log({ stage: "tabs-ready", tabIds: instanceTabIds })
+
+    const switchSamples: number[] = []
+    for (let index = 0; index < 8; index += 1) {
+      const targetId = instanceTabIds[index % 2]
+      if (activeAppTabId() === targetId) continue
+
+      const start = performance.now()
+      selectAppTab(targetId)
+      await waitForCondition(() => activeAppTabId() === targetId, 2000)
+      await waitForAnimationFrames(2)
+      switchSamples.push(performance.now() - start)
+    }
+
+    await emitPerf330Log({
+      stage: "switch-done",
+      samples: switchSamples,
+      mountedInstances: document.querySelectorAll("[data-tab-kind='instance']").length,
+      mountedSessionPanes: document.querySelectorAll(".session-cache-pane").length,
+    })
+
+    selectAppTab(instanceTabIds[0])
+    await waitForAnimationFrames(2)
+
+    const focusedInstance = activeInstance()
+    if (!focusedInstance) {
+      await emitPerf330Log({ stage: "missing-focused-instance" })
+      return
+    }
+
+    if (!activeSessionIdForInstance() || activeSessionIdForInstance() === "info") {
+      const session = await createSession(focusedInstance.id)
+      setActiveParentSession(focusedInstance.id, session.id)
+      const ready = await waitForCondition(() => {
+        const sessionId = activeSessionId().get(focusedInstance.id)
+        return Boolean(sessionId && sessionId !== "info")
+      }, 12000)
+      if (!ready) {
+        await emitPerf330Log({ stage: "session-setup-timeout", instanceId: focusedInstance.id })
+        return
+      }
+    }
+
+    await emitPerf330Log({ stage: "session-ready", sessionId: activeSessionId().get(focusedInstance.id) })
+
+    const switchSummary = summarizePerfSamples(switchSamples)
+    const mountedSessionPanes = document.querySelectorAll(".session-cache-pane").length
+    const mountedInstances = document.querySelectorAll("[data-tab-kind='instance']").length
+
+    log.info("PERF330 benchmark complete", {
+      switchSummary,
+      mountedSessionPanes,
+      mountedInstances,
+    })
+    await emitPerf330Log({
+      kind: "baseline",
+      switchSummary,
+      mountedSessionPanes,
+      mountedInstances,
+    })
+  }
 
   const launchErrorPath = () => {
     const value = launchError()?.binaryPath
@@ -544,22 +731,21 @@ const App: Component = () => {
                 />
               </Show>
 
-              <For each={appTabs()}>
-                {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
-                  return tab.kind === "instance" ? (
+              <Show when={activeAppTab() && !showFolderSelection()} keyed>
+                {(tab) =>
+                  tab.kind === "instance" ? (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
+                      style={{ display: "flex" }}
                       data-instance-id={tab.instance.id}
                       data-tab-id={tab.id}
                       data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
+                      data-tab-visible="true"
                     >
                       <InstanceMetadataProvider instance={tab.instance}>
                         <InstanceShell
                           instance={tab.instance}
-                          isActiveInstance={isVisible()}
+                          isActiveInstance={true}
                           escapeInDebounce={escapeInDebounce()}
                           paletteCommands={paletteCommands}
                           onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
@@ -577,16 +763,16 @@ const App: Component = () => {
                   ) : (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
+                      style={{ display: "flex" }}
                       data-tab-id={tab.id}
                       data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
+                      data-tab-visible="true"
                     >
                       <SideCarView tab={tab.sidecarTab} />
                     </div>
                   )
-                }}
-              </For>
+                }
+              </Show>
 
             </>
           }
