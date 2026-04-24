@@ -19,7 +19,7 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
-import { runtimeEnv } from "../lib/runtime-env"
+import { isPerf330BenchmarkEnabled, runtimeEnv } from "../lib/runtime-env"
 import {
   canUseConversationMode,
   clearConversationPlaybackForInstance,
@@ -32,8 +32,7 @@ const PERF330_SAMPLE_INPUT = "abcdefghijklmnopqrstuvwxyz"
 let perf330PromptBenchStarted = false
 
 function isPerf330PromptTarget(): boolean {
-  if (!import.meta.env.DEV) return false
-  if (runtimeEnv.host !== "tauri") return false
+  if (!isPerf330BenchmarkEnabled()) return false
   if (typeof navigator === "undefined") return false
   return /linux/i.test(navigator.userAgent)
 }

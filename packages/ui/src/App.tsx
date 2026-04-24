@@ -22,7 +22,7 @@ import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
-import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
+import { isPerf330BenchmarkEnabled, isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import {
@@ -81,8 +81,7 @@ type Perf330Summary = {
 }
 
 function isPerf330TargetHost(): boolean {
-  if (!import.meta.env.DEV) return false
-  if (runtimeEnv.host !== "tauri") return false
+  if (!isPerf330BenchmarkEnabled()) return false
   if (typeof navigator === "undefined") return false
   return /linux/i.test(navigator.userAgent)
 }
@@ -731,48 +730,51 @@ const App: Component = () => {
                 />
               </Show>
 
-              <Show when={activeAppTab() && !showFolderSelection()} keyed>
-                {(tab) =>
-                  tab.kind === "instance" ? (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: "flex" }}
-                      data-instance-id={tab.instance.id}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible="true"
-                    >
-                      <InstanceMetadataProvider instance={tab.instance}>
-                        <InstanceShell
-                          instance={tab.instance}
-                          isActiveInstance={true}
-                          escapeInDebounce={escapeInDebounce()}
-                          paletteCommands={paletteCommands}
-                          onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
-                          onNewSession={() => handleNewSession(tab.instance.id)}
-                          handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
-                          handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
-                          onExecuteCommand={executeCommand}
-                          tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
-                          onEnterMobileFullscreen={() => void enterMobileFullscreen()}
-                          onExitMobileFullscreen={() => void exitMobileFullscreen()}
-                        />
-                      </InstanceMetadataProvider>
-                    </div>
+              <For each={appTabs()}>
+                {(tab) => {
+                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
+                  return tab.kind === "instance" ? (
+                    <Show when={isVisible()} keyed>
+                      <div
+                        class="flex-1 min-h-0 overflow-hidden"
+                        style={{ display: "flex" }}
+                        data-instance-id={tab.instance.id}
+                        data-tab-id={tab.id}
+                        data-tab-kind={tab.kind}
+                        data-tab-visible="true"
+                      >
+                        <InstanceMetadataProvider instance={tab.instance}>
+                          <InstanceShell
+                            instance={tab.instance}
+                            isActiveInstance={true}
+                            escapeInDebounce={escapeInDebounce()}
+                            paletteCommands={paletteCommands}
+                            onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
+                            onNewSession={() => handleNewSession(tab.instance.id)}
+                            handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
+                            handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
+                            onExecuteCommand={executeCommand}
+                            tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                            mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                            onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                            onExitMobileFullscreen={() => void exitMobileFullscreen()}
+                          />
+                        </InstanceMetadataProvider>
+                      </div>
+                    </Show>
                   ) : (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: "flex" }}
+                      style={{ display: isVisible() ? "flex" : "none" }}
                       data-tab-id={tab.id}
                       data-tab-kind={tab.kind}
-                      data-tab-visible="true"
+                      data-tab-visible={isVisible() ? "true" : "false"}
                     >
                       <SideCarView tab={tab.sidecarTab} />
                     </div>
                   )
-                }
-              </Show>
+                }}
+              </For>
 
             </>
           }

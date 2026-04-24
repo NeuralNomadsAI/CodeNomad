@@ -3,7 +3,7 @@ import App from "./App"
 import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
-import { runtimeEnv } from "./lib/runtime-env"
+import { runtimeEnv, isPerf330LightRenderEnabled } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
 import "./index.css"
@@ -30,6 +30,7 @@ if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
   document.documentElement.dataset.runtimeOs = runtimeOs
+  document.documentElement.dataset.perf330LightRender = isPerf330LightRenderEnabled() ? "true" : "false"
 }
 
 async function bootstrap() {

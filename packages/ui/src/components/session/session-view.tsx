@@ -17,13 +17,12 @@ import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
-import { runtimeEnv } from "../../lib/runtime-env"
+import { isPerf330BenchmarkEnabled, runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
 
 async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
-  if (!import.meta.env.DEV) return
-  if (runtimeEnv.host !== "tauri") return
+  if (!isPerf330BenchmarkEnabled()) return
   try {
     const { invoke } = await import("@tauri-apps/api/core")
     await invoke("perf_log", { payload: JSON.stringify(payload) })

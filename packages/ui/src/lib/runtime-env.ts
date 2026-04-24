@@ -10,6 +10,25 @@ export interface RuntimeEnvironment {
   windowContext: WindowContextKind
 }
 
+function readPerfFlag(key: string): boolean {
+  if (typeof window === "undefined") return false
+
+  try {
+    if (window.localStorage?.getItem(key) === "1") {
+      return true
+    }
+  } catch {
+    // Ignore localStorage access failures.
+  }
+
+  try {
+    const params = new URLSearchParams(window.location.search)
+    return params.get(key) === "1"
+  } catch {
+    return false
+  }
+}
+
 declare global {
   interface TauriCoreModule {
     invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>
@@ -118,6 +137,8 @@ export const isElectronHost = () => detectHost() === "electron"
 export const isTauriHost = () => detectHost() === "tauri"
 export const isWebHost = () => detectHost() === "web"
 export const isDesktopHost = () => isElectronHost() || isTauriHost()
+export const isPerf330BenchmarkEnabled = () => import.meta.env.DEV && isTauriHost() && readPerfFlag("perf330-bench")
+export const isPerf330LightRenderEnabled = () => isTauriHost() && readPerfFlag("perf330-light-render")
 export const isMobilePlatform = () => detectPlatform() === "mobile"
 export const isLocalWindow = () => detectWindowContext() === "local"
 export const isRemoteWindow = () => detectWindowContext() === "remote"

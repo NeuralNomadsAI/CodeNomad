@@ -4,7 +4,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import iconUrl from "../../images/CodeNomad-Icon.png"
 import { tGlobal } from "../../lib/i18n"
-import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
+import { runtimeEnv, isPerf330LightRenderEnabled, isTauriHost } from "../../lib/runtime-env"
 import "../../index.css"
 import "./loading.css"
 
@@ -57,6 +57,7 @@ function annotateDocument() {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
   document.documentElement.dataset.runtimeOs = runtimeOs
+  document.documentElement.dataset.perf330LightRender = isPerf330LightRenderEnabled() ? "true" : "false"
 }
 
 function LoadingApp() {

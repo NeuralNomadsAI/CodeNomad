@@ -58,7 +58,7 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { runtimeEnv } from "../../lib/runtime-env"
+import { isPerf330BenchmarkEnabled, runtimeEnv } from "../../lib/runtime-env"
 import { getPermissionSessionId } from "../../types/permission"
 import {
   canAutoRespondPermission,
@@ -70,8 +70,7 @@ import {
 const log = getLogger("session")
 
 async function emitPerf330Log(payload: Record<string, unknown>): Promise<void> {
-  if (!import.meta.env.DEV) return
-  if (runtimeEnv.host !== "tauri") return
+  if (!isPerf330BenchmarkEnabled()) return
   try {
     const { invoke } = await import("@tauri-apps/api/core")
     await invoke("perf_log", { payload: JSON.stringify(payload) })
