@@ -732,21 +732,22 @@ const App: Component = () => {
 
               <For each={appTabs()}>
                 {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
+                  const isTabActive = () => activeAppTabId() === tab.id
+                  const isVisible = () => isTabActive() && !showFolderSelection()
                   return tab.kind === "instance" ? (
-                    <Show when={isVisible()} keyed>
+                    <Show when={isTabActive()} keyed>
                       <div
                         class="flex-1 min-h-0 overflow-hidden"
-                        style={{ display: "flex" }}
+                        style={{ display: isVisible() ? "flex" : "none" }}
                         data-instance-id={tab.instance.id}
                         data-tab-id={tab.id}
                         data-tab-kind={tab.kind}
-                        data-tab-visible="true"
+                        data-tab-visible={isVisible() ? "true" : "false"}
                       >
                         <InstanceMetadataProvider instance={tab.instance}>
                           <InstanceShell
                             instance={tab.instance}
-                            isActiveInstance={true}
+                            isActiveInstance={isVisible()}
                             escapeInDebounce={escapeInDebounce()}
                             paletteCommands={paletteCommands}
                             onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
