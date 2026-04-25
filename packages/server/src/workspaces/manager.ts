@@ -13,10 +13,9 @@ import { Logger } from "../logger"
 import { getOpencodeConfigDir } from "../opencode-config.js"
 import {
   buildOpencodeBasicAuthHeader,
-  DEFAULT_OPENCODE_USERNAME,
-  generateOpencodeServerPassword,
   OPENCODE_SERVER_PASSWORD_ENV,
   OPENCODE_SERVER_USERNAME_ENV,
+  resolveOpencodeServerAuth,
 } from "./opencode-auth"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
@@ -188,8 +187,10 @@ export class WorkspaceManager {
     const envVars = (serverConfig as any)?.environmentVariables
     const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
 
-    const opencodeUsername = DEFAULT_OPENCODE_USERNAME
-    const opencodePassword = generateOpencodeServerPassword()
+    const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
+      userEnvironment,
+      processEnv: process.env,
+    })
     const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
     if (!authorization) {
       throw new Error("Failed to build OpenCode auth header")
