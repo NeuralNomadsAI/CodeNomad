@@ -78,6 +78,13 @@ export interface TextPart {
 
 export type MessageInfo = SDKMessage
 
+export function getPatchPartFiles(part: ClientPart): string[] {
+  if (!part || part.type !== "patch") return []
+  const files = (part as { files?: unknown }).files
+  if (!Array.isArray(files)) return []
+  return files.filter((file): file is string => typeof file === "string" && file.trim().length > 0)
+}
+
 export function isHiddenSyntheticTextPart(part: ClientPart): boolean {
   return Boolean(part && part.type === "text" && part.synthetic)
 }
@@ -115,6 +122,10 @@ export function partHasRenderableText(part: ClientPart): boolean {
 
   if (typedPart.type === "tool") {
     return true // Tool parts are always renderable
+  }
+
+  if (typedPart.type === "patch" && getPatchPartFiles(part).length > 0) {
+    return true
   }
 
   if (typedPart.type === "reasoning" && hasTextSegment(typedPart.text)) {

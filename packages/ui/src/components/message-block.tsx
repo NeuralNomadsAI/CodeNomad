@@ -223,12 +223,11 @@ interface MessageContentItemProps {
 
 function isSupportedPartType(part: unknown): boolean {
   const type = (part as any)?.type
-  // Ignore part types the UI does not support rendering yet.
-  return !(typeof type === "string" && type === "patch")
+  return typeof type === "string" && type.length > 0
 }
 
 function isContentPartType(type: unknown): boolean {
-  return type === "text" || type === "file"
+  return type === "text" || type === "file" || type === "patch"
 }
 
 function isVisibleContentPart(part: ClientPart): boolean {

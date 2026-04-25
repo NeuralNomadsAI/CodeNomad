@@ -2,7 +2,8 @@ import { Match, Show, Suspense, Switch, lazy } from "solid-js"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
+import { getPatchPartFiles, partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
+import { useI18n } from "../lib/i18n"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -21,6 +22,7 @@ interface MessagePartProps {
 
 export default function MessagePart(props: MessagePartProps) {
 
+  const { t } = useI18n()
   const { isDark } = useTheme()
   const partType = () => props.part?.type || ""
   const reasoningId = () => `reasoning-${props.part?.id || ""}`
@@ -83,6 +85,8 @@ export default function MessagePart(props: MessagePartProps) {
     }
     return false
   }
+
+  const patchFiles = () => getPatchPartFiles(props.part)
 
   const createTextPartForMarkdown = (): TextPart => {
     const part = props.part
@@ -151,6 +155,21 @@ export default function MessagePart(props: MessagePartProps) {
             sessionId={props.sessionId}
           />
         </Suspense>
+      </Match>
+
+      <Match when={partType() === "patch"}>
+        <Show when={patchFiles().length > 0}>
+          <div class="rounded border border-base bg-surface-secondary px-2 py-1.5 text-xs" data-part-type="patch">
+            <div class="font-medium text-primary">
+              {t("instanceShell.sessionChanges.filesChanged", { count: patchFiles().length })}
+            </div>
+            <ul class="mt-1 space-y-0.5 text-secondary">
+              {patchFiles().map((file) => (
+                <li class="truncate" title={file}>{file}</li>
+              ))}
+            </ul>
+          </div>
+        </Show>
       </Match>
 
 
