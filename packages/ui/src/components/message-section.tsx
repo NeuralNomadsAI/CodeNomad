@@ -160,8 +160,22 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
 
+  const lastCompactionIndex = createMemo(() => {
+    // Depend on a single session revision signal (not every message/part read)
+    // to keep reactive overhead small.
+    sessionRevision()
+    return untrack(() => store().getLastCompactionMessageIndex(props.sessionId))
+  })
+
   const deletableMessageIds = createMemo(() => {
     return new Set(messageIds())
+  })
+
+  const xrayEligibleMessageIds = createMemo(() => {
+    const ids = messageIds()
+    const idx = lastCompactionIndex()
+    const start = idx === -1 ? 0 : idx + 1
+    return new Set(ids.slice(start))
   })
 
   const isMessageDeletable = (messageId: string): boolean => {
@@ -1385,7 +1399,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onClearSelection={handleClearTimelineSelection}
               selectedIds={selectedTimelineIds}
               expandedMessageIds={expandedMessageIds}
-              deletableMessageIds={deletableMessageIds}
+              deletableMessageIds={xrayEligibleMessageIds}
               activeSegmentId={activeSegmentId()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
