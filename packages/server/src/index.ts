@@ -29,6 +29,7 @@ import { SideCarManager } from "./sidecars/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
+import { runCliUpgrade } from "./cli-upgrade"
 
 const require = createRequire(import.meta.url)
 
@@ -63,6 +64,7 @@ interface CliOptions {
   authCookieName: string
   generateToken: boolean
   dangerouslySkipAuth: boolean
+  upgrade?: string | boolean
 }
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -124,6 +126,7 @@ function parseCliOptions(argv: string[]): CliOptions {
         .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
+    .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -153,8 +156,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: string
     generateToken?: boolean
     dangerouslySkipAuth?: boolean
+    upgrade?: string | boolean
   }>()
 
+  const upgrade = parsed.upgrade
   const parseBooleanEnv = (value: string | undefined): boolean => {
     const normalized = (value ?? "").trim().toLowerCase()
     return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y" || normalized === "on"
@@ -170,7 +175,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   const httpsEnabled = parseBooleanEnv(parsed.https)
   const httpEnabled = parseBooleanEnv(parsed.http)
 
-  if (!httpsEnabled && !httpEnabled) {
+  if (upgrade === undefined && !httpsEnabled && !httpEnabled) {
     throw new InvalidArgumentError("At least one listener must be enabled (--https or --http)")
   }
 
@@ -200,6 +205,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: parsed.authCookieName,
     generateToken: Boolean(parsed.generateToken),
     dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    upgrade,
   }
 }
 
@@ -232,6 +238,12 @@ function programHasArg(argv: string[], flag: string): boolean {
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2))
+  if (options.upgrade !== undefined) {
+    const version = typeof options.upgrade === "string" ? options.upgrade : undefined
+    process.exitCode = await runCliUpgrade(version)
+    return
+  }
+
   const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app" })
   const workspaceLogger = logger.child({ component: "workspace" })
   const configLogger = logger.child({ component: "config" })
