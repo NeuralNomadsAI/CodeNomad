@@ -657,8 +657,10 @@ export default function ToolCall(props: ToolCallProps) {
     return active?.kind === "question" && active.id === pending.request.id
   })
 
+  const hasPendingInterruption = createMemo(() => Boolean(pendingPermission()?.permission || pendingQuestion()?.request))
+
   const expanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (hasPendingInterruption()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -679,7 +681,7 @@ export default function ToolCall(props: ToolCallProps) {
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (hasPendingInterruption()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -714,8 +716,7 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function toggle() {
-    const permission = pendingPermission()
-    if (permission?.active) {
+    if (hasPendingInterruption()) {
       return
     }
     setUserExpanded((prev) => {
