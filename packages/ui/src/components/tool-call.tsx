@@ -120,6 +120,7 @@ function ToolCallDetails(props: {
   store: () => ReturnType<typeof messageStoreBus.getOrCreate>
   pendingPermission: () => { permission: PermissionRequestLike; active: boolean } | undefined
   pendingQuestion: () => { request: QuestionRequest; active: boolean } | undefined
+  hasPendingInterruption: () => boolean
   isPermissionActive: () => boolean
   isQuestionActive: () => boolean
   hasToolInput: () => boolean
@@ -511,7 +512,7 @@ function ToolCallDetails(props: {
             {renderToolBody()}
             {renderError()}
 
-            <Show when={status() === "pending" && !hasPendingInterruption()}>
+            <Show when={status() === "pending" && !props.hasPendingInterruption()}>
               <div class="tool-call-pending-message">
                 <span class="spinner-small"></span>
                 <span>{props.t("toolCall.pending.waitingToRun")}</span>
@@ -547,7 +548,7 @@ function ToolCallDetails(props: {
                 {renderToolBody()}
                 {renderError()}
 
-                <Show when={status() === "pending" && !hasPendingInterruption()}>
+                <Show when={status() === "pending" && !props.hasPendingInterruption()}>
                   <div class="tool-call-pending-message">
                     <span class="spinner-small"></span>
                     <span>{props.t("toolCall.pending.waitingToRun")}</span>
@@ -587,7 +588,8 @@ export default function ToolCall(props: ToolCallProps) {
   const store = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
   const activeRequest = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
-  const permissionState = createMemo(() => store().getPermissionState(props.messageId, toolCallIdentifier()))
+  const interruptionState = createMemo(() => store().getToolInterruptionState(props.messageId, toolCallIdentifier()))
+  const permissionState = createMemo(() => interruptionState().permission)
   const pendingPermission = createMemo(() => {
     const state = permissionState()
     if (state) {
@@ -596,7 +598,7 @@ export default function ToolCall(props: ToolCallProps) {
     return toolCallMemo()?.pendingPermission
   })
 
-  const questionState = createMemo(() => store().getQuestionState(props.messageId, toolCallIdentifier()))
+  const questionState = createMemo(() => interruptionState().question)
   const pendingQuestion = createMemo(() => {
     const state = questionState()
     if (state) {
@@ -909,6 +911,7 @@ export default function ToolCall(props: ToolCallProps) {
           store={store}
           pendingPermission={pendingPermission}
           pendingQuestion={pendingQuestion}
+          hasPendingInterruption={hasPendingInterruption}
           isPermissionActive={isPermissionActive}
           isQuestionActive={isQuestionActive}
           hasToolInput={hasToolInput}

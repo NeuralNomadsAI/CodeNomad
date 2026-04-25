@@ -3,6 +3,8 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
+import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
+import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
   InstanceMessageState,
@@ -25,6 +27,16 @@ const storeLog = getLogger("session")
 
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
+}
+
+type PermissionInterruptionState = { entry: PermissionEntry; active: boolean }
+type QuestionInterruptionState = { entry: QuestionEntry; active: boolean }
+
+interface ToolInterruptionState {
+  permission: PermissionInterruptionState | null
+  question: QuestionInterruptionState | null
+  hasPendingInterruption: boolean
+  hasActivePermission: boolean
 }
 
 function createInitialState(instanceId: string): InstanceMessageState {
@@ -211,6 +223,7 @@ export interface InstanceMessageStore {
   upsertQuestion: (entry: QuestionEntry) => void
   removeQuestion: (requestId: string) => void
   getQuestionState: (messageId?: string, partId?: string) => { entry: QuestionEntry; active: boolean } | null
+  getToolInterruptionState: (messageId?: string, partId?: string) => ToolInterruptionState
   setSessionRevert: (sessionId: string, revert?: SessionRecord["revert"] | null) => void
   getSessionRevert: (sessionId: string) => SessionRecord["revert"] | undefined | null
   rebuildUsage: (sessionId: string, infos: Iterable<MessageInfo>) => void
@@ -558,17 +571,28 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
   }
 
-  function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
-    if (!messageId || !partId || part.type !== "tool") {
-      return
-    }
-
-    const toolCallId =
+  function getToolCallId(part: ClientPart | null | undefined): string | undefined {
+    if (!part || part.type !== "tool") return undefined
+    return (
       (part as any).callID ??
       (part as any).callId ??
       (part as any).toolCallID ??
       (part as any).toolCallId ??
       undefined
+    )
+  }
+
+  function getToolPartCallId(messageId?: string, partId?: string): string | undefined {
+    if (!messageId || !partId) return undefined
+    return getToolCallId(state.messages[messageId]?.parts[partId]?.data)
+  }
+
+  function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
+    if (!messageId || !partId || part.type !== "tool") {
+      return
+    }
+
+    const toolCallId = getToolCallId(part)
     if (!toolCallId) {
       return
     }
@@ -582,16 +606,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         const existing = draft[partId]
         for (const [key, entry] of Object.entries(draft)) {
           if (!entry || entry.partId) continue
-          const permissionCallId =
-            (entry.permission as any).tool?.callID ??
-            (entry.permission as any).tool?.callId ??
-            (entry.permission as any).callID ??
-            (entry.permission as any).callId ??
-            (entry.permission as any).toolCallID ??
-            (entry.permission as any).toolCallId ??
-            (entry.permission as any).metadata?.callID ??
-            (entry.permission as any).metadata?.callId ??
-            undefined
+          const permissionCallId = getPermissionCallId(entry.permission)
           if (permissionCallId !== toolCallId) continue
           if (!existing || existing.permission.id === entry.permission.id) {
             entry.partId = partId
@@ -958,6 +973,25 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
+  function getPermissionStateForTool(messageId?: string, partId?: string): PermissionInterruptionState | null {
+    const direct = getPermissionState(messageId, partId)
+    if (direct) return direct
+
+    const toolCallId = getToolPartCallId(messageId, partId)
+    if (!messageId || !partId || !toolCallId) return null
+
+    const entry = state.permissions.queue.find((item) => {
+      if (!item?.permission) return false
+      if (item.partId && item.partId !== partId) return false
+      const itemMessageId = item.messageId ?? getPermissionMessageId(item.permission)
+      if (itemMessageId && itemMessageId !== messageId) return false
+      return getPermissionCallId(item.permission) === toolCallId
+    })
+    if (!entry) return null
+    const active = state.permissions.active?.permission.id === entry.permission.id
+    return { entry, active }
+  }
+
   function upsertQuestion(entry: QuestionEntry) {
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.request?.id ?? "__global__"
@@ -1010,6 +1044,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (!entry) return null
     const active = state.questions.active?.request.id === entry.request.id
     return { entry, active }
+  }
+
+  function getQuestionStateForTool(messageId?: string, partId?: string): QuestionInterruptionState | null {
+    const direct = getQuestionState(messageId, partId)
+    if (direct) return direct
+
+    const toolCallId = getToolPartCallId(messageId, partId)
+    if (!messageId || !partId || !toolCallId) return null
+
+    const entry = state.questions.queue.find((item) => {
+      if (!item?.request) return false
+      if (item.partId && item.partId !== partId) return false
+      const itemMessageId = item.messageId ?? getQuestionMessageId(item.request)
+      if (itemMessageId && itemMessageId !== messageId) return false
+      return getQuestionCallId(item.request) === toolCallId
+    })
+    if (!entry) return null
+    const active = state.questions.active?.request.id === entry.request.id
+    return { entry, active }
+  }
+
+  function getToolInterruptionState(messageId?: string, partId?: string): ToolInterruptionState {
+    const permission = getPermissionStateForTool(messageId, partId)
+    const question = getQuestionStateForTool(messageId, partId)
+
+    return {
+      permission,
+      question,
+      hasPendingInterruption: Boolean(permission?.entry.permission || question?.entry.request),
+      hasActivePermission: Boolean(permission?.active),
+    }
   }
 
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
@@ -1222,6 +1287,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       upsertQuestion,
       removeQuestion,
       getQuestionState,
+      getToolInterruptionState,
 
      setSessionRevert,
      getSessionRevert,

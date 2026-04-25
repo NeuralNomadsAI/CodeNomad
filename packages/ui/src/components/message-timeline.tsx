@@ -754,17 +754,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       if (segment.type === "tool") {
         const partIds = segment.toolPartIds ?? []
         for (const partId of partIds) {
-          const permissionState = resolvedStore.getPermissionState(segment.messageId, partId)
-          if (permissionState?.entry?.permission) {
+          const interruptionState = resolvedStore.getToolInterruptionState(segment.messageId, partId)
+          if (interruptionState.hasPendingInterruption) {
             hasPendingInterruption = true
           }
-          if (permissionState?.active) {
+          if (interruptionState.hasActivePermission) {
             hasActivePermission = true
-          }
-
-          const questionState = resolvedStore.getQuestionState(segment.messageId, partId)
-          if (questionState?.entry?.request) {
-            hasPendingInterruption = true
           }
 
           if (hasActivePermission && hasPendingInterruption) {
