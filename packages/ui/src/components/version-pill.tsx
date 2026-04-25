@@ -16,11 +16,12 @@ export default function VersionPill() {
   const serverVersion = () => meta()?.serverVersion
   const uiVersion = () => meta()?.ui?.version
   const uiSource = () => meta()?.ui?.source
+  const update = () => meta()?.update
 
   const uiLabel = () => (uiVersion() ? t("versionPill.uiWithVersion", { version: uiVersion() }) : t("versionPill.ui"))
 
   return (
-    <Show when={serverVersion() || uiVersion() || uiSource()}>
+    <Show when={serverVersion() || uiVersion() || uiSource() || update()}>
       <div class="text-[11px] text-muted whitespace-nowrap">
         <Show when={serverVersion()}>
           {(v) => <span>{t("versionPill.appWithVersion", { version: v() })}</span>}
@@ -35,6 +36,24 @@ export default function VersionPill() {
               <Show when={uiSource()}>{(s) => <span class="opacity-70">{t("versionPill.source", { source: s() })}</span>}</Show>
             </span>
           </>
+        </Show>
+        <Show when={update()}>
+          {(release) => (
+            <>
+              <Show when={serverVersion() || uiVersion() || uiSource()}>
+                <span class="mx-2">·</span>
+              </Show>
+              <a
+                href={release().url}
+                target="_blank"
+                rel="noreferrer"
+                class="text-primary hover:underline underline-offset-2"
+                title={t("releases.devUpdateAvailable.message", { version: release().version })}
+              >
+                {t("releases.devUpdateAvailable.action")}
+              </a>
+            </>
+          )}
         </Show>
       </div>
     </Show>
