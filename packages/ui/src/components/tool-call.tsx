@@ -511,7 +511,7 @@ function ToolCallDetails(props: {
             {renderToolBody()}
             {renderError()}
 
-            <Show when={status() === "pending" && !props.pendingPermission()}>
+            <Show when={status() === "pending" && !hasPendingInterruption()}>
               <div class="tool-call-pending-message">
                 <span class="spinner-small"></span>
                 <span>{props.t("toolCall.pending.waitingToRun")}</span>
@@ -547,7 +547,7 @@ function ToolCallDetails(props: {
                 {renderToolBody()}
                 {renderError()}
 
-                <Show when={status() === "pending" && !props.pendingPermission()}>
+                <Show when={status() === "pending" && !hasPendingInterruption()}>
                   <div class="tool-call-pending-message">
                     <span class="spinner-small"></span>
                     <span>{props.t("toolCall.pending.waitingToRun")}</span>

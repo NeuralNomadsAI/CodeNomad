@@ -73,6 +73,7 @@ interface TimelineSegmentState {
   deleteHovered: boolean
   deleteSelected: boolean
   hasActivePermission: boolean
+  hasPendingInterruption: boolean
   hidden: boolean
 }
 
@@ -749,12 +750,24 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       const deleteSelected = selectedMessages?.has(segment.messageId) ?? false
 
       let hasActivePermission = false
+      let hasPendingInterruption = false
       if (segment.type === "tool") {
         const partIds = segment.toolPartIds ?? []
         for (const partId of partIds) {
           const permissionState = resolvedStore.getPermissionState(segment.messageId, partId)
+          if (permissionState?.entry?.permission) {
+            hasPendingInterruption = true
+          }
           if (permissionState?.active) {
             hasActivePermission = true
+          }
+
+          const questionState = resolvedStore.getQuestionState(segment.messageId, partId)
+          if (questionState?.entry?.request) {
+            hasPendingInterruption = true
+          }
+
+          if (hasActivePermission && hasPendingInterruption) {
             break
           }
         }
@@ -765,7 +778,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         || expandedMessages?.has(segment.messageId)
         || selectionActive
         || props.activeSegmentId === segment.id
-        || hasActivePermission
+        || hasPendingInterruption
         || deleteHovered
         || deleteSelected
       )
@@ -774,6 +787,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         deleteHovered,
         deleteSelected,
         hasActivePermission,
+        hasPendingInterruption,
         hidden,
       })
     }
@@ -786,6 +800,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       deleteHovered: false,
       deleteSelected: false,
       hasActivePermission: false,
+      hasPendingInterruption: false,
       hidden: false,
     }
   }
