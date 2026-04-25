@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
-import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
+import { getPatchPartFiles, isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
@@ -290,8 +290,19 @@ export default function MessageItem(props: MessageItemProps) {
 
   const getRawContent = () => {
     return props.parts
-      .filter((part) => part.type === "text" && !isHiddenSyntheticTextPart(part))
-      .map((part) => (part as { text?: string }).text || "")
+      .map((part) => {
+        if (part.type === "text" && !isHiddenSyntheticTextPart(part)) {
+          return (part as { text?: string }).text || ""
+        }
+
+        if (part.type === "patch") {
+          const files = getPatchPartFiles(part)
+          if (files.length === 0) return ""
+          return [t("instanceShell.sessionChanges.filesChanged", { count: files.length }), ...files.map((file) => `- ${file}`)].join("\n")
+        }
+
+        return ""
+      })
       .filter((text) => text.trim().length > 0)
       .join("\n\n")
   }
