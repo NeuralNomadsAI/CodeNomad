@@ -147,9 +147,8 @@ export default function MessageSection(props: MessageSectionProps) {
   let deleteMenuRef: HTMLDivElement | undefined
   let deleteMenuButtonRef: HTMLButtonElement | undefined
 
-  // Deletion is only allowed for messages/tool parts that occur AFTER the most
-  // recent compaction. Compaction effectively resets the stored context; deleting
-  // earlier items would not reliably reflect what the model sees.
+  // Timeline deletion is a UI cleanup operation, so historical badges remain
+  // selectable even when compaction has removed them from the active context.
   const messageIndexById = createMemo(() => {
     const ids = messageIds()
     const map = new Map<string, number>()
@@ -161,28 +160,12 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
 
-  const lastCompactionIndex = createMemo(() => {
-    // Depend on a single session revision signal (not every message/part read)
-    // to keep reactive overhead small.
-    sessionRevision()
-    return untrack(() => store().getLastCompactionMessageIndex(props.sessionId))
-  })
-
-  const deletableStartIndex = createMemo(() => {
-    const idx = lastCompactionIndex()
-    return idx === -1 ? 0 : idx + 1
-  })
-
   const deletableMessageIds = createMemo(() => {
-    const ids = messageIds()
-    const start = deletableStartIndex()
-    return new Set(ids.slice(start))
+    return new Set(messageIds())
   })
 
   const isMessageDeletable = (messageId: string): boolean => {
-    const idx = messageIndexById().get(messageId)
-    if (idx === undefined) return false
-    return idx >= deletableStartIndex()
+    return messageIndexById().has(messageId)
   }
 
   // Build the message group for a segment.
@@ -224,6 +207,34 @@ export default function MessageSection(props: MessageSectionProps) {
     }
 
     setLastSelectionAnchorId(id)
+
+    if (segment.type === "compaction") {
+      let startIndex = 0
+      for (let idx = segmentIndex - 1; idx >= 0; idx -= 1) {
+        if (segments[idx].type === "compaction") {
+          startIndex = idx + 1
+          break
+        }
+      }
+
+      const group = (selectionMode() === "tools"
+        ? segments.slice(startIndex, segmentIndex + 1).filter((s) => s.type === "tool")
+        : segments.slice(startIndex, segmentIndex + 1)
+      ).filter((s) => isMessageDeletable(s.messageId))
+
+      if (group.length === 0) return
+
+      setSelectedTimelineIds((prev) => {
+        const next = new Set(prev)
+        const hasAnySelected = group.some((s) => next.has(s.id))
+        for (const s of group) {
+          if (hasAnySelected) next.delete(s.id)
+          else next.add(s.id)
+        }
+        return next
+      })
+      return
+    }
 
     if (selectionMode() === "tools" && segment.type !== "tool") {
       return
