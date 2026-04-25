@@ -387,22 +387,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     return profile
   }
 
-  async function saveServerProfile(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }) {
-    const trimmedName = input.name.trim()
-    const trimmedUrl = input.baseUrl.trim()
-    if (!trimmedName || !trimmedUrl) {
-      throw new Error(t("folderSelection.servers.dialog.errorRequired"))
-    }
-
-    const normalizedUrl = new URL(trimmedUrl).toString()
-    return saveRemoteServerProfile({
-      id: input.id,
-      name: trimmedName,
-      baseUrl: normalizedUrl,
-      skipTlsVerify: input.skipTlsVerify,
-    })
-  }
-
   async function handleSaveServer(openWindow: boolean) {
     if (isSavingServer()) return
     setIsSavingServer(true)
@@ -414,11 +398,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         baseUrl: serverUrl(),
         skipTlsVerify: skipTlsVerify(),
       }
-      if (openWindow) {
-        await probeAndOpenServer(input, true)
-      } else {
-        await saveServerProfile(input)
-      }
+      await probeAndOpenServer(input, openWindow)
       setIsServerDialogOpen(false)
       resetServerDialog()
     } catch (error) {
