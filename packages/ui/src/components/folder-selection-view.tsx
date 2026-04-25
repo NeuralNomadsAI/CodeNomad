@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
+import { Component, createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2 } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -24,6 +24,7 @@ const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
 
 type HomeTab = "local" | "servers"
+const NEW_SERVER_OPTION_VALUE = "__new_remote_server__"
 
 
 interface FolderSelectionViewProps {
@@ -54,6 +55,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
   const [serverName, setServerName] = createSignal("")
   const [serverUrl, setServerUrl] = createSignal("")
+  const [selectedServerId, setSelectedServerId] = createSignal<string | null>(null)
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
@@ -61,6 +63,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
+  type SavedServerOption = { value: string; label: string; description: string }
 
   const languageOptions: LanguageOption[] = [
     { value: "en", label: "English" },
@@ -73,6 +76,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
+  const savedServerOptions = createMemo<SavedServerOption[]>(() => [
+    {
+      value: NEW_SERVER_OPTION_VALUE,
+      label: t("folderSelection.servers.dialog.newServer"),
+      description: t("folderSelection.servers.dialog.newServerDescription"),
+    },
+    ...remoteServers().map((server) => ({
+      value: server.id,
+      label: server.name,
+      description: server.baseUrl,
+    })),
+  ])
+  const selectedSavedServerOption = () =>
+    savedServerOptions().find((option) => option.value === (selectedServerId() ?? NEW_SERVER_OPTION_VALUE)) ?? savedServerOptions()[0]
   
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
@@ -277,10 +294,40 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   function resetServerDialog() {
+    setSelectedServerId(null)
     setServerName("")
     setServerUrl("")
     setSkipTlsVerify(false)
     setServerDialogError(null)
+  }
+
+  function handleSavedServerSelect(option: SavedServerOption | null) {
+    setServerDialogError(null)
+    if (!option || option.value === NEW_SERVER_OPTION_VALUE) {
+      resetServerDialog()
+      return
+    }
+
+    const server = remoteServers().find((entry) => entry.id === option.value)
+    if (!server) return
+    setSelectedServerId(server.id)
+    setServerName(server.name)
+    setServerUrl(server.baseUrl)
+    setSkipTlsVerify(server.skipTlsVerify)
+  }
+
+  function preventSavedServerOptionPress(event: Event) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    event.stopPropagation()
+  }
+
+  function handleRemoveSavedServerFromDialog(id: string, event: Event) {
+    preventSavedServerOptionPress(event)
+    if (selectedServerId() === id) {
+      resetServerDialog()
+    }
+    removeRemoteServerProfile(id)
   }
 
   function openServerDialog() {
@@ -340,19 +387,38 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     return profile
   }
 
+  async function saveServerProfile(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }) {
+    const trimmedName = input.name.trim()
+    const trimmedUrl = input.baseUrl.trim()
+    if (!trimmedName || !trimmedUrl) {
+      throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+    }
+
+    const normalizedUrl = new URL(trimmedUrl).toString()
+    return saveRemoteServerProfile({
+      id: input.id,
+      name: trimmedName,
+      baseUrl: normalizedUrl,
+      skipTlsVerify: input.skipTlsVerify,
+    })
+  }
+
   async function handleSaveServer(openWindow: boolean) {
     if (isSavingServer()) return
     setIsSavingServer(true)
     setServerDialogError(null)
     try {
-      await probeAndOpenServer(
-        {
-          name: serverName(),
-          baseUrl: serverUrl(),
-          skipTlsVerify: skipTlsVerify(),
-        },
-        openWindow,
-      )
+      const input = {
+        id: selectedServerId() ?? undefined,
+        name: serverName(),
+        baseUrl: serverUrl(),
+        skipTlsVerify: skipTlsVerify(),
+      }
+      if (openWindow) {
+        await probeAndOpenServer(input, true)
+      } else {
+        await saveServerProfile(input)
+      }
       setIsServerDialogOpen(false)
       resetServerDialog()
     } catch (error) {
@@ -978,6 +1044,75 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   {t("folderSelection.servers.dialog.description")}
                 </Dialog.Description>
               </div>
+
+              <Show when={remoteServers().length > 0}>
+                <div class="flex flex-col gap-2 text-sm text-secondary">
+                  <span>{t("folderSelection.servers.dialog.savedServer")}</span>
+                  <Select<SavedServerOption>
+                    value={selectedSavedServerOption()}
+                    onChange={handleSavedServerSelect}
+                    options={savedServerOptions()}
+                    optionValue="value"
+                    optionTextValue="label"
+                    itemComponent={(itemProps) => (
+                      <Select.Item item={itemProps.item} class="selector-option group">
+                        <Globe class="w-4 h-4 flex-shrink-0 mt-0.5 icon-muted" />
+                        <div class="selector-option-content">
+                          <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                          <p class="selector-option-description truncate">{itemProps.item.rawValue.description}</p>
+                        </div>
+                        <Show when={itemProps.item.rawValue.value !== NEW_SERVER_OPTION_VALUE}>
+                          <button
+                            type="button"
+                            class="p-1 rounded transition-all flex-shrink-0 opacity-50 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                            aria-label={t("folderSelection.servers.remove")}
+                            title={t("folderSelection.servers.remove")}
+                            onPointerDown={(event) => handleRemoveSavedServerFromDialog(itemProps.item.rawValue.value, event)}
+                            onPointerUp={preventSavedServerOptionPress}
+                            onMouseDown={preventSavedServerOptionPress}
+                            onMouseUp={preventSavedServerOptionPress}
+                            onClick={preventSavedServerOptionPress}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" && event.key !== " ") return
+                              handleRemoveSavedServerFromDialog(itemProps.item.rawValue.value, event)
+                            }}
+                          >
+                            <Trash2 class="w-3.5 h-3.5 transition-colors" />
+                          </button>
+                        </Show>
+                      </Select.Item>
+                    )}
+                  >
+                    <Select.Trigger class="selector-trigger w-full px-3 py-2">
+                      <Globe class="w-4 h-4 icon-muted" aria-hidden="true" />
+                      <div class="flex-1 min-w-0">
+                        <Select.Value<SavedServerOption>>
+                          {(state) => {
+                            const option = state.selectedOption()
+                            return (
+                              <span class="selector-trigger-label selector-trigger-label--stacked">
+                                <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                                  {option?.label}
+                                </span>
+                                <span class="selector-trigger-secondary">{option?.description}</span>
+                              </span>
+                            )
+                          }}
+                        </Select.Value>
+                      </div>
+                      <Select.Icon class="selector-trigger-icon">
+                        <ChevronDown class="w-3 h-3" />
+                      </Select.Icon>
+                    </Select.Trigger>
+
+                    <Select.Portal>
+                      <Select.Content class="selector-popover min-w-[320px]">
+                        <Select.Listbox class="selector-listbox" />
+                      </Select.Content>
+                    </Select.Portal>
+                  </Select>
+                </div>
+              </Show>
 
               <label class="flex flex-col gap-2 text-sm text-secondary">
                 <span>{t("folderSelection.servers.dialog.name")}</span>
