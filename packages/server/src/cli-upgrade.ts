@@ -29,10 +29,11 @@ export function buildUpgradeCommand(
 ): UpgradeCommand {
   const targetVersion = (version ?? "").trim() || "latest"
   const packageSpec = `${CODENOMAD_PACKAGE_NAME}@${targetVersion}`
+  const args = packageManager === "bun" ? ["add", "-g", packageSpec] : ["install", "-g", packageSpec]
 
   return {
     command: packageManager,
-    args: ["install", "-g", packageSpec],
+    args,
     packageSpec,
   }
 }

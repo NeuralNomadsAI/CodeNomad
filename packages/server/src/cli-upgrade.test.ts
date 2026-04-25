@@ -28,4 +28,12 @@ describe("cli upgrade", () => {
     assert.deepEqual(command.args, ["install", "-g", "@neuralnomads/codenomad@0.10.5"])
     assert.equal(formatUpgradeCommand(command), "pnpm install -g @neuralnomads/codenomad@0.10.5")
   })
+
+  it("uses bun add for Bun installs", () => {
+    const command = buildUpgradeCommand("0.10.5", "bun")
+
+    assert.equal(command.packageSpec, "@neuralnomads/codenomad@0.10.5")
+    assert.deepEqual(command.args, ["add", "-g", "@neuralnomads/codenomad@0.10.5"])
+    assert.equal(formatUpgradeCommand(command), "bun add -g @neuralnomads/codenomad@0.10.5")
+  })
 })
