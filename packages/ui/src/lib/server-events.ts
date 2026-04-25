@@ -62,13 +62,13 @@ class ServerEvents {
     }
     const source = this.source
     this.source = null
-    source?.close()
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_DELAY)
       this.connect()
     }, this.retryDelay)
+    source?.close()
   }
 
   private dispatch(event: WorkspaceEventPayload) {

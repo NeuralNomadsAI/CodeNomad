@@ -47,4 +47,23 @@ describe("attachEventSourceHandlers", () => {
 
     assert.equal(reconnects, 1)
   })
+
+  it("requests reconnect once when a close notification hits multiple handlers", () => {
+    const source = new FakeEventSource()
+    let reconnects = 0
+
+    attachEventSourceHandlers(source as unknown as EventSource, {
+      onEvent() {},
+      onError: () => {
+        reconnects += 1
+      },
+      logger,
+    })
+
+    source.onclose?.()
+    source.dispatchEvent(new Event("close"))
+    source.onerror?.()
+
+    assert.equal(reconnects, 1)
+  })
 })

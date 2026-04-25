@@ -17,6 +17,8 @@ interface EventSourceHandlerOptions {
 }
 
 export function attachEventSourceHandlers(source: EventSource, options: EventSourceHandlerOptions) {
+  let disconnected = false
+
   source.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data) as WorkspaceEventPayload
@@ -27,6 +29,10 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
   }
 
   const handleDisconnect = (reason: string) => {
+    if (disconnected) {
+      return
+    }
+    disconnected = true
     options.logger.warn(reason)
     options.onError?.()
   }
