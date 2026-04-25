@@ -316,17 +316,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setSkipTlsVerify(server.skipTlsVerify)
   }
 
-  function preventSavedServerOptionPress(event: Event) {
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    event.stopPropagation()
-  }
-
-  function handleRemoveSavedServerFromDialog(id: string, event: Event) {
-    preventSavedServerOptionPress(event)
-    if (selectedServerId() === id) {
-      resetServerDialog()
-    }
+  function handleRemoveSelectedSavedServer() {
+    const id = selectedServerId()
+    if (!id) return
+    resetServerDialog()
     removeRemoteServerProfile(id)
   }
 
@@ -1028,69 +1021,63 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <Show when={remoteServers().length > 0}>
                 <div class="flex flex-col gap-2 text-sm text-secondary">
                   <span>{t("folderSelection.servers.dialog.savedServer")}</span>
-                  <Select<SavedServerOption>
-                    value={selectedSavedServerOption()}
-                    onChange={handleSavedServerSelect}
-                    options={savedServerOptions()}
-                    optionValue="value"
-                    optionTextValue="label"
-                    itemComponent={(itemProps) => (
-                      <Select.Item item={itemProps.item} class="selector-option group">
-                        <Globe class="w-4 h-4 flex-shrink-0 mt-0.5 icon-muted" />
-                        <div class="selector-option-content">
-                          <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
-                          <p class="selector-option-description truncate">{itemProps.item.rawValue.description}</p>
-                        </div>
-                        <Show when={itemProps.item.rawValue.value !== NEW_SERVER_OPTION_VALUE}>
-                          <button
-                            type="button"
-                            class="p-1 rounded transition-all flex-shrink-0 opacity-50 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
-                            aria-label={t("folderSelection.servers.remove")}
-                            title={t("folderSelection.servers.remove")}
-                            onPointerDown={(event) => handleRemoveSavedServerFromDialog(itemProps.item.rawValue.value, event)}
-                            onPointerUp={preventSavedServerOptionPress}
-                            onMouseDown={preventSavedServerOptionPress}
-                            onMouseUp={preventSavedServerOptionPress}
-                            onClick={preventSavedServerOptionPress}
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter" && event.key !== " ") return
-                              handleRemoveSavedServerFromDialog(itemProps.item.rawValue.value, event)
-                            }}
-                          >
-                            <Trash2 class="w-3.5 h-3.5 transition-colors" />
-                          </button>
-                        </Show>
-                      </Select.Item>
-                    )}
-                  >
-                    <Select.Trigger class="selector-trigger w-full px-3 py-2">
-                      <Globe class="w-4 h-4 icon-muted" aria-hidden="true" />
-                      <div class="flex-1 min-w-0">
-                        <Select.Value<SavedServerOption>>
-                          {(state) => {
-                            const option = state.selectedOption()
-                            return (
-                              <span class="selector-trigger-label selector-trigger-label--stacked">
-                                <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                                  {option?.label}
+                  <div class="flex items-stretch gap-2">
+                    <Select<SavedServerOption>
+                      value={selectedSavedServerOption()}
+                      onChange={handleSavedServerSelect}
+                      options={savedServerOptions()}
+                      optionValue="value"
+                      optionTextValue="label"
+                      itemComponent={(itemProps) => (
+                        <Select.Item item={itemProps.item} class="selector-option">
+                          <Globe class="w-4 h-4 flex-shrink-0 mt-0.5 icon-muted" />
+                          <div class="selector-option-content">
+                            <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                            <p class="selector-option-description truncate">{itemProps.item.rawValue.description}</p>
+                          </div>
+                        </Select.Item>
+                      )}
+                    >
+                      <Select.Trigger class="selector-trigger w-full px-3 py-2">
+                        <Globe class="w-4 h-4 icon-muted" aria-hidden="true" />
+                        <div class="flex-1 min-w-0">
+                          <Select.Value<SavedServerOption>>
+                            {(state) => {
+                              const option = state.selectedOption()
+                              return (
+                                <span class="selector-trigger-label selector-trigger-label--stacked">
+                                  <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                                    {option?.label}
+                                  </span>
+                                  <span class="selector-trigger-secondary">{option?.description}</span>
                                 </span>
-                                <span class="selector-trigger-secondary">{option?.description}</span>
-                              </span>
-                            )
-                          }}
-                        </Select.Value>
-                      </div>
-                      <Select.Icon class="selector-trigger-icon">
-                        <ChevronDown class="w-3 h-3" />
-                      </Select.Icon>
-                    </Select.Trigger>
+                              )
+                            }}
+                          </Select.Value>
+                        </div>
+                        <Select.Icon class="selector-trigger-icon">
+                          <ChevronDown class="w-3 h-3" />
+                        </Select.Icon>
+                      </Select.Trigger>
 
-                    <Select.Portal>
-                      <Select.Content class="selector-popover min-w-[320px]">
-                        <Select.Listbox class="selector-listbox" />
-                      </Select.Content>
-                    </Select.Portal>
-                  </Select>
+                      <Select.Portal>
+                        <Select.Content class="selector-popover min-w-[320px]">
+                          <Select.Listbox class="selector-listbox" />
+                        </Select.Content>
+                      </Select.Portal>
+                    </Select>
+                    <Show when={selectedServerId()}>
+                      <button
+                        type="button"
+                        class="selector-button selector-button-secondary w-auto px-3 flex-shrink-0 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                        aria-label={t("folderSelection.servers.remove")}
+                        title={t("folderSelection.servers.remove")}
+                        onClick={handleRemoveSelectedSavedServer}
+                      >
+                        <Trash2 class="w-4 h-4" />
+                      </button>
+                    </Show>
+                  </div>
                 </div>
               </Show>
 
