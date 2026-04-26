@@ -148,6 +148,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "Visionneuse de changements",
   "instanceShell.filesShell.viewerPlaceholder": "Le rendu détaillé sera ajouté à l'étape suivante.",
   "instanceShell.filesShell.viewerEmpty": "Aucun fichier sélectionné.",
+  "instanceShell.filesShell.listEmpty": "Aucun fichier dans ce dossier.",
+  "instanceShell.filesShell.search.placeholder": "Filtrer les fichiers de ce dossier",
+  "instanceShell.filesShell.search.ariaLabel": "Filtrer les fichiers de ce dossier",
+  "instanceShell.filesShell.search.empty": "Aucun fichier correspondant.",
+  "instanceShell.filesShell.actions.copyPath": "Copier le chemin",
+  "instanceShell.filesShell.toast.copyPathSuccess": "Chemin copié",
+  "instanceShell.filesShell.toast.copyPathError": "Impossible de copier le chemin",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

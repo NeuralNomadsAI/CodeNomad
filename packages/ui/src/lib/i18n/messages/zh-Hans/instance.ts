@@ -148,6 +148,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "更改查看器",
   "instanceShell.filesShell.viewerPlaceholder": "详细更改渲染将在下一步中添加。",
   "instanceShell.filesShell.viewerEmpty": "未选择文件。",
+  "instanceShell.filesShell.listEmpty": "此文件夹中没有文件。",
+  "instanceShell.filesShell.search.placeholder": "筛选此文件夹中的文件",
+  "instanceShell.filesShell.search.ariaLabel": "筛选此文件夹中的文件",
+  "instanceShell.filesShell.search.empty": "没有匹配的文件。",
+  "instanceShell.filesShell.actions.copyPath": "复制路径",
+  "instanceShell.filesShell.toast.copyPathSuccess": "路径已复制",
+  "instanceShell.filesShell.toast.copyPathError": "无法复制路径",
 
   "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
   "instanceShell.plan.empty": "暂无计划。",
