@@ -148,6 +148,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "Visor de cambios",
   "instanceShell.filesShell.viewerPlaceholder": "La vista detallada se agregará en el siguiente paso.",
   "instanceShell.filesShell.viewerEmpty": "Ningún archivo seleccionado.",
+  "instanceShell.filesShell.listEmpty": "No hay archivos en esta carpeta.",
+  "instanceShell.filesShell.search.placeholder": "Filtrar archivos de esta carpeta",
+  "instanceShell.filesShell.search.ariaLabel": "Filtrar archivos de esta carpeta",
+  "instanceShell.filesShell.search.empty": "No hay archivos coincidentes.",
+  "instanceShell.filesShell.actions.copyPath": "Copiar ruta",
+  "instanceShell.filesShell.toast.copyPathSuccess": "Ruta copiada",
+  "instanceShell.filesShell.toast.copyPathError": "No se pudo copiar la ruta",
 
   "instanceShell.plan.noSessionSelected": "Selecciona una sesión para ver el plan.",
   "instanceShell.plan.empty": "Aún no hay nada planificado.",

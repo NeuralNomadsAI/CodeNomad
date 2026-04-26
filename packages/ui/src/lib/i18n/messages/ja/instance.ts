@@ -148,6 +148,13 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "変更ビューア",
   "instanceShell.filesShell.viewerPlaceholder": "詳細な変更表示は次のステップで追加します。",
   "instanceShell.filesShell.viewerEmpty": "ファイルが選択されていません。",
+  "instanceShell.filesShell.listEmpty": "このフォルダーにファイルはありません。",
+  "instanceShell.filesShell.search.placeholder": "このフォルダーのファイルを絞り込む",
+  "instanceShell.filesShell.search.ariaLabel": "このフォルダーのファイルを絞り込む",
+  "instanceShell.filesShell.search.empty": "一致するファイルがありません。",
+  "instanceShell.filesShell.actions.copyPath": "パスをコピー",
+  "instanceShell.filesShell.toast.copyPathSuccess": "パスをコピーしました",
+  "instanceShell.filesShell.toast.copyPathError": "パスをコピーできませんでした",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",

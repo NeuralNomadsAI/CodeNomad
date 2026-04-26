@@ -116,10 +116,20 @@ function loadLoadingScreen(window: BrowserWindow) {
       : window.loadFile(target.source)
 
   loader.catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to load loading screen:", error)
   })
+}
 
-  return loader
+function isIgnorableNavigationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+  return code === "ERR_ABORTED" || code === "ERR_FAILED"
 }
 
 function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
@@ -294,7 +304,7 @@ function createWindow() {
   showingLoadingScreen = true
   currentCliUrl = null
   clearWindowAllowedOrigin(window)
-  const loadingReady = loadLoadingScreen(window)
+  loadLoadingScreen(window)
 
   if (process.env.NODE_ENV === "development") {
     window.webContents.openDevTools({ mode: "detach" })
@@ -313,7 +323,11 @@ function createWindow() {
     showingLoadingScreen = false
   })
 
-  return loadingReady
+  if (pendingCliUrl) {
+    const url = pendingCliUrl
+    pendingCliUrl = null
+    startCliPreload(url)
+  }
 }
 
 function showLoadingScreen(force = false) {
@@ -384,6 +398,9 @@ function startCliPreload(url: string) {
   })
 
   view.webContents.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to preload CLI view:", error)
     if (preloadingView === view) {
       destroyPreloadingView(view)
@@ -404,7 +421,12 @@ function finalizeCliSwap(url: string) {
   currentCliUrl = url
   setWindowAllowedOrigin(window, url)
   pendingCliUrl = null
-  window.loadURL(url).catch((error) => console.error("[cli] failed to load CLI view:", error))
+  window.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
+    console.error("[cli] failed to load CLI view:", error)
+  })
 }
 
 function buildRemoteWindowTitle(name: string, baseUrl: string) {
@@ -620,8 +642,7 @@ app.whenReady().then(() => {
     // ignore
   }
 
-  const loadingReady = createWindow()
-  ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
+  startCli()
 
   if (isMac) {
     session.defaultSession.setSpellCheckerEnabled(false)
@@ -638,11 +659,8 @@ app.whenReady().then(() => {
     }
   }
 
-  void loadingReady.finally(() => {
-    setTimeout(() => {
-      void startCli()
-    }, 0)
-  })
+  createWindow()
+  ;(mainWindow as BrowserWindow & { __codenomadOpenRemoteWindow?: typeof openRemoteWindow }).__codenomadOpenRemoteWindow = openRemoteWindow
 
   app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
     if (isInsecureOriginAllowed(url)) {

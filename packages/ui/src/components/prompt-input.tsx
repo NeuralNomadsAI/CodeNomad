@@ -310,14 +310,29 @@ export default function PromptInput(props: PromptInputProps) {
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const activeElement = document.activeElement as HTMLElement | null
+      const targetElement = e.target instanceof HTMLElement ? e.target : null
 
-      const isInputElement =
-        activeElement?.tagName === "INPUT" ||
-        activeElement?.tagName === "TEXTAREA" ||
-        activeElement?.tagName === "SELECT" ||
-        Boolean(activeElement?.isContentEditable)
+      const isEditableElement = (element: HTMLElement | null) =>
+        element?.tagName === "INPUT" ||
+        element?.tagName === "TEXTAREA" ||
+        element?.tagName === "SELECT" ||
+        Boolean(element?.isContentEditable)
 
-      if (isInputElement) return
+      const isInteractiveElement = (element: HTMLElement | null) =>
+        Boolean(
+          element?.closest(
+            'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex]:not([tabindex="-1"])',
+          ),
+        )
+
+      if (
+        isEditableElement(activeElement) ||
+        isEditableElement(targetElement) ||
+        isInteractiveElement(activeElement) ||
+        isInteractiveElement(targetElement)
+      ) {
+        return
+      }
 
       const isModifierKey = e.ctrlKey || e.metaKey || e.altKey
       if (isModifierKey) return

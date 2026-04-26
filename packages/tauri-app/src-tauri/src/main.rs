@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
+mod managed_node;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 
