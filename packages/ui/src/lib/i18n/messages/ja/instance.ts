@@ -155,6 +155,10 @@ export const instanceMessages = {
   "instanceShell.filesShell.actions.copyPath": "パスをコピー",
   "instanceShell.filesShell.toast.copyPathSuccess": "パスをコピーしました",
   "instanceShell.filesShell.toast.copyPathError": "パスをコピーできませんでした",
+  "instanceShell.filesShell.previewMarkdown": "Markdown プレビュー",
+  "instanceShell.filesShell.showSource": "ソースを表示",
+  "instanceShell.filesShell.enableWordWrap": "折り返しを有効化",
+  "instanceShell.filesShell.disableWordWrap": "折り返しを無効化",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",
