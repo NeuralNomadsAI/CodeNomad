@@ -23,7 +23,7 @@ describe("listWorktrees", () => {
         "HEAD 1111111",
         "branch refs/heads/main",
         "",
-      ].join("\\n")
+      ].join("\n")
 
       if (process.platform === "win32") {
         writeFileSync(gitPath, `@echo off\r\nif "%1"=="worktree" if "%2"=="list" if "%3"=="--porcelain" (\r\necho ${porcelain.replace(/\n/g, "\r\necho ")}\r\nexit /b 0\r\n)\r\nexit /b 1\r\n`)
@@ -38,6 +38,7 @@ describe("listWorktrees", () => {
       assert.equal(worktrees[0]?.slug, "root")
       assert.equal(worktrees[0]?.directory, workspaceFolder)
       assert.equal(worktrees[0]?.kind, "root")
+      assert.equal(worktrees[0]?.branch, "main")
       assert.notEqual(worktrees[0]?.directory, repoRoot)
     } finally {
       process.env.PATH = originalPath

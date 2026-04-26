@@ -52,7 +52,7 @@ export interface WorkspaceDeleteResponse {
 export type WorktreeKind = "root" | "worktree"
 
 export interface WorktreeDescriptor {
-  /** Stable identifier used by CodeNomad + clients ("root" for repo root). */
+  /** Stable identifier used by CodeNomad + clients ("root" for the selected workspace folder). */
   slug: string
   /** Absolute directory path on the server host. */
   directory: string
