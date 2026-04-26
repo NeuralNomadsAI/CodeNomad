@@ -179,7 +179,7 @@ const FileSystemBrowserDialog: Component<FileSystemBrowserDialogProps> = (props)
     if (!metadata) {
       return rootPath()
     }
-    if (metadata.pathKind === "drives" || metadata.pathKind === "roots") {
+    if (metadata.pathKind === "drives") {
       return ""
     }
     if (metadata.pathKind === "relative") {

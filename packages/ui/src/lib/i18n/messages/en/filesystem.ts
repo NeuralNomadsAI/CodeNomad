@@ -1,9 +1,10 @@
 export const filesystemMessages = {
   "directoryBrowser.defaultDescription": "Browse folders under the configured workspace root.",
   "directoryBrowser.close": "Close",
-  "directoryBrowser.currentFolder": "Current folder",
+  "directoryBrowser.currentFolder": "Select folder or enter path",
   "directoryBrowser.currentFolder.inputAriaLabel": "Folder path",
-  "directoryBrowser.currentFolder.inputPlaceholder": "Type or paste an absolute path and press Enter",
+  "directoryBrowser.currentFolder.inputPlaceholder": "Type or paste a folder path",
+  "directoryBrowser.openCurrent": "Open",
   "directoryBrowser.selectCurrent": "Select Current",
   "directoryBrowser.newFolder": "New Folder",
   "directoryBrowser.creating": "Creating…",

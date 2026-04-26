@@ -1,9 +1,10 @@
 export const filesystemMessages = {
   "directoryBrowser.defaultDescription": "Parcourez les dossiers sous la racine d'espace de travail configurée.",
   "directoryBrowser.close": "Fermer",
-  "directoryBrowser.currentFolder": "Dossier actuel",
+  "directoryBrowser.currentFolder": "Sélectionner un dossier ou saisir un chemin",
   "directoryBrowser.currentFolder.inputAriaLabel": "Chemin du dossier",
-  "directoryBrowser.currentFolder.inputPlaceholder": "Saisissez ou collez un chemin absolu, puis appuyez sur Entrée",
+  "directoryBrowser.currentFolder.inputPlaceholder": "Saisissez ou collez un chemin de dossier",
+  "directoryBrowser.openCurrent": "Ouvrir",
   "directoryBrowser.selectCurrent": "Sélectionner le dossier actuel",
   "directoryBrowser.newFolder": "Nouveau dossier",
   "directoryBrowser.creating": "Création…",

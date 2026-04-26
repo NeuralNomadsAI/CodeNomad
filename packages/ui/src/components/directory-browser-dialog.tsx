@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -60,7 +60,7 @@ function resolveAbsolutePath(root: string, relativePath: string) {
 }
 
 function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null) {
-  if (!metadata || metadata.pathKind === "drives" || metadata.pathKind === "roots") {
+  if (!metadata || metadata.pathKind === "drives") {
     return ""
   }
   if (metadata.pathKind === "relative") {
@@ -323,7 +323,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     if (creatingFolder()) return
     const target = pathInput().trim()
     const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
-    if (!metadata || metadata.pathKind === "drives" || metadata.pathKind === "roots") {
+    if (!metadata || metadata.pathKind === "drives") {
       return
     }
     setPathInputDirty(false)
@@ -398,48 +398,47 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
             <div class="panel-body directory-browser-body">
               <Show when={rootPath()}>
                 <div class="directory-browser-current">
-                  <div class="directory-browser-current-meta">
-                    <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
-                    <input
-                      type="text"
-                      value={pathInput()}
-                      onInput={(event) => {
-                        setPathInput(event.currentTarget.value)
-                        setPathInputDirty(true)
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault()
-                          void handlePathSubmit()
-                        }
-                      }}
-                      spellcheck={false}
-                      placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
-                      aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
-                      class="selector-input directory-browser-current-path"
-                    />
-                  </div>
-                  <div class="directory-browser-current-actions">
-                    <button
-                      type="button"
-                      class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                      disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
-                      onClick={() => void handleSelectCurrent()}
-                    >
-                      {t("directoryBrowser.selectCurrent")}
-                    </button>
-                    <button
-                      type="button"
-                      class="selector-button selector-button-secondary directory-browser-select"
-                      disabled={!canSelectCurrent() || creatingFolder()}
-                      onClick={() => void handleCreateFolder()}
-                    >
-                      <span class="inline-flex items-center gap-2">
-                        <FolderPlus class="w-4 h-4" />
-                        {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
-                      </span>
-                    </button>
-                  </div>
+                  <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
+                  <input
+                    type="text"
+                    value={pathInput()}
+                    onInput={(event) => {
+                      setPathInput(event.currentTarget.value)
+                      setPathInputDirty(true)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        void handlePathSubmit()
+                      }
+                    }}
+                    spellcheck={false}
+                    placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
+                    aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
+                    class="selector-input directory-browser-current-path"
+                  />
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary directory-browser-select directory-browser-new-folder"
+                    disabled={!canSelectCurrent() || creatingFolder()}
+                    onClick={() => void handleCreateFolder()}
+                  >
+                    <span class="inline-flex items-center gap-2">
+                      <FolderPlus class="w-4 h-4" />
+                      {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary directory-browser-open-path"
+                    disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
+                    onClick={() => void handleSelectCurrent()}
+                    title={t("directoryBrowser.openCurrent")}
+                    aria-label={t("directoryBrowser.openCurrent")}
+                  >
+                    <ArrowRightSquare class="w-4 h-4" />
+                    <span>{t("directoryBrowser.openCurrent")}</span>
+                  </button>
                 </div>
               </Show>
               <Show

@@ -156,7 +156,7 @@ export interface FileSystemEntry {
 }
 
 export type FileSystemScope = "restricted" | "unrestricted"
-export type FileSystemPathKind = "relative" | "absolute" | "drives" | "roots"
+export type FileSystemPathKind = "relative" | "absolute" | "drives"
 
 export interface FileSystemListingMetadata {
   scope: FileSystemScope
@@ -164,7 +164,6 @@ export interface FileSystemListingMetadata {
    * Canonical identifier of the current view:
    * - "." for restricted single-root listings
    * - WINDOWS_DRIVES_ROOT for the Windows drives pseudo-root
-   * - MULTI_ROOTS_ROOT for the multi-root top-level pseudo-view
    * - absolute path otherwise
    */
   currentPath: string
@@ -176,7 +175,7 @@ export interface FileSystemListingMetadata {
   homePath: string
   /** Human-friendly label for the current path. */
   displayPath: string
-  /** Indicates whether entry paths are relative, absolute, or represent drive/root pseudo-views. */
+  /** Indicates whether entry paths are relative, absolute, or represent the drive pseudo-view. */
   pathKind: FileSystemPathKind
 }
 
@@ -198,7 +197,7 @@ export interface FileSystemCreateFolderRequest {
 export interface FileSystemCreateFolderResponse {
   /**
    * Path identifier that can be passed back to `/api/filesystem` to browse the new folder.
-   * Absolute for unrestricted, multi-root, and newly-created restricted folders.
+   * Relative for restricted listings and absolute for unrestricted listings.
    */
   path: string
   /** Absolute folder path on the server host. */
@@ -206,7 +205,6 @@ export interface FileSystemCreateFolderResponse {
 }
 
 export const WINDOWS_DRIVES_ROOT = "__drives__"
-export const MULTI_ROOTS_ROOT = "__roots__"
 
 export interface WorkspaceFileResponse {
   workspaceId: string

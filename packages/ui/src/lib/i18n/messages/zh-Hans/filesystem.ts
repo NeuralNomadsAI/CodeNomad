@@ -1,9 +1,10 @@
 export const filesystemMessages = {
   "directoryBrowser.defaultDescription": "浏览已配置的工作区根目录下的文件夹。",
   "directoryBrowser.close": "关闭",
-  "directoryBrowser.currentFolder": "当前文件夹",
+  "directoryBrowser.currentFolder": "选择文件夹或输入路径",
   "directoryBrowser.currentFolder.inputAriaLabel": "文件夹路径",
-  "directoryBrowser.currentFolder.inputPlaceholder": "输入或粘贴绝对路径后按回车",
+  "directoryBrowser.currentFolder.inputPlaceholder": "输入或粘贴文件夹路径",
+  "directoryBrowser.openCurrent": "打开",
   "directoryBrowser.selectCurrent": "选择当前",
   "directoryBrowser.newFolder": "新建文件夹",
   "directoryBrowser.creating": "正在创建…",

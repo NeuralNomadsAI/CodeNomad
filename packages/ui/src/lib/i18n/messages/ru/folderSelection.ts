@@ -20,7 +20,6 @@ export const folderSelectionMessages = {
   "folderSelection.browse.subtitle": "Выберите любую папку на компьютере",
   "folderSelection.browse.button": "Обзор папок",
   "folderSelection.browse.buttonOpening": "Открытие…",
-  "folderSelection.browse.enterPath": "Ввести путь вручную",
   "folderSelection.actions.title": "Открыть папку или подключить сервер",
   "folderSelection.actions.subtitle": "Откройте локальную папку или подключитесь к серверу CodeNomad",
   "folderSelection.actions.connectButton": "Подключить сервер CodeNomad",

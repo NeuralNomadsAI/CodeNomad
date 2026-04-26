@@ -49,7 +49,6 @@ interface CliOptions {
   tlsCaPath?: string
   tlsSANs?: string
   rootDir: string
-  rootDirs: string[]
   configPath: string
   unrestrictedRoot: boolean
   logLevel?: string
@@ -88,12 +87,6 @@ function parseCliOptions(argv: string[]): CliOptions {
     .addOption(new Option("--tlsSANs <list>", "Additional TLS SANs (comma-separated)").env("CLI_TLS_SANS"))
     .addOption(
       new Option("--workspace-root <path>", "Restricts root path where workspaces can be opened").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
-    )
-    .addOption(
-      new Option(
-        "--workspace-roots <paths>",
-        "Extra workspace roots added alongside --workspace-root (comma-separated absolute paths). The picker lists all roots when 2+ are configured in total.",
-      ).env("CLI_WORKSPACE_ROOTS"),
     )
     .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))
     .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem").env("CLI_UNRESTRICTED_ROOT").default(false))
@@ -145,7 +138,6 @@ function parseCliOptions(argv: string[]): CliOptions {
     tlsCa?: string
     tlsSANs?: string
     workspaceRoot?: string
-    workspaceRoots?: string
     root?: string
     unrestrictedRoot?: boolean
     config: string
@@ -171,19 +163,6 @@ function parseCliOptions(argv: string[]): CliOptions {
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
 
-  const resolvedRootDirs = (parsed.workspaceRoots ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-
-  for (const entry of resolvedRootDirs) {
-    if (!path.isAbsolute(entry)) {
-      throw new InvalidArgumentError(
-        `--workspace-roots entries must be absolute paths; received "${entry}"`,
-      )
-    }
-  }
-
   const normalizedHost = resolveHost(parsed.host)
 
   const autoUpdateString = (parsed.uiAutoUpdate ?? "true").trim().toLowerCase()
@@ -207,7 +186,6 @@ function parseCliOptions(argv: string[]): CliOptions {
     tlsCaPath: parsed.tlsCa,
     tlsSANs: parsed.tlsSANs,
     rootDir: resolvedRoot,
-    rootDirs: resolvedRootDirs,
     configPath: parsed.config,
     unrestrictedRoot: Boolean(parsed.unrestrictedRoot),
     logLevel: parsed.logLevel,
@@ -342,7 +320,6 @@ async function main() {
   })
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
-    rootDirs: options.rootDirs,
     unrestricted: options.unrestrictedRoot,
   })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
