@@ -1080,7 +1080,7 @@ impl CliEntry {
                 runner: Runner::Node,
                 runner_path: None,
                 node_binary: ensure_managed_node_binary(app)?,
-                node_args: Vec::new(),
+                node_args: vec!["--experimental-specifier-resolution=node".to_string()],
             });
         }
 
