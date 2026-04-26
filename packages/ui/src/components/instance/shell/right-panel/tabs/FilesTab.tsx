@@ -69,8 +69,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     if (!query) return entries
     return entries.filter((item) => {
       const name = String(item.name || "").toLowerCase()
-      const path = String(item.path || "").toLowerCase()
-      return name.includes(query) || path.includes(query)
+      return name.includes(query)
     })
   })
 

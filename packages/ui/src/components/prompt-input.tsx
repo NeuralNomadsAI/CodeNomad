@@ -240,7 +240,21 @@ export default function PromptInput(props: PromptInputProps) {
         element?.tagName === "SELECT" ||
         Boolean(element?.isContentEditable)
 
-      if (isEditableElement(activeElement) || isEditableElement(targetElement)) return
+      const isInteractiveElement = (element: HTMLElement | null) =>
+        Boolean(
+          element?.closest(
+            'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex]:not([tabindex="-1"])',
+          ),
+        )
+
+      if (
+        isEditableElement(activeElement) ||
+        isEditableElement(targetElement) ||
+        isInteractiveElement(activeElement) ||
+        isInteractiveElement(targetElement)
+      ) {
+        return
+      }
 
       const isModifierKey = e.ctrlKey || e.metaKey || e.altKey
       if (isModifierKey) return
