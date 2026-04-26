@@ -53,7 +53,7 @@ on:
 # least-privilege (e.g. dev CI uses read-only; releases grant write).
 
 env:
-  NODE_VERSION: 22
+  NODE_VERSION: 20
 
 jobs:
   build-macos:
@@ -372,7 +372,7 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.10.1 @tauri-apps/cli-darwin-x64@2.10.1 --no-save --no-audit --no-fund --workspaces=false
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
@@ -456,7 +456,7 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.10.1 @tauri-apps/cli-darwin-arm64@2.10.1 --no-save --no-audit --no-fund --workspaces=false
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
@@ -542,7 +542,7 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            npm install @tauri-apps/cli@2.10.1 @tauri-apps/cli-win32-x64-msvc@2.10.1 --no-save --no-audit --no-fund --workspaces=false
+            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-win32-x64-msvc@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
           echo "Tauri CLI failed to load after retries" >&2
@@ -614,7 +614,6 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             pkg-config \
-            xdg-utils \
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
@@ -643,7 +642,6 @@ jobs:
             if [ "$attempt" -gt 1 ]; then
               echo "Retrying Tauri CLI install (attempt $attempt)..."
             fi
-            # Tauri CLI 2.10.1 regresses Linux AppImage bundling in CI; keep Linux on the last known-good CLI.
             npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save --no-audit --no-fund --workspaces=false
             node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
           done
@@ -743,7 +741,6 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             pkg-config \
-            xdg-utils \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
             libgtk-3-dev:arm64 \

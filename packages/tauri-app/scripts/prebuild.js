@@ -21,7 +21,6 @@ const serverDevInstallCommand =
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
-const serverStandaloneBuildCommand = "npm run build:standalone --workspace @neuralnomads/codenomad"
 
 const envWithRootBin = {
   ...process.env,
@@ -78,15 +77,6 @@ function ensureServerBuild() {
   }
 }
 
-function ensureStandaloneServerBuild() {
-  console.log("[prebuild] building standalone server executable...")
-  execSync(serverStandaloneBuildCommand, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-    env: envWithRootBin,
-  })
-}
-
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
@@ -127,19 +117,15 @@ function ensureServerDevDependencies() {
 }
 
 function ensureServerDependencies() {
-  console.log("[prebuild] pruning server to production dependencies...")
-  execSync("npm prune --omit=dev --ignore-scripts --workspaces=false --fund=false --audit=false", {
+  if (fs.existsSync(braceExpansionPath)) {
+    return
+  }
+
+  console.log("[prebuild] ensuring server production dependencies...")
+  execSync(serverInstallCommand, {
     cwd: serverRoot,
     stdio: "inherit",
   })
-
-  if (!fs.existsSync(braceExpansionPath)) {
-    console.log("[prebuild] restoring missing server production dependencies...")
-    execSync(serverInstallCommand, {
-      cwd: serverRoot,
-      stdio: "inherit",
-    })
-  }
 }
 
 function ensureUiDevDependencies() {
@@ -195,11 +181,14 @@ function ensureRollupPlatformBinary() {
 function ensureEsbuildPlatformBinary() {
   const platformKey = `${process.platform}-${process.arch}`
   const platformPackages = {
-    "linux-x64": "@esbuild/linux-x64",
+    "linux-arm": "@esbuild/linux-arm",
     "linux-arm64": "@esbuild/linux-arm64",
+    "linux-ia32": "@esbuild/linux-ia32",
+    "linux-x64": "@esbuild/linux-x64",
     "darwin-arm64": "@esbuild/darwin-arm64",
     "darwin-x64": "@esbuild/darwin-x64",
     "win32-arm64": "@esbuild/win32-arm64",
+    "win32-ia32": "@esbuild/win32-ia32",
     "win32-x64": "@esbuild/win32-x64",
   }
 
@@ -208,26 +197,29 @@ function ensureEsbuildPlatformBinary() {
     return
   }
 
-  const platformPackagePath = path.join(workspaceRoot, "node_modules", ...pkgName.split("/"))
-  if (fs.existsSync(platformPackagePath)) {
+  const platformPackageName = pkgName.split("/").pop()
+  const platformPackagePaths = [
+    path.join(serverRoot, "node_modules", "@esbuild", platformPackageName),
+    path.join(workspaceRoot, "node_modules", "@esbuild", platformPackageName),
+  ]
+  if (platformPackagePaths.some((packagePath) => fs.existsSync(packagePath))) {
     return
   }
 
   let esbuildVersion = ""
-  try {
-    esbuildVersion = require(path.join(workspaceRoot, "node_modules", "esbuild", "package.json")).version
-  } catch {
+  for (const baseRoot of [serverRoot, workspaceRoot]) {
     try {
-      esbuildVersion = require(path.join(workspaceRoot, "node_modules", "vite", "node_modules", "esbuild", "package.json")).version
-    } catch {
-      // leave version empty; fallback install will use latest compatible
+      esbuildVersion = require(path.join(baseRoot, "node_modules", "esbuild", "package.json")).version
+      break
+    } catch (error) {
+      // try the next install root; fallback install will use latest compatible
     }
   }
 
   const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
 
   console.log("[prebuild] installing esbuild platform binary (optional dep workaround)...")
-  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
+  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --package-lock=false --fund=false --audit=false`, {
     cwd: workspaceRoot,
     stdio: "inherit",
   })
@@ -313,7 +305,6 @@ function copyUiLoadingAssets() {
   ensureRollupPlatformBinary()
   ensureEsbuildPlatformBinary()
   ensureServerBuild()
-  ensureStandaloneServerBuild()
   ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
