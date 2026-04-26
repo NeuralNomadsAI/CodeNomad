@@ -1250,7 +1250,8 @@ fn build_shell_command_string(
         quoted.push(shell_escape(&arg));
     }
     let command = format!(
-        "if [ -x {} ]; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
+        "if [ -x {} ] || command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
+        shell_escape(&entry.node_binary),
         shell_escape(&entry.node_binary),
         quoted.join(" "),
         MISSING_NODE_PREFIX,
