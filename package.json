@@ -25,6 +25,7 @@
     "bumpVersion": "node ./scripts/bump-version.js"
   },
   "dependencies": {
+    "@esbuild/darwin-arm64": "^0.28.0",
     "7zip-bin": "^5.2.0",
     "google-auth-library": "^10.5.0"
   },
