@@ -43,6 +43,11 @@
   "bundle": {
     "active": true,
     "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop"
+        }
+      },
       "deb": {
         "files": {
           "/usr/share/applications/ai.neuralnomads.codenomad.client.desktop": "icons/linux/ai.neuralnomads.codenomad.client.desktop",

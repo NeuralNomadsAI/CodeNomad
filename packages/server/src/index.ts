@@ -29,14 +29,13 @@ import { SideCarManager } from "./sidecars/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
-import { readServerPackageVersion, resolveServerPublicDir } from "./runtime-paths"
 
 const require = createRequire(import.meta.url)
 
-const packageJson = { version: readServerPackageVersion(import.meta.url) }
+const packageJson = require("../package.json") as { version: string }
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const DEFAULT_UI_STATIC_DIR = resolveServerPublicDir(import.meta.url)
+const DEFAULT_UI_STATIC_DIR = path.resolve(__dirname, "../public")
 
 interface CliOptions {
   host: string
