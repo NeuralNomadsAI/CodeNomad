@@ -38,6 +38,7 @@ import type {
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
+import { attachEventSourceHandlers } from "./event-source-handlers"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -510,26 +511,7 @@ export const serverApi = {
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
     const source = new EventSource(url, { withCredentials: true } as any)
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as WorkspaceEventPayload
-        onEvent(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse event", error)
-      }
-    }
-    source.onerror = () => {
-      sseLogger.warn("EventSource error, closing stream")
-      onError?.()
-    }
-    source.addEventListener("codenomad.client.ping", (event: MessageEvent) => {
-      try {
-        const payload = event.data ? (JSON.parse(event.data) as { ts?: number }) : {}
-        onPing?.(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse ping event", error)
-      }
-    })
+    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
     return source
   },
 }
