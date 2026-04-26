@@ -263,6 +263,19 @@ export class FileSystemBrowser {
     if (!input || input === "." || input === "./" || input === "/") {
       return "."
     }
+
+    if (path.isAbsolute(input)) {
+      const resolved = path.resolve(input)
+      const relativeToRoot = path.relative(this.root, resolved)
+      if (relativeToRoot === "") {
+        return "."
+      }
+      if (this.isOutsideRoot(relativeToRoot)) {
+        throw new Error("Access outside of root is not allowed")
+      }
+      return relativeToRoot.replace(/\\+/g, "/")
+    }
+
     let normalized = input.replace(/\\+/g, "/")
     if (normalized.startsWith("./")) {
       normalized = normalized.replace(/^\.\/+/, "")
@@ -293,10 +306,14 @@ export class FileSystemBrowser {
     const normalized = this.normalizeRelativePath(relativePath)
     const target = path.resolve(this.root, normalized)
     const relativeToRoot = path.relative(this.root, target)
-    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot) && relativeToRoot !== "") {
+    if (this.isOutsideRoot(relativeToRoot)) {
       throw new Error("Access outside of root is not allowed")
     }
     return target
+  }
+
+  private isOutsideRoot(relativeToRoot: string) {
+    return relativeToRoot === ".." || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)
   }
 
   private resolveUnrestrictedPath(input: string | undefined): string {

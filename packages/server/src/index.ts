@@ -317,7 +317,10 @@ async function main() {
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
-  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
+  const fileSystemBrowser = new FileSystemBrowser({
+    rootDir: options.rootDir,
+    unrestricted: options.unrestrictedRoot,
+  })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
   const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
   const sidecarManager = new SideCarManager({

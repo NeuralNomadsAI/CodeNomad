@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -38,6 +38,7 @@ interface DirectoryBrowserDialogProps {
   open: boolean
   title: string
   description?: string
+  initialPath?: string
   onSelect: (absolutePath: string) => void
   onClose: () => void
 }
@@ -125,7 +126,17 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   async function initialize() {
     setLoading(true)
     try {
-      await navigateTo()
+      const startPath = props.initialPath?.trim()
+      if (startPath) {
+        const metadata = await navigateTo(startPath)
+        if (metadata) {
+          return
+        }
+        // initialPath was rejected (e.g. no longer under an allowed root);
+        // silently fall back to the default root so the dialog stays usable.
+        setError(null)
+      }
+      await navigateTo(undefined)
     } finally {
       setLoading(false)
     }
@@ -387,46 +398,47 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
             <div class="panel-body directory-browser-body">
               <Show when={rootPath()}>
                 <div class="directory-browser-current">
-                  <div class="directory-browser-current-meta">
-                    <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
-                    <input
-                      type="text"
-                      value={pathInput()}
-                      onInput={(event) => {
-                        setPathInput(event.currentTarget.value)
-                        setPathInputDirty(true)
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault()
-                          void handlePathSubmit()
-                        }
-                      }}
-                      spellcheck={false}
-                      class="selector-input directory-browser-current-path"
-                    />
-                  </div>
-                  <div class="directory-browser-current-actions">
-                    <button
-                      type="button"
-                      class="selector-button selector-button-secondary directory-browser-select directory-browser-current-select"
-                      disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
-                      onClick={() => void handleSelectCurrent()}
-                    >
-                      {t("directoryBrowser.selectCurrent")}
-                    </button>
-                    <button
-                      type="button"
-                      class="selector-button selector-button-secondary directory-browser-select"
-                      disabled={!canSelectCurrent() || creatingFolder()}
-                      onClick={() => void handleCreateFolder()}
-                    >
-                      <span class="inline-flex items-center gap-2">
-                        <FolderPlus class="w-4 h-4" />
-                        {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
-                      </span>
-                    </button>
-                  </div>
+                  <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
+                  <input
+                    type="text"
+                    value={pathInput()}
+                    onInput={(event) => {
+                      setPathInput(event.currentTarget.value)
+                      setPathInputDirty(true)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        void handlePathSubmit()
+                      }
+                    }}
+                    spellcheck={false}
+                    placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
+                    aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
+                    class="selector-input directory-browser-current-path"
+                  />
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary directory-browser-select directory-browser-new-folder"
+                    disabled={!canSelectCurrent() || creatingFolder()}
+                    onClick={() => void handleCreateFolder()}
+                  >
+                    <span class="inline-flex items-center gap-2">
+                      <FolderPlus class="w-4 h-4" />
+                      {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="selector-button selector-button-secondary directory-browser-open-path"
+                    disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
+                    onClick={() => void handleSelectCurrent()}
+                    title={t("directoryBrowser.openCurrent")}
+                    aria-label={t("directoryBrowser.openCurrent")}
+                  >
+                    <ArrowRightSquare class="w-4 h-4" />
+                    <span>{t("directoryBrowser.openCurrent")}</span>
+                  </button>
                 </div>
               </Show>
               <Show
