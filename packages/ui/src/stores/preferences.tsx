@@ -470,13 +470,11 @@ function addEnvironmentVariable(key: string, value: string, secure: boolean = tr
   const current = serverSettings().environmentVariables
   updateEnvironmentVariables({ ...current, [key]: value })
 
-  // 依照提交時的 secure 狀態來決定是否加入/移除 secureEnvVars
   const secureList = serverSettings().secureEnvVars
   const upperKey = key.toUpperCase()
   const exists = secureList.some((name) => name.toUpperCase() === upperKey)
 
   if (secure) {
-    // 如果 secure 為 true 且不在列表中，則加入
     if (!exists) {
       const next = [...secureList, key]
       void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>
@@ -484,7 +482,6 @@ function addEnvironmentVariable(key: string, value: string, secure: boolean = tr
       )
     }
   } else {
-    // 如果 secure 為 false 但在列表中，則移除
     if (exists) {
       const next = secureList.filter((name) => name.toUpperCase() !== upperKey)
       void patchConfigOwner("server", { secureEnvVars: next }).catch((error) =>

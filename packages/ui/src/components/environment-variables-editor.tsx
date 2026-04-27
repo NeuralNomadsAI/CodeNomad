@@ -34,7 +34,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
     setEnvVars({ ...envVars(), [key]: value })
     setNewKey("")
     setNewValue("")
-    setNewVarSecure(true) // 重置為預設值（secure）
+    setNewVarSecure(true)
   }
 
   function handleRemoveVariable(key: string) {
@@ -95,6 +95,9 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
                     class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder={t("envEditor.fields.value.placeholder")}
+                    autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
+                    spellcheck={isSecureEnvVar(key) ? false : undefined}
+                    autocapitalize={isSecureEnvVar(key) ? "off" : undefined}
                   />
                 </div>
                 <button
