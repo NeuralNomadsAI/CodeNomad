@@ -339,28 +339,29 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
               {(group) => (
                 <div class="p-[var(--space-sm)]">
                   <div class="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--font-size-xs)] font-semibold text-muted uppercase tracking-wide">{t(group.labelKey)}</div>
-                  <div class="flex flex-col gap-[var(--space-xs)]">
-                    <For each={group.items}>
-                      {(item, index) => (
-                        <>
-                          <Show when={index() > 0 && isNewDayGroup(item, group.items[index() - 1])}>
-                            {/* 分隔線 / Divider */}
-                          </Show>
-                          <div
-                            role="row"
-                            tabIndex={0}
-                            class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] rounded-[var(--radius-lg)] border-none bg-surface-secondary relative w-full text-start font-inherit text-inherit cursor-pointer"
-                            classList={{
-                              "toast-history-item-unread": !item.read,
-                            }}
-                            onClick={() => handleItemClick(item)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                handleItemClick(item);
-                              }
-                            }}
-                          >
+                  <ul role="list" class="flex flex-col gap-[var(--space-xs)] list-none p-0 m-0">
+                     <For each={group.items}>
+                       {(item, index) => (
+                         <>
+                           <Show when={index() > 0 && isNewDayGroup(item, group.items[index() - 1])}>
+                             {/* 分隔線 / Divider */}
+                           </Show>
+                           {/* 通知歷史項目 - 語意化列表項目 / Toast history item - Semantic list item */}
+                           {/* 使用 li 元素確保正確的 ARIA 語意 / Uses li element for proper ARIA semantics */}
+                           <li
+                             tabIndex={0}
+                             class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] rounded-[var(--radius-lg)] border-none bg-surface-secondary relative w-full text-start font-inherit text-inherit cursor-pointer"
+                             classList={{
+                               "toast-history-item-unread": !item.read,
+                             }}
+                             onClick={() => handleItemClick(item)}
+                             onKeyDown={(e) => {
+                               if (e.key === "Enter" || e.key === " ") {
+                                 e.preventDefault();
+                                 handleItemClick(item);
+                               }
+                             }}
+                           >
                             <span
                               class={`w-2 h-2 rounded-full flex-shrink-0 mt-[0.35rem] toast-history-indicator ${VARIANT_INDICATOR_CLASS[item.variant]}`}
                               aria-hidden="true"
@@ -401,12 +402,12 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                             <Show when={!item.read}>
                               <span class="toast-history-item-unread-dot absolute top-[var(--space-sm)] right-[var(--space-sm)] w-2 h-2 rounded-full" aria-hidden="true" />
                             </Show>
-                          </div>
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </div>
+                           </li>
+                         </>
+                       )}
+                     </For>
+                   </ul>
+                 </div>
               )}
             </For>
           </Show>
