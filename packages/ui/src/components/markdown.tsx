@@ -4,10 +4,23 @@ import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import "katex/dist/katex.min.css"
 
 const log = getLogger("session")
 
 type MarkdownModule = typeof import("../lib/markdown")
+
+interface ResolvedMarkdownSnapshot {
+  part: TextPart
+  text: string
+  themeKey: string
+  highlightEnabled: boolean
+  escapeRawHtml: boolean
+  partId: string | undefined
+  cacheId: string
+  version: string
+  requestKey: string
+}
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
 
@@ -124,7 +137,7 @@ export function Markdown(props: MarkdownProps) {
   })
 
   const commitCacheEntry = (
-    snapshot: ReturnType<typeof resolved>,
+    snapshot: ResolvedMarkdownSnapshot,
     renderedHtml: string,
     options?: { cache?: boolean },
   ) => {
@@ -141,7 +154,7 @@ export function Markdown(props: MarkdownProps) {
     notifyRendered()
   }
 
-  const renderSnapshot = async (snapshot: ReturnType<typeof resolved>) => {
+  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot): Promise<void> => {
     const markdown = await loadMarkdownModule()
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const rendered = await markdown.renderMarkdown(snapshot.text, {

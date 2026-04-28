@@ -1,6 +1,16 @@
 @import "github-markdown-css/github-markdown-light.css" layer(github-markdown-base);
 
 @layer components {
+  .markdown-body .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.25rem 0;
+  }
+
+  .markdown-body .katex {
+    font-size: 1.05em;
+  }
+
   .markdown-body {
     max-width: none;
     background-color: transparent;
