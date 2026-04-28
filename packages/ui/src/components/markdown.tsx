@@ -4,7 +4,6 @@ import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
-import "katex/dist/katex.min.css"
 
 const log = getLogger("session")
 

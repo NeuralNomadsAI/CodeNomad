@@ -1,6 +1,7 @@
 @import "github-markdown-css/github-markdown-light.css" layer(github-markdown-base);
+@import "katex/dist/katex.min.css" layer(katex-base);
 
-@layer components {
+@layer katex-overrides {
   .markdown-body .katex-display {
     overflow-x: auto;
     overflow-y: hidden;
@@ -10,7 +11,9 @@
   .markdown-body .katex {
     font-size: 1.05em;
   }
+}
 
+@layer components {
   .markdown-body {
     max-width: none;
     background-color: transparent;

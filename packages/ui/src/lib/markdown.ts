@@ -31,15 +31,10 @@ interface InlineMathMatch {
 
 const blockMathPattern = /^\$\$([\s\S]+?)\$\$(?:\n+|$)/
 const bracketBlockMathPattern = /^\\\[([\s\S]+?)\\\](?:\n+|$)/
-const inlineParenMathPattern = /^\\\(([\s\S]+?)\\\)/
+const inlineParenMathPattern = /^\\\(([^\n]+?)\\\)/
 
 function normalizeMathContent(content: string): string {
   return content.trim()
-}
-
-function canOpenInlineMath(src: string): boolean {
-  const nextCharacter = src[1]
-  return Boolean(nextCharacter) && !/\s/.test(nextCharacter)
 }
 
 function canCloseInlineMath(raw: string): boolean {
@@ -48,15 +43,41 @@ function canCloseInlineMath(raw: string): boolean {
   }
 
   const content = raw.slice(1, -1)
-  if (!content || /\s$/.test(content)) {
+  if (!normalizeMathContent(content)) {
     return false
   }
 
   return true
 }
 
+function canStartInlineMath(src: string): boolean {
+  const nextCharacter = src[1]
+  if (!nextCharacter) {
+    return false
+  }
+
+  if (nextCharacter === "$") {
+    return false
+  }
+
+  return true
+}
+
+function isInlineMathBoundaryCharacter(character: string | undefined): boolean {
+  if (!character) {
+    return true
+  }
+
+  return /\s|[({\[<>'"“”‘’,;:!?)]/.test(character)
+}
+
+function hasInlineMathBoundaries(src: string, endIndex: number): boolean {
+  const nextCharacter = src[endIndex + 1]
+  return isInlineMathBoundaryCharacter(nextCharacter)
+}
+
 function matchDollarInlineMath(src: string): InlineMathMatch | undefined {
-  if (!src.startsWith("$") || src.startsWith("$$") || !canOpenInlineMath(src)) {
+  if (!src.startsWith("$") || src.startsWith("$$") || !canStartInlineMath(src)) {
     return undefined
   }
 
@@ -78,6 +99,10 @@ function matchDollarInlineMath(src: string): InlineMathMatch | undefined {
         return undefined
       }
 
+      if (!hasInlineMathBoundaries(src, index)) {
+        return undefined
+      }
+
       return {
         raw,
         text: raw.slice(1, -1),
@@ -90,10 +115,10 @@ function matchDollarInlineMath(src: string): InlineMathMatch | undefined {
   return undefined
 }
 
-function renderMathToken(content: string, displayMode: boolean): string {
+function renderMathToken(raw: string, content: string, displayMode: boolean): string {
   const normalizedContent = normalizeMathContent(content)
   if (!normalizedContent) {
-    return escapeHtml(content)
+    return escapeHtml(raw)
   }
 
   try {
@@ -104,7 +129,7 @@ function renderMathToken(content: string, displayMode: boolean): string {
       throwOnError: false,
     })
   } catch {
-    return escapeHtml(content)
+    return escapeHtml(raw)
   }
 }
 
@@ -185,7 +210,7 @@ const mathMarkedExtensions = [
       return matchBlockMath(src)
     },
     renderer(token: MathToken): string {
-      return renderMathToken(token.text, token.displayMode)
+      return renderMathToken(token.raw, token.text, token.displayMode)
     },
   },
   {
@@ -205,7 +230,7 @@ const mathMarkedExtensions = [
       return matchInlineMath(src)
     },
     renderer(token: MathToken): string {
-      return renderMathToken(token.text, token.displayMode)
+      return renderMathToken(token.raw, token.text, token.displayMode)
     },
   },
 ]
