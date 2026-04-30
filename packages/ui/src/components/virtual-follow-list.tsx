@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, 
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 
 const DEFAULT_SCROLL_SENTINEL_MARGIN_PX = 48
+const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const DEFAULT_NEAR_BOTTOM_THRESHOLD_PX = 48
 const SCROLL_DIRECTION_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
@@ -153,6 +154,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const initialScrollToBottom = () => (props.initialScrollToBottom ? props.initialScrollToBottom() : true)
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
   const externalSuspendAutoPinToBottom = () => (props.suspendAutoPinToBottom ? props.suspendAutoPinToBottom() : false)
+  const holdTargetKey = () => (props.autoPinHoldTargetKey ? props.autoPinHoldTargetKey() : null)
+  const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
 
   const initialFollowEnabled = Boolean(initialAutoScroll())
 
@@ -161,7 +164,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom()
+  const [activeHoldTargetKey, setActiveHoldTargetKey] = createSignal<string | null>(null)
+  const [didTriggerHoldForCurrentTarget, setDidTriggerHoldForCurrentTarget] = createSignal(false)
+  const effectiveSuspendAutoPinToBottom = () => externalSuspendAutoPinToBottom() || activeHoldTargetKey() !== null
 
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
   const itemElements = new Map<string, HTMLDivElement>()
@@ -184,9 +189,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     activeKey,
   }
 
-  function syncFollowState(nextNearBottom: boolean, nextEscapedFromLock: boolean) {
+  function syncFollowState(nextNearBottom: boolean, nextEscapedFromLock: boolean, options?: { forceAutoScroll?: boolean }) {
     setEscapedFromLock(nextEscapedFromLock)
-    setAutoScroll(!nextEscapedFromLock && nextNearBottom)
+    if (nextEscapedFromLock) {
+      setAutoScroll(false)
+      return
+    }
+
+    if (nextNearBottom || options?.forceAutoScroll) {
+      setAutoScroll(true)
+    }
   }
 
   function resetPendingFollowFrames() {
@@ -197,15 +209,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingProgrammaticBottomScroll = false
   }
 
-  function cancelPendingContentGrowthCheck() {
-    if (pendingContentGrowthCheckFrame !== null) {
-      cancelAnimationFrame(pendingContentGrowthCheckFrame)
-      pendingContentGrowthCheckFrame = null
+  function clearAutoPinHold(options?: { resumeBottom?: boolean }) {
+    if (activeHoldTargetKey() === null) return
+    setActiveHoldTargetKey(null)
+    if (options?.resumeBottom && autoScroll()) {
+      requestAnimationFrame(() => {
+        if (!autoScroll() || escapedFromLock() || activeHoldTargetKey() !== null) return
+        scrollToBottom(false, { preserveFollowState: true })
+      })
     }
   }
 
   function escapeFromFollow() {
     resetPendingFollowFrames()
+    clearAutoPinHold()
     setEscapedFromLock(true)
     setAutoScroll(false)
   }
@@ -280,8 +297,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleWheelIntent = (event: WheelEvent) => {
       const dir: "up" | "down" | null = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
       if (dir === "up" && autoScroll()) {
-        event.preventDefault()
-        event.stopPropagation()
         escapeFromFollow()
       } else if (dir === "down" && escapedFromLock()) {
         if (getDistanceFromBottom() <= Math.max(props.scrollSentinelMarginPx ?? DEFAULT_SCROLL_SENTINEL_MARGIN_PX, DEFAULT_NEAR_BOTTOM_THRESHOLD_PX)) {
@@ -363,6 +378,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!handle || !element) return
     ignoreNextScrollEvent = true
     if (!options?.preserveFollowState) {
+      clearAutoPinHold()
       rejoinFollow()
     }
     if (immediate) {
@@ -424,6 +440,44 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     return props.getAnchorId ? props.getAnchorId(key) : key
   }
 
+  function updateAutoPinHold() {
+    const element = scrollElement()
+    if (!element) return
+
+    const targetKey = holdTargetKey()
+    const heldKey = activeHoldTargetKey()
+
+    if (heldKey !== null) {
+      if (targetKey !== heldKey) {
+        clearAutoPinHold({ resumeBottom: true })
+      }
+      return
+    }
+
+    if (!autoScroll()) return
+    if (externalSuspendAutoPinToBottom()) return
+    if (!targetKey) return
+    if (didTriggerHoldForCurrentTarget()) return
+
+    const itemWrapper = itemElements.get(targetKey)
+    if (!itemWrapper) return
+    const target = props.resolveAutoPinHoldElement?.(itemWrapper, targetKey) ?? itemWrapper
+
+    const containerRect = element.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const relativeTop = targetRect.top - containerRect.top
+    const exceedsViewport = targetRect.height > element.clientHeight
+
+    if (exceedsViewport && relativeTop < 0) {
+      const alignDelta = relativeTop - holdTargetTopThresholdPx()
+      if (Math.abs(alignDelta) > 1) {
+        element.scrollTop = Math.max(0, element.scrollTop + alignDelta)
+      }
+      setActiveHoldTargetKey(targetKey)
+      setDidTriggerHoldForCurrentTarget(true)
+    }
+  }
+
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true),
@@ -439,8 +493,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       ignoreNextScrollEvent = true
       virtuaHandle()?.scrollToIndex(index, { align: opts?.block ?? "start", smooth: opts?.behavior === "smooth" })
     },
-    notifyContentRendered: () => scheduleContentGrowthCheck(),
-    setAutoScroll: (enabled) => setAutoScroll(Boolean(enabled)),
+    notifyContentRendered: () => {
+      updateAutoPinHold()
+      if (activeHoldTargetKey() !== null) return
+      scheduleContentGrowthCheck()
+    },
+    setAutoScroll: (enabled) => {
+      if (enabled) {
+        rejoinFollow()
+        return
+      }
+      escapeFromFollow()
+    },
     getAutoScroll: () => autoScroll(),
     getScrollElement: () => scrollElement(),
     getShellElement: () => shellElement(),
@@ -451,11 +515,22 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(() => props.resetKey?.(), () => {
     itemElements.clear()
+    setActiveHoldTargetKey(null)
+    setDidTriggerHoldForCurrentTarget(false)
     lastObservedScrollOffset = 0
     ignoreNextScrollEvent = false
     resetPendingFollowFrames()
     resetContentGrowthTracking()
   }))
+
+  createEffect(on(holdTargetKey, (nextTargetKey, prevTargetKey) => {
+    if (nextTargetKey !== prevTargetKey && didTriggerHoldForCurrentTarget()) {
+      setDidTriggerHoldForCurrentTarget(false)
+    }
+    if (activeHoldTargetKey() === null) return
+    if (nextTargetKey === activeHoldTargetKey()) return
+    clearAutoPinHold({ resumeBottom: true })
+  }, { defer: true }))
 
   // Handle followToken change
   createEffect(on(() => props.followToken?.(), () => {
@@ -468,7 +543,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
-    syncFollowState(initialFollowEnabled, !initialFollowEnabled)
+    const followEnabled = Boolean(initialAutoScroll())
+    syncFollowState(followEnabled, !followEnabled, { forceAutoScroll: followEnabled })
     pendingInitialScroll = true
   }))
 
