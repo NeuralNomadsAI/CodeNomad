@@ -214,7 +214,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setActiveHoldTargetKey(null)
     if (options?.resumeBottom && autoScroll()) {
       requestAnimationFrame(() => {
-        if (!autoScroll() || escapedFromLock() || activeHoldTargetKey() !== null) return
+        if (!autoScroll() || escapedFromLock() || activeHoldTargetKey() !== null || externalSuspendAutoPinToBottom()) return
         scrollToBottom(false, { preserveFollowState: true })
       })
     }
@@ -359,8 +359,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       direction = "down"
     }
 
+    const holdActive = activeHoldTargetKey() !== null
     let nextEscapedFromLock = escapedFromLock()
-    if (direction === "up") {
+    if (holdActive && direction) {
+      clearAutoPinHold()
+      nextEscapedFromLock = direction === "down" && nearBottom ? false : true
+    } else if (direction === "up") {
+      clearAutoPinHold()
       nextEscapedFromLock = true
     } else if (direction === "down" && nearBottom) {
       nextEscapedFromLock = false
@@ -393,6 +398,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handle = virtuaHandle()
     const element = scrollElement()
     if (!handle || !element) return
+    escapeFromFollow()
     if (immediate) {
       element.scrollTop = 0
       lastObservedScrollOffset = 0
@@ -471,7 +477,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (exceedsViewport && relativeTop < 0) {
       const alignDelta = relativeTop - holdTargetTopThresholdPx()
       if (Math.abs(alignDelta) > 1) {
+        ignoreNextScrollEvent = true
         element.scrollTop = Math.max(0, element.scrollTop + alignDelta)
+        lastObservedScrollOffset = element.scrollTop
       }
       setActiveHoldTargetKey(targetKey)
       setDidTriggerHoldForCurrentTarget(true)
