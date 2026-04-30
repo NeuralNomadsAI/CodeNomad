@@ -15,9 +15,9 @@ describe("message timing helpers", () => {
     assert.equal(duration, 6_000)
   })
 
-  it("falls back to updated time once a non-streaming message has finished", () => {
+  it("does not infer message duration from updated time alone", () => {
     const duration = getMessageDurationMs({ time: { created: 1_000, updated: 5_000 } } as any, "error")
-    assert.equal(duration, 4_000)
+    assert.equal(duration, undefined)
   })
 
   it("uses explicit reasoning duration when present", () => {
@@ -26,14 +26,13 @@ describe("message timing helpers", () => {
     assert.equal(duration, 3_000)
   })
 
-  it("infers reasoning duration from the next timed part", () => {
-    const reasoningPart = { id: "reasoning-1", type: "reasoning", time: { start: 1_000 } } as any
-    const textPart = { id: "text-1", type: "text", text: "done", time: { start: 4_500 } } as any
-    const duration = inferReasoningDurationMs([reasoningPart, textPart], reasoningPart)
+  it("uses reasoning start/end times when OpenCode provides them on the part", () => {
+    const reasoningPart = { id: "reasoning-1", type: "reasoning", time: { start: 1_000, end: 4_500 } } as any
+    const duration = inferReasoningDurationMs([reasoningPart], reasoningPart)
     assert.equal(duration, 3_500)
   })
 
-  it("falls back to message completion when no later timed part exists", () => {
+  it("does not infer reasoning duration from message completion", () => {
     const reasoningPart = { id: "reasoning-1", type: "reasoning", time: { start: 2_000 } } as any
     const duration = inferReasoningDurationMs(
       [reasoningPart],
@@ -41,6 +40,6 @@ describe("message timing helpers", () => {
       { time: { created: 1_000, end: 8_000 } } as any,
       "complete",
     )
-    assert.equal(duration, 6_000)
+    assert.equal(duration, undefined)
   })
 })
