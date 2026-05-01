@@ -18,15 +18,16 @@ if (!root) {
 
 const mount = root
 const bootParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
+const isPerf242TransportBenchBuild = import.meta.env.VITE_PERF242_TRANSPORT_BENCH === "1"
 const isPerf242TransportBench =
-  import.meta.env.VITE_PERF242_TRANSPORT_BENCH === "1"
-  || bootParams.get("perf242TransportBench") === "1"
+  isPerf242TransportBenchBuild
+  && bootParams.get("perf242TransportBench") === "1"
 
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
 
-  if (bootParams.get("perf242TransportBench") === "1") {
+  if (isPerf242TransportBench) {
     const payload = {
       stage: "frontend-bootstrap",
       host: runtimeEnv.host,

@@ -131,26 +131,13 @@ pub(super) fn read_sse(
                     return; // consumer dropped — stop reading
                 }
                 let trimmed = line.trim_end_matches(['\r', '\n']);
-                if trimmed.is_empty() {
+                if handle_sse_line(trimmed, &mut event_name, &mut data_lines) {
                     if flush_sse_frame(&tx, &event_name, &data_lines).is_err() {
                         return;
                     }
                     event_name = None;
                     data_lines.clear();
                     continue;
-                }
-
-                if trimmed.starts_with(':') {
-                    continue;
-                }
-
-                if let Some(name) = trimmed.strip_prefix("event:") {
-                    event_name = Some(name.strip_prefix(' ').unwrap_or(name).to_string());
-                    continue;
-                }
-
-                if let Some(data) = trimmed.strip_prefix("data:") {
-                    data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
                 }
             }
             Err(error) => {
@@ -160,6 +147,31 @@ pub(super) fn read_sse(
             }
         }
     }
+}
+
+fn handle_sse_line(
+    trimmed: &str,
+    event_name: &mut Option<String>,
+    data_lines: &mut Vec<String>,
+) -> bool {
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    if trimmed.starts_with(':') {
+        return false;
+    }
+
+    if let Some(name) = trimmed.strip_prefix("event:") {
+        *event_name = Some(name.strip_prefix(' ').unwrap_or(name).to_string());
+        return false;
+    }
+
+    if let Some(data) = trimmed.strip_prefix("data:") {
+        data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
+    }
+
+    false
 }
 
 fn flush_sse_frame(
@@ -189,4 +201,37 @@ fn parse_sse_payload(lines: &[String]) -> Option<Value> {
     }
 
     serde_json::from_str::<Value>(&payload).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn named_ping_event_is_routed_to_ping_channel() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut event_name = None;
+        let mut data_lines = Vec::new();
+
+        assert!(!handle_sse_line(
+            "event: codenomad.client.ping",
+            &mut event_name,
+            &mut data_lines
+        ));
+        assert!(!handle_sse_line(
+            r#"data: {"ts":123}"#,
+            &mut event_name,
+            &mut data_lines
+        ));
+        assert!(handle_sse_line("", &mut event_name, &mut data_lines));
+
+        flush_sse_frame(&tx, &event_name, &data_lines).expect("ping frame should flush");
+
+        match rx.recv().expect("ping frame should be emitted") {
+            ReaderMessage::Ping(payload) => {
+                assert_eq!(payload.get("ts").and_then(Value::as_u64), Some(123));
+            }
+            _ => panic!("expected ping frame"),
+        }
+    }
 }

@@ -13,19 +13,16 @@ import {
 } from "./stores/sessions"
 
 const benchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
-const PERF242_BENCH_MODE = benchParams.get("mode") || "short"
-const PERF242_BENCH_FOLDER = benchParams.get("folder") || import.meta.env.VITE_PERF242_BENCH_FOLDER || "D:\\CodeNomad"
+const PERF242_BENCH_MODE = benchParams.get("mode") === "long" ? "long" : "short"
+const PERF242_BENCH_FOLDER = import.meta.env.VITE_PERF242_BENCH_FOLDER || "D:\\CodeNomad"
 const PERF242_BENCH_SESSION_ID =
-  benchParams.get("sessionId")
-  || import.meta.env.VITE_PERF242_BENCH_SESSION_ID
+  import.meta.env.VITE_PERF242_BENCH_SESSION_ID
   || "ses_21feb15b3ffeLz3uRModK4KKnG"
-const PERF242_BENCH_BINARY = benchParams.get("binary") || import.meta.env.VITE_PERF242_BENCH_BINARY || "opencode"
+const PERF242_BENCH_BINARY = import.meta.env.VITE_PERF242_BENCH_BINARY || "opencode"
 const PERF242_SHORT_COMMAND = `node -e "for (let i = 1; i <= 400; i += 1) console.log('line ' + i)"`
 const PERF242_LONG_COMMAND = `powershell -NoProfile -Command Start-Sleep -Seconds 70`
 const PERF242_BENCH_COMMAND =
-  benchParams.get("command")
-  || import.meta.env.VITE_PERF242_BENCH_COMMAND
-  || (PERF242_BENCH_MODE === "long" ? PERF242_LONG_COMMAND : PERF242_SHORT_COMMAND)
+  PERF242_BENCH_MODE === "long" ? PERF242_LONG_COMMAND : PERF242_SHORT_COMMAND
 
 let perf242TransportBenchStarted = false
 
