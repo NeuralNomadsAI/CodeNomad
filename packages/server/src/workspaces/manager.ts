@@ -22,6 +22,7 @@ const STARTUP_STABILITY_DELAY_MS = 1500
 
 interface WorkspaceManagerOptions {
   rootDir: string
+  configDir: string
   settings: SettingsService
   binaryResolver: BinaryResolver
   eventBus: EventBus
@@ -41,7 +42,7 @@ export class WorkspaceManager {
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
-    this.opencodeConfigDir = getOpencodeConfigDir()
+    this.opencodeConfigDir = getOpencodeConfigDir(this.options.configDir)
   }
 
   list(): WorkspaceDescriptor[] {

@@ -19,7 +19,6 @@ const templateDir = isDevBuild
   ? devTemplateDir
   : prodTemplateDirs.find((dir) => existsSync(dir)) ?? prodTemplateDirs[0]
 const userConfigDir = path.join(os.homedir(), ".config", "opencode")
-const mergedConfigDir = path.join(os.homedir(), ".config", "codenomad", "opencode-config")
 
 function copyConfigDirectory(source: string, target: string): void {
   cpSync(source, target, {
@@ -29,7 +28,16 @@ function copyConfigDirectory(source: string, target: string): void {
   })
 }
 
-function prepareMergedConfigDir(): string {
+function copyBridgePlugin(target: string): void {
+  const bridgePluginDir = path.join(templateDir, "plugin")
+  if (existsSync(bridgePluginDir)) {
+    copyConfigDirectory(bridgePluginDir, path.join(target, "plugin"))
+  }
+}
+
+function prepareMergedConfigDir(baseDir: string): string {
+  const mergedConfigDir = path.join(baseDir, "opencode-config")
+
   rmSync(mergedConfigDir, { recursive: true, force: true })
   mkdirSync(mergedConfigDir, { recursive: true })
 
@@ -37,6 +45,7 @@ function prepareMergedConfigDir(): string {
 
   if (existsSync(userConfigDir)) {
     copyConfigDirectory(userConfigDir, mergedConfigDir)
+    copyBridgePlugin(mergedConfigDir)
     log.debug({ templateDir, userConfigDir, mergedConfigDir }, "Using merged OpenCode config")
   } else {
     log.debug({ templateDir, mergedConfigDir }, "Using generated OpenCode config without user overlay")
@@ -45,10 +54,10 @@ function prepareMergedConfigDir(): string {
   return mergedConfigDir
 }
 
-export function getOpencodeConfigDir(): string {
+export function getOpencodeConfigDir(baseDir: string): string {
   if (!existsSync(templateDir)) {
     throw new Error(`CodeNomad Opencode config template missing at ${templateDir}`)
   }
 
-  return prepareMergedConfigDir()
+  return prepareMergedConfigDir(baseDir)
 }

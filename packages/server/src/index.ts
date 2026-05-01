@@ -322,6 +322,7 @@ async function main() {
   const binaryResolver = new BinaryResolver(settings)
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
+    configDir,
     settings,
     binaryResolver,
     eventBus,
