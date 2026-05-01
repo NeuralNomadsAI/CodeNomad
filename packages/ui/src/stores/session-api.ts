@@ -1,4 +1,4 @@
-import { mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { isSelectablePrimaryAgent, mapSdkSessionRetry, mapSdkSessionStatus, type Agent, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -45,6 +45,50 @@ import {
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
+const AGENT_FETCH_RETRY_DELAYS_MS = [0, 500, 1000, 1000, 1000, 1000]
+const MIN_PLUGIN_AGENT_WAIT_MS = 2500
+
+type RootClient = ReturnType<typeof getRootClient>
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function mapAgents(agentList: Awaited<ReturnType<RootClient["app"]["agents"]>>["data"] = []): Agent[] {
+  return agentList.map((agent) => ({
+    name: agent.name,
+    description: agent.description || "",
+    mode: agent.mode,
+    native: agent.native,
+    hidden: agent.hidden,
+    model: agent.model?.modelID
+      ? {
+          providerId: agent.model.providerID || "",
+          modelId: agent.model.modelID,
+        }
+      : undefined,
+  }))
+}
+
+function agentSignature(agentList: Agent[]): string {
+  return agentList.map((agent) => `${agent.name}:${agent.mode}:${agent.hidden ? "1" : "0"}:${agent.native ? "1" : "0"}`).sort().join("|")
+}
+
+function hasExpectedOmoPrimaryAgents(agentList: Agent[]): boolean {
+  const names = new Set(agentList.map((agent) => agent.name.toLowerCase()))
+  return names.has("atlas") && names.has("sisyphus") && names.has("hephaestus")
+}
+
+async function getConfiguredPluginNames(rootClient: RootClient): Promise<string[]> {
+  try {
+    const response = await rootClient.config.get()
+    const config = response.data as { plugin?: unknown } | undefined
+    return Array.isArray(config?.plugin) ? config.plugin.filter((plugin): plugin is string => typeof plugin === "string") : []
+  } catch (error) {
+    log.warn("Failed to inspect configured plugins before fetching agents", error)
+    return []
+  }
+}
 
 async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
   if (!instanceId || !sessionId) return
@@ -236,8 +280,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
   const instanceAgents = agents().get(instanceId) || []
-  const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
-  const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
+  const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
+  const selectedAgent = agent || (primaryAgents.length > 0 ? primaryAgents[0].name : "")
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
 
@@ -524,20 +568,33 @@ async function fetchAgents(instanceId: string): Promise<void> {
   const rootClient = getRootClient(instanceId)
 
   try {
-    log.info(`[HTTP] GET /app.agents for instance ${instanceId}`)
-    const response = await rootClient.app.agents()
-    const agentList = (response.data ?? []).map((agent) => ({
-      name: agent.name,
-      description: agent.description || "",
-      mode: agent.mode,
-      hidden: agent.hidden,
-      model: agent.model?.modelID
-        ? {
-            providerId: agent.model.providerID || "",
-            modelId: agent.model.modelID,
-          }
-        : undefined,
-    }))
+    const pluginNames = await getConfiguredPluginNames(rootClient)
+    const waitsForOmoAgents = pluginNames.some((plugin) => plugin.includes("oh-my-openagent"))
+    const waitsForPluginAgents = pluginNames.length > 0
+
+    let agentList: Agent[] = []
+    let previousSignature = ""
+    let stableSamples = 0
+    let elapsed = 0
+
+    for (const delay of waitsForPluginAgents ? AGENT_FETCH_RETRY_DELAYS_MS : [0]) {
+      if (delay > 0) {
+        await sleep(delay)
+        elapsed += delay
+      }
+
+      log.info(`[HTTP] GET /app.agents for instance ${instanceId}`)
+      const response = await rootClient.app.agents()
+      agentList = mapAgents(response.data ?? [])
+
+      const signature = agentSignature(agentList)
+      stableSamples = signature === previousSignature ? stableSamples + 1 : 0
+      previousSignature = signature
+
+      if (!waitsForPluginAgents) break
+      if (waitsForOmoAgents && hasExpectedOmoPrimaryAgents(agentList)) break
+      if (elapsed >= MIN_PLUGIN_AGENT_WAIT_MS && stableSamples > 0) break
+    }
 
     setAgents((prev) => {
       const next = new Map(prev)

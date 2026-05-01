@@ -86,11 +86,16 @@ export interface Agent {
   name: string
   description: string
   mode: string
+  native?: boolean
   hidden?: boolean
   model?: {
     providerId: string
     modelId: string
   }
+}
+
+export function isSelectablePrimaryAgent(agent: Agent): boolean {
+  return !agent.hidden && !agent.native && agent.mode === "primary"
 }
 
 // Our client-specific Provider interface (simplified version of SDK Provider)
