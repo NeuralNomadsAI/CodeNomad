@@ -1,5 +1,5 @@
 import { Select } from "@kobalte/core/select"
-import { For, Show, createEffect, createMemo } from "solid-js"
+import { Show, createEffect, createMemo } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import { isSelectablePrimaryAgent, type Agent } from "../types/session"
