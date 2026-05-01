@@ -1,4 +1,5 @@
-import { existsSync } from "fs"
+import { cpSync, existsSync, mkdirSync, rmSync } from "fs"
+import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createLogger } from "./logger"
@@ -17,15 +18,37 @@ const isDevBuild = Boolean(process.env.CODENOMAD_DEV ?? process.env.CLI_UI_DEV_S
 const templateDir = isDevBuild
   ? devTemplateDir
   : prodTemplateDirs.find((dir) => existsSync(dir)) ?? prodTemplateDirs[0]
+const userConfigDir = path.join(os.homedir(), ".config", "opencode")
+const mergedConfigDir = path.join(os.homedir(), ".config", "codenomad", "opencode-config")
+
+function copyConfigDirectory(source: string, target: string): void {
+  cpSync(source, target, {
+    recursive: true,
+    force: true,
+    dereference: true,
+  })
+}
+
+function prepareMergedConfigDir(): string {
+  rmSync(mergedConfigDir, { recursive: true, force: true })
+  mkdirSync(mergedConfigDir, { recursive: true })
+
+  copyConfigDirectory(templateDir, mergedConfigDir)
+
+  if (existsSync(userConfigDir)) {
+    copyConfigDirectory(userConfigDir, mergedConfigDir)
+    log.debug({ templateDir, userConfigDir, mergedConfigDir }, "Using merged OpenCode config")
+  } else {
+    log.debug({ templateDir, mergedConfigDir }, "Using generated OpenCode config without user overlay")
+  }
+
+  return mergedConfigDir
+}
 
 export function getOpencodeConfigDir(): string {
   if (!existsSync(templateDir)) {
     throw new Error(`CodeNomad Opencode config template missing at ${templateDir}`)
   }
 
-  if (isDevBuild) {
-    log.debug({ templateDir }, "Using Opencode config template directly (dev mode)")
-  }
-
-  return templateDir
+  return prepareMergedConfigDir()
 }
