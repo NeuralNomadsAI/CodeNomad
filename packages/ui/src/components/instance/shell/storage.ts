@@ -28,6 +28,7 @@ export const RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY = "opencode-session
 export const RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY = "opencode-session-right-panel-changes-diff-view-mode-v1"
 export const RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY = "opencode-session-right-panel-changes-diff-context-mode-v1"
 export const RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY = "opencode-session-right-panel-changes-diff-word-wrap-v1"
+export const RIGHT_PANEL_FILES_WORD_WRAP_KEY = "opencode-session-right-panel-files-word-wrap-v1"
 
 export const clampWidth = (value: number) =>
   Math.min(MAX_SESSION_SIDEBAR_WIDTH, Math.max(MIN_SESSION_SIDEBAR_WIDTH, value))

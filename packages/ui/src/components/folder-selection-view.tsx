@@ -400,7 +400,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsFolderBrowserOpen(false)
     handleFolderSelect(path)
   }
- 
+
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
@@ -961,6 +961,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         open={isFolderBrowserOpen()}
         title={t("folderSelection.dialog.title")}
         description={t("folderSelection.dialog.description")}
+        initialPath={folders()[0]?.path}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
       />

@@ -12,78 +12,14 @@ import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import { getOpencodeConfigDir } from "../opencode-config.js"
 import {
+  OPENCODE_SERVER_BASE_URL_ENV,
   buildOpencodeBasicAuthHeader,
-  DEFAULT_OPENCODE_USERNAME,
-  generateOpencodeServerPassword,
   OPENCODE_SERVER_PASSWORD_ENV,
   OPENCODE_SERVER_USERNAME_ENV,
+  resolveOpencodeServerAuth,
 } from "./opencode-auth"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
-
-function defaultShellPath(): string {
-  const configured = process.env.SHELL?.trim()
-  if (configured) {
-    return configured
-  }
-
-  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"
-}
-
-function shellEscape(input: string): string {
-  if (!input) return "''"
-  return `'${input.replace(/'/g, `'\\''`)}'`
-}
-
-function wrapCommandForShell(command: string, shellPath: string): string {
-  const shellName = path.basename(shellPath).toLowerCase()
-
-  if (shellName.includes("bash")) {
-    return `if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; ${command}`
-  }
-
-  if (shellName.includes("zsh")) {
-    return `if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; ${command}`
-  }
-
-  return command
-}
-
-function buildShellArgs(shellPath: string, command: string): string[] {
-  const shellName = path.basename(shellPath).toLowerCase()
-  if (shellName.includes("zsh")) {
-    return ["-l", "-i", "-c", command]
-  }
-  return ["-l", "-c", command]
-}
-
-function resolveBinaryPathFromUserShell(identifier: string): string | null {
-  if (process.platform === "win32") {
-    return null
-  }
-
-  const shellPath = defaultShellPath()
-  const lookupCommand = wrapCommandForShell(`command -v ${shellEscape(identifier)}`, shellPath)
-  const result = spawnSync(shellPath, buildShellArgs(shellPath, lookupCommand), {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      npm_config_prefix: undefined,
-      NPM_CONFIG_PREFIX: undefined,
-    },
-  })
-
-  if (result.status !== 0) {
-    return null
-  }
-
-  const resolved = String(result.stdout ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0)
-
-  return resolved ?? null
-}
 
 interface WorkspaceManagerOptions {
   rootDir: string
@@ -187,9 +123,13 @@ export class WorkspaceManager {
     const serverConfig = this.options.settings.getOwner("config", "server")
     const envVars = (serverConfig as any)?.environmentVariables
     const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+    const serverBaseUrl = this.options.getServerBaseUrl()
+    const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
 
-    const opencodeUsername = DEFAULT_OPENCODE_USERNAME
-    const opencodePassword = generateOpencodeServerPassword()
+    const { username: opencodeUsername, password: opencodePassword } = resolveOpencodeServerAuth({
+      userEnvironment,
+      processEnv: process.env,
+    })
     const authorization = buildOpencodeBasicAuthHeader({ username: opencodeUsername, password: opencodePassword })
     if (!authorization) {
       throw new Error("Failed to build OpenCode auth header")
@@ -200,8 +140,9 @@ export class WorkspaceManager {
       ...userEnvironment,
       OPENCODE_CONFIG_DIR: this.opencodeConfigDir,
       CODENOMAD_INSTANCE_ID: id,
-      CODENOMAD_BASE_URL: this.options.getServerBaseUrl(),
+      CODENOMAD_BASE_URL: serverBaseUrl,
       ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
+      [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedServerBaseUrl}${proxyPath}`,
       [OPENCODE_SERVER_USERNAME_ENV]: opencodeUsername,
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
@@ -328,12 +269,6 @@ export class WorkspaceManager {
       }
     } catch (error) {
       this.options.logger.warn({ identifier, err: error }, "Failed to resolve binary path from system PATH")
-    }
-
-    const shellResolved = resolveBinaryPathFromUserShell(identifier)
-    if (shellResolved) {
-      this.options.logger.debug({ identifier, resolved: shellResolved }, "Resolved binary path from user shell")
-      return shellResolved
     }
 
     return identifier
