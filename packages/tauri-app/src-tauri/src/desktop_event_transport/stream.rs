@@ -1,4 +1,5 @@
 use super::*;
+use reqwest::blocking::RequestBuilder;
 
 pub(super) fn build_stream_client() -> Result<Client, OpenStreamError> {
     Client::builder()
@@ -29,14 +30,11 @@ pub(super) fn open_stream(
         config.events_url, config.client_id, config.connection_id
     );
 
-    let mut request = client.get(&url).header("Accept", "text/event-stream");
-
-    if let Some(session_cookie) = resolve_session_cookie(app, config) {
-        request = request.header(
-            "Cookie",
-            format!("{}={}", config.cookie_name, session_cookie),
-        );
-    }
+    let request = attach_session_cookie(
+        client.get(&url).header("Accept", "text/event-stream"),
+        app,
+        config,
+    );
 
     let response = request.send().map_err(|error| OpenStreamError {
         kind: OpenStreamErrorKind::Transport,
@@ -66,6 +64,30 @@ fn resolve_session_cookie(app: &AppHandle, config: &DesktopEventStreamConfig) ->
     read_session_cookie_from_webview(app, &config.base_url, &config.cookie_name)
         .or_else(|| config.session_cookie.clone())
         .filter(|value| !value.is_empty())
+}
+
+pub(super) fn attach_session_cookie(
+    request: RequestBuilder,
+    app: &AppHandle,
+    config: &DesktopEventStreamConfig,
+) -> RequestBuilder {
+    attach_session_cookie_value(
+        request,
+        &config.cookie_name,
+        resolve_session_cookie(app, config).as_deref(),
+    )
+}
+
+fn attach_session_cookie_value(
+    request: RequestBuilder,
+    cookie_name: &str,
+    session_cookie: Option<&str>,
+) -> RequestBuilder {
+    let Some(session_cookie) = session_cookie.filter(|value| !value.is_empty()) else {
+        return request;
+    };
+
+    request.header("Cookie", format!("{}={}", cookie_name, session_cookie))
 }
 
 fn read_session_cookie_from_webview(
@@ -233,5 +255,24 @@ mod tests {
             }
             _ => panic!("expected ping frame"),
         }
+    }
+
+    #[test]
+    fn session_cookie_is_attached_to_requests() {
+        let request = attach_session_cookie_value(
+            Client::new().post("http://localhost/api/client-connections/pong"),
+            "codenomad_session",
+            Some("cookie-value"),
+        )
+        .build()
+        .expect("request should build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("Cookie")
+                .and_then(|value| value.to_str().ok()),
+            Some("codenomad_session=cookie-value")
+        );
     }
 }

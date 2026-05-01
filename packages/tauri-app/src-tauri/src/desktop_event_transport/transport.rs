@@ -1,19 +1,25 @@
 use super::*;
 
-fn send_connection_pong(client: &Client, config: &DesktopEventStreamConfig, payload: &Value) {
+fn send_connection_pong(
+    app: &AppHandle,
+    client: &Client,
+    config: &DesktopEventStreamConfig,
+    payload: &Value,
+) {
     let body = serde_json::json!({
         "clientId": config.client_id,
         "connectionId": config.connection_id,
         "pingTs": payload.get("ts").and_then(Value::as_u64),
     });
 
-    let _ = client
+    let request = client
         .post(format!(
             "{}/api/client-connections/pong",
             config.base_url.trim_end_matches('/')
         ))
-        .json(&body)
-        .send();
+        .json(&body);
+
+    let _ = attach_session_cookie(request, app, config).send();
 }
 
 pub(super) fn run_transport_loop(
@@ -246,7 +252,7 @@ fn consume_stream(
             }
             Ok(ReaderMessage::Ping(payload)) => {
                 last_reader_activity = Instant::now();
-                send_connection_pong(client, stream_config, &payload);
+                send_connection_pong(app, client, stream_config, &payload);
             }
             Ok(ReaderMessage::Event(event)) => {
                 last_reader_activity = Instant::now();
