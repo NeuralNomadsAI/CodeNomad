@@ -94,8 +94,13 @@ export interface Agent {
   }
 }
 
+/**
+ * Matches OpenCode TUI's agent visibility rule: visible iff not a subagent and not hidden.
+ * Native/system agents like `build` are included so they appear when no plugin disables them,
+ * just as they do in OpenCode TUI.
+ */
 export function isSelectablePrimaryAgent(agent: Agent): boolean {
-  return !agent.hidden && !agent.native && agent.mode === "primary"
+  return !agent.hidden && agent.mode !== "subagent"
 }
 
 // Our client-specific Provider interface (simplified version of SDK Provider)
