@@ -6,6 +6,7 @@ import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
+import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
@@ -99,14 +100,16 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <Dynamic component={notificationIcon()} class="w-4 h-4" />
             </button>
 
-             <button
-               class="new-tab-button tab-remote-button"
-               onClick={() => openSettings("remote")}
-               title={t("instanceTabs.remote.title")}
-               aria-label={t("instanceTabs.remote.ariaLabel")}
-             >
-               <MonitorUp class="w-4 h-4" />
-             </button>
+             <Show when={canOpenRemoteWindows()}>
+               <button
+                 class="new-tab-button tab-remote-button"
+                 onClick={() => openSettings("remote")}
+                 title={t("instanceTabs.remote.title")}
+                 aria-label={t("instanceTabs.remote.ariaLabel")}
+               >
+                 <MonitorUp class="w-4 h-4" />
+               </button>
+             </Show>
           </div>
         </div>
       </div>

@@ -69,5 +69,10 @@ export const folderSelectionMessages = {
   "folderSelection.servers.dialog.connecting": "Подключение...",
   "folderSelection.servers.dialog.errorRequired": "Имя сервера и URL обязательны.",
   "folderSelection.servers.dialog.errorConnect": "Не удалось подключиться к удаленному серверу.",
+  "folderSelection.servers.certificateInstall.title": "Установить локальный сертификат",
+  "folderSelection.servers.certificateInstall.confirmMessage": "CodeNomad должен установить локальный сертификат, чтобы открывать удаленные HTTPS-окна с самоподписанным сертификатом. Этот сертификат используется только для трафика локального настольного прокси на вашем устройстве. После этого ваша операционная система может показать второе предупреждение о сертификате.",
+  "folderSelection.servers.certificateInstall.confirmLabel": "Продолжить",
+  "folderSelection.servers.certificateInstall.cancelLabel": "Отмена",
+  "folderSelection.servers.certificateInstall.cancelled": "CodeNomad должен доверять локальному сертификату, прежде чем сможет открывать удаленные HTTPS-окна с самоподписанным сертификатом.",
   "folderSelection.sidecars.button": "Open SideCar",
 } as const

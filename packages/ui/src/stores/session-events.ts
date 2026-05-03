@@ -397,7 +397,8 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
     const hasError = Boolean((info as any).error)
-    const status: MessageStatus = hasError ? "error" : "complete"
+    const hasEnded = typeof timeInfo.end === "number" && timeInfo.end > 0
+    const status: MessageStatus = hasError ? "error" : hasEnded ? "complete" : "streaming"
 
     let record = store.getMessage(messageId)
     if (!record) {

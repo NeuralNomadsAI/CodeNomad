@@ -52,7 +52,7 @@ export interface WorkspaceDeleteResponse {
 export type WorktreeKind = "root" | "worktree"
 
 export interface WorktreeDescriptor {
-  /** Stable identifier used by CodeNomad + clients ("root" for repo root). */
+  /** Stable identifier used by CodeNomad + clients ("root" for the selected workspace folder). */
   slug: string
   /** Absolute directory path on the server host. */
   directory: string
@@ -81,6 +81,55 @@ export interface WorktreeMap {
   parentSessionWorktreeSlug: Record<string, string>
 }
 
+export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
+
+export interface WorktreeGitStatusEntry {
+  path: string
+  originalPath?: string | null
+  stagedStatus: GitChangeKind | null
+  stagedAdditions: number
+  stagedDeletions: number
+  unstagedStatus: GitChangeKind | null
+  unstagedAdditions: number
+  unstagedDeletions: number
+}
+
+export type WorktreeGitStatusResponse = WorktreeGitStatusEntry[]
+
+export type WorktreeGitDiffScope = "staged" | "unstaged"
+
+export interface WorktreeGitPathsRequest {
+  paths: string[]
+}
+
+export interface WorktreeGitMutationResponse {
+  ok: true
+}
+
+export interface WorktreeGitCommitRequest {
+  message: string
+}
+
+export interface WorktreeGitCommitResponse {
+  ok: true
+  commitSha?: string
+}
+
+export interface WorktreeGitDiffResponse {
+  path: string
+  originalPath?: string | null
+  scope: WorktreeGitDiffScope
+  before: string
+  after: string
+  isBinary?: boolean
+}
+
+export interface WorktreeGitDiffRequest {
+  path: string
+  originalPath?: string | null
+  scope: WorktreeGitDiffScope
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export interface WorkspaceLogEntry {
@@ -92,9 +141,13 @@ export interface WorkspaceLogEntry {
 
 export interface FileSystemEntry {
   name: string
-  /** Path relative to the CLI server root ("." represents the root itself). */
+  /**
+   * Path identifier for the entry. Relative to the server root in restricted
+   * single-root listings ("." represents the root itself); absolute in
+   * unrestricted, drives, and multi-root top-level listings.
+   */
   path: string
-  /** Absolute path when available (unrestricted listings). */
+  /** Absolute path when available (unrestricted and multi-root listings). */
   absolutePath?: string
   type: "file" | "directory"
   size?: number
@@ -107,7 +160,12 @@ export type FileSystemPathKind = "relative" | "absolute" | "drives"
 
 export interface FileSystemListingMetadata {
   scope: FileSystemScope
-  /** Canonical identifier of the current view ("." for restricted roots, absolute paths otherwise). */
+  /**
+   * Canonical identifier of the current view:
+   * - "." for restricted single-root listings
+   * - WINDOWS_DRIVES_ROOT for the Windows drives pseudo-root
+   * - absolute path otherwise
+   */
   currentPath: string
   /** Optional parent path if navigation upward is allowed. */
   parentPath?: string
@@ -117,7 +175,7 @@ export interface FileSystemListingMetadata {
   homePath: string
   /** Human-friendly label for the current path. */
   displayPath: string
-  /** Indicates whether entry paths are relative, absolute, or represent drive roots. */
+  /** Indicates whether entry paths are relative, absolute, or represent the drive pseudo-view. */
   pathKind: FileSystemPathKind
 }
 
@@ -139,7 +197,7 @@ export interface FileSystemCreateFolderRequest {
 export interface FileSystemCreateFolderResponse {
   /**
    * Path identifier that can be passed back to `/api/filesystem` to browse the new folder.
-   * Relative for restricted listings, absolute for unrestricted.
+   * Relative for restricted listings and absolute for unrestricted listings.
    */
   path: string
   /** Absolute folder path on the server host. */
@@ -286,6 +344,16 @@ export interface RemoteServerProbeResponse {
   authenticated: boolean
   error?: string
   errorCode?: string
+}
+
+export interface RemoteProxySessionCreateRequest {
+  baseUrl: string
+  skipTlsVerify?: boolean
+}
+
+export interface RemoteProxySessionCreateResponse {
+  sessionId: string
+  windowUrl: string
 }
 
 export type WorkspaceEventType =

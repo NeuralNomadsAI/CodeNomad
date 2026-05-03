@@ -15,25 +15,33 @@ import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
+import { canOpenRemoteWindows } from "../lib/runtime-env"
 
 export const SettingsScreen: Component = () => {
   const { t } = useI18n()
 
-  const sections = createMemo(() => [
-    { id: "appearance" as SettingsSectionId, icon: Paintbrush, label: t("settings.nav.appearance") },
-    { id: "notifications" as SettingsSectionId, icon: Bell, label: t("settings.nav.notifications") },
-    { id: "remote" as SettingsSectionId, icon: MonitorUp, label: t("settings.nav.remote") },
-    { id: "speech" as SettingsSectionId, icon: Volume2, label: t("settings.nav.speech") },
-    { id: "sidecars" as SettingsSectionId, icon: Globe, label: t("settings.nav.sidecars") },
-    { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
-  ])
+  const sections = createMemo(() => {
+    const items = [
+      { id: "appearance" as SettingsSectionId, icon: Paintbrush, label: t("settings.nav.appearance") },
+      { id: "notifications" as SettingsSectionId, icon: Bell, label: t("settings.nav.notifications") },
+      { id: "speech" as SettingsSectionId, icon: Volume2, label: t("settings.nav.speech") },
+      { id: "sidecars" as SettingsSectionId, icon: Globe, label: t("settings.nav.sidecars") },
+      { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
+    ]
+
+    if (canOpenRemoteWindows()) {
+      items.splice(2, 0, { id: "remote" as SettingsSectionId, icon: MonitorUp, label: t("settings.nav.remote") })
+    }
+
+    return items
+  })
 
   const renderSection = () => {
     switch (activeSettingsSection()) {
       case "notifications":
         return <NotificationsSettingsSection />
       case "remote":
-        return <RemoteAccessSettingsSection />
+        return canOpenRemoteWindows() ? <RemoteAccessSettingsSection /> : <AppearanceSettingsSection />
       case "speech":
         return <SpeechSettingsSection />
       case "sidecars":

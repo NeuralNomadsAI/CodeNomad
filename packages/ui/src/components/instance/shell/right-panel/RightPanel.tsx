@@ -10,7 +10,7 @@ import {
   type Component,
 } from "solid-js"
 import type { ToolState } from "@opencode-ai/sdk/v2"
-import type { FileContent, FileNode, File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
+import type { FileContent, FileNode } from "@opencode-ai/sdk/v2/client"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 import PushPinIcon from "@suid/icons-material/PushPin"
@@ -19,29 +19,41 @@ import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import type { Instance } from "../../../../types/instance"
 import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
+import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DrawerViewState } from "../types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
 
-import { getDefaultWorktreeSlug, getOrCreateWorktreeClient, getWorktreeSlugForSession } from "../../../../stores/worktrees"
+import {
+  getDefaultWorktreeSlug,
+  getGitRepoStatus,
+  getOrCreateWorktreeClient,
+  getWorktreeSlugForSession,
+  getWorktrees,
+} from "../../../../stores/worktrees"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
 import { showToastNotification } from "../../../../lib/notifications"
-import { buildUnifiedDiffFromSdkPatch, tryReverseApplyUnifiedDiff } from "../../../../lib/unified-diff-reverse"
 import { useGlobalPointerDrag } from "../useGlobalPointerDrag"
+import { useGitChanges } from "./useGitChanges"
 import {
   RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
   RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_CHANGES_LIST_OPEN_PHONE_KEY,
+  RIGHT_PANEL_FILES_WORD_WRAP_KEY,
   RIGHT_PANEL_CHANGES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY,
   RIGHT_PANEL_FILES_SPLIT_WIDTH_KEY,
   RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY,
   RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY,
   RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
+  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY,
+  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY,
   RIGHT_PANEL_TAB_STORAGE_KEY,
   readStoredBool,
   readStoredEnum,
@@ -82,6 +94,7 @@ interface RightPanelProps {
   onCloseRightDrawer: () => void
   onPinRightDrawer: () => void
   onUnpinRightDrawer: () => void
+  promptInputApi: Accessor<PromptInputApi | null>
 
   setContentEl: (el: HTMLElement | null) => void
 }
@@ -119,6 +132,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [diffWordWrapMode, setDiffWordWrapMode] = createSignal<DiffWordWrapMode>(
     readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, ["on", "off"] as const) ?? "on",
   )
+  const [filesWordWrapMode, setFilesWordWrapMode] = createSignal<DiffWordWrapMode>(
+    readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) ?? "off",
+  )
 
   const [changesSplitWidth, setChangesSplitWidth] = createSignal(320)
   const [filesSplitWidth, setFilesSplitWidth] = createSignal(320)
@@ -133,6 +149,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [changesListTouched, setChangesListTouched] = createSignal(false)
   const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
   const [gitChangesListTouched, setGitChangesListTouched] = createSignal(false)
+  const [gitStagedOpen, setGitStagedOpen] = createSignal(true)
+  const [gitUnstagedOpen, setGitUnstagedOpen] = createSignal(true)
 
   const listLayoutKey = createMemo(() => (props.isPhoneLayout() ? "phone" : "nonphone"))
 
@@ -149,9 +167,26 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return layout === "phone" ? RIGHT_PANEL_FILES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_FILES_LIST_OPEN_NONPHONE_KEY
   }
 
+  const gitSectionStorageKey = (section: "staged" | "unstaged") => {
+    const layout = listLayoutKey()
+    if (section === "staged") {
+      return layout === "phone"
+        ? RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY
+        : RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY
+    }
+    return layout === "phone"
+      ? RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY
+      : RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY
+  }
+
   const persistListOpen = (tab: "changes" | "git-changes" | "files", value: boolean) => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(listOpenStorageKey(tab), value ? "true" : "false")
+  }
+
+  const persistGitSectionOpen = (section: "staged" | "unstaged", value: boolean) => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(gitSectionStorageKey(section), value ? "true" : "false")
   }
 
   createEffect(() => {
@@ -185,6 +220,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setGitChangesListOpen(true)
       setGitChangesListTouched(false)
     }
+
+    const stagedPersisted = readStoredBool(gitSectionStorageKey("staged"))
+    setGitStagedOpen(stagedPersisted ?? true)
+
+    const unstagedPersisted = readStoredBool(gitSectionStorageKey("unstaged"))
+    setGitUnstagedOpen(unstagedPersisted ?? true)
   })
 
   createEffect(() => {
@@ -215,6 +256,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode())
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(RIGHT_PANEL_FILES_WORD_WRAP_KEY, filesWordWrapMode())
   })
 
   const clampSplitWidth = (value: number) => {
@@ -339,34 +385,56 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return getDefaultWorktreeSlug(props.instanceId)
   })
 
+  const gitChangesWorktreeSlug = createMemo(() => {
+    if (getGitRepoStatus(props.instanceId) === false) return null
+    const slug = worktreeSlugForViewer().trim()
+    return slug ? slug : null
+  })
+
+  const gitChangesWorktree = createMemo(() => {
+    const slug = gitChangesWorktreeSlug()
+    if (!slug) return null
+    return getWorktrees(props.instanceId).find((worktree) => worktree.slug === slug) ?? null
+  })
+
+  const gitChangesBranchLabel = createMemo(() => {
+    const branch = gitChangesWorktree()?.branch?.trim()
+    return branch || null
+  })
+
   const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
 
-  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitFileStatus[] | null>(null)
-  const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
-  const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
-  const [gitSelectedPath, setGitSelectedPath] = createSignal<string | null>(null)
-  const [gitSelectedLoading, setGitSelectedLoading] = createSignal(false)
-  const [gitSelectedError, setGitSelectedError] = createSignal<string | null>(null)
-  const [gitSelectedBefore, setGitSelectedBefore] = createSignal<string | null>(null)
-  const [gitSelectedAfter, setGitSelectedAfter] = createSignal<string | null>(null)
-
-  const gitMostChangedPath = createMemo<string | null>(() => {
-    const entries = gitStatusEntries()
-    if (!Array.isArray(entries) || entries.length === 0) return null
-    const candidates = entries.filter((item) => item && item.status !== "deleted")
-    if (candidates.length === 0) return null
-    const best = candidates.reduce((currentBest, item) => {
-      const bestScore = (currentBest?.added ?? 0) + (currentBest?.removed ?? 0)
-      const score = (item?.added ?? 0) + (item?.removed ?? 0)
-      if (score > bestScore) return item
-      if (score < bestScore) return currentBest
-      return String(item.path || "").localeCompare(String(currentBest?.path || "")) < 0 ? item : currentBest
-    }, candidates[0])
-    return typeof best?.path === "string" ? best.path : null
+  const {
+    gitStatusEntries,
+    gitStatusLoading,
+    gitStatusError,
+    gitSelectedItemId,
+    gitBulkSelectedItemIds,
+    gitSelectedLoading,
+    gitSelectedError,
+    gitSelectedBefore,
+    gitSelectedAfter,
+    gitCommitMessage,
+    gitCommitSubmitting,
+    gitMostChangedItemId,
+    setGitCommitMessage,
+    handleGitRowClick,
+    refreshGitStatus,
+    insertGitChangeContext,
+    submitGitCommit,
+    stageGitFile,
+    unstageGitFile,
+  } = useGitChanges({
+    t: props.t,
+    instanceId: props.instanceId,
+    rightPanelTab,
+    worktreeSlug: worktreeSlugForViewer,
+    isPhoneLayout: props.isPhoneLayout,
+    promptInputApi: props.promptInputApi,
+    closeGitList: () => setGitChangesListOpen(false),
   })
 
   createEffect(() => {
-    // Reset tab state when worktree context changes.
     worktreeSlugForViewer()
     setBrowserPath(".")
     setBrowserEntries(null)
@@ -375,110 +443,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedContent(null)
     setBrowserSelectedError(null)
     setBrowserSelectedLoading(false)
-
-    setGitStatusEntries(null)
-    setGitStatusError(null)
-    setGitStatusLoading(false)
-    setGitSelectedPath(null)
-    setGitSelectedLoading(false)
-    setGitSelectedError(null)
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
   })
-
-  const loadGitStatus = async (force = false) => {
-    if (!force && gitStatusEntries() !== null) return
-    setGitStatusLoading(true)
-    setGitStatusError(null)
-    try {
-      const list = await requestData<GitFileStatus[]>(browserClient().file.status(), "file.status")
-      setGitStatusEntries(Array.isArray(list) ? list : [])
-    } catch (error) {
-      setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
-      setGitStatusEntries([])
-    } finally {
-      setGitStatusLoading(false)
-    }
-  }
-
-  async function openGitFile(path: string) {
-    setGitSelectedPath(path)
-    setGitSelectedLoading(true)
-    setGitSelectedError(null)
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-
-    const list = gitStatusEntries() || []
-    const entry = list.find((item) => item.path === path) || null
-    if (entry?.status === "deleted") {
-      setGitSelectedError("Deleted file diff is not available yet")
-      setGitSelectedLoading(false)
-      return
-    }
-
-    // Phone: treat file selection as a commit action and close the overlay.
-    if (props.isPhoneLayout()) {
-      setGitChangesListOpen(false)
-    }
-
-    try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
-      const type = (content as any)?.type
-      const encoding = (content as any)?.encoding
-      if (type && type !== "text") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      if (encoding === "base64") {
-        throw new Error("Binary file cannot be displayed")
-      }
-      const afterText = typeof (content as any)?.content === "string" ? ((content as any).content as string) : null
-      if (afterText === null) {
-        throw new Error("Unsupported file type")
-      }
-
-      setGitSelectedAfter(afterText)
-
-      if (entry?.status === "added") {
-        setGitSelectedBefore("")
-        return
-      }
-
-      const diffText =
-        typeof (content as any)?.diff === "string" && String((content as any).diff).trim().length > 0
-          ? String((content as any).diff)
-          : (content as any)?.patch
-            ? buildUnifiedDiffFromSdkPatch((content as any).patch)
-            : ""
-
-      const beforeText = tryReverseApplyUnifiedDiff(afterText, diffText)
-      if (beforeText === null) {
-        throw new Error("Unable to calculate diff for this file")
-      }
-      setGitSelectedBefore(beforeText)
-    } catch (error) {
-      setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
-    } finally {
-      setGitSelectedLoading(false)
-    }
-  }
-
-  createEffect(() => {
-    if (rightPanelTab() !== "git-changes") return
-    const entries = gitStatusEntries()
-    if (entries === null) return
-    if (gitSelectedPath()) return
-    const next = gitMostChangedPath()
-    if (!next) return
-    void openGitFile(next)
-  })
-
-  const refreshGitStatus = async () => {
-    await loadGitStatus(true)
-    const selected = gitSelectedPath()
-    if (selected) {
-      void openGitFile(selected)
-    }
-  }
 
   const bestDiffFile = createMemo<string | null>(() => {
     const diffs = props.activeSessionDiffs()
@@ -678,21 +643,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserSelectedLoading(false)
     setBrowserSelectedError(null)
     setBrowserSelectedDirty(false)
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() !== "git-changes") return
-    if (gitStatusLoading()) return
-    if (gitStatusEntries() !== null) return
-    void loadGitStatus()
-  })
-
-  createEffect(() => {
-    if (rightPanelTab() === "git-changes") return
-    setGitSelectedBefore(null)
-    setGitSelectedAfter(null)
-    setGitSelectedLoading(false)
-    setGitSelectedError(null)
   })
 
   const handleSelectChangesFile = (file: string, closeList: boolean) => {
@@ -911,12 +861,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               entries={gitStatusEntries}
               statusLoading={gitStatusLoading}
               statusError={gitStatusError}
-              selectedPath={gitSelectedPath}
+              selectedItemId={gitSelectedItemId}
+              selectedBulkItemIds={gitBulkSelectedItemIds}
               selectedLoading={gitSelectedLoading}
               selectedError={gitSelectedError}
               selectedBefore={gitSelectedBefore}
               selectedAfter={gitSelectedAfter}
-              mostChangedPath={gitMostChangedPath}
+              mostChangedItemId={gitMostChangedItemId}
               scopeKey={gitScopeKey}
               diffViewMode={diffViewMode}
               diffContextMode={diffContextMode}
@@ -924,8 +875,28 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onViewModeChange={setDiffViewMode}
               onContextModeChange={setDiffContextMode}
               onWordWrapModeChange={setDiffWordWrapMode}
-              onOpenFile={(path: string) => void openGitFile(path)}
+              onRowClick={handleGitRowClick}
               onRefresh={() => void refreshGitStatus()}
+              onInsertContext={insertGitChangeContext}
+              onStageFile={stageGitFile}
+              onUnstageFile={unstageGitFile}
+              commitMessage={gitCommitMessage}
+              commitSubmitting={gitCommitSubmitting}
+              onCommitMessageInput={setGitCommitMessage}
+              onSubmitCommit={() => void submitGitCommit()}
+              branchLabel={gitChangesBranchLabel}
+              stagedOpen={gitStagedOpen}
+              unstagedOpen={gitUnstagedOpen}
+              onToggleStagedOpen={() => {
+                const next = !gitStagedOpen()
+                setGitStagedOpen(next)
+                persistGitSectionOpen("staged", next)
+              }}
+              onToggleUnstagedOpen={() => {
+                const next = !gitUnstagedOpen()
+                setGitUnstagedOpen(next)
+                persistGitSectionOpen("unstaged", next)
+              }}
               listOpen={gitChangesListOpen}
               onToggleList={toggleGitList}
               splitWidth={gitChangesSplitWidth}
@@ -950,6 +921,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               browserSelectedError={browserSelectedError}
               browserSelectedDirty={browserSelectedDirty}
               browserSelectedSaving={browserSelectedSaving}
+              wordWrapMode={filesWordWrapMode}
               parentPath={browserParentPath}
               scopeKey={browserScopeKey}
               onLoadEntries={(path: string) => void loadBrowserEntries(path)}
@@ -957,6 +929,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               onRefresh={() => void refreshFilesTab()}
               onSave={(content: string) => void saveBrowserFile(content)}
               onContentChange={(content: string) => handleBrowserFileChange(content)}
+              onWordWrapModeChange={setFilesWordWrapMode}
               listOpen={filesListOpen}
               onToggleList={toggleFilesList}
               splitWidth={filesSplitWidth}

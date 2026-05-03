@@ -5,7 +5,7 @@ import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, S
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
-import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
@@ -16,6 +16,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
+import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
@@ -57,7 +58,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
-  const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -77,6 +77,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
+  const canUseRemoteServerWindows = () => canOpenRemoteWindows()
 
   function getActiveListLength() {
     return activeTab() === "local" ? folders().length : serverList().length
@@ -123,17 +124,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const normalizedKey = e.key.toLowerCase()
     const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
-    const blockedKeys = [
-      "ArrowDown",
-      "ArrowUp",
-      "PageDown",
-      "PageUp",
-      "Home",
-      "End",
-      "Enter",
-      "Backspace",
-      "Delete",
-    ]
+    const blockedKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Enter"]
 
     if (isLoading()) {
       if (isBrowseShortcut || blockedKeys.includes(e.key)) {
@@ -191,21 +182,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } else if (e.key === "Enter") {
       e.preventDefault()
       handleEnterKey()
-    } else if (e.key === "Backspace" || e.key === "Delete") {
-      e.preventDefault()
-      if (listLength > 0 && focusMode() === "recent") {
-        if (activeTab() === "local") {
-          const folder = folders()[selectedIndex()]
-          if (folder) {
-            handleRemove(folder.path)
-          }
-        } else {
-          const server = serverList()[selectedIndex()]
-          if (server) {
-            removeRemoteServerProfile(server.id)
-          }
-        }
-      }
     }
   }
 
@@ -230,6 +206,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   createEffect(() => {
     activeTab()
+    if (!canUseRemoteServerWindows() && activeTab() !== "local") {
+      setActiveTab("local")
+      return
+    }
     setSelectedIndex(0)
     setFocusMode("recent")
   })
@@ -304,11 +284,16 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   function openServerDialog() {
+    if (!canUseRemoteServerWindows()) return
     resetServerDialog()
     setIsServerDialogOpen(true)
   }
 
   async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
+    if (openWindow && !canUseRemoteServerWindows()) {
+      throw new Error("Remote server windows can only be opened from a local desktop window")
+    }
+
     const trimmedName = input.name.trim()
     const trimmedUrl = input.baseUrl.trim()
     if (!trimmedName || !trimmedUrl) {
@@ -332,7 +317,23 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     })
 
     if (openWindow) {
-      await openRemoteServerWindow(profile)
+      const remoteProxySession =
+        isTauriHost() && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
+          ? await serverApi.createRemoteProxySession({
+              baseUrl: profile.baseUrl,
+              skipTlsVerify: profile.skipTlsVerify,
+            })
+          : undefined
+
+      try {
+        await openRemoteServerWindow(profile, remoteProxySession?.windowUrl, remoteProxySession?.sessionId)
+      } catch (error) {
+        if (remoteProxySession) {
+          void serverApi.deleteRemoteProxySession(remoteProxySession.sessionId).catch(() => {})
+        }
+        throw error
+      }
+
       await markRemoteServerConnected(profile.id)
     }
 
@@ -362,6 +363,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   async function handleConnectSavedServer(id: string) {
+    if (!canUseRemoteServerWindows()) return
     const target = remoteServers().find((entry) => entry.id === id)
     if (!target || connectingServerId()) return
     setConnectingServerId(id)
@@ -380,7 +382,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   async function handleBrowse() {
     if (isLoading()) return
     setFocusMode("new")
-    if (nativeDialogsAvailable) {
+    if (supportsNativeDialogsInCurrentWindow()) {
       const fallbackPath = folders()[0]?.path
       const selected = await openNativeFolderDialog({
         title: t("folderSelection.dialog.title"),
@@ -398,7 +400,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsFolderBrowserOpen(false)
     handleFolderSelect(path)
   }
- 
+
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
@@ -537,15 +539,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             >
               <Settings class="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-              onClick={() => openSettings("remote")}
-              aria-label={t("instanceTabs.remote.ariaLabel")}
-              title={t("instanceTabs.remote.title")}
-            >
-              <MonitorUp class="w-4 h-4" />
-            </button>
+            <Show when={canUseRemoteServerWindows()}>
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+                onClick={() => openSettings("remote")}
+                aria-label={t("instanceTabs.remote.ariaLabel")}
+                title={t("instanceTabs.remote.title")}
+              >
+                <MonitorUp class="w-4 h-4" />
+              </button>
+            </Show>
             <Show when={props.onClose}>
               <button
                 type="button"
@@ -619,7 +623,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
                 <div class="panel flex flex-col flex-1 min-h-0">
                   <div class="panel-header !gap-0 !p-0">
-                    <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none">
+                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
                       <button
                         type="button"
                         class="border-r border-base px-4 py-3 text-left transition-colors"
@@ -654,35 +658,37 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           )}
                         </p>
                       </button>
-                      <button
-                        type="button"
-                        class="px-4 py-3 text-left transition-colors"
-                        classList={{
-                          "text-primary": activeTab() === "servers",
-                          "text-muted hover:text-secondary": activeTab() !== "servers",
-                        }}
-                        style={{
-                          "background-color": "var(--surface-secondary)",
-                        }}
-                        onClick={() => setActiveTab("servers")}
-                      >
-                        <div
-                          class="panel-title text-base"
-                          style={{
-                            color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
+                      <Show when={canUseRemoteServerWindows()}>
+                        <button
+                          type="button"
+                          class="px-4 py-3 text-left transition-colors"
+                          classList={{
+                            "text-primary": activeTab() === "servers",
+                            "text-muted hover:text-secondary": activeTab() !== "servers",
                           }}
-                        >
-                          {t("folderSelection.tabs.servers")}
-                        </div>
-                        <p
-                          class="panel-subtitle mt-1"
                           style={{
-                            color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
+                            "background-color": "var(--surface-secondary)",
                           }}
+                          onClick={() => setActiveTab("servers")}
                         >
-                          {t("folderSelection.servers.count", { count: remoteServers().length })}
-                        </p>
-                      </button>
+                          <div
+                            class="panel-title text-base"
+                            style={{
+                              color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
+                            }}
+                          >
+                            {t("folderSelection.tabs.servers")}
+                          </div>
+                          <p
+                            class="panel-subtitle mt-1"
+                            style={{
+                              color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
+                            }}
+                          >
+                            {t("folderSelection.servers.count", { count: remoteServers().length })}
+                          </p>
+                        </button>
+                      </Show>
                     </div>
                   </div>
 
@@ -690,23 +696,25 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     when={activeTab() === "local"}
                     fallback={
                       <Show
-                        when={remoteServers().length > 0}
+                        when={canUseRemoteServerWindows() && remoteServers().length > 0}
                         fallback={
-                          <div class="panel-empty-state flex-1">
-                            <div class="panel-empty-state-icon">
-                              <Globe class="w-12 h-12 mx-auto" />
+                          <Show when={canUseRemoteServerWindows()}>
+                            <div class="panel-empty-state flex-1">
+                              <div class="panel-empty-state-icon">
+                                <Globe class="w-12 h-12 mx-auto" />
+                              </div>
+                              <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
+                              <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
+                              <button
+                                type="button"
+                                class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
+                                onClick={openServerDialog}
+                              >
+                                <Globe class="w-4 h-4" />
+                                <span>{t("folderSelection.actions.connectButton")}</span>
+                              </button>
                             </div>
-                            <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                            <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
-                            <button
-                              type="button"
-                              class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
-                              onClick={openServerDialog}
-                            >
-                              <Globe class="w-4 h-4" />
-                              <span>{t("folderSelection.actions.connectButton")}</span>
-                            </button>
-                          </div>
+                          </Show>
                         }
                       >
                         <div
@@ -874,15 +882,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button>
 
-                  <button
-                    onClick={openServerDialog}
-                    class="button-primary w-full flex items-center justify-center text-sm"
-                  >
-                    <div class="flex items-center gap-2">
-                      <Globe class="w-4 h-4" />
-                      <span>{t("folderSelection.actions.connectButton")}</span>
-                    </div>
-                  </button>
+                  <Show when={canUseRemoteServerWindows()}>
+                    <button
+                      onClick={openServerDialog}
+                      class="button-primary w-full flex items-center justify-center text-sm"
+                    >
+                      <div class="flex items-center gap-2">
+                        <Globe class="w-4 h-4" />
+                        <span>{t("folderSelection.actions.connectButton")}</span>
+                      </div>
+                    </button>
+                  </Show>
                 </div>
 
                 {/* OpenCode settings section */}
@@ -918,10 +928,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     <kbd class="kbd">Enter</kbd>
                     <span>{t("folderSelection.hints.select")}</span>
                   </div>
-                  <div class="flex items-center gap-1.5">
-                    <kbd class="kbd">Del</kbd>
-                    <span>{t("folderSelection.hints.remove")}</span>
-                  </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
                   <Kbd shortcut="cmd+n" class="kbd-hint" />
@@ -955,6 +961,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         open={isFolderBrowserOpen()}
         title={t("folderSelection.dialog.title")}
         description={t("folderSelection.dialog.description")}
+        initialPath={folders()[0]?.path}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
       />

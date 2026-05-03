@@ -43,6 +43,7 @@ import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
+import type { PromptInputApi } from "../prompt-input/types"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -105,6 +106,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   const [now, setNow] = createSignal(Date.now())
+  const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -268,6 +270,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
 
+  const activePromptInputApi = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return null
+    return sessionPromptApis()[sessionId] ?? null
+  })
+
+  const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
+    setSessionPromptApis((current) => ({
+      ...current,
+      [sessionId]: api,
+    }))
+  }
+
   createEffect(() => {
     getPermissionAutoAcceptInFlightVersion()
 
@@ -342,7 +357,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const pill = activeSessionStatusPill()
     if (!pill) return null
     return (
-      <span class={`status-indicator session-status session-status-list ${pill.className}`} title={pill.title}>
+      <span
+        class={`status-indicator session-status session-status-list ${pill.className} notranslate`}
+        title={pill.title}
+        translate="no"
+      >
         {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
         {pill.text}
       </span>
@@ -594,6 +613,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onCloseRightDrawer={closeRightDrawer}
             onPinRightDrawer={pinRightDrawer}
             onUnpinRightDrawer={unpinRightDrawer}
+            promptInputApi={activePromptInputApi}
             setContentEl={setRightDrawerContentEl}
           />
         </Box>
@@ -656,6 +676,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onCloseRightDrawer={closeRightDrawer}
           onPinRightDrawer={pinRightDrawer}
           onUnpinRightDrawer={unpinRightDrawer}
+          promptInputApi={activePromptInputApi}
           setContentEl={setRightDrawerContentEl}
         />
       </Drawer>
@@ -892,6 +913,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           escapeInDebounce={props.escapeInDebounce}
                           isPhoneLayout={isPhoneLayout()}
                           compactPromptLayout={compactPromptLayout()}
+                          registerSessionPromptApi={registerSessionPromptApi}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}

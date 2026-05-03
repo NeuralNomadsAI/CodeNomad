@@ -7,6 +7,7 @@ import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
+import { ensureManagedNodeBinary } from "./managed-node"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -40,6 +41,8 @@ interface CliEntryResolution {
   entry: string
   runner: "node" | "tsx"
   runnerPath?: string
+  nodeBinaryPath: string
+  nodeArgs?: string[]
 }
 
 type ManagedChild = ChildProcess | UtilityProcess
@@ -148,6 +151,7 @@ export class CliProcessManager extends EventEmitter {
     const listeningMode = this.resolveListeningMode()
     const host = resolveHostForMode(listeningMode)
     const args = this.buildCliArgs(options, host)
+    const cliEntry = await this.resolveCliEntry(options)
 
     let child: ManagedChild
 
@@ -156,7 +160,8 @@ export class CliProcessManager extends EventEmitter {
       const entryPath = this.resolveBundledProdEntry()
       const supervisorPath = this.resolveCliSupervisorPath()
       const shellEnv = supportsUserShell() ? getUserShellEnv() : { ...process.env }
-      const shellCommand = buildUserShellCommand(`exec ${this.buildExecutableCommand(runtimePath, [entryPath, ...args])}`)
+      const shellTarget = this.buildCommand(cliEntry, args)
+      const shellCommand = buildUserShellCommand(`exec ${shellTarget}`)
       const supervisorPayload = JSON.stringify({
         command: shellCommand.command,
         args: shellCommand.args,
@@ -170,13 +175,12 @@ export class CliProcessManager extends EventEmitter {
       console.info(`[cli] shell command: ${shellCommand.command} ${shellCommand.args.join(" ")}`)
 
       child = utilityProcess.fork(supervisorPath, [supervisorPayload], {
-        env: shellEnv,
+        env: { ...shellEnv, ELECTRON_RUN_AS_NODE: "1" },
         stdio: "pipe",
         serviceName: "CodeNomad CLI Supervisor",
       })
       this.childLaunchMode = "utility"
     } else {
-      const cliEntry = this.resolveCliEntry(options)
       console.info(
         `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
       )
@@ -563,7 +567,10 @@ export class CliProcessManager extends EventEmitter {
   }
 
   private buildCommand(cliEntry: CliEntryResolution, args: string[]): string {
-    const parts = [JSON.stringify(process.execPath)]
+    const parts = [JSON.stringify(cliEntry.nodeBinaryPath)]
+    for (const nodeArg of cliEntry.nodeArgs ?? []) {
+      parts.push(JSON.stringify(nodeArg))
+    }
     if (cliEntry.runner === "tsx" && cliEntry.runnerPath) {
       parts.push(JSON.stringify(cliEntry.runnerPath))
     }
@@ -572,30 +579,30 @@ export class CliProcessManager extends EventEmitter {
     return parts.join(" ")
   }
 
-  private buildExecutableCommand(command: string, args: string[]): string {
-    return [JSON.stringify(command), ...args.map((arg) => JSON.stringify(arg))].join(" ")
-  }
-
   private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
     if (cliEntry.runner === "tsx") {
-      return { command: process.execPath, args: [cliEntry.runnerPath!, cliEntry.entry, ...args] }
+      return { command: cliEntry.nodeBinaryPath, args: [...(cliEntry.nodeArgs ?? []), cliEntry.runnerPath!, cliEntry.entry, ...args] }
     }
 
-    return { command: process.execPath, args: [cliEntry.entry, ...args] }
+    return { command: cliEntry.nodeBinaryPath, args: [...(cliEntry.nodeArgs ?? []), cliEntry.entry, ...args] }
   }
 
-  private resolveCliEntry(options: StartOptions): CliEntryResolution {
+  private async resolveCliEntry(options: StartOptions): Promise<CliEntryResolution> {
     if (options.dev) {
       const tsxPath = this.resolveTsx()
       if (!tsxPath) {
         throw new Error("tsx is required to run the CLI in development mode. Please install dependencies.")
       }
       const devEntry = this.resolveDevEntry()
-      return { entry: devEntry, runner: "tsx", runnerPath: tsxPath }
+      return { entry: devEntry, runner: "tsx", runnerPath: tsxPath, nodeBinaryPath: process.execPath }
     }
- 
-    const distEntry = this.resolveProdEntry()
-    return { entry: distEntry, runner: "node" }
+
+    return {
+      entry: this.resolveProdEntry(),
+      runner: "node",
+      nodeBinaryPath: await ensureManagedNodeBinary(),
+      nodeArgs: ["--experimental-specifier-resolution=node"],
+    }
   }
  
   private resolveTsx(): string | null {
@@ -636,19 +643,23 @@ export class CliProcessManager extends EventEmitter {
   }
  
   private resolveProdEntry(): string {
-    try {
-      const entry = nodeRequire.resolve("@neuralnomads/codenomad/dist/bin.js")
-      if (existsSync(entry)) {
-        return entry
+    const candidates = [
+      path.join(process.resourcesPath, "server", "dist", "bin.js"),
+      path.join(mainDirname, "../resources/server/dist/bin.js"),
+      path.resolve(process.cwd(), "..", "server", "dist", "bin.js"),
+    ]
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate
       }
-    } catch {
-      // fall through to error below
     }
-    throw new Error("Unable to locate CodeNomad CLI build (dist/bin.js). Run npm run build --workspace @neuralnomads/codenomad.")
+
+    throw new Error("Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Rebuild the desktop bundle.")
   }
 
   private shouldUsePackagedShellSupervisor(options: StartOptions): boolean {
-    return !options.dev && app.isPackaged && process.platform === "darwin"
+    return false
   }
 
   private resolveCliSupervisorPath(): string {

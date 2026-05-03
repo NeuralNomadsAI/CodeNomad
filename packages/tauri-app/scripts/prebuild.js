@@ -37,6 +37,12 @@ const braceExpansionPath = path.join(
   "package.json",
 )
 
+const serverBuildDependencyPaths = [
+  path.join(serverRoot, "node_modules", "typescript", "package.json"),
+  path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
+  path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
+]
+
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
 
 async function ensureMonacoAssets() {
@@ -98,7 +104,7 @@ function syncServerUiBundle() {
 }
 
 function ensureServerDevDependencies() {
-  if (fs.existsSync(braceExpansionPath)) {
+  if (serverBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
     return
   }
 
@@ -142,6 +148,7 @@ function ensureRollupPlatformBinary() {
     "linux-arm64": "@rollup/rollup-linux-arm64-gnu",
     "darwin-arm64": "@rollup/rollup-darwin-arm64",
     "darwin-x64": "@rollup/rollup-darwin-x64",
+    "win32-arm64": "@rollup/rollup-win32-arm64-msvc",
     "win32-x64": "@rollup/rollup-win32-x64-msvc",
   }
 
@@ -166,6 +173,53 @@ function ensureRollupPlatformBinary() {
 
   console.log("[prebuild] installing rollup platform binary (optional dep workaround)...")
   execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+  })
+}
+
+function ensureEsbuildPlatformBinary() {
+  const platformKey = `${process.platform}-${process.arch}`
+  const platformPackages = {
+    "linux-arm": "@esbuild/linux-arm",
+    "linux-arm64": "@esbuild/linux-arm64",
+    "linux-ia32": "@esbuild/linux-ia32",
+    "linux-x64": "@esbuild/linux-x64",
+    "darwin-arm64": "@esbuild/darwin-arm64",
+    "darwin-x64": "@esbuild/darwin-x64",
+    "win32-arm64": "@esbuild/win32-arm64",
+    "win32-ia32": "@esbuild/win32-ia32",
+    "win32-x64": "@esbuild/win32-x64",
+  }
+
+  const pkgName = platformPackages[platformKey]
+  if (!pkgName) {
+    return
+  }
+
+  const platformPackageName = pkgName.split("/").pop()
+  const platformPackagePaths = [
+    path.join(serverRoot, "node_modules", "@esbuild", platformPackageName),
+    path.join(workspaceRoot, "node_modules", "@esbuild", platformPackageName),
+  ]
+  if (platformPackagePaths.some((packagePath) => fs.existsSync(packagePath))) {
+    return
+  }
+
+  let esbuildVersion = ""
+  for (const baseRoot of [serverRoot, workspaceRoot]) {
+    try {
+      esbuildVersion = require(path.join(baseRoot, "node_modules", "esbuild", "package.json")).version
+      break
+    } catch (error) {
+      // try the next install root; fallback install will use latest compatible
+    }
+  }
+
+  const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
+
+  console.log("[prebuild] installing esbuild platform binary (optional dep workaround)...")
+  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --package-lock=false --fund=false --audit=false`, {
     cwd: workspaceRoot,
     stdio: "inherit",
   })
@@ -249,8 +303,9 @@ function copyUiLoadingAssets() {
   ensureUiDevDependencies()
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
-  ensureServerDependencies()
+  ensureEsbuildPlatformBinary()
   ensureServerBuild()
+  ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
   copyServerArtifacts()

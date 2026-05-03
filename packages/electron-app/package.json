@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "CodeNomad - AI coding assistant",
   "license": "MIT",
   "author": {
@@ -62,7 +62,7 @@
     "vite-plugin-solid": "^2.10.0"
   },
   "build": {
-    "appId": "ai.opencode.client",
+    "appId": "ai.neuralnomads.codenomad.client",
     "productName": "CodeNomad",
     "directories": {
       "output": "release",
@@ -143,6 +143,13 @@
       "target": [
         {
           "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "AppImage",
           "arch": [
             "x64",
             "arm64"

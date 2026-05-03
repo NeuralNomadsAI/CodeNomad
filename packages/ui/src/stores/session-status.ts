@@ -1,9 +1,25 @@
 import type { Session, SessionRetryState, SessionStatus } from "../types/session"
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
+import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 
 function getSession(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
   return instanceSessions?.get(sessionId) ?? null
+}
+
+export function hasWakeLockEligibleWork(instanceId: string): boolean {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) {
+    return false
+  }
+
+  for (const session of instanceSessions.values()) {
+    if (shouldSessionHoldWakeLock(session)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 export function getSessionStatus(instanceId: string, sessionId: string): SessionStatus {

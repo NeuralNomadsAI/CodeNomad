@@ -171,9 +171,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     } else if (e.key === "Enter") {
       e.preventDefault()
       void handleEnterKey()
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault()
-      void handleDeleteKey()
     }
   }
 
@@ -185,29 +182,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
     if (index < sessions.length) {
       await handleSessionSelect(sessions[index].id)
     }
-  }
- 
-  async function handleDeleteKey() {
-    const sessions = parentSessions()
-    const index = selectedIndex()
- 
-    if (index >= sessions.length) {
-      return
-    }
- 
-    await handleSessionDelete(sessions[index].id)
- 
-    const updatedSessions = parentSessions()
-    if (updatedSessions.length === 0) {
-      setFocusMode("new-session")
-      setSelectedIndex(0)
-      return
-    }
- 
-    const nextIndex = Math.min(index, updatedSessions.length - 1)
-    setSelectedIndex(nextIndex)
-    setFocusMode("sessions")
-    scrollToIndex(nextIndex)
   }
  
    onMount(() => {
@@ -561,10 +535,6 @@ const InstanceWelcomeView: Component<InstanceWelcomeViewProps> = (props) => {
           <div class="flex items-center gap-1.5">
             <kbd class="kbd">Enter</kbd>
             <span>{t("instanceWelcome.hints.resume")}</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <kbd class="kbd">Del</kbd>
-            <span>{t("instanceWelcome.hints.delete")}</span>
           </div>
         </div>
       </div>
