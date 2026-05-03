@@ -162,7 +162,7 @@ jobs:
               arch="arm64"
             fi
 
-            out_zip="$release_root/CodeNomad-${VERSION_TO_USE}-mac-${arch}.zip"
+            out_zip="$release_root/CodeNomad-Electron-macos-${arch}-${VERSION_TO_USE}.zip"
             rm -f "$out_zip"
             echo "ditto -ck: $app -> $out_zip"
             ditto -ck --sequesterRsrc --keepParent "$app" "$out_zip"
@@ -177,7 +177,7 @@ jobs:
           tmp_dir=$(mktemp -d)
           trap 'rm -rf "$tmp_dir"' EXIT
 
-          zips=(packages/electron-app/release/CodeNomad-*-mac-*.zip)
+          zips=(packages/electron-app/release/CodeNomad-Electron-macos-*.zip)
           if [ "${#zips[@]}" -eq 0 ]; then
             echo "No Electron macOS zip artifacts found to validate" >&2
             exit 1
@@ -391,7 +391,7 @@ jobs:
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
-            ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-x64.zip"
+            ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-x64-${VERSION}.zip"
           fi
 
       - name: Upload Actions artifacts (Tauri macOS)
@@ -475,7 +475,7 @@ jobs:
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
-            ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-macos-arm64.zip"
+            ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-arm64-${VERSION}.zip"
           fi
 
       - name: Upload Actions artifacts (Tauri macOS arm64)
@@ -563,7 +563,7 @@ jobs:
           New-Item -ItemType Directory -Path $artifactDir | Out-Null
           $exe = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter *.exe | Select-Object -First 1
           if ($null -ne $exe) {
-            $dest = Join-Path $artifactDir ("CodeNomad-Tauri-$env:VERSION-windows-x64.zip")
+            $dest = Join-Path $artifactDir ("CodeNomad-Tauri-windows-x64-$env:VERSION.zip")
             Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
           }
 
@@ -674,8 +674,8 @@ jobs:
             exit 1
           fi
 
-          cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.AppImage"
-          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.zip" "$fallback_bin"
+          cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.AppImage"
+          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.zip" "$fallback_bin"
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
@@ -777,9 +777,9 @@ jobs:
           first_artifact=$(find "$SEARCH_ROOT" -type f \( -name "*.AppImage" -o -name "*.tar.gz" \) | head -n1)
           fallback_bin="$SEARCH_ROOT/release/codenomad-tauri"
           if [ -n "$first_artifact" ]; then
-            zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.zip" "$first_artifact"
+            zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-arm64-${VERSION}.zip" "$first_artifact"
           elif [ -f "$fallback_bin" ]; then
-            zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.zip" "$fallback_bin"
+            zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-arm64-${VERSION}.zip" "$fallback_bin"
           else
             echo "No bundled artifact found under $SEARCH_ROOT and no binary at $fallback_bin" >&2
             exit 1

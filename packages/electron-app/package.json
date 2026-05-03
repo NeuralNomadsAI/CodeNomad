@@ -103,7 +103,7 @@
           ]
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-macos-${arch}-${version}.${ext}",
       "icon": "electron/resources/icon.icns"
     },
     "dmg": {
@@ -130,7 +130,7 @@
           ]
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-windows-${arch}-${version}.${ext}",
       "icon": "electron/resources/icon.ico"
     },
     "nsis": {
@@ -156,7 +156,7 @@
           ]
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",
       "category": "Development",
       "icon": "electron/resources/icon.png"
     }
