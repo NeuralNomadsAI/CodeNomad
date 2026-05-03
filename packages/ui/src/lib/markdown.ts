@@ -68,7 +68,7 @@ function isInlineMathBoundaryCharacter(character: string | undefined): boolean {
     return true
   }
 
-  return /\s|[({\[<>'"“”‘’,;:!?)）】》」』、。，；：？！…—]/.test(character)
+  return /[\s\p{P}]/u.test(character)
 }
 
 function hasInlineMathBoundaries(src: string, endIndex: number): boolean {
