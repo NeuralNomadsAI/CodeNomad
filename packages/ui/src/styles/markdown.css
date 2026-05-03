@@ -1,4 +1,5 @@
-@import "github-markdown-css/github-markdown-light.css" layer(github-markdown-base);
+@import "github-markdown-css/github-markdown-light.css"
+  layer(github-markdown-base);
 @import "katex/dist/katex.min.css" layer(katex-base);
 
 @layer katex-overrides {
@@ -10,6 +11,11 @@
 
   .markdown-body .katex {
     font-size: 1.05em;
+  }
+
+  .markdown-body .katex .frac-line {
+    border-bottom-width: 0.1em !important;
+    border-color: currentColor !important;
   }
 }
 
@@ -252,7 +258,10 @@
     border-radius: 4px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease,
+      border-color 150ms ease;
     margin-inline-start: auto;
     font-size: var(--font-size-sm);
   }
