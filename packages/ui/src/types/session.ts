@@ -22,6 +22,23 @@ export interface SessionRetryState {
   next: number
 }
 
+export function getIdleSinceForStatusTransition(
+  previousStatus: SessionStatus | null | undefined,
+  nextStatus: SessionStatus,
+  previousIdleSince: number | null | undefined,
+  now = Date.now(),
+): number | null {
+  if (nextStatus !== "idle") {
+    return null
+  }
+
+  if (previousStatus && previousStatus !== "idle") {
+    return now
+  }
+
+  return previousIdleSince ?? null
+}
+
 export function mapSdkSessionStatus(status: SDKSessionStatus | null | undefined): SessionStatus {
   if (!status || status.type === "idle") {
     return "idle"
@@ -58,6 +75,7 @@ export interface Session
   pendingQuestion?: boolean // Indicates if session is waiting on user input
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
+  idleSince?: number | null // Timestamp for short-lived idle badge visibility after active work completes
   diff?: FileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 
@@ -76,6 +94,7 @@ export function createClientSession(
     agent,
     model,
     status,
+    idleSince: null,
   }
 }
 

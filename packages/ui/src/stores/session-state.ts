@@ -1,6 +1,6 @@
 import { batch, createSignal } from "solid-js"
 
-import type { Session, SessionStatus, Agent, Provider } from "../types/session"
+import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
@@ -353,6 +353,7 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
     if (session.status === status) return false
     const previous = session.status
     session.status = status
+    session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     if (status !== "working") {
       session.retry = null
     }

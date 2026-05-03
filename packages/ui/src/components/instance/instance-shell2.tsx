@@ -41,7 +41,7 @@ import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
-import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../../stores/session-status"
+import { getRetrySeconds, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 
@@ -329,6 +329,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
     const retry = getSessionRetry(props.instance.id, activeSessionId)
+    const showStatus = shouldShowSessionStatus(props.instance.id, activeSessionId, now())
+    if (!showStatus) {
+      return null
+    }
     const text = retry
       ? (() => {
           const seconds = getRetrySeconds(retry.next, now())

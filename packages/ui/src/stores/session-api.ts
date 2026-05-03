@@ -1,4 +1,4 @@
-import { mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { getIdleSinceForStatusTransition, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -175,6 +175,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         model: existingSession?.model ?? { providerId: "", modelId: "" },
         status,
         retry,
+        idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -273,6 +274,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       agent: selectedAgent,
       model: defaultModel,
       status: "idle",
+      idleSince: null,
       version: response.data.version,
       time: {
         ...response.data.time,
@@ -378,12 +380,13 @@ async function forkSession(
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
-    model: {
-      providerId: info.model?.providerID || "",
-      modelId: info.model?.modelID || "",
-    },
-    status: "idle",
-    version: "0",
+     model: {
+       providerId: info.model?.providerID || "",
+       modelId: info.model?.modelID || "",
+     },
+     status: "idle",
+     idleSince: null,
+     version: "0",
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {
