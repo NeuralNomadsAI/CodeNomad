@@ -667,17 +667,15 @@ jobs:
           }
 
           appimage=$(find_one "*.AppImage")
-          deb=$(find_one "*.deb")
-          rpm=$(find_one "*.rpm")
+          fallback_bin="$SEARCH_ROOT/release/codenomad-tauri"
 
-          if [ -z "$appimage" ] || [ -z "$deb" ] || [ -z "$rpm" ]; then
-            echo "Missing bundle(s): appimage=${appimage:-none} deb=${deb:-none} rpm=${rpm:-none}" >&2
+          if [ -z "$appimage" ] || [ ! -f "$fallback_bin" ]; then
+            echo "Missing bundle(s): appimage=${appimage:-none} binary=$fallback_bin" >&2
             exit 1
           fi
 
           cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.AppImage"
-          cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.deb"
-          cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.rpm"
+          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.zip" "$fallback_bin"
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
@@ -776,7 +774,7 @@ jobs:
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
           shopt -s nullglob globstar
-          first_artifact=$(find "$SEARCH_ROOT" -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" \) | head -n1)
+          first_artifact=$(find "$SEARCH_ROOT" -type f \( -name "*.AppImage" -o -name "*.tar.gz" \) | head -n1)
           fallback_bin="$SEARCH_ROOT/release/codenomad-tauri"
           if [ -n "$first_artifact" ]; then
             zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-${VERSION}-linux-x64.zip" "$first_artifact"
@@ -797,61 +795,3 @@ jobs:
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
           done
-
-
-  build-linux-rpm:
-    runs-on: ubuntu-24.04
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      VERSION: ${{ inputs.version }}
-      TAG: ${{ inputs.tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install rpm packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm ruby ruby-dev build-essential
-          sudo gem install --no-document fpm
-
-      - name: Set workspace versions
-        if: ${{ inputs.set_versions && inputs.version != '' }}
-        run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
-
-      - name: Install project dependencies
-        run: npm ci --workspaces --include=optional
-
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-
-      - name: Build Linux RPM binaries
-        run: npm run build:linux-rpm --workspace @neuralnomads/codenomad-electron-app
-
-      - name: Upload RPM release assets
-        if: ${{ inputs.upload && inputs.tag != '' }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          for file in packages/electron-app/release/*.rpm; do
-            [ -f "$file" ] || continue
-            echo "Uploading $file"
-            gh release upload "$TAG" "$file" --clobber
-          done
-
-      - name: Upload Actions artifacts (Electron Linux RPM)
-        if: ${{ inputs.upload_actions_artifacts }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.actions_artifacts_name_prefix }}electron-linux-rpm
-          path: packages/electron-app/release/*.rpm
-          retention-days: ${{ inputs.actions_artifacts_retention_days }}
-          if-no-files-found: error
