@@ -32,7 +32,7 @@ export const toolCallMessages = {
   "toolCall.diagnostics.severity.info.short": "מידע",
 
   "toolCall.renderer.toolName.shell": "מעטפת",
-  "toolCall.renderer.toolName.fetch": "Fetch",
+  "toolCall.renderer.toolName.fetch": "אחזור",
   "toolCall.renderer.toolName.invalid": "לא תקין",
   "toolCall.renderer.toolName.plan": "תוכנית",
   "toolCall.renderer.toolName.applyPatch": "החל תיקון",
@@ -80,7 +80,7 @@ export const toolCallMessages = {
   "permissionApproval.empty": "אין בקשות ממתינות.",
   "permissionApproval.kind.permission": "אישור",
   "permissionApproval.kind.question": "שאלה",
-  "permissionApproval.questionCount.one": "שאלה אחת",
+  "permissionApproval.questionCount.one": "{count} שאלה",
   "permissionApproval.questionCount.other": "{count} שאלות",
   "permissionApproval.status.active": "פעיל",
   "permissionApproval.actions.closeAriaLabel": "סגור",
@@ -131,7 +131,7 @@ export const toolCallMessages = {
   "toolCall.status.unknown": "לא ידוע",
 
   "toolCall.applyPatch.action.preparing": "מכין apply_patch...",
-  "toolCall.applyPatch.title.withFileCount.one": "{tool} (קובץ אחד)",
+  "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} קובץ)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",
   "toolCall.applyPatch.fileFallback": "קובץ {number}",
 } as const

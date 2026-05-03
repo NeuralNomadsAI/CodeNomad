@@ -12,7 +12,7 @@ export const folderSelectionMessages = {
   "folderSelection.empty.description": "עיין בתיקייה כדי להתחיל",
 
   "folderSelection.recent.title": "תיקיות אחרונות",
-  "folderSelection.recent.subtitle.one": "תיקייה אחת זמינה",
+  "folderSelection.recent.subtitle.one": "{count} תיקייה זמינה",
   "folderSelection.recent.subtitle.other": "{count} תיקיות זמינות",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
 
