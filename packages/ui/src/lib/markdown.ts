@@ -1,5 +1,5 @@
-import katex from "katex"
 import { marked } from "marked"
+import markedKatex from "marked-katex-extension"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
@@ -17,223 +17,10 @@ let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
 
-interface MathToken {
-  type: "blockMath" | "inlineMath"
-  raw: string
-  text: string
-  displayMode: boolean
-}
-
-interface InlineMathMatch {
-  raw: string
-  text: string
-}
-
-const blockMathPattern = /^\$\$([\s\S]+?)\$\$(?:\n+|$)/
-const bracketBlockMathPattern = /^\\\[([\s\S]+?)\\\](?:\n+|$)/
-const inlineParenMathPattern = /^\\\(([^\n]+?)\\\)/
-
-function normalizeMathContent(content: string): string {
-  return content.trim()
-}
-
-function canCloseInlineMath(raw: string): boolean {
-  if (raw.length < 2) {
-    return false
-  }
-
-  const content = raw.slice(1, -1)
-  if (!normalizeMathContent(content)) {
-    return false
-  }
-
-  return true
-}
-
-function canStartInlineMath(src: string): boolean {
-  const nextCharacter = src[1]
-  if (!nextCharacter) {
-    return false
-  }
-
-  if (nextCharacter === "$") {
-    return false
-  }
-
-  return true
-}
-
-function isInlineMathBoundaryCharacter(character: string | undefined): boolean {
-  if (!character) {
-    return true
-  }
-
-  return /[\s\p{P}]/u.test(character)
-}
-
-function hasInlineMathBoundaries(src: string, endIndex: number): boolean {
-  const nextCharacter = src[endIndex + 1]
-  return isInlineMathBoundaryCharacter(nextCharacter)
-}
-
-function matchDollarInlineMath(src: string): InlineMathMatch | undefined {
-  if (!src.startsWith("$") || src.startsWith("$$") || !canStartInlineMath(src)) {
-    return undefined
-  }
-
-  let isEscaped = false
-  for (let index = 1; index < src.length; index++) {
-    const character = src[index]
-    if (character === "\n") {
-      return undefined
-    }
-
-    if (character === "\\" && !isEscaped) {
-      isEscaped = true
-      continue
-    }
-
-    if (character === "$" && !isEscaped) {
-      const raw = src.slice(0, index + 1)
-      if (!canCloseInlineMath(raw)) {
-        return undefined
-      }
-
-      if (!hasInlineMathBoundaries(src, index)) {
-        return undefined
-      }
-
-      return {
-        raw,
-        text: raw.slice(1, -1),
-      }
-    }
-
-    isEscaped = false
-  }
-
-  return undefined
-}
-
-function renderMathToken(raw: string, content: string, displayMode: boolean): string {
-  const normalizedContent = normalizeMathContent(content)
-  if (!normalizedContent) {
-    return escapeHtml(raw)
-  }
-
-  try {
-    return katex.renderToString(normalizedContent, {
-      displayMode,
-      output: "html",
-      strict: "ignore",
-      throwOnError: false,
-    })
-  } catch {
-    return escapeHtml(raw)
-  }
-}
-
-function createBlockMathToken(raw: string, text: string): MathToken | undefined {
-  const normalizedText = normalizeMathContent(text)
-  if (!normalizedText) {
-    return undefined
-  }
-
-  return {
-    type: "blockMath",
-    raw,
-    text: normalizedText,
-    displayMode: true,
-  }
-}
-
-function createInlineMathToken(raw: string, text: string): MathToken | undefined {
-  if (!canCloseInlineMath(raw)) {
-    return undefined
-  }
-
-  return {
-    type: "inlineMath",
-    raw,
-    text,
-    displayMode: false,
-  }
-}
-
-function matchBlockMath(src: string): MathToken | undefined {
-  const dollarMatch = src.match(blockMathPattern)
-  if (dollarMatch) {
-    return createBlockMathToken(dollarMatch[0], dollarMatch[1] ?? "")
-  }
-
-  const bracketMatch = src.match(bracketBlockMathPattern)
-  if (bracketMatch) {
-    return createBlockMathToken(bracketMatch[0], bracketMatch[1] ?? "")
-  }
-
-  return undefined
-}
-
-function matchInlineMath(src: string): MathToken | undefined {
-  if (src.startsWith("\\(")) {
-    const parenMatch = src.match(inlineParenMathPattern)
-    if (!parenMatch) {
-      return undefined
-    }
-
-    return createInlineMathToken(parenMatch[0], parenMatch[1] ?? "")
-  }
-
-  const inlineMatch = matchDollarInlineMath(src)
-  if (!inlineMatch) {
-    return undefined
-  }
-
-  return createInlineMathToken(inlineMatch.raw, inlineMatch.text)
-}
-
-const mathMarkedExtensions = [
-  {
-    name: "blockMath",
-    level: "block" as const,
-    start(src: string): number | undefined {
-      const dollarIndex = src.indexOf("$$")
-      const bracketIndex = src.indexOf("\\[")
-      const indices = [dollarIndex, bracketIndex].filter((index) => index >= 0)
-      if (indices.length === 0) {
-        return undefined
-      }
-
-      return Math.min(...indices)
-    },
-    tokenizer(src: string): MathToken | undefined {
-      return matchBlockMath(src)
-    },
-    renderer(token: MathToken): string {
-      return renderMathToken(token.raw, token.text, token.displayMode)
-    },
-  },
-  {
-    name: "inlineMath",
-    level: "inline" as const,
-    start(src: string): number | undefined {
-      const dollarIndex = src.indexOf("$")
-      const parenIndex = src.indexOf("\\(")
-      const indices = [dollarIndex, parenIndex].filter((index) => index >= 0)
-      if (indices.length === 0) {
-        return undefined
-      }
-
-      return Math.min(...indices)
-    },
-    tokenizer(src: string): MathToken | undefined {
-      return matchInlineMath(src)
-    },
-    renderer(token: MathToken): string {
-      return renderMathToken(token.raw, token.text, token.displayMode)
-    },
-  },
-]
+// Math rendering is handled by marked-katex-extension (registered in setupRenderer).
+// Delimiter rules, boundaries, CJK punctuation, and block/inline rendering are
+// all delegated to the maintained extension so we avoid ~200 lines of fragile
+// hand-rolled tokenizer code.
 
 const ALLOWED_RAW_HTML_TAGS = new Set([
   "a",
@@ -593,9 +380,11 @@ function setupRenderer(isDark: boolean) {
     gfm: true,
   })
 
-  marked.use({
-    extensions: mathMarkedExtensions,
-  })
+  marked.use(markedKatex({
+    throwOnError: false,
+    nonStandard: true,
+    strict: "ignore",
+  }))
 
   const renderer = new marked.Renderer()
 
