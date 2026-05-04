@@ -1,4 +1,4 @@
-use crate::managed_node::ensure_managed_node_binary;
+use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -1079,7 +1079,7 @@ impl CliEntry {
                 entry,
                 runner: Runner::Node,
                 runner_path: None,
-                node_binary: ensure_managed_node_binary(app)?,
+                node_binary: resolve_bundled_node_binary()?,
                 node_args: vec!["--experimental-specifier-resolution=node".to_string()],
             });
         }

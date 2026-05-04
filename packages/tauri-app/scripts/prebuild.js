@@ -11,6 +11,8 @@ const uiRoot = path.resolve(root, "..", "ui")
 const uiDist = path.resolve(uiRoot, "src", "renderer", "dist")
 const serverDest = path.resolve(root, "src-tauri", "resources", "server")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
+const resourcesRoot = path.resolve(root, "src-tauri", "resources")
+const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 
 const sources = ["dist", "public", "node_modules", "package.json"]
 
@@ -311,6 +313,7 @@ function copyUiLoadingAssets() {
   copyServerArtifacts()
   stripNodeModuleBins()
   copyUiLoadingAssets()
+  await prepareBundledNodeRuntime({ resourcesRoot })
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)

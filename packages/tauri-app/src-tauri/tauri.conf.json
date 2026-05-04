@@ -72,6 +72,7 @@
       }
     },
     "resources": [
+      "resources/node",
       "resources/server",
       "resources/ui-loading"
     ],

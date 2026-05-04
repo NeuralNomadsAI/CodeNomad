@@ -35,12 +35,9 @@
     "build:linux-arm64": "node scripts/build.js linux-arm64",
     "build:linux-rpm": "node scripts/build.js linux-rpm",
     "build:all": "node scripts/build.js all",
-    "prepackage:mac": "npm run prepare:resources",
-    "package:mac": "electron-builder --mac",
-    "prepackage:win": "npm run prepare:resources",
-    "package:win": "electron-builder --win",
-    "prepackage:linux": "npm run prepare:resources",
-    "package:linux": "electron-builder --linux"
+    "package:mac": "node scripts/build.js mac",
+    "package:win": "node scripts/build.js win",
+    "package:linux": "node scripts/build.js linux"
   },
   "dependencies": {
     "@neuralnomads/codenomad": "file:../server",
@@ -96,11 +93,7 @@
       "category": "public.app-category.developer-tools",
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         }
       ],
       "artifactName": "CodeNomad-Electron-macos-${arch}-${version}.${ext}",
@@ -123,11 +116,7 @@
     "win": {
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         }
       ],
       "artifactName": "CodeNomad-Electron-windows-${arch}-${version}.${ext}",
@@ -142,18 +131,10 @@
     "linux": {
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         },
         {
-          "target": "AppImage",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "AppImage"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",

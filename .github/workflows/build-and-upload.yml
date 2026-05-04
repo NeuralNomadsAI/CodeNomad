@@ -101,6 +101,9 @@ jobs:
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
+      - name: Verify bundled Node resource (Electron macOS)
+        run: node scripts/verify-bundled-node.cjs packages/electron-app/release/mac/CodeNomad.app/Contents/Resources@darwin-x64 packages/electron-app/release/mac-arm64/CodeNomad.app/Contents/Resources@darwin-arm64
+
       - name: Ad-hoc sign Electron macOS app bundles (seal resources)
         shell: bash
         run: |
@@ -259,6 +262,9 @@ jobs:
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
+      - name: Verify bundled Node resource (Electron Windows)
+        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
+
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}
         shell: pwsh
@@ -307,6 +313,9 @@ jobs:
 
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
+
+      - name: Verify bundled Node resource (Electron Linux)
+        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
 
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -363,6 +372,9 @@ jobs:
 
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
+
+      - name: Verify bundled Node resource (Tauri macOS x64)
+        run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-x64
 
       - name: Ensure tauri native binary
         working-directory: packages/tauri-app
@@ -448,6 +460,9 @@ jobs:
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
 
+      - name: Verify bundled Node resource (Tauri macOS arm64)
+        run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-arm64
+
       - name: Ensure tauri native binary
         working-directory: packages/tauri-app
         run: |
@@ -532,6 +547,9 @@ jobs:
 
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
+
+      - name: Verify bundled Node resource (Tauri Windows)
+        run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@win32-x64
 
       - name: Ensure tauri native binary
         shell: bash
@@ -633,6 +651,9 @@ jobs:
 
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
+
+      - name: Verify bundled Node resource (Tauri Linux)
+        run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@linux-x64
 
       - name: Ensure tauri native binary
         working-directory: packages/tauri-app

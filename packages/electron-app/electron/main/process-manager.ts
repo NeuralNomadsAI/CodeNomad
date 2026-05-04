@@ -212,11 +212,14 @@ export class CliProcessManager extends EventEmitter {
     this.child = child
     this.updateStatus({ pid: child.pid ?? undefined })
 
-    child.stdout?.on("data", (data: Buffer) => {
+    const stdout = child.stdout as NodeJS.ReadableStream | undefined
+    const stderr = child.stderr as NodeJS.ReadableStream | undefined
+
+    stdout?.on("data", (data: Buffer) => {
       this.handleStream(data.toString(), "stdout")
     })
 
-    child.stderr?.on("data", (data: Buffer) => {
+    stderr?.on("data", (data: Buffer) => {
       this.handleStream(data.toString(), "stderr")
     })
 
