@@ -8,7 +8,6 @@ import { getLogger } from "../lib/logger"
 import { uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 const log = getLogger("session")
 
-
 interface ModelSelectorProps {
   instanceId: string
   sessionId: string
@@ -21,6 +20,26 @@ interface FlatModel extends Model {
   key: string
   searchText: string
 }
+
+interface ModelGroup {
+  providerId: string
+  providerName: string
+  models: FlatModel[]
+}
+
+interface ProviderHeaderOption {
+  type: "header"
+  key: string
+  providerId: string
+  providerName: string
+  searchText: string
+}
+
+type PickerOption = FlatModel | ProviderHeaderOption
+
+const compareIds = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" })
+
+const isProviderHeaderOption = (option: PickerOption): option is ProviderHeaderOption => "type" in option && option.type === "header"
 
 export default function ModelSelector(props: ModelSelectorProps) {
   const { t } = useI18n()
@@ -57,6 +76,16 @@ export default function ModelSelector(props: ModelSelectorProps) {
     ),
   )
 
+  const sortedModels = createMemo<FlatModel[]>(() =>
+    [...allModels()].sort((left, right) => {
+      const providerComparison = compareIds(left.providerId, right.providerId)
+      if (providerComparison !== 0) return providerComparison
+      const nameComparison = compareIds(left.name, right.name)
+      if (nameComparison !== 0) return nameComparison
+      return compareIds(left.id, right.id)
+    }),
+  )
+
   const favoriteKeySet = createMemo(() => {
     const result = new Set<string>()
     for (const item of uiState().models.favorites ?? []) {
@@ -70,7 +99,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const favoriteModels = createMemo<FlatModel[]>(() => {
     const keys = favoriteKeySet()
     if (keys.size === 0) return []
-    return allModels().filter((m) => keys.has(m.key))
+    return sortedModels().filter((m) => keys.has(m.key))
   })
 
   const hasFavorites = createMemo(() => favoriteModels().length > 0)
@@ -104,20 +133,46 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   const visibleOptions = createMemo<FlatModel[]>(() => {
     if (!favoritesOnlyEnabled()) {
-      return allModels()
+      return sortedModels()
     }
     return favoriteModels()
   })
 
-  const handleChange = async (value: FlatModel | null) => {
-    if (!value) return
+  const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {
+    const query = searchActive() ? inputValue().trim().toLowerCase() : ""
+    const groups = new Map<string, ModelGroup>()
+    for (const model of visibleOptions()) {
+      if (query && !model.searchText.toLowerCase().includes(query)) continue
+      const existing = groups.get(model.providerId)
+      if (existing) {
+        existing.models.push(model)
+      } else {
+        groups.set(model.providerId, { providerId: model.providerId, providerName: model.providerName, models: [model] })
+      }
+    }
+
+    return Array.from(groups.values())
+  })
+
+  const pickerOptions = createMemo<PickerOption[]>(() =>
+    groupedVisibleOptions().flatMap((group) => [
+      {
+        type: "header" as const,
+        key: `provider:${group.providerId}`,
+        providerId: group.providerId,
+        providerName: group.providerName,
+        searchText: `${group.providerName} ${group.providerId}`,
+      },
+      ...group.models,
+    ]),
+  )
+
+  const handleChange = async (value: PickerOption | null) => {
+    if (!value || isProviderHeaderOption(value)) return
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
   }
 
-  const customFilter = (option: FlatModel, rawInput: string) => {
-    if (!searchDirty()) return true
-    return option.searchText.toLowerCase().includes(rawInput.toLowerCase())
-  }
+  const customFilter = () => true
 
   createEffect(() => {
     if (isOpen()) {
@@ -209,7 +264,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   return (
     <div class="sidebar-selector">
-      <Combobox<FlatModel>
+      <Combobox<PickerOption>
         open={isOpen()}
         value={currentModelValue()}
         onChange={handleChange}
@@ -217,15 +272,29 @@ export default function ModelSelector(props: ModelSelectorProps) {
           if (!next && suppressNextClose) return
           setIsOpen(next)
         }}
-        options={visibleOptions()}
+        options={pickerOptions()}
         optionValue="key"
         optionTextValue="searchText"
-        optionLabel="name"
+        optionLabel={(option) => (isProviderHeaderOption(option) ? option.providerName : option.name)}
+        optionDisabled={isProviderHeaderOption}
         placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
         allowsEmptyCollection
         itemComponent={(itemProps) => {
-          const isFavorite = () => favoriteKeySet().has(itemProps.item.rawValue.key)
+          if (isProviderHeaderOption(itemProps.item.rawValue)) {
+            const header = itemProps.item.rawValue
+            return (
+              <li class="selector-section" role="presentation">
+                <span class="selector-section-title" title={header.providerId}>
+                  {header.providerName}
+                  {header.providerName !== header.providerId && <span dir="ltr"> · {header.providerId}</span>}
+                </span>
+              </li>
+            )
+          }
+
+          const model = itemProps.item.rawValue
+          const isFavorite = () => favoriteKeySet().has(model.key)
           return (
             <Combobox.Item
               item={itemProps.item}
@@ -233,9 +302,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
             >
               <>
                 <div class="selector-option-content">
-                  <Combobox.ItemLabel class="selector-option-label">{itemProps.item.rawValue.name}</Combobox.ItemLabel>
+                  <Combobox.ItemLabel class="selector-option-label">{model.name}</Combobox.ItemLabel>
                   <Combobox.ItemDescription class="selector-option-description">
-                    {itemProps.item.rawValue.providerName} • {itemProps.item.rawValue.providerId}/{itemProps.item.rawValue.id}
+                    {model.providerName} • {model.providerId}/{model.id}
                   </Combobox.ItemDescription>
                 </div>
                 <Combobox.ItemIndicator class="selector-option-indicator">
@@ -269,8 +338,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
                     event.preventDefault()
                     event.stopPropagation()
                     toggleFavoriteModelPreference({
-                      providerId: itemProps.item.rawValue.providerId,
-                      modelId: itemProps.item.rawValue.id,
+                      providerId: model.providerId,
+                      modelId: model.id,
                     })
                   }}
                 >
