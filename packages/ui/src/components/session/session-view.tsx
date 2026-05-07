@@ -8,7 +8,7 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markViewedSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
 import { IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
@@ -17,6 +17,7 @@ import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
+import { useConfig } from "../../stores/preferences"
 
 const log = getLogger("session")
 
@@ -41,6 +42,7 @@ interface SessionViewProps {
 
 export const SessionView: Component<SessionViewProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -80,6 +82,26 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       requestAnimationFrame(() => scrollToBottomHandle?.())
     })
   }
+
+  function getSeenIdleSignature(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): string {
+    const ids: string[] = []
+
+    if (currentSession.status === "idle" && typeof currentSession.idleSince === "number") {
+      ids.push(`${currentSession.id}:${currentSession.idleSince}`)
+    }
+
+    if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
+      for (const child of props.activeSessions.values()) {
+        if (child.parentId !== currentSession.id) continue
+        if (child.status !== "idle") continue
+        if (typeof child.idleSince !== "number") continue
+        ids.push(`${child.id}:${child.idleSince}`)
+      }
+    }
+
+    return ids.sort().join("|")
+  }
+
   createEffect(
     on(
       () => props.isActive,
@@ -95,16 +117,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   createEffect(() => {
     const currentSession = session()
     if (!props.isActive || !currentSession) return
-    if (currentSession.status !== "idle") return
-    if (typeof currentSession.idleSince !== "number") return
 
-    const idleSince = currentSession.idleSince
+    const keepUnseenSubagentIdleStatus = preferences().keepUnseenSubagentIdleStatus
+    const seenIdleSignature = getSeenIdleSignature(currentSession, keepUnseenSubagentIdleStatus)
+    if (!seenIdleSignature) return
+
     const timeout = window.setTimeout(() => {
       const latestSession = session()
       if (!props.isActive || !latestSession) return
-      if (latestSession.status !== "idle") return
-      if (latestSession.idleSince !== idleSince) return
-      markSessionIdleSeen(props.instanceId, latestSession.id)
+      const latestKeepUnseenSubagentIdleStatus = preferences().keepUnseenSubagentIdleStatus
+      if (getSeenIdleSignature(latestSession, latestKeepUnseenSubagentIdleStatus) !== seenIdleSignature) return
+      markViewedSessionIdleSeen(props.instanceId, latestSession.id, latestKeepUnseenSubagentIdleStatus)
     }, IDLE_STATUS_VISIBILITY_MS)
 
     onCleanup(() => window.clearTimeout(timeout))

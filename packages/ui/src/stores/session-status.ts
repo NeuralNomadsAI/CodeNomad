@@ -39,8 +39,6 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
 
 export function shouldShowIdleStatus(
   session: Pick<Session, "status" | "idleSince" | "parentId"> | null | undefined,
-  now = Date.now(),
-  keepUnseenSubagentIdleStatus = false,
 ): boolean {
   if (!session || session.status !== "idle") {
     return false
@@ -50,18 +48,12 @@ export function shouldShowIdleStatus(
     return false
   }
 
-  if (session.parentId && !keepUnseenSubagentIdleStatus) {
-    return now - session.idleSince < IDLE_STATUS_VISIBILITY_MS
-  }
-
   return true
 }
 
 export function shouldShowSessionStatus(
   instanceId: string,
   sessionId: string,
-  now = Date.now(),
-  keepUnseenSubagentIdleStatus = false,
 ): boolean {
   const session = getSession(instanceId, sessionId)
   if (!session) {
@@ -72,7 +64,7 @@ export function shouldShowSessionStatus(
     return true
   }
 
-  return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
+  return session.status !== "idle" || shouldShowIdleStatus(session)
 }
 
 export function getRetrySeconds(next: number, now = Date.now()): number {
@@ -83,8 +75,6 @@ export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
 export function getInstanceSessionIndicatorStatus(
   instanceId: string,
-  now = Date.now(),
-  keepUnseenSubagentIdleStatus = false,
 ): InstanceSessionIndicatorStatus | null {
   const aggregated = getInstanceSessionIndicatorStatusCached(instanceId)
   if (aggregated !== "idle") {
@@ -97,7 +87,7 @@ export function getInstanceSessionIndicatorStatus(
   }
 
   for (const session of instanceSessions.values()) {
-    if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) {
+    if (shouldShowIdleStatus(session)) {
       return "idle"
     }
   }

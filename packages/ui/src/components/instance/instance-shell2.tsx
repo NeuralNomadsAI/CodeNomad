@@ -44,7 +44,6 @@ import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Maximize2, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
-import { useConfig } from "../../stores/preferences"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -91,7 +90,6 @@ interface InstanceShellProps {
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const { t, locale } = useI18n()
-  const { preferences } = useConfig()
   const isRTL = () => locale() === "he"
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
@@ -331,12 +329,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
     const retry = getSessionRetry(props.instance.id, activeSessionId)
-    const showStatus = shouldShowSessionStatus(
-      props.instance.id,
-      activeSessionId,
-      now(),
-      preferences().keepUnseenSubagentIdleStatus,
-    )
+    const showStatus = shouldShowSessionStatus(props.instance.id, activeSessionId)
     if (!showStatus) {
       return null
     }

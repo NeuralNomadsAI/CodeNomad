@@ -1,9 +1,8 @@
-import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js"
+import { Component, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
 import { FolderOpen, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { useConfig } from "../stores/preferences"
 
 interface InstanceTabProps {
   instance: Instance
@@ -21,17 +20,8 @@ function getPathBasename(path: string): string {
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
-  const { preferences } = useConfig()
-  const [now, setNow] = createSignal(Date.now())
 
-  if (typeof window !== "undefined") {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
-  }
-
-  const aggregatedStatus = createMemo(() =>
-    getInstanceSessionIndicatorStatus(props.instance.id, now(), preferences().keepUnseenSubagentIdleStatus),
-  )
+  const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id))
   const statusClassName = createMemo(() => {
     const status = aggregatedStatus()
     if (!status) return null
