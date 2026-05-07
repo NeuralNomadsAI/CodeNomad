@@ -146,6 +146,8 @@ export const settingsMessages = {
   "settings.behavior.usageMetrics.subtitle": "Показывать или скрывать статистику токенов и стоимости в сообщениях ассистента.",
   "settings.behavior.autoCleanup.title": "Автоочистка пустых сессий",
   "settings.behavior.autoCleanup.subtitle": "Автоматически очищать пустые сессии при создании новых.",
+  "settings.behavior.keepUnseenSubagentIdle.title": "Оставлять idle-маркеры субагентов",
+  "settings.behavior.keepUnseenSubagentIdle.subtitle": "Оставлять idle-маркеры субагентов видимыми до просмотра вместо скрытия через 5 секунд.",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "Enter для отправки",

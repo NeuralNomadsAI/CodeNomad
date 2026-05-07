@@ -75,7 +75,7 @@ export interface Session
   pendingQuestion?: boolean // Indicates if session is waiting on user input
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
-  idleSince?: number | null // Timestamp for short-lived idle badge visibility after active work completes
+  idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
   diff?: FileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 

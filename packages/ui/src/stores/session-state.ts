@@ -314,6 +314,14 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   })
 }
 
+function markSessionIdleSeen(instanceId: string, sessionId: string): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.status !== "idle") return false
+    if (typeof session.idleSince !== "number") return false
+    session.idleSince = null
+  })
+}
+
 function setActiveSession(instanceId: string, sessionId: string): void {
   setActiveSessionId((prev) => {
     const next = new Map(prev)
@@ -736,6 +744,7 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  markSessionIdleSeen,
   setSessionStatus,
   setActiveSession,
  

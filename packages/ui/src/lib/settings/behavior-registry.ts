@@ -251,6 +251,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.keepUnseenSubagentIdleStatus",
+      titleKey: "settings.behavior.keepUnseenSubagentIdle.title",
+      subtitleKey: "settings.behavior.keepUnseenSubagentIdle.subtitle",
+      get: (p) => Boolean(p.keepUnseenSubagentIdleStatus),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ keepUnseenSubagentIdleStatus: next })
+        }
+      },
+    },
+    {
+      kind: "toggle",
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
       subtitleKey: "settings.behavior.promptVoiceInput.subtitle",
