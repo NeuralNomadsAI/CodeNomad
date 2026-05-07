@@ -37,7 +37,7 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
   return session?.retry ?? null
 }
 
-export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSince"> | null | undefined, _now = Date.now()): boolean {
+export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSince"> | null | undefined): boolean {
   if (!session || session.status !== "idle") {
     return false
   }
@@ -45,7 +45,7 @@ export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSinc
   return typeof session.idleSince === "number"
 }
 
-export function shouldShowSessionStatus(instanceId: string, sessionId: string, now = Date.now()): boolean {
+export function shouldShowSessionStatus(instanceId: string, sessionId: string, _now = Date.now()): boolean {
   const session = getSession(instanceId, sessionId)
   if (!session) {
     return false
@@ -55,7 +55,7 @@ export function shouldShowSessionStatus(instanceId: string, sessionId: string, n
     return true
   }
 
-  return session.status !== "idle" || shouldShowIdleStatus(session, now)
+  return session.status !== "idle" || shouldShowIdleStatus(session)
 }
 
 export function getRetrySeconds(next: number, now = Date.now()): number {
@@ -64,7 +64,7 @@ export function getRetrySeconds(next: number, now = Date.now()): number {
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
-export function getInstanceSessionIndicatorStatus(instanceId: string, now = Date.now()): InstanceSessionIndicatorStatus | null {
+export function getInstanceSessionIndicatorStatus(instanceId: string, _now = Date.now()): InstanceSessionIndicatorStatus | null {
   const aggregated = getInstanceSessionIndicatorStatusCached(instanceId)
   if (aggregated !== "idle") {
     return aggregated
@@ -76,7 +76,7 @@ export function getInstanceSessionIndicatorStatus(instanceId: string, now = Date
   }
 
   for (const session of instanceSessions.values()) {
-    if (shouldShowIdleStatus(session, now)) {
+    if (shouldShowIdleStatus(session)) {
       return "idle"
     }
   }
