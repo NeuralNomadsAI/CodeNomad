@@ -60,6 +60,19 @@ type InstanceIndicatorCounts = {
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
 
+function upsertAgent(instanceId: string, agent: Agent): void {
+  setAgents((prev) => {
+    const next = new Map(prev)
+    const current = next.get(instanceId) ?? []
+    const index = current.findIndex((item) => item.name === agent.name)
+    const updated = index === -1
+      ? [...current, agent]
+      : current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...agent } : item))
+    next.set(instanceId, updated)
+    return next
+  })
+}
+
 function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingQuestion) {
     return "permission"
@@ -720,6 +733,7 @@ export {
   setActiveParentSessionId,
   agents,
   setAgents,
+  upsertAgent,
   providers,
   setProviders,
   loading,
