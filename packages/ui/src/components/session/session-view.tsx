@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, on, type Component } from "solid-js"
+import { Show, createMemo, createEffect, on, onCleanup, type Component } from "solid-js"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -8,8 +8,8 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
-import { isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -91,6 +91,24 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       },
     ),
   )
+
+  createEffect(() => {
+    const currentSession = session()
+    if (!props.isActive || !currentSession) return
+    if (currentSession.status !== "idle") return
+    if (typeof currentSession.idleSince !== "number") return
+
+    const idleSince = currentSession.idleSince
+    const timeout = window.setTimeout(() => {
+      const latestSession = session()
+      if (!props.isActive || !latestSession) return
+      if (latestSession.status !== "idle") return
+      if (latestSession.idleSince !== idleSince) return
+      markSessionIdleSeen(props.instanceId, latestSession.id)
+    }, IDLE_STATUS_VISIBILITY_MS)
+
+    onCleanup(() => window.clearTimeout(timeout))
+  })
 
   createEffect(
     on(

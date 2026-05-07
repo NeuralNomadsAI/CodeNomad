@@ -2,7 +2,7 @@ import type { Session, SessionRetryState, SessionStatus } from "../types/session
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 
-export const IDLE_STATUS_VISIBILITY_MS = 5000
+export const IDLE_STATUS_VISIBILITY_MS = 2500
 
 function getSession(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
@@ -37,16 +37,12 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
   return session?.retry ?? null
 }
 
-export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSince"> | null | undefined, now = Date.now()): boolean {
+export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSince"> | null | undefined, _now = Date.now()): boolean {
   if (!session || session.status !== "idle") {
     return false
   }
 
-  if (typeof session.idleSince !== "number") {
-    return false
-  }
-
-  return now - session.idleSince < IDLE_STATUS_VISIBILITY_MS
+  return typeof session.idleSince === "number"
 }
 
 export function shouldShowSessionStatus(instanceId: string, sessionId: string, now = Date.now()): boolean {

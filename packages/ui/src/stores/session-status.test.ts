@@ -22,13 +22,16 @@ describe("shouldSessionHoldWakeLock", () => {
 })
 
 describe("idle status visibility", () => {
-  it("shows idle briefly after transitioning from active work", () => {
+  it("uses Shantur's transient visibility delay before clearing seen idle state", () => {
+    assert.equal(IDLE_STATUS_VISIBILITY_MS, 2_500)
+  })
+
+  it("shows idle after transitioning from active work until it is seen", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
     assert.equal(idleSince, 1_000)
     assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000 + IDLE_STATUS_VISIBILITY_MS - 1), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000 + IDLE_STATUS_VISIBILITY_MS), false)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 60_000), true)
   })
 
   it("does not show idle for sessions that started idle", () => {
