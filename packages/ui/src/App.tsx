@@ -64,6 +64,7 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  moveAppTab,
   selectAppTab,
   selectInstanceTab,
   selectSidecarTab,
@@ -541,6 +542,7 @@ const App: Component = () => {
                   onSelect={selectAppTab}
                   onClose={(tabId) => void handleCloseAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
+                  onMoveTab={moveAppTab}
                 />
               </Show>
 

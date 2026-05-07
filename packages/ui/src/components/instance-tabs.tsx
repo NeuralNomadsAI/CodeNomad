@@ -1,5 +1,13 @@
 import { Component, For, Show, createMemo } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import {
+  DragDropProvider,
+  DragDropSensors,
+  SortableProvider,
+  closestCenter,
+  createSortable,
+  type DragEvent as SolidDndDragEvent,
+} from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
 import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
@@ -17,11 +25,69 @@ interface InstanceTabsProps {
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
   onNew: () => void
+  onMoveTab: (tabId: string, targetTabId: string, placement: "before" | "after") => void
+}
+
+interface SortableAppTabProps {
+  tab: AppTabRecord
+  activeTabId: string | null
+  onSelect: (tabId: string) => void
+  onClose: (tabId: string) => void
+}
+
+const SortableAppTab: Component<SortableAppTabProps> = (props) => {
+  const sortable = createSortable(props.tab.id)
+
+  return (
+    <div
+      ref={sortable}
+      class={`tab-draggable ${sortable.isActiveDraggable ? "tab-draggable-active" : ""}`}
+      data-app-tab-id={props.tab.id}
+    >
+      {props.tab.kind === "instance" ? (
+        <InstanceTab
+          instance={props.tab.instance}
+          active={props.tab.id === props.activeTabId}
+          onSelect={() => props.onSelect(props.tab.id)}
+          onClose={() => props.onClose(props.tab.id)}
+        />
+      ) : (
+        <div
+          class={`tab-pill ${props.tab.id === props.activeTabId ? "tab-pill-active" : ""}`}
+          role="tab"
+          tabIndex={0}
+          aria-selected={props.tab.id === props.activeTabId}
+          onClick={() => props.onSelect(props.tab.id)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return
+            event.preventDefault()
+            props.onSelect(props.tab.id)
+          }}
+        >
+          <span class="tab-pill-button">
+            <span class="truncate max-w-[180px]">{props.tab.sidecarTab.name}</span>
+          </span>
+          <button
+            class="tab-pill-close"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              props.onClose(props.tab.id)
+            }}
+            aria-label={props.tab.sidecarTab.name}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
+  const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
 
   const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
   const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
@@ -37,32 +103,42 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       : t("settings.notifications.status.disabled")
   })
 
+  const handleDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
+    if (!droppable) return
+
+    const tabId = String(draggable.id)
+    const targetTabId = String(droppable.id)
+    if (tabId === targetTabId) return
+
+    const fromIndex = props.tabs.findIndex((tab) => tab.id === tabId)
+    const toIndex = props.tabs.findIndex((tab) => tab.id === targetTabId)
+    if (fromIndex < 0 || toIndex < 0) return
+
+    props.onMoveTab(tabId, targetTabId, fromIndex < toIndex ? "after" : "before")
+  }
+
   return (
     <div class="tab-bar tab-bar-instance">
       <div class="tab-container" role="tablist">
         <div class="tab-scroll">
           <div class="tab-strip">
             <div class="tab-strip-tabs">
-              <For each={props.tabs}>
-                {(tab) =>
-                  tab.kind === "instance" ? (
-                    <InstanceTab
-                      instance={tab.instance}
-                      active={tab.id === props.activeTabId}
-                      onSelect={() => props.onSelect(tab.id)}
-                      onClose={() => props.onClose(tab.id)}
-                    />
-                  ) : (
-                    <div class={`tab-pill ${tab.id === props.activeTabId ? "tab-pill-active" : ""}`}>
-                      <button class="tab-pill-button" onClick={() => props.onSelect(tab.id)}>
-                        <span class="truncate max-w-[180px]">{tab.sidecarTab.name}</span>
-                      </button>
-                      <button class="tab-pill-close" onClick={() => props.onClose(tab.id)} aria-label={tab.sidecarTab.name}>
-                        ×
-                      </button>
-                    </div>
-                  )}
-              </For>
+              <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
+                <DragDropSensors>
+                  <SortableProvider ids={tabIds()}>
+                    <For each={props.tabs}>
+                      {(tab) => (
+                        <SortableAppTab
+                          tab={tab}
+                          activeTabId={props.activeTabId}
+                          onSelect={props.onSelect}
+                          onClose={props.onClose}
+                        />
+                      )}
+                    </For>
+                  </SortableProvider>
+                </DragDropSensors>
+              </DragDropProvider>
               <button
                 class="new-tab-button"
                 onClick={props.onNew}
