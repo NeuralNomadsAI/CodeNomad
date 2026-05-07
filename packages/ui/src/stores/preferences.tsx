@@ -65,6 +65,7 @@ export interface UiSettings {
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
+  keepUnseenSubagentIdleStatus: boolean
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -143,6 +144,7 @@ const defaultUiSettings: UiSettings = {
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
+  keepUnseenSubagentIdleStatus: false,
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -181,6 +183,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
         : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
+    keepUnseenSubagentIdleStatus:
+      sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,

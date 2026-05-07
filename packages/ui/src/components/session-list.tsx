@@ -24,6 +24,7 @@ import {
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
+import { useConfig } from "../stores/preferences"
 const log = getLogger("session")
 
 
@@ -47,6 +48,7 @@ function formatSessionStatus(status: SessionStatus): string {
 
 const SessionList: Component<SessionListProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
@@ -427,7 +429,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => (needsInput() ? "session-permission" : `session-${retry() ? "retrying" : status()}`)
-    const showStatus = () => needsInput() || shouldShowSessionStatus(props.instanceId, rowProps.sessionId, now())
+    const showStatus = () =>
+      needsInput() ||
+      shouldShowSessionStatus(
+        props.instanceId,
+        rowProps.sessionId,
+        now(),
+        preferences().keepUnseenSubagentIdleStatus,
+      )
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")

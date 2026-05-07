@@ -37,15 +37,32 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
   return session?.retry ?? null
 }
 
-export function shouldShowIdleStatus(session: Pick<Session, "status" | "idleSince"> | null | undefined): boolean {
+export function shouldShowIdleStatus(
+  session: Pick<Session, "status" | "idleSince" | "parentId"> | null | undefined,
+  now = Date.now(),
+  keepUnseenSubagentIdleStatus = false,
+): boolean {
   if (!session || session.status !== "idle") {
     return false
   }
 
-  return typeof session.idleSince === "number"
+  if (typeof session.idleSince !== "number") {
+    return false
+  }
+
+  if (session.parentId && !keepUnseenSubagentIdleStatus) {
+    return now - session.idleSince < IDLE_STATUS_VISIBILITY_MS
+  }
+
+  return true
 }
 
-export function shouldShowSessionStatus(instanceId: string, sessionId: string, _now = Date.now()): boolean {
+export function shouldShowSessionStatus(
+  instanceId: string,
+  sessionId: string,
+  now = Date.now(),
+  keepUnseenSubagentIdleStatus = false,
+): boolean {
   const session = getSession(instanceId, sessionId)
   if (!session) {
     return false
@@ -55,7 +72,7 @@ export function shouldShowSessionStatus(instanceId: string, sessionId: string, _
     return true
   }
 
-  return session.status !== "idle" || shouldShowIdleStatus(session)
+  return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
 }
 
 export function getRetrySeconds(next: number, now = Date.now()): number {
@@ -64,7 +81,11 @@ export function getRetrySeconds(next: number, now = Date.now()): number {
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
-export function getInstanceSessionIndicatorStatus(instanceId: string, _now = Date.now()): InstanceSessionIndicatorStatus | null {
+export function getInstanceSessionIndicatorStatus(
+  instanceId: string,
+  now = Date.now(),
+  keepUnseenSubagentIdleStatus = false,
+): InstanceSessionIndicatorStatus | null {
   const aggregated = getInstanceSessionIndicatorStatusCached(instanceId)
   if (aggregated !== "idle") {
     return aggregated
@@ -76,7 +97,7 @@ export function getInstanceSessionIndicatorStatus(instanceId: string, _now = Dat
   }
 
   for (const session of instanceSessions.values()) {
-    if (shouldShowIdleStatus(session)) {
+    if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) {
       return "idle"
     }
   }
