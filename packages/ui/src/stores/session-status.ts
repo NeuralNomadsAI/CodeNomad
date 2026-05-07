@@ -2,7 +2,7 @@ import type { Session, SessionRetryState, SessionStatus } from "../types/session
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 
-export const IDLE_STATUS_VISIBILITY_MS = 2500
+export const IDLE_STATUS_VISIBILITY_MS = 5000
 
 function getSession(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)

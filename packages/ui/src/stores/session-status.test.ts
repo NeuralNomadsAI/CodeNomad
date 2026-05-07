@@ -23,7 +23,7 @@ describe("shouldSessionHoldWakeLock", () => {
 
 describe("idle status visibility", () => {
   it("keeps seen idle visible for the configured transient delay", () => {
-    assert.equal(IDLE_STATUS_VISIBILITY_MS, 2_500)
+    assert.equal(IDLE_STATUS_VISIBILITY_MS, 5_000)
   })
 
   it("shows idle after transitioning from active work until it is seen", () => {
