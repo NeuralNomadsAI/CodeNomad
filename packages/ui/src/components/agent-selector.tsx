@@ -1,10 +1,12 @@
 import { Select } from "@kobalte/core/select"
-import { For, Show, createEffect, createMemo } from "solid-js"
+import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import type { Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { serverApi } from "../lib/api-client"
+import { showToastNotification } from "../lib/notifications"
 const log = getLogger("session")
 
 
@@ -17,6 +19,10 @@ interface AgentSelectorProps {
 
 export default function AgentSelector(props: AgentSelectorProps) {
   const { t } = useI18n()
+  const [newAgentName, setNewAgentName] = createSignal("")
+  const [newAgentDescription, setNewAgentDescription] = createSignal("")
+  const [newAgentPrompt, setNewAgentPrompt] = createSignal("")
+  const [isCreatingAgent, setIsCreatingAgent] = createSignal(false)
   const instanceAgents = () => agents().get(props.instanceId) || []
 
   const session = createMemo(() => {
@@ -62,6 +68,68 @@ export default function AgentSelector(props: AgentSelectorProps) {
   const handleChange = async (value: Agent | null) => {
     if (value && value.name !== props.currentAgent) {
       await props.onAgentChange(value.name)
+    }
+  }
+
+  const normalizedNewAgentName = createMemo(() => newAgentName().trim())
+  const isNewAgentNameValid = createMemo(() => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(normalizedNewAgentName()))
+  const canCreateAgent = createMemo(() => isNewAgentNameValid() && !isCreatingAgent())
+
+  const quoteYamlString = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+
+  const buildAgentMarkdown = (name: string) => {
+    const description = newAgentDescription().trim() || t("agentSelector.add.defaultDescription", { agent: name })
+    const prompt = newAgentPrompt().trim() || t("agentSelector.add.defaultPrompt", { agent: name })
+    return [
+      "---",
+      `description: ${quoteYamlString(description)}`,
+      "mode: primary",
+      "---",
+      prompt,
+      "",
+    ].join("\n")
+  }
+
+  const handleCreateAgent = async (event: SubmitEvent) => {
+    event.preventDefault()
+    const name = normalizedNewAgentName()
+    if (!isNewAgentNameValid()) {
+      showToastNotification({ message: t("agentSelector.add.invalidName"), variant: "error" })
+      return
+    }
+    if (instanceAgents().some((agent) => agent.name === name)) {
+      showToastNotification({ message: t("agentSelector.add.duplicate", { agent: name }), variant: "error" })
+      return
+    }
+
+    setIsCreatingAgent(true)
+    try {
+      await serverApi.createWorkspaceAgent(props.instanceId, {
+        name,
+        contents: buildAgentMarkdown(name),
+      })
+      const refreshedAgents = await fetchAgents(props.instanceId, { throwOnError: true })
+      if (!refreshedAgents.some((agent) => agent.name === name)) {
+        throw new Error(`Created agent ${name} was not loaded by OpenCode`)
+      }
+      await props.onAgentChange(name)
+      setNewAgentName("")
+      setNewAgentDescription("")
+      setNewAgentPrompt("")
+      showToastNotification({ message: t("agentSelector.add.success", { agent: name }), variant: "success" })
+    } catch (error) {
+      log.error("Failed to create agent", error)
+      if (error instanceof Error && error.message.includes("Agent already exists")) {
+        showToastNotification({ message: t("agentSelector.add.fileExists", { agent: name }), variant: "error" })
+        return
+      }
+      if (error instanceof Error && error.message.includes("was not loaded by OpenCode")) {
+        showToastNotification({ message: t("agentSelector.add.notLoaded", { agent: name }), variant: "error" })
+        return
+      }
+      showToastNotification({ message: t("agentSelector.add.error"), variant: "error" })
+    } finally {
+      setIsCreatingAgent(false)
     }
   }
 
@@ -123,6 +191,40 @@ export default function AgentSelector(props: AgentSelectorProps) {
           </Select.Content>
         </Select.Portal>
       </Select>
+      <form class="mt-2 space-y-2" onSubmit={handleCreateAgent}>
+        <div class="selector-section-title">{t("agentSelector.add.title")}</div>
+        <input
+          class="selector-input w-full"
+          value={newAgentName()}
+          onInput={(event) => setNewAgentName(event.currentTarget.value)}
+          placeholder={t("agentSelector.add.name.placeholder")}
+          aria-label={t("agentSelector.add.name.ariaLabel")}
+        />
+        <input
+          class="selector-input w-full"
+          value={newAgentDescription()}
+          onInput={(event) => setNewAgentDescription(event.currentTarget.value)}
+          placeholder={t("agentSelector.add.description.placeholder")}
+          aria-label={t("agentSelector.add.description.ariaLabel")}
+        />
+        <textarea
+          class="selector-input w-full min-h-20 resize-y"
+          value={newAgentPrompt()}
+          onInput={(event) => setNewAgentPrompt(event.currentTarget.value)}
+          placeholder={t("agentSelector.add.prompt.placeholder")}
+          aria-label={t("agentSelector.add.prompt.ariaLabel")}
+        />
+        <button
+          type="submit"
+          class="selector-button selector-button-primary"
+          disabled={!canCreateAgent()}
+        >
+          {isCreatingAgent() ? t("agentSelector.add.creating") : t("agentSelector.add.action")}
+        </button>
+        <Show when={normalizedNewAgentName() && !isNewAgentNameValid()}>
+          <p class="selector-validation-error-text">{t("agentSelector.add.name.help")}</p>
+        </Show>
+      </form>
     </div>
   )
 }

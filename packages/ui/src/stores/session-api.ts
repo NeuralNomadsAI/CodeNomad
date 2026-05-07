@@ -1,4 +1,4 @@
-import { getIdleSinceForStatusTransition, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { getIdleSinceForStatusTransition, mapSdkSessionRetry, mapSdkSessionStatus, type Agent, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -524,7 +524,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 }
 
-async function fetchAgents(instanceId: string): Promise<void> {
+async function fetchAgents(instanceId: string, options: { throwOnError?: boolean } = {}): Promise<Agent[]> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -553,8 +553,13 @@ async function fetchAgents(instanceId: string): Promise<void> {
       next.set(instanceId, agentList)
       return next
     })
+    return agentList
   } catch (error) {
     log.error("Failed to fetch agents:", error)
+    if (options.throwOnError) {
+      throw error
+    }
+    return []
   }
 }
 

@@ -82,12 +82,13 @@ export class FileSystemBrowser {
     return { path: relativePath, absolutePath }
   }
 
-  writeFile(relativePath: string, contents: string): void {
+  writeFile(relativePath: string, contents: string, options: { overwrite?: boolean } = {}): void {
     if (this.unrestricted) {
       throw new Error("writeFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    fs.writeFileSync(resolved, contents, "utf-8")
+    fs.mkdirSync(path.dirname(resolved), { recursive: true })
+    fs.writeFileSync(resolved, contents, { encoding: "utf-8", flag: options.overwrite === false ? "wx" : "w" })
   }
 
   readFile(relativePath: string): string {

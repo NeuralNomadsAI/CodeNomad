@@ -23,6 +23,8 @@ import type {
   WorktreeGitMutationResponse,
   WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
+  WorkspaceAgentCreateRequest,
+  WorkspaceAgentCreateResponse,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
@@ -279,6 +281,12 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  createWorkspaceAgent(id: string, payload: WorkspaceAgentCreateRequest): Promise<WorkspaceAgentCreateResponse> {
+    return request<WorkspaceAgentCreateResponse>(`/api/workspaces/${encodeURIComponent(id)}/agents`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
