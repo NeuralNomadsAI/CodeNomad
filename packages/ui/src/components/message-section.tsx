@@ -1103,6 +1103,7 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     sessionRevision()
     const query = debouncedSearchQuery()
+    const includeThinking = Boolean(preferences().showThinkingBlocks)
     if (query.trim().length < SEARCH_MIN_CHARS) {
       return
     }
@@ -1113,7 +1114,7 @@ export default function MessageSection(props: MessageSectionProps) {
         store: store(),
         sessionId: props.sessionId,
         query,
-        includeThinking: Boolean(preferences().showThinkingBlocks),
+        includeThinking,
       })
       setSearchMatches(matches)
       setSearchedQuery(query)
