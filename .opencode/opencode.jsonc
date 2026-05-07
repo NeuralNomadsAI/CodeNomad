@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "@neuralnomads/nomadworks@0.1.0-rc.10"
+    // "@neuralnomads/nomadworks@0.1.0-rc.10"
   ]
 }
