@@ -108,7 +108,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
         name,
         contents: buildAgentMarkdown(name),
       })
-      const refreshedAgents = await fetchAgents(props.instanceId)
+      const refreshedAgents = await fetchAgents(props.instanceId, { throwOnError: true })
       if (!refreshedAgents.some((agent) => agent.name === name)) {
         throw new Error(`Created agent ${name} was not loaded by OpenCode`)
       }

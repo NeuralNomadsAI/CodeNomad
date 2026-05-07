@@ -524,7 +524,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 }
 
-async function fetchAgents(instanceId: string): Promise<Agent[]> {
+async function fetchAgents(instanceId: string, options: { throwOnError?: boolean } = {}): Promise<Agent[]> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -556,7 +556,10 @@ async function fetchAgents(instanceId: string): Promise<Agent[]> {
     return agentList
   } catch (error) {
     log.error("Failed to fetch agents:", error)
-    throw error
+    if (options.throwOnError) {
+      throw error
+    }
+    return []
   }
 }
 
