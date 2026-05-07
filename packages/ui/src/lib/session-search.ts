@@ -2,14 +2,8 @@ import type { ClientPart, MessageInfo } from "../types/message"
 import { isHiddenSyntheticTextPart } from "../types/message"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { MessageRecord, MessageRole } from "../stores/message-v2/types"
-import type { ToolState } from "@opencode-ai/sdk/v2"
-import {
-  formatUnknown,
-  isToolStateCompleted,
-  isToolStateError,
-  isToolStateRunning,
-  readToolStatePayload,
-} from "../components/tool-call/utils"
+import { resolveToolRenderer } from "../components/tool-call/renderers"
+import { getDefaultToolSearchText } from "../components/tool-call/search-text"
 
 export interface SessionSearchMatch {
   id: string
@@ -44,6 +38,7 @@ function normalizeSearchValue(value: string): string {
 
 function segmentToText(segment: unknown): string {
   if (typeof segment === "string") return segment
+  if (Array.isArray(segment)) return segment.map((entry) => segmentToText(entry)).filter(Boolean).join("\n")
   if (!segment || typeof segment !== "object") return ""
 
   const candidate = segment as { text?: unknown; value?: unknown; content?: unknown[] }
@@ -64,88 +59,26 @@ function extractReasoningText(part: ClientPart): string {
   return [text, content].filter(Boolean).join("\n")
 }
 
+function extractGenericPartText(part: ClientPart): string {
+  const candidate = part as Record<string, unknown>
+  const values = [
+    candidate.text,
+    candidate.content,
+    candidate.value,
+    candidate.title,
+    candidate.name,
+    candidate.filename,
+    candidate.message,
+  ]
+  return values.map((value) => segmentToText(value)).filter(Boolean).join("\n")
+}
+
 function extractToolText(part: Extract<ClientPart, { type: "tool" }>): string {
-  const state = (part as any).state as ToolState | undefined
-  const { input, metadata, output } = readToolStatePayload(state)
-  const values: string[] = []
-
-  const appendFormatted = (value: unknown) => {
-    const result = formatUnknown(value)
-    if (result?.text.trim()) values.push(result.text)
-  }
-
-  const appendString = (value: unknown) => {
-    if (typeof value === "string" && value.trim().length > 0) values.push(value)
-  }
-
-  if (typeof part.tool === "string") values.push(part.tool)
-
-  appendString(metadata.title)
-  appendString(metadata.description)
-  appendString(state && "title" in state ? (state as any).title : undefined)
-
-  switch (part.tool) {
-    case "bash": {
-      const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-      appendString(command)
-      appendFormatted(
-        state && isToolStateCompleted(state)
-          ? output
-          : state && (isToolStateRunning(state) || isToolStateError(state))
-            ? metadata.output
-            : undefined,
-      )
-      break
-    }
-    case "read": {
-      appendString(typeof input.filePath === "string" ? input.filePath : undefined)
-      appendString(metadata.preview)
-      break
-    }
-    case "write": {
-      appendString(typeof input.filePath === "string" ? input.filePath : undefined)
-      appendString(typeof input.content === "string" ? input.content : metadata.content)
-      break
-    }
-    case "edit":
-    case "patch":
-    case "apply_patch": {
-      appendString(typeof input.filePath === "string" ? input.filePath : undefined)
-      appendString(typeof input.path === "string" ? input.path : undefined)
-      appendString(metadata.diff)
-      appendFormatted(output)
-      appendFormatted(metadata.output)
-      break
-    }
-    case "webfetch": {
-      appendString(typeof input.url === "string" ? input.url : undefined)
-      appendFormatted(state && isToolStateCompleted(state) ? output : metadata.output)
-      break
-    }
-    case "task": {
-      appendString(typeof input.prompt === "string" ? input.prompt : undefined)
-      appendString(typeof input.subagent_type === "string" ? input.subagent_type : undefined)
-      appendFormatted(output)
-      appendFormatted(metadata.summary)
-      break
-    }
-    default: {
-      const primaryOutput = state && isToolStateCompleted(state)
-        ? output
-        : state && (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
-          ? metadata.output
-          : metadata.diff ?? metadata.preview ?? input.content
-      appendString(typeof input.command === "string" ? `$ ${input.command}` : undefined)
-      appendString(typeof input.filePath === "string" ? input.filePath : undefined)
-      appendString(typeof input.path === "string" ? input.path : undefined)
-      appendFormatted(primaryOutput)
-    }
-  }
-
-  appendString(state && "message" in state ? (state as any).message : undefined)
-  appendString(state && "error" in state ? (state as any).error : undefined)
-
-  return values.filter(Boolean).join("\n")
+  const toolName = typeof part.tool === "string" ? part.tool : ""
+  const context = { toolCall: part, toolState: (part as any).state, toolName }
+  const renderer = resolveToolRenderer(toolName)
+  const values = renderer.getSearchText?.(context) ?? getDefaultToolSearchText(context)
+  return values.filter((value) => value.trim().length > 0).join("\n")
 }
 
 function extractMessageInfoText(info: MessageInfo | undefined): string {
@@ -188,7 +121,8 @@ function extractSearchablePartText(part: ClientPart, includeThinking: boolean): 
     return { partId, partType, text }
   }
 
-  return null
+  const text = extractGenericPartText(part)
+  return text.trim().length > 0 ? { partId, partType, text } : null
 }
 
 function buildPreview(text: string, start: number, end: number): string {
