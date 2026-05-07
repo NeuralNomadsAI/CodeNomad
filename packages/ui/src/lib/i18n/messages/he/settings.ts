@@ -38,6 +38,7 @@ export const settingsMessages = {
   "agentSelector.add.duplicate": "הסוכן {agent} כבר קיים.",
   "agentSelector.add.fileExists": "קובץ סוכן עבור {agent} כבר קיים.",
   "agentSelector.add.success": "הסוכן {agent} נוסף.",
+  "agentSelector.add.notLoaded": "הסוכן {agent} נוצר, אך OpenCode עדיין לא טען אותו.",
   "agentSelector.add.error": "הוספת הסוכן נכשלה.",
   "agentSelector.add.defaultDescription": "סוכן פרויקט מותאם אישית {agent}",
   "agentSelector.add.defaultPrompt": "אתה {agent}, עוזר קוד ייעודי לפרויקט.",

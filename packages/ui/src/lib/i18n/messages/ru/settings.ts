@@ -38,6 +38,7 @@ export const settingsMessages = {
   "agentSelector.add.duplicate": "Агент {agent} уже существует.",
   "agentSelector.add.fileExists": "Файл агента для {agent} уже существует.",
   "agentSelector.add.success": "Агент {agent} добавлен.",
+  "agentSelector.add.notLoaded": "Агент {agent} создан, но OpenCode еще не загрузил его.",
   "agentSelector.add.error": "Не удалось добавить агента.",
   "agentSelector.add.defaultDescription": "Пользовательский агент проекта {agent}",
   "agentSelector.add.defaultPrompt": "Вы {agent}, помощник по коду для этого проекта.",

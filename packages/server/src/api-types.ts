@@ -44,6 +44,16 @@ export type WorkspaceCreateResponse = WorkspaceDescriptor
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
 
+export interface WorkspaceAgentCreateRequest {
+  name: string
+  contents: string
+}
+
+export interface WorkspaceAgentCreateResponse {
+  name: string
+  path: string
+}
+
 export interface WorkspaceDeleteResponse {
   id: string
   status: WorkspaceStatus

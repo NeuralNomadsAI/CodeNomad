@@ -38,6 +38,7 @@ export const settingsMessages = {
   "agentSelector.add.duplicate": "エージェント {agent} は既に存在します。",
   "agentSelector.add.fileExists": "{agent} のエージェントファイルは既に存在します。",
   "agentSelector.add.success": "エージェント {agent} を追加しました。",
+  "agentSelector.add.notLoaded": "エージェント {agent} を作成しましたが、OpenCode はまだ読み込んでいません。",
   "agentSelector.add.error": "エージェントを追加できませんでした。",
   "agentSelector.add.defaultDescription": "カスタムプロジェクトエージェント {agent}",
   "agentSelector.add.defaultPrompt": "あなたは {agent}、プロジェクト固有のコーディングアシスタントです。",

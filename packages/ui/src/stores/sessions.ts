@@ -34,7 +34,6 @@ import {
   setSessionParentExpanded,
   setSessionStatus,
   toggleSessionParentExpanded,
-  upsertAgent,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -136,7 +135,6 @@ export {
   setSessionParentExpanded,
   setSessionStatus,
   toggleSessionParentExpanded,
-  upsertAgent,
   updateSessionAgent,
   updateSessionModel,
 }

@@ -27,6 +27,11 @@ const WorkspaceFileContentBodySchema = z.object({
   contents: z.string(),
 })
 
+const WorkspaceAgentCreateSchema = z.object({
+  name: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Invalid agent name"),
+  contents: z.string(),
+})
+
 const WorktreeGitDiffQuerySchema = z.object({
   path: z.string().trim().min(1, "Path is required"),
   originalPath: z.string().trim().optional(),
@@ -133,6 +138,24 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
       reply.code(204)
     } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.post<{
+    Params: { id: string }
+  }>("/api/workspaces/:id/agents", async (request, reply) => {
+    try {
+      const body = WorkspaceAgentCreateSchema.parse(request.body ?? {})
+      const relativePath = `.opencode/agents/${body.name}.md`
+      deps.workspaceManager.createFile(request.params.id, relativePath, body.contents)
+      reply.code(201)
+      return { name: body.name, path: relativePath }
+    } catch (error: any) {
+      if (error?.code === "EEXIST") {
+        reply.code(409)
+        return { error: "Agent already exists" }
+      }
       return handleWorkspaceError(error, reply)
     }
   })

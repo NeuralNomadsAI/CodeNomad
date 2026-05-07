@@ -38,6 +38,7 @@ export const settingsMessages = {
   "agentSelector.add.duplicate": "智能体 {agent} 已存在。",
   "agentSelector.add.fileExists": "{agent} 的智能体文件已存在。",
   "agentSelector.add.success": "已添加智能体 {agent}。",
+  "agentSelector.add.notLoaded": "已创建智能体 {agent}，但 OpenCode 尚未加载。",
   "agentSelector.add.error": "添加智能体失败。",
   "agentSelector.add.defaultDescription": "自定义项目智能体 {agent}",
   "agentSelector.add.defaultPrompt": "你是 {agent}，一个项目专用编码助手。",
