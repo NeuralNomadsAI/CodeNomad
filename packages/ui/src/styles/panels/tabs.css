@@ -32,7 +32,6 @@
 
 .tab-draggable {
   @apply flex-shrink-0;
-  touch-action: none;
   user-select: none;
   transition: transform 140ms ease, opacity 140ms ease;
   will-change: transform;
