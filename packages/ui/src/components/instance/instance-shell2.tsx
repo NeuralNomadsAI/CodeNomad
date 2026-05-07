@@ -42,7 +42,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Maximize2, ShieldAlert } from "lucide-solid"
+import { Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 
 import type { LayoutMode } from "./shell/types"
@@ -67,6 +67,7 @@ import {
 } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
+const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 
 interface InstanceShellProps {
   instance: Instance
@@ -402,6 +403,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     showCommandPalette(props.instance.id)
   }
 
+  const handleChatSearchClick = () => {
+    if (typeof window === "undefined") return
+    window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
+  }
+
   const openBackgroundOutput = (process: BackgroundProcess) => {
     setSelectedBackgroundProcess(process)
     setShowBackgroundOutput(true)
@@ -729,6 +735,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-1">
+                      <Show when={!showingInfoView()}>
+                        <IconButton
+                          color="inherit"
+                          onClick={handleChatSearchClick}
+                          aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                          title={t("instanceShell.chatSearch.openAriaLabel")}
+                          size="small"
+                        >
+                          <Search class="w-5 h-5" aria-hidden="true" />
+                        </IconButton>
+                      </Show>
                       <button
                         type="button"
                         class="connection-status-button command-palette-button"
@@ -839,7 +856,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </span>
 
                 <div class="ms-auto flex items-center gap-3">
-                  <div class="connection-status-meta flex items-center gap-3">
+                <div class="connection-status-meta flex items-center gap-3">
+                    <Show when={!showingInfoView()}>
+                      <IconButton
+                        color="inherit"
+                        onClick={handleChatSearchClick}
+                        aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                        title={t("instanceShell.chatSearch.openAriaLabel")}
+                        size="small"
+                      >
+                        <Search class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                    </Show>
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">
                         <span class="status-dot" />

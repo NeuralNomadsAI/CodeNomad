@@ -1,8 +1,10 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, formatUnknown, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
+import { getDefaultToolSearchText } from "../search-text"
 
 export const defaultRenderer: ToolRenderer = {
   tools: ["*"],
+  getSearchText: getDefaultToolSearchText,
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null

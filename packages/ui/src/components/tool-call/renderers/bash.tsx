@@ -5,6 +5,7 @@ import { ensureMarkdownContent, formatUnknown, getToolName, isToolStateCompleted
 import { tGlobal } from "../../../lib/i18n"
 import { createStableAnsiStreamUpdater } from "../ansi-render"
 import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
+import { getBashToolSearchText } from "../search-text"
 
 function RunningBashOutput(props: {
   content: Accessor<string>
@@ -105,6 +106,7 @@ function BashToolBody(props: {
 
 export const bashRenderer: ToolRenderer = {
   tools: ["bash"],
+  getSearchText: getBashToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.writingCommand"),
   getTitle({ toolState }) {
     const state = toolState()

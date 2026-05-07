@@ -2,6 +2,7 @@ import { For, Show, createMemo } from "solid-js"
 import type { ToolRenderer } from "../types"
 import { getRelativePath, getToolName, isToolStateCompleted, readToolStatePayload } from "../utils"
 import { buildDiagnosticEntries, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
+import { getApplyPatchToolSearchText } from "../search-text"
 
 type ApplyPatchFile = {
   filePath?: string
@@ -45,6 +46,7 @@ function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t
 
 export const applyPatchRenderer: ToolRenderer = {
   tools: ["apply_patch"],
+  getSearchText: getApplyPatchToolSearchText,
   getAction: ({ t }) => t("toolCall.applyPatch.action.preparing"),
   getTitle({ toolState, t }) {
     const state = toolState()

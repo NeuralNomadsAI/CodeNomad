@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "פתח לוח פקודות",
   "instanceShell.commandPalette.button": "לוח פקודות",
+  "instanceShell.chatSearch.openAriaLabel": "חפש בהיסטוריית הצ'אט",
 
   "instanceShell.connection.ariaLabel": "חיבור {status}",
   "instanceShell.connection.connected": "מחובר",
