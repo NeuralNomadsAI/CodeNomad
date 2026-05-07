@@ -30,6 +30,33 @@
   @apply flex items-center gap-1 flex-shrink-0;
 }
 
+.tab-draggable {
+  @apply flex-shrink-0;
+  touch-action: none;
+  user-select: none;
+  transition: transform 140ms ease, opacity 140ms ease;
+  will-change: transform;
+}
+
+.tab-draggable-active {
+  opacity: 0.72;
+  position: relative;
+  z-index: 20;
+  transition: none;
+}
+
+.tab-draggable .tab-base,
+.tab-draggable .tab-pill,
+.tab-draggable .tab-pill-button {
+  cursor: grab;
+}
+
+.tab-draggable .tab-base:active,
+.tab-draggable .tab-pill:active,
+.tab-draggable .tab-pill-button:active {
+  cursor: grabbing;
+}
+
 .tab-strip-spacer {
   @apply flex-1;
   min-width: 1px;
@@ -159,6 +186,13 @@
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
   border-bottom: 2px solid var(--tab-active-bg);
+  outline: none;
+}
+
+.tab-pill:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
 }
 
 .tab-pill-active {

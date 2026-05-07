@@ -22,6 +22,7 @@
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.3",
+    "@thisbeyond/solid-dnd": "^0.7.5",
     "ansi-sequence-parser": "^1.1.3",
     "debug": "^4.4.3",
     "github-markdown-css": "^5.8.1",

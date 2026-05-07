@@ -81,6 +81,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             e.stopPropagation()
             props.onClose()
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           role="button"
           tabIndex={0}
           aria-label={t("instanceTab.actions.close.ariaLabel")}
