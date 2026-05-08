@@ -1,5 +1,5 @@
 # NomadWorks repository configuration
-enabled: true
+enabled: false
 team_mode: full
 
 defaults:

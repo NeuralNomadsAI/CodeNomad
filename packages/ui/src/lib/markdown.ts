@@ -1,4 +1,5 @@
 import { marked } from "marked"
+import markedKatex from "marked-katex-extension"
 import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
@@ -15,6 +16,11 @@ let escapeRawHtmlEnabled = false
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
+
+// Math rendering is handled by marked-katex-extension (registered in setupRenderer).
+// Delimiter rules, boundaries, CJK punctuation, and block/inline rendering are
+// all delegated to the maintained extension so we avoid ~200 lines of fragile
+// hand-rolled tokenizer code.
 
 const ALLOWED_RAW_HTML_TAGS = new Set([
   "a",
@@ -373,6 +379,12 @@ function setupRenderer(isDark: boolean) {
     breaks: true,
     gfm: true,
   })
+
+  marked.use(markedKatex({
+    throwOnError: false,
+    nonStandard: true,
+    strict: "ignore",
+  }))
 
   const renderer = new marked.Renderer()
 

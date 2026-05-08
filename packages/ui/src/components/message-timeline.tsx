@@ -50,6 +50,8 @@ interface MessageTimelineProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  searchMatchedSegmentIds?: Accessor<Set<string>>
+  activeSearchSegmentId?: Accessor<string | null>
 }
 
 const MAX_TOOLTIP_LENGTH = 220
@@ -856,6 +858,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 onCleanup(() => buttonRefs.delete(segment.id))
                 const isActive = () => props.activeSegmentId === segment.id
                 const isSelected = () => props.selectedIds?.().has(segment.id)
+                const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
+                const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
                 const state = () => segmentStateFor(segment.id)
                 const isDeleteHovered = () => state().deleteHovered
                 const isDeleteSelected = () => state().deleteSelected
@@ -891,7 +895,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                       ref={(el) => registerButtonRef(segment.id, el)}
                       type="button"
                       data-variant={segment.variant}
-                      class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
+                      class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
                       data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
                       aria-current={isActive() ? "true" : undefined}
                       aria-hidden={isHidden() ? "true" : undefined}
@@ -949,6 +953,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               const segIndex = () => index()
             const isActive = () => props.activeSegmentId === segment.id
             const isSelected = () => props.selectedIds?.().has(segment.id)
+            const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
+            const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
             const state = () => segmentStateFor(segment.id)
             const isDeleteHovered = () => state().deleteHovered
             const isDeleteSelected = () => state().deleteSelected
@@ -985,7 +991,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   <button
                     type="button"
                     data-variant={segment.variant}
-                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
+                    class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
                    data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
                    aria-current={isActive() ? "true" : undefined}
                    aria-hidden={isHidden() ? "true" : undefined}

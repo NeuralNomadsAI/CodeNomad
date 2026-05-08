@@ -22,26 +22,42 @@ describe("shouldSessionHoldWakeLock", () => {
 })
 
 describe("idle status visibility", () => {
-  it("shows idle briefly after transitioning from active work", () => {
+  it("keeps seen idle visible for the configured transient delay", () => {
+    assert.equal(IDLE_STATUS_VISIBILITY_MS, 5_000)
+  })
+
+  it("shows idle after transitioning from active work until it is seen", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
     assert.equal(idleSince, 1_000)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000 + IDLE_STATUS_VISIBILITY_MS - 1), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000 + IDLE_STATUS_VISIBILITY_MS), false)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: null }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: null }), true)
+  })
+
+  it("keeps subagent idle visible until the parent or child session is seen", () => {
+    const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
+
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+  })
+
+  it("does not use the keep-unseen setting to age out visible idle markers", () => {
+    const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
+
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
   })
 
   it("does not show idle for sessions that started idle", () => {
     const idleSince = getIdleSinceForStatusTransition(undefined, "idle", null, 1_000)
 
     assert.equal(idleSince, null)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince }, 1_000), false)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: null }), false)
   })
 
   it("clears idle visibility when work resumes", () => {
     const idleSince = getIdleSinceForStatusTransition("idle", "working", 1_000, 2_000)
 
     assert.equal(idleSince, null)
-    assert.equal(shouldShowIdleStatus({ status: "working", idleSince }, 2_000), false)
+    assert.equal(shouldShowIdleStatus({ status: "working", idleSince, parentId: null }), false)
   })
 })

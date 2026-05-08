@@ -146,6 +146,8 @@ export const settingsMessages = {
   "settings.behavior.usageMetrics.subtitle": "Muestra u oculta estadisticas de tokens y costo en mensajes del asistente.",
   "settings.behavior.autoCleanup.title": "Limpieza automatica de sesiones en blanco",
   "settings.behavior.autoCleanup.subtitle": "Limpia automaticamente las sesiones en blanco al crear nuevas.",
+  "settings.behavior.keepUnseenSubagentIdle.title": "Mantener marcadores idle de subagentes",
+  "settings.behavior.keepUnseenSubagentIdle.subtitle": "Mantiene visibles los marcadores idle de subagentes hasta verlos, en lugar de ocultarlos despues de 5 segundos.",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "Enter para enviar",

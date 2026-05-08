@@ -427,7 +427,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => (needsInput() ? "session-permission" : `session-${retry() ? "retrying" : status()}`)
-    const showStatus = () => needsInput() || shouldShowSessionStatus(props.instanceId, rowProps.sessionId, now())
+    const showStatus = () => needsInput() || shouldShowSessionStatus(props.instanceId, rowProps.sessionId)
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")

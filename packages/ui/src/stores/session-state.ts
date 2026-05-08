@@ -314,6 +314,52 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   })
 }
 
+function markSessionIdleSeen(instanceId: string, sessionId: string): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.status !== "idle") return false
+    if (typeof session.idleSince !== "number") return false
+    session.idleSince = null
+  })
+}
+
+function markViewedSessionIdleSeen(
+  instanceId: string,
+  sessionId: string,
+  keepUnseenSubagentIdleStatus: boolean,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const viewedSession = instanceSessions.get(sessionId)
+    if (!viewedSession) return prev
+
+    const idsToClear = new Set<string>([sessionId])
+    if (viewedSession.parentId === null && !keepUnseenSubagentIdleStatus) {
+      for (const session of instanceSessions.values()) {
+        if (session.parentId === sessionId) idsToClear.add(session.id)
+      }
+    }
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const id of idsToClear) {
+      const session = updatedSessions.get(id)
+      if (!session) continue
+      if (session.status !== "idle") continue
+      if (typeof session.idleSince !== "number") continue
+      updatedSessions.set(id, { ...session, idleSince: null })
+      changed = true
+    }
+
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
 function setActiveSession(instanceId: string, sessionId: string): void {
   setActiveSessionId((prev) => {
     const next = new Map(prev)
@@ -736,6 +782,8 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  markSessionIdleSeen,
+  markViewedSessionIdleSeen,
   setSessionStatus,
   setActiveSession,
  

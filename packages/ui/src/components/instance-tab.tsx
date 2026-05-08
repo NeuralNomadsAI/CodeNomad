@@ -1,4 +1,4 @@
-import { Component, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { Component, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
 import { FolderOpen, ShieldAlert, X } from "lucide-solid"
@@ -20,15 +20,8 @@ function getPathBasename(path: string): string {
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
-  const [now, setNow] = createSignal(Date.now())
 
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
-  })
-
-  const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id, now()))
+  const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id))
   const statusClassName = createMemo(() => {
     const status = aggregatedStatus()
     if (!status) return null
@@ -81,6 +74,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             e.stopPropagation()
             props.onClose()
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           role="button"
           tabIndex={0}
           aria-label={t("instanceTab.actions.close.ariaLabel")}
