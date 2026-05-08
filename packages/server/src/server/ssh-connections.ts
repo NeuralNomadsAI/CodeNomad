@@ -7,9 +7,18 @@ import type { SshConnectionBootstrapRequest, SshConnectionBootstrapResponse } fr
 
 const LOOPBACK_HOST = "127.0.0.1"
 const DEFAULT_SSH_PORT = 22
-const DEFAULT_REMOTE_SERVER_PORT = 9898
+const DEFAULT_REMOTE_SERVER_PORT = 9899
 const PROBE_TIMEOUT_MS = 15_000
 const PROBE_INTERVAL_MS = 500
+const SSH_CONNECT_TIMEOUT_SECONDS = 10
+const SSH_BOOTSTRAP_TIMEOUT_MS = 60_000
+
+const SSH_BASE_OPTIONS = [
+  "-o",
+  `ConnectTimeout=${SSH_CONNECT_TIMEOUT_SECONDS}`,
+  "-o",
+  "BatchMode=yes",
+]
 
 interface ActiveSshSession {
   sessionId: string
@@ -55,6 +64,7 @@ export class SshConnectionSessionManager {
     const args = [
       "-p",
       String(request.port ?? DEFAULT_SSH_PORT),
+      ...SSH_BASE_OPTIONS,
       "-o",
       "ExitOnForwardFailure=yes",
       "-o",
@@ -153,6 +163,7 @@ export class SshConnectionSessionManager {
     const args = [
       "-p",
       String(request.port ?? DEFAULT_SSH_PORT),
+      ...SSH_BASE_OPTIONS,
       target,
       "sh",
       "-s",
@@ -173,6 +184,19 @@ export class SshConnectionSessionManager {
       const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] })
       let stderr = ""
       let stdout = ""
+      let settled = false
+      const timeout = setTimeout(() => {
+        settled = true
+        child.kill("SIGTERM")
+        reject(new Error("Timed out waiting for SSH bootstrap to finish"))
+      }, SSH_BOOTSTRAP_TIMEOUT_MS)
+
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        callback()
+      }
 
       child.stdout?.on("data", (chunk: Buffer) => {
         stdout += chunk.toString("utf8")
@@ -180,14 +204,14 @@ export class SshConnectionSessionManager {
       child.stderr?.on("data", (chunk: Buffer) => {
         stderr += chunk.toString("utf8")
       })
-      child.once("error", reject)
+      child.once("error", (error) => finish(() => reject(error)))
       child.once("close", (code) => {
         if (code === 0) {
-          resolve()
+          finish(resolve)
           return
         }
         const detail = stderr.trim() || stdout.trim() || `SSH bootstrap exited with code ${code}`
-        reject(new Error(detail))
+        finish(() => reject(new Error(detail)))
       })
 
       child.stdin?.end(prelude)
@@ -233,7 +257,13 @@ function buildSshTarget(request: Pick<SshConnectionBootstrapRequest, "host" | "u
   if (!host) {
     throw new Error("SSH host is required")
   }
+  if (host.startsWith("-") || /\s/.test(host)) {
+    throw new Error("SSH host must not start with '-' or contain whitespace")
+  }
   const username = request.username?.trim()
+  if (username && (username.startsWith("-") || /[@\s]/.test(username))) {
+    throw new Error("SSH username must not start with '-' or contain '@' or whitespace")
+  }
   return username ? `${username}@${host}` : host
 }
 

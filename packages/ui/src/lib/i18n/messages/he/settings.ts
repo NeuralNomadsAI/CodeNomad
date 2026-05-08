@@ -119,7 +119,7 @@ export const settingsMessages = {
   "settings.remoteConnections.form.port.label": "Port",
   "settings.remoteConnections.form.port.placeholder": "22",
   "settings.remoteConnections.form.remoteServerPort.label": "Remote server port",
-  "settings.remoteConnections.form.remoteServerPort.placeholder": "9898",
+  "settings.remoteConnections.form.remoteServerPort.placeholder": "9899",
   "settings.remoteConnections.form.username.label": "Username",
   "settings.remoteConnections.form.username.placeholder": "ubuntu",
   "settings.remoteConnections.form.remotePath.label": "Remote workspace path",

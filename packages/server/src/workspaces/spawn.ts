@@ -28,6 +28,7 @@ interface BuildSpawnSpecOptions {
   env?: NodeJS.ProcessEnv
   propagateEnvKeys?: string[]
   wslPidMarker?: string
+  wslDistro?: string
 }
 
 interface WslPath {
@@ -70,6 +71,11 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
   const wslPath = parseWslUncPath(binaryPath)
   if (wslPath) {
     return buildWslSpawnSpec(wslPath, args, options)
+  }
+
+  const wslDistro = options.wslDistro?.trim()
+  if (wslDistro) {
+    return buildWslSpawnSpec({ distro: wslDistro, linuxPath: binaryPath }, args, options)
   }
 
   const extension = path.extname(binaryPath).toLowerCase()
@@ -132,7 +138,7 @@ export function buildWslSignalSpec(distro: string, linuxPid: number, signal: Nod
   }
 }
 
-export function probeBinaryVersion(binaryPath: string): {
+export function probeBinaryVersion(binaryPath: string, options: { wslDistro?: string } = {}): {
   valid: boolean
   version?: string
   reported?: string
@@ -143,7 +149,7 @@ export function probeBinaryVersion(binaryPath: string): {
   }
 
   try {
-    const spec = buildSpawnSpec(binaryPath, ["--version"])
+    const spec = buildSpawnSpec(binaryPath, ["--version"], { wslDistro: options.wslDistro })
     const result = spawnSync(spec.command, spec.args, {
       encoding: "utf8",
       cwd: spec.cwd,

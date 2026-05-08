@@ -10,6 +10,7 @@ export interface LaunchCommandSpec {
   args: string[]
   cwd?: string
   environment?: Record<string, string>
+  wslDistro?: string
 }
 
 interface BuildLaunchCommandParams {
@@ -40,6 +41,7 @@ export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchComm
     args: openCodeArgs,
     cwd: params.workspacePath,
     environment: params.environment,
+    wslDistro: params.execution.kind === "wsl" ? params.execution.wslDistro : undefined,
   }
 }
 
@@ -52,6 +54,7 @@ export function buildLaunchPreview(params: BuildLaunchCommandParams): LaunchComm
     env: mergedEnvironment,
     propagateEnvKeys: Object.keys(explicitEnvironment),
     wslPidMarker: WSL_PID_MARKER,
+    wslDistro: launch.wslDistro,
   })
 
   return {
@@ -108,7 +111,7 @@ function buildDockerLaunchCommand(
   }
 
   for (const [key, value] of Object.entries(containerEnvironment)) {
-    dockerArgs.push("-e", `${key}=${value}`)
+    dockerArgs.push("-e", key)
   }
 
   if (execution.extraDockerArgs?.length) {
@@ -122,6 +125,7 @@ function buildDockerLaunchCommand(
   return {
     command: "docker",
     args: dockerArgs,
+    environment: containerEnvironment,
   }
 }
 

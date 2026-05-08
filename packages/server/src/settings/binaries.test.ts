@@ -84,6 +84,7 @@ describe("BinaryResolver", () => {
     assert.deepEqual(resolver.resolveActive(), {
       kind: "wsl",
       path: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      wslDistro: "Ubuntu",
       label: "WSL Ubuntu",
       executionProfileId: "wsl-ubuntu",
       executionProfileName: "WSL Ubuntu",

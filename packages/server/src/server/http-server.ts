@@ -107,6 +107,17 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  const sensitivePayloadRoute = /\/api\/(remote-connections\/ssh\/connect|storage\/execution-profiles\/(preview|test))/
+  const redactSensitivePayload = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return value
+    if (Array.isArray(value)) return value.map(redactSensitivePayload)
+    const output: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      output[key] = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY|bootstrapScript)/i.test(key) ? "[REDACTED]" : redactSensitivePayload(entry)
+    }
+    return output
+  }
+
   app.addHook("onResponse", (request, reply, done) => {
     const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
     const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
@@ -118,7 +129,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      const body = sensitivePayloadRoute.test(request.url) ? redactSensitivePayload(request.body) : request.body
+      apiLogger.trace({ ...base, params: request.params, query: request.query, body }, "HTTP request payload")
     }
     done()
   })

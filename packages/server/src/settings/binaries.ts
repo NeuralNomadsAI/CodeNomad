@@ -26,6 +26,7 @@ interface ResolvedExecutionBase {
 export interface ResolvedHostExecution extends ResolvedExecutionBase {
   kind: "local" | "wsl"
   path: string
+  wslDistro?: string
 }
 
 export interface ResolvedDockerExecution extends ResolvedExecutionBase {
@@ -162,6 +163,7 @@ export class BinaryResolver {
       ...shared,
       kind: "wsl",
       path: profile.binaryPath,
+      wslDistro: profile.distro,
     }
   }
 

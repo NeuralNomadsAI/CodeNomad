@@ -79,6 +79,27 @@ describe("buildWindowsSpawnSpec", () => {
     assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
   })
 
+  it("wraps plain Linux binary paths when a WSL distro is provided", () => {
+    const spec = buildWindowsSpawnSpec("/home/dev/.opencode/bin/opencode", ["serve"], {
+      cwd: String.raw`C:\Users\dev\workspace`,
+      wslDistro: "Ubuntu",
+    })
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.deepEqual(spec.args, [
+      "--distribution",
+      "Ubuntu",
+      "--exec",
+      "sh",
+      "-lc",
+      'cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      "codenomad-wsl-launch",
+      String.raw`C:\Users\dev\workspace`,
+      "/home/dev/.opencode/bin/opencode",
+      "serve",
+    ])
+  })
+
   it("upgrades existing WSLENV path entries to include /p", () => {
     const spec = buildWindowsSpawnSpec(
       String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,

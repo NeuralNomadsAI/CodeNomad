@@ -169,6 +169,7 @@ export class WorkspaceManager {
         commandArgs: launchCommand.args,
         spawnCwd: launchCommand.cwd,
         environment: launchCommand.environment,
+        wslDistro: launchCommand.wslDistro,
         logLevel,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })

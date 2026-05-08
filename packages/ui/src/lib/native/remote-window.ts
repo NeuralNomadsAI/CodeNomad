@@ -19,7 +19,7 @@ export async function openRemoteServerWindow(
   proxySessionId?: string,
 ): Promise<void> {
   if (!canOpenRemoteWindows()) {
-    throw new Error("Remote server windows can only be opened from a local desktop window")
+    throw new Error(tGlobal("folderSelection.servers.errorDesktopOnly"))
   }
 
   const payload: RemoteWindowOpenPayload = {

@@ -20,6 +20,22 @@ function redactEnvironment(env: Record<string, string | undefined>): Record<stri
   return redacted
 }
 
+function redactArgs(args: string[]): string[] {
+  return args.map((arg, index) => {
+    const [key] = arg.split("=", 1)
+    if (key && SENSITIVE_ENV_KEY.test(key)) {
+      return arg.includes("=") ? `${key}=[REDACTED]` : "[REDACTED]"
+    }
+
+    const previous = args[index - 1]
+    if ((previous === "-e" || previous === "--env") && SENSITIVE_ENV_KEY.test(key ?? arg)) {
+      return arg.includes("=") ? `${key}=[REDACTED]` : arg
+    }
+
+    return arg
+  })
+}
+
 interface LaunchOptions {
   workspaceId: string
   folder: string
@@ -27,6 +43,7 @@ interface LaunchOptions {
   commandArgs?: string[]
   spawnCwd?: string
   environment?: Record<string, string>
+  wslDistro?: string
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
 }
@@ -88,8 +105,10 @@ export class WorkspaceRuntime {
         env,
         propagateEnvKeys: propagatedEnvKeys,
         wslPidMarker: WSL_PID_MARKER,
+        wslDistro: options.wslDistro,
       })
-      const commandLine = [spec.command, ...spec.args].join(" ")
+      const redactedArgs = redactArgs(spec.args)
+      const commandLine = [spec.command, ...redactedArgs].join(" ")
       this.logger.info(
         {
           workspaceId: options.workspaceId,
@@ -104,7 +123,7 @@ export class WorkspaceRuntime {
       this.logger.debug(
         {
           workspaceId: options.workspaceId,
-          spawnArgs: spec.args,
+          spawnArgs: redactedArgs,
         },
         "OpenCode spawn args",
       )

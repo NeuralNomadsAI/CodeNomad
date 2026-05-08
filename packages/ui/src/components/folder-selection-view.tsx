@@ -23,6 +23,7 @@ import { openRemoteServerWindow } from "../lib/native/remote-window"
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
+const DEFAULT_SSH_REMOTE_SERVER_PORT = "9899"
 
 type HomeTab = "local" | "servers"
 
@@ -78,7 +79,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [sshProfileName, setSshProfileName] = createSignal("")
   const [sshHost, setSshHost] = createSignal("")
   const [sshPort, setSshPort] = createSignal("22")
-  const [sshRemoteServerPort, setSshRemoteServerPort] = createSignal("9898")
+  const [sshRemoteServerPort, setSshRemoteServerPort] = createSignal(DEFAULT_SSH_REMOTE_SERVER_PORT)
   const [sshUsername, setSshUsername] = createSignal("")
   const [sshRemotePath, setSshRemotePath] = createSignal("")
   const [sshBootstrapScript, setSshBootstrapScript] = createSignal("")
@@ -105,7 +106,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     executionProfiles().map((profile) => ({
       value: profile.id,
       label: profile.name,
-      subtitle: profile.kind,
+      subtitle: t(`settings.opencode.executionProfiles.kind.${profile.kind}`),
     })),
   )
   const selectedExecutionProfileOption = createMemo(() => {
@@ -363,7 +364,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setSshProfileName("")
     setSshHost("")
     setSshPort("22")
-    setSshRemoteServerPort("9898")
+    setSshRemoteServerPort(DEFAULT_SSH_REMOTE_SERVER_PORT)
     setSshUsername("")
     setSshRemotePath("")
     setSshBootstrapScript("")
@@ -378,7 +379,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
     if (openWindow && !canUseRemoteServerWindows()) {
-      throw new Error("Remote server windows can only be opened from a local desktop window")
+      throw new Error(t("folderSelection.servers.errorDesktopOnly"))
     }
 
     const trimmedName = input.name.trim()
@@ -489,7 +490,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     const host = sshHost().trim()
     const profileName = sshProfileName().trim() || host
     const port = sshPort().trim().length > 0 ? Number(sshPort()) : undefined
-    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : 9898
+    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : Number(DEFAULT_SSH_REMOTE_SERVER_PORT)
 
     return {
       id: createConnectionProfileId(),
@@ -537,7 +538,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (isSavingSsh()) return
     const host = sshHost().trim()
     const port = sshPort().trim().length > 0 ? Number(sshPort()) : undefined
-    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : 9898
+    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : Number(DEFAULT_SSH_REMOTE_SERVER_PORT)
 
     if (!host) {
       setSshDialogError(t("folderSelection.ssh.dialog.errorHost"))
@@ -556,9 +557,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setSshDialogError(null)
     try {
       const profile = buildSshConnectionProfile()
-      await saveConnectionProfile(profile)
       if (openWindow) {
         await connectSshProfile(profile)
+      } else {
+        await saveConnectionProfile(profile)
       }
       setIsSshDialogOpen(false)
       resetSshDialog()

@@ -5,6 +5,8 @@ import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 
+const DEFAULT_SSH_REMOTE_SERVER_PORT = "9899"
+
 function createConnectionProfileId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID()
@@ -49,7 +51,7 @@ export const ConnectionProfilesSettingsSection: Component = () => {
   const [name, setName] = createSignal("")
   const [host, setHost] = createSignal("")
   const [port, setPort] = createSignal("")
-  const [remoteServerPort, setRemoteServerPort] = createSignal("9898")
+  const [remoteServerPort, setRemoteServerPort] = createSignal(DEFAULT_SSH_REMOTE_SERVER_PORT)
   const [username, setUsername] = createSignal("")
   const [remotePath, setRemotePath] = createSignal("")
   const [bootstrapScript, setBootstrapScript] = createSignal("")
@@ -61,7 +63,7 @@ export const ConnectionProfilesSettingsSection: Component = () => {
     setName(profile?.name ?? "")
     setHost(profile?.host ?? "")
     setPort(profile?.port ? String(profile.port) : "")
-    setRemoteServerPort(profile?.remoteServerPort ? String(profile.remoteServerPort) : "9898")
+    setRemoteServerPort(profile?.remoteServerPort ? String(profile.remoteServerPort) : DEFAULT_SSH_REMOTE_SERVER_PORT)
     setUsername(profile?.username ?? "")
     setRemotePath(profile?.remotePath ?? "")
     setBootstrapScript(profile?.bootstrapScript ?? "")
@@ -72,7 +74,7 @@ export const ConnectionProfilesSettingsSection: Component = () => {
     const trimmedName = name().trim()
     const trimmedHost = host().trim()
     const nextPort = port().trim().length > 0 ? Number(port()) : undefined
-    const nextRemoteServerPort = remoteServerPort().trim().length > 0 ? Number(remoteServerPort()) : 9898
+    const nextRemoteServerPort = remoteServerPort().trim().length > 0 ? Number(remoteServerPort()) : Number(DEFAULT_SSH_REMOTE_SERVER_PORT)
 
     if (!trimmedName) {
       setFormError(t("settings.remoteConnections.validation.name"))

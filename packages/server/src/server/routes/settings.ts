@@ -65,8 +65,8 @@ const ExecutionProfilePreviewSchema = z.object({
 
 const PREVIEW_SECRET_KEY = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY)/i
 
-function validateBinaryPath(binaryPath: string): { valid: boolean; version?: string; error?: string } {
-  const result = probeBinaryVersion(binaryPath)
+function validateBinaryPath(binaryPath: string, options: { wslDistro?: string } = {}): { valid: boolean; version?: string; error?: string } {
+  const result = probeBinaryVersion(binaryPath, options)
   return { valid: result.valid, version: result.version, error: result.error }
 }
 
@@ -162,6 +162,7 @@ function buildExecutionProfilePreview(
         ? {
             kind: "wsl" as const,
             path: input.profile.binaryPath,
+            wslDistro: input.profile.distro,
             label: input.profile.name,
           }
         : input.profile.kind === "docker"
@@ -226,7 +227,7 @@ function testExecutionProfile(
       ? validateDockerImage(input.profile.image)
       : input.profile.kind === "command"
         ? validateBinaryPath(input.profile.executable)
-        : validateBinaryPath(input.profile.binaryPath)
+        : validateBinaryPath(input.profile.binaryPath, input.profile.kind === "wsl" ? { wslDistro: input.profile.distro } : {})
 
   return {
     ...preview,

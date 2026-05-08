@@ -86,9 +86,11 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
     next.logLevel = "DEBUG"
   }
 
-   const parsedExecutionProfiles = z.array(ExecutionProfileSchema).safeParse(next.executionProfiles)
-   if (parsedExecutionProfiles.success) {
-     next.executionProfiles = parsedExecutionProfiles.data
+   if (Array.isArray(next.executionProfiles)) {
+     next.executionProfiles = next.executionProfiles.flatMap((profile) => {
+       const parsed = ExecutionProfileSchema.safeParse(profile)
+       return parsed.success ? [parsed.data] : []
+     })
    } else if (next.executionProfiles !== undefined) {
      next.executionProfiles = []
    }
