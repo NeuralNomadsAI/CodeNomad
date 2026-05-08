@@ -866,19 +866,18 @@ export default function ToolCall(props: ToolCallProps) {
   const status = () => toolState()?.status || ""
 
   return (
-      <div
-
-        ref={(element) => {
+    <div
+      ref={(element) => {
         setToolCallRootEl(element || undefined)
       }}
       class={`tool-call ${combinedStatusClass()}`}
       data-part-type="tool"
       data-tool-name={toolName()}
       data-instance-id={props.instanceId}
-        data-session-id={props.sessionId}
-        data-message-id={props.messageId}
-        data-part-id={toolCallIdentifier()}
-      >
+      data-session-id={props.sessionId}
+      data-message-id={props.messageId}
+      data-part-id={toolCallIdentifier()}
+    >
       <div class="tool-call-header" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
         <button
           type="button"
@@ -982,9 +981,8 @@ export default function ToolCall(props: ToolCallProps) {
           </div>
         )}
       </Show>
- 
-      <Show when={diagnosticsEntries().length}>
 
+      <Show when={diagnosticsEntries().length}>
         {renderDiagnosticsSection(
           t,
           diagnosticsEntries(),

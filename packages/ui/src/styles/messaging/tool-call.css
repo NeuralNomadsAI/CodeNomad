@@ -17,6 +17,7 @@
 
 .tool-call-header-meta {
   @apply flex items-center gap-2;
+  min-width: 0;
 }
 
 .tool-call-header-button {
@@ -59,10 +60,6 @@
 
 .session-center-column[data-session-center-width="narrow"] .tool-call-header-label[data-action-overflow="true"] > .action-overflow-trigger {
   display: inline-flex;
-}
-
-.tool-call-header-label .tool-call-icon {
-  @apply text-base;
 }
 
 .tool-call-header-label .tool-name {

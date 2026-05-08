@@ -226,7 +226,7 @@ export function buildToolPreview(toolName: string, state?: ToolState): {
     ? undefined
     : isToolStateCompleted(state)
       ? state.output ?? metadata.output ?? metadata.diff ?? metadata.preview
-      : (isToolStateRunning(state) || isToolStateError(state))
+      : isToolStateRunning(state) || isToolStateError(state)
         ? metadata.output ?? metadata.diff ?? metadata.preview
         : metadata.preview ?? metadata.diff
 

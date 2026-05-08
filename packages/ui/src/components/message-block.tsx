@@ -28,7 +28,6 @@ function DeleteUpToIcon() {
   )
 }
 
-const TOOL_ICON = "🔧"
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const TOOL_BORDER_COLOR = "var(--message-tool-border)"
@@ -612,8 +611,6 @@ function ToolCallItem(props: ToolCallItemProps) {
                 />
               </Show>
 
-              <span class="tool-call-icon">{TOOL_ICON}</span>
-              <span>{t("messageBlock.tool.header")}</span>
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
             </div>
 
