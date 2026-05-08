@@ -19,8 +19,6 @@ export default function VersionPill() {
   const serverVersion = () => meta()?.serverVersion
   const uiVersion = () => meta()?.ui?.version
   const uiSource = () => meta()?.ui?.source
-  const latestServerUrl = () => meta()?.support?.latestServerUrl ?? null
-  const latestServerVersion = () => meta()?.support?.latestServerVersion ?? null
   const update = () => {
     const refreshedUpdate = availableUpdate()
     if (refreshedUpdate !== undefined) {
@@ -32,7 +30,7 @@ export default function VersionPill() {
   const uiLabel = () => (uiVersion() ? t("versionPill.uiWithVersion", { version: uiVersion() }) : t("versionPill.ui"))
 
   return (
-    <Show when={serverVersion() || uiVersion() || uiSource() || update() || latestServerUrl()}>
+    <Show when={serverVersion() || uiVersion() || uiSource() || update()}>
       <div class="text-[11px] text-muted whitespace-nowrap">
         <Show when={serverVersion()}>
           {(v) => <span>{t("versionPill.appWithVersion", { version: v() })}</span>}
@@ -48,32 +46,24 @@ export default function VersionPill() {
             </span>
           </>
         </Show>
-        <Show when={update() || latestServerUrl()}>
-          {() => (
+        <Show when={update()}>
+          {(release) => (
             <>
               <Show when={serverVersion() || uiVersion() || uiSource()}>
                 <span class="mx-2">·</span>
               </Show>
               <a
-                href={update()?.url ?? latestServerUrl() ?? "#"}
+                href={release().url}
                 target="_blank"
                 rel="noreferrer"
                 class="text-primary hover:underline underline-offset-2"
-                title={
-                  update()?.version
-                    ? t("releases.devUpdateAvailable.message", { version: update()!.version })
-                    : latestServerVersion()
-                      ? t("releases.upgradeRequired.message.withVersion", { version: latestServerVersion()! })
-                      : t("releases.upgradeRequired.message.noVersion")
-                }
+                title={t("releases.devUpdateAvailable.message", { version: release().version })}
                 onClick={(event) => {
                   event.preventDefault()
-                  const url = update()?.url ?? latestServerUrl()
-                  if (!url) return
-                  void openExternalUrl(url, "version-pill")
+                  void openExternalUrl(release().url, "version-pill")
                 }}
               >
-                {update() ? t("releases.devUpdateAvailable.action") : t("releases.upgradeRequired.action.getUpdate")}
+                {t("releases.devUpdateAvailable.action")}
               </a>
             </>
           )}
