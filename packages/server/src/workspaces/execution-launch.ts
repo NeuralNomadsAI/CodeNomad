@@ -11,6 +11,7 @@ export interface LaunchCommandSpec {
   cwd?: string
   environment?: Record<string, string>
   wslDistro?: string
+  stdin?: string
 }
 
 interface BuildLaunchCommandParams {
@@ -23,11 +24,14 @@ interface BuildLaunchCommandParams {
 }
 
 export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchCommandSpec {
-  const openCodePort = params.execution.kind === "ssh" && params.reservedPort ? String(params.reservedPort) : "0"
+  const openCodePort = (params.execution.kind === "docker" || params.execution.kind === "ssh") && params.reservedPort ? String(params.reservedPort) : "0"
   const openCodeArgs = ["serve", "--port", openCodePort, "--print-logs", "--log-level", params.logLevel]
 
   if (params.execution.kind === "docker") {
-    return buildDockerLaunchCommand(params.execution, params.workspacePath, params.environment, openCodeArgs)
+    if (!params.reservedPort) {
+      throw new Error("Reserved local port is required for Docker execution profiles")
+    }
+    return buildDockerLaunchCommand(params.execution, params.workspacePath, params.environment, openCodeArgs, params.reservedPort)
   }
 
   if (params.execution.kind === "command") {
@@ -74,16 +78,7 @@ function buildSshLaunchCommand(
 
   const target = username ? `${username}@${host}` : host
   const remoteEnvironment = rewriteSshCallbackEnvironment(environment, callbackPort)
-  const remoteCommand = [
-    "cd",
-    shellQuote(execution.remotePath),
-    "&&",
-    "env",
-    ...Object.entries(remoteEnvironment).map(([key, value]) => `${key}=${shellQuote(value)}`),
-    shellQuote(execution.binaryPath),
-    ...(execution.args ?? []).map(shellQuote),
-    ...openCodeArgs.map(shellQuote),
-  ].join(" ")
+  const remoteScript = buildSshRemoteScript(execution, remoteEnvironment, openCodeArgs)
 
   return {
     command: "ssh",
@@ -100,11 +95,35 @@ function buildSshLaunchCommand(
       `127.0.0.1:${callbackPort}:127.0.0.1:${getUrlPort(environment.CODENOMAD_BASE_URL) ?? 9898}`,
       target,
       "sh",
-      "-lc",
-      remoteCommand,
+      "-s",
     ],
     environment: {},
+    stdin: remoteScript,
   }
+}
+
+function buildSshRemoteScript(
+  execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+  environment: Record<string, string>,
+  openCodeArgs: string[],
+): string {
+  const assignments = Object.entries(environment).map(([key, value]) => {
+    if (!isEnvironmentVariableName(key)) {
+      throw new Error(`Invalid environment variable name for SSH execution profile: ${key}`)
+    }
+    return `${key}=${shellQuote(value)}`
+  })
+
+  const command = [
+    "exec",
+    "env",
+    ...assignments,
+    shellQuote(execution.binaryPath),
+    ...(execution.args ?? []).map(shellQuote),
+    ...openCodeArgs.map(shellQuote),
+  ].join(" ")
+
+  return ["set -eu", `cd ${shellQuote(execution.remotePath)}`, command, ""].join("\n")
 }
 
 export function buildLaunchPreview(params: BuildLaunchCommandParams): LaunchCommandSpec {
@@ -136,6 +155,7 @@ function buildDockerLaunchCommand(
   workspacePath: string,
   environment: Record<string, string>,
   openCodeArgs: string[],
+  forwardedPort: number,
 ): LaunchCommandSpec {
   const configDir = environment.OPENCODE_CONFIG_DIR?.trim()
   if (!configDir) {
@@ -161,6 +181,8 @@ function buildDockerLaunchCommand(
     execution.workspaceMountPath,
     "--add-host",
     `${DOCKER_HOST_ALIAS}:host-gateway`,
+    "-p",
+    `127.0.0.1:${forwardedPort}:${forwardedPort}`,
     "-v",
     `${workspacePath}:${execution.workspaceMountPath}`,
     "-v",
@@ -231,6 +253,10 @@ function formatCommandToken(token: string): string {
 function shellQuote(value: string): string {
   if (!value) return "''"
   return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function isEnvironmentVariableName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
 }
 
 function rewriteSshCallbackEnvironment(environment: Record<string, string>, callbackPort: number): Record<string, string> {

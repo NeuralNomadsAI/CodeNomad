@@ -44,6 +44,7 @@ interface LaunchOptions {
   spawnCwd?: string
   environment?: Record<string, string>
   wslDistro?: string
+  stdin?: string
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
 }
@@ -139,10 +140,14 @@ export class WorkspaceRuntime {
       const child = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
         env: spec.env,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         detached,
         ...spec.options,
       })
+
+      if (options.stdin !== undefined) {
+        child.stdin?.end(options.stdin)
+      }
 
       const managed: ManagedProcess = {
         child,

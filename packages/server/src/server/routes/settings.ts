@@ -174,7 +174,7 @@ function buildRequestBaseUrl(request: FastifyRequest): string {
 }
 
 function getPreviewReservedPort(profile: z.infer<typeof ExecutionProfileSchema>): number | undefined {
-  return profile.kind === "ssh" ? 17600 : undefined
+  return profile.kind === "docker" || profile.kind === "ssh" ? 17600 : undefined
 }
 
 function getPreviewCallbackPort(profile: z.infer<typeof ExecutionProfileSchema>): number | undefined {

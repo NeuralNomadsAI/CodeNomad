@@ -48,6 +48,7 @@ describe("buildLaunchCommand", () => {
         OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:9898/workspaces/abc/worktrees/root/instance",
       },
       logLevel: "INFO",
+      reservedPort: 17600,
     })
 
     assert.equal(result.command, "docker")
@@ -55,13 +56,34 @@ describe("buildLaunchCommand", () => {
     assert.ok(result.args.includes("D:/CodeNomad:/workspace"))
     assert.ok(result.args.includes("C:/Users/Admin/.config/opencode:/root/.config/opencode"))
     assert.ok(result.args.includes("C:/Users/Admin/.config/codenomad/certs.pem:/tmp/codenomad-node-extra-ca.pem:ro"))
+    assert.ok(result.args.includes("127.0.0.1:17600:17600"))
     assert.ok(result.args.includes("CODENOMAD_BASE_URL"))
     assert.ok(result.args.includes("OPENCODE_CONFIG_DIR"))
     assert.ok(result.args.includes("NODE_EXTRA_CA_CERTS"))
     assert.equal(result.environment?.CODENOMAD_BASE_URL, "https://host.docker.internal:9898")
     assert.equal(result.environment?.OPENCODE_CONFIG_DIR, "/root/.config/opencode")
     assert.equal(result.environment?.NODE_EXTRA_CA_CERTS, "/tmp/codenomad-node-extra-ca.pem")
-    assert.deepEqual(result.args.slice(-6), ["serve", "--port", "0", "--print-logs", "--log-level", "INFO"])
+    assert.deepEqual(result.args.slice(-6), ["serve", "--port", "17600", "--print-logs", "--log-level", "INFO"])
+  })
+
+  it("requires a reserved local port for Docker execution profiles", () => {
+    const execution: ResolvedBinary = {
+      kind: "docker",
+      label: "Docker Sandbox",
+      image: "ghcr.io/example/opencode:latest",
+      workspaceMountPath: "/workspace",
+      configMountPath: "/root/.config/opencode",
+    }
+
+    assert.throws(
+      () => buildLaunchCommand({
+        execution,
+        workspacePath: "D:/CodeNomad",
+        environment: { OPENCODE_CONFIG_DIR: "C:/Users/Admin/.config/opencode" },
+        logLevel: "INFO",
+      }),
+      /Reserved local port is required/,
+    )
   })
 
   it("builds an SSH execution profile launch with forward and reverse tunnels", () => {
@@ -91,8 +113,34 @@ describe("buildLaunchCommand", () => {
     assert.ok(result.args.includes("127.0.0.1:17600:127.0.0.1:17600"))
     assert.ok(result.args.includes("127.0.0.1:17601:127.0.0.1:9898"))
     assert.ok(result.args.includes("ubuntu@vm.example.com"))
-    assert.ok(result.args.some((arg) => arg.includes("opencode") && arg.includes("--port") && arg.includes("17600")))
-    assert.ok(result.args.some((arg) => arg.includes("OPENCODE_SERVER_BASE_URL='http://127.0.0.1:17601/workspaces/abc/worktrees/root/instance'")))
+    assert.deepEqual(result.args.slice(-2), ["sh", "-s"])
+    assert.ok(result.stdin?.includes("exec env"))
+    assert.ok(result.stdin?.includes("opencode"))
+    assert.ok(result.stdin?.includes("--port"))
+    assert.ok(result.stdin?.includes("17600"))
+    assert.ok(result.stdin?.includes("OPENCODE_SERVER_BASE_URL='http://127.0.0.1:17601/workspaces/abc/worktrees/root/instance'"))
+  })
+
+  it("rejects unsafe SSH environment variable names", () => {
+    const execution: ResolvedBinary = {
+      kind: "ssh",
+      label: "SSH Linux",
+      host: "vm.example.com",
+      remotePath: "/srv/project",
+      binaryPath: "opencode",
+    }
+
+    assert.throws(
+      () => buildLaunchCommand({
+        execution,
+        workspacePath: "/unused/local/path",
+        environment: { "BAD;touch /tmp/pwned": "value" },
+        logLevel: "DEBUG",
+        reservedPort: 17600,
+        callbackPort: 17601,
+      }),
+      /Invalid environment variable name/,
+    )
   })
 
   it("formats preview command lines with quoting", () => {

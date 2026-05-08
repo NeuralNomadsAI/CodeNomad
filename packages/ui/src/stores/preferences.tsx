@@ -272,6 +272,27 @@ function normalizeExecutionProfiles(value: unknown): ExecutionProfile[] {
         args: normalizeStringList((entry as any).args),
         cwdMode,
       })
+      continue
+    }
+
+    if (kind === "ssh") {
+      const host = typeof (entry as any).host === "string" ? (entry as any).host.trim() : ""
+      const remotePath = typeof (entry as any).remotePath === "string" ? (entry as any).remotePath.trim() : ""
+      const binaryPath = typeof (entry as any).binaryPath === "string" ? (entry as any).binaryPath.trim() : ""
+      const port = typeof (entry as any).port === "number" && Number.isInteger((entry as any).port) ? (entry as any).port : undefined
+      const username = typeof (entry as any).username === "string" ? (entry as any).username.trim() : ""
+      if (!host || !remotePath || !binaryPath) continue
+      profiles.push({
+        id,
+        name,
+        kind,
+        host,
+        port: port && port > 0 && port <= 65535 ? port : undefined,
+        username: username || undefined,
+        remotePath,
+        binaryPath,
+        args: normalizeStringList((entry as any).args),
+      })
     }
   }
 

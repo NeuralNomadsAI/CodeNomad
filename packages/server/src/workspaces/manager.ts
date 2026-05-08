@@ -154,7 +154,7 @@ export class WorkspaceManager {
     }
 
     const logLevel = (serverConfig as any)?.logLevel
-    const reservedPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
+    const reservedPort = execution.kind === "docker" || execution.kind === "ssh" ? await this.getAvailablePort() : undefined
     const callbackPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
     const launchCommand = buildLaunchCommand({
       execution,
@@ -176,6 +176,7 @@ export class WorkspaceManager {
         spawnCwd: launchCommand.cwd,
         environment: launchCommand.environment,
         wslDistro: launchCommand.wslDistro,
+        stdin: launchCommand.stdin,
         logLevel,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
