@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, on, onCleanup, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, type Component } from "solid-js"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -9,7 +9,7 @@ import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
 import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markViewedSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
-import { IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
+import { IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -51,6 +51,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!currentSession) return false
     return getSessionBusyStatus(props.instanceId, currentSession.id)
   })
+  const sessionStreamingActive = createMemo(() => {
+    const currentSession = session()
+    if (!currentSession) return false
+    return getSessionStatus(props.instanceId, currentSession.id) === "working"
+  })
 
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
@@ -68,6 +73,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+  const [pendingSubmitBottomScrollTargetCount, setPendingSubmitBottomScrollTargetCount] = createSignal<number | null>(null)
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
@@ -76,11 +82,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return !snapshot || snapshot.atBottom
   }
 
-  function scheduleScrollToBottom() {
-    if (!scrollToBottomHandle) return
+  function scheduleScrollToBottom(options?: { force?: boolean }) {
+    if (!scrollToBottomHandle) return false
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => scrollToBottomHandle?.())
+      requestAnimationFrame(() => {
+        if (!options?.force && !shouldScrollToBottomOnActivate()) return
+        scrollToBottomHandle?.()
+      })
     })
+    return true
   }
 
   function getSeenIdleSignature(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): string {
@@ -189,6 +199,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   })
 
+  createEffect(
+    on(
+      () => messageStore().getSessionMessageIds(props.sessionId).length,
+      (messageCount) => {
+        const targetCount = pendingSubmitBottomScrollTargetCount()
+        if (targetCount === null) return
+        const didSchedule = scheduleScrollToBottom({ force: true })
+        if (didSchedule && messageCount >= targetCount) {
+          setPendingSubmitBottomScrollTargetCount(null)
+        }
+      },
+      { defer: true },
+    ),
+  )
+
   function registerPromptInputApi(api: PromptInputApi) {
     promptInputApi = api
     props.registerSessionPromptApi?.(props.sessionId, api)
@@ -220,8 +245,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
  
   async function handleSendMessage(prompt: string, attachments: Attachment[]) {
-    scheduleScrollToBottom()
-    await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
+    const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+    setPendingSubmitBottomScrollTargetCount(messageCount + 2)
+    scheduleScrollToBottom({ force: true })
+    try {
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
+      scheduleScrollToBottom({ force: true })
+      setPendingSubmitBottomScrollTargetCount(null)
+    } catch (error) {
+      setPendingSubmitBottomScrollTargetCount(null)
+      throw error
+    }
   }
 
   async function handleRunShell(command: string) {
@@ -276,13 +310,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       )
 
       const restoredText = getUserMessageText(messageId)
-       if (restoredText) {
-         if (promptInputApi) {
-           promptInputApi.setPromptText(restoredText, { focus: true })
-         } else {
-           pendingPromptText = restoredText
-         }
-       }
+      if (restoredText) {
+        if (promptInputApi) {
+          promptInputApi.setPromptText(restoredText, { focus: true })
+        } else {
+          pendingPromptText = restoredText
+        }
+      }
     } catch (error) {
       log.error("Failed to revert message", error)
       showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
@@ -360,8 +394,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       })
     }
   }
-
-
   return (
     <Show
       when={session()}
@@ -377,58 +409,62 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         return (
           <div ref={rootRef} class="session-view">
             <MessageSection
-               instanceId={props.instanceId}
-               sessionId={activeSession.id}
-                loading={messagesLoading()}
-                onRevert={handleRevert}
-                onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
-                 onFork={handleFork}
-                 isActive={props.isActive}
-                 registerScrollToBottom={(fn) => {
-                   scrollToBottomHandle = fn
-                 }}
+              instanceId={props.instanceId}
+              sessionId={activeSession.id}
+              loading={messagesLoading()}
+              sessionStreamingActive={sessionStreamingActive()}
+              onRevert={handleRevert}
+              onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
+              onFork={handleFork}
+              isActive={props.isActive}
+              registerScrollToBottom={(fn) => {
+                scrollToBottomHandle = fn ?? undefined
+                if (!fn) return
+                const targetCount = pendingSubmitBottomScrollTargetCount()
+                if (targetCount === null) return
+                const didSchedule = scheduleScrollToBottom({ force: true })
+                const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+                if (didSchedule && messageCount >= targetCount) {
+                  setPendingSubmitBottomScrollTargetCount(null)
+                }
+              }}
+              showSidebarToggle={props.showSidebarToggle}
+              onSidebarToggle={props.onSidebarToggle}
+              forceCompactStatusLayout={props.forceCompactStatusLayout}
+              onQuoteSelection={handleQuoteSelection}
+            />
 
+            <Show when={attachments().length > 0}>
+              <PromptAttachmentsBar
+                attachments={attachments()}
+                onRemoveAttachment={(attachmentId) => {
+                  if (promptInputApi) {
+                    promptInputApi.removeAttachment(attachmentId)
+                    return
+                  }
+                  removeAttachment(props.instanceId, props.sessionId, attachmentId)
+                }}
+                onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
+              />
+            </Show>
 
-
-
-               showSidebarToggle={props.showSidebarToggle}
-               onSidebarToggle={props.onSidebarToggle}
-               forceCompactStatusLayout={props.forceCompactStatusLayout}
-               onQuoteSelection={handleQuoteSelection}
-             />
-
-
-                <Show when={attachments().length > 0}>
-                  <PromptAttachmentsBar
-                    attachments={attachments()}
-                    onRemoveAttachment={(attachmentId) => {
-                      if (promptInputApi) {
-                        promptInputApi.removeAttachment(attachmentId)
-                        return
-                      }
-                      removeAttachment(props.instanceId, props.sessionId, attachmentId)
-                    }}
-                    onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
-                  />
-                </Show>
-
-              <PromptInput
-                instanceId={props.instanceId}
-                instanceFolder={props.instanceFolder}
-                sessionId={activeSession.id}
-                isActive={props.isActive}
-                compactLayout={props.compactPromptLayout}
-                onSend={handleSendMessage}
-                onRunShell={handleRunShell}
-                escapeInDebounce={props.escapeInDebounce}
-                isSessionBusy={sessionBusy()}
-                disabled={sessionNeedsInput()}
-                onAbortSession={handleAbortSession}
-                registerPromptInputApi={registerPromptInputApi}
-                />
-            </div>
-          )
-        }}
+            <PromptInput
+              instanceId={props.instanceId}
+              instanceFolder={props.instanceFolder}
+              sessionId={activeSession.id}
+              isActive={props.isActive}
+              compactLayout={props.compactPromptLayout}
+              onSend={handleSendMessage}
+              onRunShell={handleRunShell}
+              escapeInDebounce={props.escapeInDebounce}
+              isSessionBusy={sessionBusy()}
+              disabled={sessionNeedsInput()}
+              onAbortSession={handleAbortSession}
+              registerPromptInputApi={registerPromptInputApi}
+            />
+          </div>
+        )
+      }}
     </Show>
   )
 }
