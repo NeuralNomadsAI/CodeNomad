@@ -1,4 +1,5 @@
 import { isSelectablePrimaryAgent, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { getIdleSinceForStatusTransition, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -123,8 +124,14 @@ async function fetchSessions(instanceId: string): Promise<void> {
   })
 
   try {
-    log.info("session.list", { instanceId })
-    const response = await rootClient.session.list()
+    const projectResponse = await rootClient.project.current()
+    const projectId = projectResponse.data?.id
+    const sessionListOptions = projectId === "global" ? { directory: instance.folder } : undefined
+
+    log.info("session.list", { instanceId, projectId, directory: sessionListOptions?.directory })
+    const response = sessionListOptions
+      ? await rootClient.session.list(sessionListOptions)
+      : await rootClient.session.list()
 
     const sessionMap = new Map<string, Session>()
 
@@ -169,6 +176,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         model: existingSession?.model ?? { providerId: "", modelId: "" },
         status,
         retry,
+        idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -267,6 +275,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       agent: selectedAgent,
       model: defaultModel,
       status: "idle",
+      idleSince: null,
       version: response.data.version,
       time: {
         ...response.data.time,
@@ -372,12 +381,13 @@ async function forkSession(
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
-    model: {
-      providerId: info.model?.providerID || "",
-      modelId: info.model?.modelID || "",
-    },
-    status: "idle",
-    version: "0",
+     model: {
+       providerId: info.model?.providerID || "",
+       modelId: info.model?.modelID || "",
+     },
+     status: "idle",
+     idleSince: null,
+     version: "0",
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {

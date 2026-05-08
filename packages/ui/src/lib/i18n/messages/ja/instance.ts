@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "コマンドパレットを開く",
   "instanceShell.commandPalette.button": "コマンドパレット",
+  "instanceShell.chatSearch.openAriaLabel": "チャット履歴を検索",
 
   "instanceShell.connection.ariaLabel": "接続 {status}",
   "instanceShell.connection.connected": "接続済み",

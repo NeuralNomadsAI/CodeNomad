@@ -146,6 +146,8 @@ export const settingsMessages = {
   "settings.behavior.usageMetrics.subtitle": "アシスタントのメッセージにトークン数とコストの統計を表示/非表示にします。",
   "settings.behavior.autoCleanup.title": "空のセッションを自動クリーンアップ",
   "settings.behavior.autoCleanup.subtitle": "新しいセッション作成時に空のセッションを自動的にクリーンアップします。",
+  "settings.behavior.keepUnseenSubagentIdle.title": "サブエージェントの idle マーカーを保持",
+  "settings.behavior.keepUnseenSubagentIdle.subtitle": "サブエージェントの idle マーカーを 5 秒後に隠さず、表示するまで残します。",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "Enterで送信",
