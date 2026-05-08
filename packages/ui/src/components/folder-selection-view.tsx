@@ -1,8 +1,8 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js"
-import type { ConnectionProfile, RemoteServerConnectionProfile, SshConnectionProfile } from "../../../server/src/api-types"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2 } from "lucide-solid"
+import type { ConnectionProfile, SshConnectionProfile } from "../../../server/src/api-types"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, Terminal } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
@@ -64,6 +64,16 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
+  const [isSshDialogOpen, setIsSshDialogOpen] = createSignal(false)
+  const [sshProfileName, setSshProfileName] = createSignal("")
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshPort, setSshPort] = createSignal("22")
+  const [sshRemoteServerPort, setSshRemoteServerPort] = createSignal("9898")
+  const [sshUsername, setSshUsername] = createSignal("")
+  const [sshRemotePath, setSshRemotePath] = createSignal("")
+  const [sshBootstrapScript, setSshBootstrapScript] = createSignal("")
+  const [sshDialogError, setSshDialogError] = createSignal<string | null>(null)
+  const [isSavingSsh, setIsSavingSsh] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
   let recentListRef: HTMLDivElement | undefined
 
@@ -339,6 +349,23 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsServerDialogOpen(true)
   }
 
+  function resetSshDialog() {
+    setSshProfileName("")
+    setSshHost("")
+    setSshPort("22")
+    setSshRemoteServerPort("9898")
+    setSshUsername("")
+    setSshRemotePath("")
+    setSshBootstrapScript("")
+    setSshDialogError(null)
+  }
+
+  function openSshDialog() {
+    if (!canUseRemoteServerWindows()) return
+    resetSshDialog()
+    setIsSshDialogOpen(true)
+  }
+
   async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
     if (openWindow && !canUseRemoteServerWindows()) {
       throw new Error("Remote server windows can only be opened from a local desktop window")
@@ -423,30 +450,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         return
       }
 
-      const result = await serverApi.connectSshRemote({
-        connectionProfileId: target.id,
-        name: target.name,
-        host: target.host,
-        port: target.port,
-        username: target.username,
-        remotePath: target.remotePath,
-        remoteServerPort: target.remoteServerPort,
-        bootstrapScript: target.bootstrapScript,
-      })
-
-      const now = new Date().toISOString()
-      await saveConnectionProfile({
-        ...target,
-        updatedAt: now,
-        lastConnectedAt: now,
-      })
-
-      await openRemoteServerWindow({
-        id: target.id,
-        name: target.name,
-        baseUrl: result.baseUrl,
-        skipTlsVerify: false,
-      })
+      await connectSshProfile(target)
     } catch (error) {
       showAlertDialog(error instanceof Error ? error.message : String(error), {
         title: t("folderSelection.servers.errorTitle"),
@@ -462,6 +466,97 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
       await serverApi.disconnectSshRemote(profile.id).catch(() => undefined)
     }
     removeConnectionProfile(profile.id)
+  }
+
+  function createConnectionProfileId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID()
+    }
+    return `conn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  }
+
+  function buildSshConnectionProfile(): SshConnectionProfile {
+    const host = sshHost().trim()
+    const profileName = sshProfileName().trim() || host
+    const port = sshPort().trim().length > 0 ? Number(sshPort()) : undefined
+    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : 9898
+
+    return {
+      id: createConnectionProfileId(),
+      kind: "ssh",
+      name: profileName,
+      host,
+      port,
+      remoteServerPort,
+      username: sshUsername().trim() || undefined,
+      remotePath: sshRemotePath().trim() || undefined,
+      bootstrapScript: sshBootstrapScript().trim() || undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  async function connectSshProfile(profile: SshConnectionProfile) {
+    const result = await serverApi.connectSshRemote({
+      connectionProfileId: profile.id,
+      name: profile.name,
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      remotePath: profile.remotePath,
+      remoteServerPort: profile.remoteServerPort,
+      bootstrapScript: profile.bootstrapScript,
+    })
+
+    const now = new Date().toISOString()
+    await saveConnectionProfile({
+      ...profile,
+      updatedAt: now,
+      lastConnectedAt: now,
+    })
+
+    await openRemoteServerWindow({
+      id: profile.id,
+      name: profile.name,
+      baseUrl: result.baseUrl,
+      skipTlsVerify: false,
+    })
+  }
+
+  async function handleSaveSsh(openWindow: boolean) {
+    if (isSavingSsh()) return
+    const host = sshHost().trim()
+    const port = sshPort().trim().length > 0 ? Number(sshPort()) : undefined
+    const remoteServerPort = sshRemoteServerPort().trim().length > 0 ? Number(sshRemoteServerPort()) : 9898
+
+    if (!host) {
+      setSshDialogError(t("folderSelection.ssh.dialog.errorHost"))
+      return
+    }
+    if (port !== undefined && (!Number.isInteger(port) || port <= 0 || port > 65535)) {
+      setSshDialogError(t("folderSelection.ssh.dialog.errorPort"))
+      return
+    }
+    if (!Number.isInteger(remoteServerPort) || remoteServerPort <= 0 || remoteServerPort > 65535) {
+      setSshDialogError(t("folderSelection.ssh.dialog.errorRemoteServerPort"))
+      return
+    }
+
+    setIsSavingSsh(true)
+    setSshDialogError(null)
+    try {
+      const profile = buildSshConnectionProfile()
+      await saveConnectionProfile(profile)
+      if (openWindow) {
+        await connectSshProfile(profile)
+      }
+      setIsSshDialogOpen(false)
+      resetSshDialog()
+    } catch (error) {
+      setSshDialogError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsSavingSsh(false)
+    }
   }
 
   async function handleBrowse() {
@@ -798,6 +893,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 <Globe class="w-4 h-4" />
                                 <span>{t("folderSelection.actions.connectButton")}</span>
                               </button>
+                              <button
+                                type="button"
+                                class="button-primary mt-3 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
+                                onClick={openSshDialog}
+                              >
+                                <Terminal class="w-4 h-4" />
+                                <span>{t("folderSelection.actions.connectSshButton")}</span>
+                              </button>
                             </div>
                           </Show>
                         }
@@ -1035,6 +1138,16 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         <span>{t("folderSelection.actions.connectButton")}</span>
                       </div>
                     </button>
+                    <button
+                      type="button"
+                      onClick={openSshDialog}
+                      class="button-primary w-full flex items-center justify-center text-sm"
+                    >
+                      <div class="flex items-center gap-2">
+                        <Terminal class="w-4 h-4" />
+                        <span>{t("folderSelection.actions.connectSshButton")}</span>
+                      </div>
+                    </button>
                   </Show>
                 </div>
 
@@ -1176,6 +1289,127 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     <span class="inline-flex items-center gap-2">
                       <Loader2 class="w-4 h-4 animate-spin" />
                       {t("folderSelection.servers.dialog.connecting")}
+                    </span>
+                  </Show>
+                </button>
+              </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog>
+
+      <Dialog open={isSshDialogOpen()} onOpenChange={(open) => !open && setIsSshDialogOpen(false)}>
+        <Dialog.Portal>
+          <Dialog.Overlay class="modal-overlay" />
+          <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
+            <Dialog.Content class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5" tabIndex={-1}>
+              <div>
+                <Dialog.Title class="text-xl font-semibold text-primary">
+                  {t("folderSelection.ssh.dialog.title")}
+                </Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-2">
+                  {t("folderSelection.ssh.dialog.description")}
+                </Dialog.Description>
+              </div>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.ssh.dialog.name")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={sshProfileName()}
+                  onInput={(event) => setSshProfileName(event.currentTarget.value)}
+                  placeholder={t("folderSelection.ssh.dialog.namePlaceholder")}
+                />
+              </label>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.ssh.dialog.host")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={sshHost()}
+                  onInput={(event) => setSshHost(event.currentTarget.value)}
+                  placeholder={t("folderSelection.ssh.dialog.hostPlaceholder")}
+                />
+              </label>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label class="flex flex-col gap-2 text-sm text-secondary">
+                  <span>{t("folderSelection.ssh.dialog.port")}</span>
+                  <input
+                    class="selector-input w-full"
+                    value={sshPort()}
+                    inputMode="numeric"
+                    onInput={(event) => setSshPort(event.currentTarget.value)}
+                    placeholder={t("folderSelection.ssh.dialog.portPlaceholder")}
+                  />
+                </label>
+
+                <label class="flex flex-col gap-2 text-sm text-secondary">
+                  <span>{t("folderSelection.ssh.dialog.remoteServerPort")}</span>
+                  <input
+                    class="selector-input w-full"
+                    value={sshRemoteServerPort()}
+                    inputMode="numeric"
+                    onInput={(event) => setSshRemoteServerPort(event.currentTarget.value)}
+                    placeholder={t("folderSelection.ssh.dialog.remoteServerPortPlaceholder")}
+                  />
+                </label>
+              </div>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.ssh.dialog.username")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={sshUsername()}
+                  onInput={(event) => setSshUsername(event.currentTarget.value)}
+                  placeholder={t("folderSelection.ssh.dialog.usernamePlaceholder")}
+                />
+              </label>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.ssh.dialog.remotePath")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={sshRemotePath()}
+                  onInput={(event) => setSshRemotePath(event.currentTarget.value)}
+                  placeholder={t("folderSelection.ssh.dialog.remotePathPlaceholder")}
+                />
+              </label>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.ssh.dialog.bootstrapScript")}</span>
+                <textarea
+                  class="selector-input w-full min-h-[8rem]"
+                  value={sshBootstrapScript()}
+                  onInput={(event) => setSshBootstrapScript(event.currentTarget.value)}
+                  placeholder={t("folderSelection.ssh.dialog.bootstrapScriptPlaceholder")}
+                />
+              </label>
+
+              <Show when={sshDialogError()}>
+                {(message) => <p class="text-sm text-red-500 break-words">{message()}</p>}
+              </Show>
+
+              <div class="flex items-center justify-end gap-3">
+                <button class="selector-button selector-button-secondary w-auto px-4" onClick={() => setIsSshDialogOpen(false)}>
+                  {t("folderSelection.ssh.dialog.cancel")}
+                </button>
+                <button
+                  class="selector-button selector-button-secondary w-auto px-4"
+                  disabled={isSavingSsh()}
+                  onClick={() => void handleSaveSsh(false)}
+                >
+                  {t("folderSelection.ssh.dialog.save")}
+                </button>
+                <button
+                  class="selector-button selector-button-secondary w-auto px-4"
+                  disabled={isSavingSsh()}
+                  onClick={() => void handleSaveSsh(true)}
+                >
+                  <Show when={isSavingSsh()} fallback={<span>{t("folderSelection.ssh.dialog.connect")}</span>}>
+                    <span class="inline-flex items-center gap-2">
+                      <Loader2 class="w-4 h-4 animate-spin" />
+                      {t("folderSelection.ssh.dialog.connecting")}
                     </span>
                   </Show>
                 </button>
