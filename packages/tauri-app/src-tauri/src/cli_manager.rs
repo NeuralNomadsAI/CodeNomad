@@ -1215,10 +1215,7 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
 }
 
 fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
-    let base = workspace_root();
-    let mut candidates = vec![base
-        .as_ref()
-        .map(|p| p.join("packages/server/dist/bin.js"))];
+    let mut candidates = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -1235,6 +1232,12 @@ fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
             }
         }
     }
+
+    let base = workspace_root();
+    candidates.push(
+        base.as_ref()
+            .map(|p| p.join("packages/server/dist/bin.js")),
+    );
 
     first_existing(candidates)
 }
