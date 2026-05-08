@@ -128,6 +128,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "この項目を削除",
   "messagePart.actions.deleteFailedTitle": "削除に失敗しました",
   "messagePart.actions.deleteFailedMessage": "項目の削除に失敗しました",
+  "messagePart.hiddenPrompt.summary": "非表示のプロンプトセクション",
   "messageItem.attachment.defaultName": "添付ファイル",
   "messageItem.attachment.downloadAriaLabel": "{name} をダウンロード",
   "messageItem.agentMeta.agentLabel": "エージェント: {agent}",

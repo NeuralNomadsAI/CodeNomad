@@ -20,6 +20,7 @@ export interface MessageRecord {
   updatedAt: number
   revision: number
   isEphemeral?: boolean
+  clientPromptDisplayText?: string
   partIds: string[]
   parts: Record<string, NormalizedPartRecord>
 }
@@ -141,6 +142,7 @@ export interface MessageUpsertInput {
   createdAt?: number
   updatedAt?: number
   isEphemeral?: boolean
+  clientPromptDisplayText?: string
   bumpRevision?: boolean
 }
 

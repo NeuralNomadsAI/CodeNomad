@@ -164,6 +164,11 @@ export default function MessageItem(props: MessageItemProps) {
     return typeof firstText?.id === "string" ? firstText.id : null
   }
 
+  const primaryUserPromptDisplayText = () => {
+    if (!isUser()) return undefined
+    return props.record.clientPromptDisplayText
+  }
+
   const fileAttachments = () =>
     messageParts().filter((part): part is FilePart => part?.type === "file" && typeof (part as FilePart).url === "string")
 
@@ -592,14 +597,15 @@ export default function MessageItem(props: MessageItemProps) {
           {(part) => {
             return (
               <div class="message-part-shell">
-                <MessagePart
-                  part={part}
-                  messageType={props.record.role}
-                  instanceId={props.instanceId}
-                  sessionId={props.sessionId}
-                  primaryUserTextPartId={primaryUserTextPartId()}
-                  onRendered={props.onContentRendered}
-                />
+          <MessagePart
+            part={part}
+            messageType={props.record.role}
+            instanceId={props.instanceId}
+            sessionId={props.sessionId}
+            primaryUserTextPartId={primaryUserTextPartId()}
+            displayTextOverride={part.id === primaryUserTextPartId() ? primaryUserPromptDisplayText() : undefined}
+            onRendered={props.onContentRendered}
+          />
               </div>
             )
           }}

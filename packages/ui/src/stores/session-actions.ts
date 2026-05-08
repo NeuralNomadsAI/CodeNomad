@@ -1,4 +1,5 @@
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
+import { preparePromptDisplayText } from "../lib/hidden-prompt-sections"
 import { instances } from "./instances"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 
@@ -98,12 +99,13 @@ async function sendMessage(
   const textPartId = createId("prt")
 
   const resolvedPrompt = resolvePastedPlaceholders(prompt, attachments)
+  const preparedPrompt = preparePromptDisplayText(resolvedPrompt)
 
   const optimisticParts: any[] = [
     {
       id: textPartId,
       type: "text" as const,
-      text: resolvedPrompt,
+      text: preparedPrompt.promptToSend,
       synthetic: true,
       renderCache: undefined,
     },
@@ -112,7 +114,7 @@ async function sendMessage(
   const requestParts: any[] = [
     {
       type: "text" as const,
-      text: resolvedPrompt,
+      text: preparedPrompt.promptToSend,
     },
   ]
 
@@ -177,6 +179,7 @@ async function sendMessage(
     createdAt,
     updatedAt: createdAt,
     isEphemeral: true,
+    clientPromptDisplayText: preparedPrompt.displayText,
   })
 
   withSession(instanceId, sessionId, () => {

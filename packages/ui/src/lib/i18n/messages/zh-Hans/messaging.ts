@@ -128,6 +128,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "删除此项",
   "messagePart.actions.deleteFailedTitle": "删除失败",
   "messagePart.actions.deleteFailedMessage": "删除失败",
+  "messagePart.hiddenPrompt.summary": "已隐藏的提示区段",
   "messageItem.attachment.defaultName": "附件",
   "messageItem.attachment.downloadAriaLabel": "下载 {name}",
   "messageItem.agentMeta.agentLabel": "智能体：{agent}",
