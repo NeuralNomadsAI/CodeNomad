@@ -2,11 +2,8 @@ import { createContext, createMemo, createSignal, onMount, useContext } from "so
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type {
-  ConnectionProfile,
   ExecutionProfile,
-  RemoteServerConnectionProfile,
   RemoteServerProfile,
-  SshConnectionProfile,
 } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
@@ -116,7 +113,6 @@ interface UiStateBucket {
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
-  connectionProfiles?: ConnectionProfile[]
   lastSelectedExecutionProfileId?: string
   models?: {
     recents?: ModelPreference[]
@@ -129,7 +125,6 @@ interface NormalizedUiState {
   recentFolders: RecentFolder[]
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
-  connectionProfiles: ConnectionProfile[]
   lastSelectedExecutionProfileId?: string
   models: {
     recents: ModelPreference[]
@@ -351,86 +346,6 @@ function normalizeRemoteServerProfile(value: unknown): RemoteServerProfile | nul
   }
 }
 
-function remoteServerToConnectionProfile(server: RemoteServerProfile): RemoteServerConnectionProfile {
-  return {
-    id: server.id,
-    name: server.name,
-    kind: "remote-server",
-    baseUrl: server.baseUrl,
-    skipTlsVerify: server.skipTlsVerify,
-    createdAt: server.createdAt,
-    updatedAt: server.updatedAt,
-    lastConnectedAt: server.lastConnectedAt,
-  }
-}
-
-function connectionProfileToRemoteServer(profile: ConnectionProfile): RemoteServerProfile | null {
-  if (profile.kind !== "remote-server") return null
-  return {
-    id: profile.id,
-    name: profile.name,
-    baseUrl: profile.baseUrl,
-    skipTlsVerify: profile.skipTlsVerify,
-    createdAt: profile.createdAt,
-    updatedAt: profile.updatedAt,
-    lastConnectedAt: profile.lastConnectedAt,
-  }
-}
-
-function normalizeConnectionProfiles(value: unknown, remoteServers: RemoteServerProfile[]): ConnectionProfile[] {
-  const profiles: ConnectionProfile[] = []
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      if (!entry || typeof entry !== "object") continue
-      const id = typeof (entry as any).id === "string" ? (entry as any).id.trim() : ""
-      const name = typeof (entry as any).name === "string" ? (entry as any).name.trim() : ""
-      const kind = typeof (entry as any).kind === "string" ? (entry as any).kind.trim() : ""
-      if (!id || !name) continue
-
-      const createdAt = typeof (entry as any).createdAt === "string" ? (entry as any).createdAt : new Date().toISOString()
-      const updatedAt = typeof (entry as any).updatedAt === "string" ? (entry as any).updatedAt : createdAt
-      const lastConnectedAt = typeof (entry as any).lastConnectedAt === "string" ? (entry as any).lastConnectedAt : undefined
-
-      if (kind === "remote-server") {
-        const remote = normalizeRemoteServerProfile(entry)
-        if (!remote) continue
-        profiles.push(remoteServerToConnectionProfile(remote))
-        continue
-      }
-
-      if (kind === "ssh") {
-        const host = typeof (entry as any).host === "string" ? (entry as any).host.trim() : ""
-        if (!host) continue
-        const profile: SshConnectionProfile = {
-          id,
-          name,
-          kind,
-          host,
-          createdAt,
-          updatedAt,
-          lastConnectedAt,
-          port: typeof (entry as any).port === "number" ? (entry as any).port : undefined,
-          remoteServerPort: typeof (entry as any).remoteServerPort === "number" ? (entry as any).remoteServerPort : undefined,
-          username: typeof (entry as any).username === "string" && (entry as any).username.trim() ? (entry as any).username.trim() : undefined,
-          remotePath: typeof (entry as any).remotePath === "string" && (entry as any).remotePath.trim() ? (entry as any).remotePath.trim() : undefined,
-          bootstrapScript:
-            typeof (entry as any).bootstrapScript === "string" && (entry as any).bootstrapScript.trim()
-              ? (entry as any).bootstrapScript
-              : undefined,
-        }
-        profiles.push(profile)
-      }
-    }
-  }
-
-  const byId = new Map(profiles.map((profile) => [profile.id, profile] as const))
-  for (const server of remoteServers) {
-    byId.set(server.id, remoteServerToConnectionProfile(server))
-  }
-
-  return sortByRecentActivity(Array.from(byId.values()))
-}
-
 function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   const source = input ?? {}
   const remoteServers = sortByRecentActivity(
@@ -456,7 +371,6 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       return { path: p, version, label, lastUsed }
     }),
     remoteServers,
-    connectionProfiles: normalizeConnectionProfiles(source.connectionProfiles, remoteServers),
     lastSelectedExecutionProfileId:
       typeof source.lastSelectedExecutionProfileId === "string" && source.lastSelectedExecutionProfileId.trim()
         ? source.lastSelectedExecutionProfileId.trim()
@@ -560,11 +474,6 @@ function buildExecutionProfileList(profile: ExecutionProfile, source: ExecutionP
   return [profile, ...remaining]
 }
 
-function buildConnectionProfileList(profile: ConnectionProfile, source: ConnectionProfile[]): ConnectionProfile[] {
-  const remaining = source.filter((entry) => entry.id !== profile.id)
-  return sortByRecentActivity([profile, ...remaining])
-}
-
 function createRandomId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID()
@@ -586,7 +495,6 @@ const preferences = uiSettings
 const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
-const connectionProfiles = createMemo<ConnectionProfile[]>(() => uiState().connectionProfiles)
 const lastSelectedExecutionProfileId = createMemo<string | undefined>(() => uiState().lastSelectedExecutionProfileId)
 const executionProfiles = createMemo<ExecutionProfile[]>(() => serverSettings().executionProfiles)
 const defaultExecutionProfileId = createMemo<string | undefined>(() => serverSettings().defaultExecutionProfileId)
@@ -735,53 +643,25 @@ function removeRecentFolder(folderPath: string): void {
 
 async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
   const profile = buildRemoteServerProfile(input, remoteServers())
-  await saveConnectionProfile(remoteServerToConnectionProfile(profile))
+  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
   return profile
 }
 
 async function markRemoteServerConnected(id: string): Promise<void> {
-  const current = connectionProfiles().find((entry) => entry.id === id)
+  const current = remoteServers().find((entry) => entry.id === id)
   if (!current) return
   const now = new Date().toISOString()
-  const updated: ConnectionProfile = {
+  const updated: RemoteServerProfile = {
     ...current,
     updatedAt: now,
     lastConnectedAt: now,
   }
-  await saveConnectionProfile(updated)
+  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
 function removeRemoteServerProfile(id: string): void {
-  removeConnectionProfile(id)
-}
-
-async function saveConnectionProfile(profile: ConnectionProfile): Promise<ConnectionProfile> {
-  const nextProfiles = buildConnectionProfileList(profile, connectionProfiles())
-  const nextRemoteServers = sortByRecentActivity(
-    nextProfiles
-      .map((entry) => connectionProfileToRemoteServer(entry))
-      .filter((entry): entry is RemoteServerProfile => Boolean(entry)),
-  )
-
-  await patchStateOwner("ui", {
-    connectionProfiles: nextProfiles,
-    remoteServers: nextRemoteServers,
-  })
-  return profile
-}
-
-function removeConnectionProfile(id: string): void {
-  const nextProfiles = connectionProfiles().filter((entry) => entry.id !== id)
-  const nextRemoteServers = sortByRecentActivity(
-    nextProfiles
-      .map((entry) => connectionProfileToRemoteServer(entry))
-      .filter((entry): entry is RemoteServerProfile => Boolean(entry)),
-  )
-
-  void patchStateOwner("ui", {
-    connectionProfiles: nextProfiles,
-    remoteServers: nextRemoteServers,
-  }).catch((error) => log.error("Failed to remove connection profile", error))
+  const nextRemoteServers = remoteServers().filter((entry) => entry.id !== id)
+  void patchStateOwner("ui", { remoteServers: nextRemoteServers }).catch((error) => log.error("Failed to remove remote server profile", error))
 }
 
 function setLastSelectedExecutionProfileId(profileId: string | undefined): void {
@@ -985,15 +865,12 @@ interface ConfigContextValue {
   recentFolders: typeof recentFolders
   opencodeBinaries: typeof opencodeBinaries
   remoteServers: typeof remoteServers
-  connectionProfiles: typeof connectionProfiles
   lastSelectedExecutionProfileId: typeof lastSelectedExecutionProfileId
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
-  saveConnectionProfile: typeof saveConnectionProfile
-  removeConnectionProfile: typeof removeConnectionProfile
   setLastSelectedExecutionProfileId: typeof setLastSelectedExecutionProfileId
   saveRemoteServerProfile: typeof saveRemoteServerProfile
   markRemoteServerConnected: typeof markRemoteServerConnected
@@ -1048,15 +925,12 @@ const configContextValue: ConfigContextValue = {
   recentFolders,
   opencodeBinaries,
   remoteServers,
-  connectionProfiles,
   lastSelectedExecutionProfileId,
   uiState,
   addRecentFolder,
   removeRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
-  saveConnectionProfile,
-  removeConnectionProfile,
   setLastSelectedExecutionProfileId,
   saveRemoteServerProfile,
   markRemoteServerConnected,
@@ -1130,7 +1004,6 @@ export {
   defaultExecutionProfileId,
   recentFolders,
   opencodeBinaries,
-  connectionProfiles,
   lastSelectedExecutionProfileId,
   themePreference,
   setThemePreference,
@@ -1149,8 +1022,6 @@ export {
   removeRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
-  saveConnectionProfile,
-  removeConnectionProfile,
   setLastSelectedExecutionProfileId,
   recordWorkspaceLaunch,
   addRecentModelPreference,

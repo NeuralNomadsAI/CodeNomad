@@ -9,8 +9,8 @@ describe("buildLaunchCommand", () => {
     const execution: ResolvedBinary = {
       kind: "command",
       label: "Wrapper",
-      executable: "ssh",
-      args: ["user@example.com"],
+      executable: "node",
+      args: ["scripts/opencode-wrapper.mjs"],
       cwdMode: "inherit",
     }
 
@@ -21,8 +21,8 @@ describe("buildLaunchCommand", () => {
       logLevel: "DEBUG",
     })
 
-    assert.equal(result.command, "ssh")
-    assert.deepEqual(result.args, ["user@example.com", "serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"])
+    assert.equal(result.command, "node")
+    assert.deepEqual(result.args, ["scripts/opencode-wrapper.mjs", "serve", "--port", "0", "--print-logs", "--log-level", "DEBUG"])
     assert.equal(result.cwd, undefined)
     assert.deepEqual(result.environment, { CODENOMAD_INSTANCE_ID: "abc123" })
   })

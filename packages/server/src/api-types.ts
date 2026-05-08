@@ -391,17 +391,6 @@ export interface VoiceModeStateResponse {
   enabled: boolean
 }
 
-export type ConnectionProfileKind = "remote-server" | "ssh"
-
-export interface ConnectionProfileBase {
-  id: string
-  name: string
-  kind: ConnectionProfileKind
-  createdAt: string
-  updatedAt: string
-  lastConnectedAt?: string
-}
-
 export interface RemoteServerProfile {
   id: string
   name: string
@@ -411,42 +400,6 @@ export interface RemoteServerProfile {
   updatedAt: string
   lastConnectedAt?: string
 }
-
-export interface RemoteServerConnectionProfile extends ConnectionProfileBase {
-  kind: "remote-server"
-  baseUrl: string
-  skipTlsVerify: boolean
-}
-
-export interface SshConnectionProfile extends ConnectionProfileBase {
-  kind: "ssh"
-  host: string
-  port?: number
-  username?: string
-  remotePath?: string
-  remoteServerPort?: number
-  bootstrapScript?: string
-}
-
-export interface SshConnectionBootstrapRequest {
-  connectionProfileId?: string
-  name?: string
-  host: string
-  port?: number
-  username?: string
-  remotePath?: string
-  remoteServerPort?: number
-  bootstrapScript?: string
-}
-
-export interface SshConnectionBootstrapResponse {
-  sessionId: string
-  baseUrl: string
-  localPort: number
-  remoteServerPort: number
-}
-
-export type ConnectionProfile = RemoteServerConnectionProfile | SshConnectionProfile
 
 export interface RemoteServerProbeRequest {
   baseUrl: string

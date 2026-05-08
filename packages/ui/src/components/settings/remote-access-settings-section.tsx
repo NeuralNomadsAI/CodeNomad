@@ -10,7 +10,6 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useI18n } from "../../lib/i18n"
 import { splitRemoteAddresses, type RemoteAddressGroups } from "../../lib/remote-access-addresses"
-import { ConnectionProfilesSettingsSection } from "./connection-profiles-settings-section"
 
 const log = getLogger("actions")
 
@@ -483,8 +482,6 @@ export const RemoteAccessSettingsSection: Component = () => {
           </Show>
         </Show>
       </div>
-
-      <ConnectionProfilesSettingsSection />
     </div>
   )
 }

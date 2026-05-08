@@ -126,11 +126,11 @@ describe("BinaryResolver", () => {
 
   it("resolves a command execution profile", () => {
     const profile: ExecutionProfile = {
-      id: "ssh-wrapper",
-      name: "SSH Wrapper",
+      id: "custom-wrapper",
+      name: "Custom Wrapper",
       kind: "command",
-      executable: "ssh",
-      args: ["user@example.com"],
+      executable: "node",
+      args: ["scripts/opencode-wrapper.mjs"],
       cwdMode: "inherit",
     }
 
@@ -142,12 +142,12 @@ describe("BinaryResolver", () => {
 
     assert.deepEqual(resolver.resolveActive(profile.id), {
       kind: "command",
-      label: "SSH Wrapper",
-      executable: "ssh",
-      args: ["user@example.com"],
+      label: "Custom Wrapper",
+      executable: "node",
+      args: ["scripts/opencode-wrapper.mjs"],
       cwdMode: "inherit",
-      executionProfileId: "ssh-wrapper",
-      executionProfileName: "SSH Wrapper",
+      executionProfileId: "custom-wrapper",
+      executionProfileName: "Custom Wrapper",
       executionProfileKind: "command",
     })
   })

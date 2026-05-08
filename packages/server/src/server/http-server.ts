@@ -27,7 +27,6 @@ import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
-import { registerRemoteConnectionRoutes } from "./routes/remote-connections"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
@@ -41,7 +40,6 @@ import { PluginChannelManager } from "../plugins/channel"
 import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
-import type { SshConnectionSessionManager } from "./ssh-connections"
 
 interface HttpServerDeps {
   bindHost: string
@@ -63,7 +61,6 @@ interface HttpServerDeps {
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
-  sshConnectionSessionManager: SshConnectionSessionManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -73,6 +70,16 @@ interface HttpServerStartResult {
   port: number
   url: string
   displayHost: string
+}
+
+function redactSensitivePayload(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(redactSensitivePayload)
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY)/i.test(key) ? "[REDACTED]" : redactSensitivePayload(entry)
+  }
+  return output
 }
 
 export function createHttpServer(deps: HttpServerDeps) {
@@ -107,17 +114,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
-  const sensitivePayloadRoute = /\/api\/(remote-connections\/ssh\/connect|storage\/execution-profiles\/(preview|test))/
-  const redactSensitivePayload = (value: unknown): unknown => {
-    if (!value || typeof value !== "object") return value
-    if (Array.isArray(value)) return value.map(redactSensitivePayload)
-    const output: Record<string, unknown> = {}
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      output[key] = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY|bootstrapScript)/i.test(key) ? "[REDACTED]" : redactSensitivePayload(entry)
-    }
-    return output
-  }
-
   app.addHook("onResponse", (request, reply, done) => {
     const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
     const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
@@ -129,7 +125,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      const body = sensitivePayloadRoute.test(request.url) ? redactSensitivePayload(request.body) : request.body
+      const body = redactSensitivePayload(request.body)
       apiLogger.trace({ ...base, params: request.params, query: request.query, body }, "HTTP request payload")
     }
     done()
@@ -297,10 +293,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
-  registerRemoteConnectionRoutes(app, {
-    logger: apiLogger,
-    sshConnectionSessionManager: deps.sshConnectionSessionManager,
-  })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
@@ -642,7 +634,7 @@ async function proxyWorkspaceRequest(args: {
 
   logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
   if (logger.isLevelEnabled("trace")) {
-    logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
+    logger.trace({ workspaceId, targetUrl, body: redactSensitivePayload(request.body) }, "Instance proxy payload")
   }
 
   return reply.from(targetUrl, {
@@ -680,7 +672,7 @@ async function proxyWorkspaceRequest(args: {
             worktreeSlug,
             directory,
             contentType: request.headers["content-type"],
-            body: bodyToJson(request.body),
+            body: redactSensitivePayload(bodyToJson(request.body)),
             headers: outgoing,
           },
           "Proxy -> OpenCode request",

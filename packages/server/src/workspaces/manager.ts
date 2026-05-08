@@ -161,6 +161,8 @@ export class WorkspaceManager {
       logLevel: typeof logLevel === "string" ? logLevel.toUpperCase() : "DEBUG",
     })
 
+    let launchedPid: number | undefined
+
     try {
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
@@ -173,6 +175,7 @@ export class WorkspaceManager {
         logLevel,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })
+      launchedPid = pid
 
       const runtimeVersion = await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
       if (runtimeVersion) {
@@ -192,6 +195,11 @@ export class WorkspaceManager {
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
       this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed to start")
+      if (launchedPid !== undefined) {
+        await this.runtime.stop(id).catch((stopError) => {
+          this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup failure")
+        })
+      }
       throw error
     }
   }

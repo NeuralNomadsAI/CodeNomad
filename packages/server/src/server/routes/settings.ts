@@ -138,6 +138,22 @@ function redactPreviewEnvironment(environment: Record<string, string>): Record<s
   return redacted
 }
 
+function redactPreviewArgs(args: string[]): string[] {
+  return args.map((arg, index) => {
+    const [key] = arg.split("=", 1)
+    if (key && PREVIEW_SECRET_KEY.test(key)) {
+      return arg.includes("=") ? `${key}=REDACTED` : "REDACTED"
+    }
+
+    const previous = args[index - 1]
+    if ((previous === "-e" || previous === "--env") && PREVIEW_SECRET_KEY.test(key || arg)) {
+      return arg.includes("=") ? `${key}=REDACTED` : arg
+    }
+
+    return arg
+  })
+}
+
 function buildRequestBaseUrl(request: FastifyRequest): string {
   const host = request.headers.host?.trim()
   if (!host) {
@@ -208,10 +224,12 @@ function buildExecutionProfilePreview(
     logLevel: readConfiguredLogLevel(options.settings),
   })
 
+  const redactedArgs = redactPreviewArgs(launch.args)
+
   return {
     command: launch.command,
-    args: launch.args,
-    commandLine: formatCommandLine(launch.command, launch.args),
+    args: redactedArgs,
+    commandLine: formatCommandLine(launch.command, redactedArgs),
     cwd: launch.cwd,
     environment: launch.environment ?? {},
   }
