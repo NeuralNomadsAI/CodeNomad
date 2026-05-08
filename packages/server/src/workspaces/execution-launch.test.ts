@@ -63,7 +63,7 @@ describe("buildLaunchCommand", () => {
     assert.equal(result.environment?.CODENOMAD_BASE_URL, "https://host.docker.internal:9898")
     assert.equal(result.environment?.OPENCODE_CONFIG_DIR, "/root/.config/opencode")
     assert.equal(result.environment?.NODE_EXTRA_CA_CERTS, "/tmp/codenomad-node-extra-ca.pem")
-    assert.deepEqual(result.args.slice(-6), ["serve", "--port", "17600", "--print-logs", "--log-level", "INFO"])
+    assert.deepEqual(result.args.slice(-8), ["serve", "--port", "17600", "--print-logs", "--log-level", "INFO", "--hostname", "0.0.0.0"])
   })
 
   it("requires a reserved local port for Docker execution profiles", () => {

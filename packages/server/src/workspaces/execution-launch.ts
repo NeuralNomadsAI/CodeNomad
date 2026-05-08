@@ -26,6 +26,9 @@ interface BuildLaunchCommandParams {
 export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchCommandSpec {
   const openCodePort = (params.execution.kind === "docker" || params.execution.kind === "ssh") && params.reservedPort ? String(params.reservedPort) : "0"
   const openCodeArgs = ["serve", "--port", openCodePort, "--print-logs", "--log-level", params.logLevel]
+  if (params.execution.kind === "docker") {
+    openCodeArgs.push("--hostname", "0.0.0.0")
+  }
 
   if (params.execution.kind === "docker") {
     if (!params.reservedPort) {
