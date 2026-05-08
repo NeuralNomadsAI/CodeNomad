@@ -57,6 +57,8 @@ export const folderSelectionMessages = {
   "folderSelection.servers.connectSubtitle": "שמור שרת CodeNomad מרוחק ופתח אותו בחלון חדש",
   "folderSelection.servers.connectButton": "התחבר לשרת",
   "folderSelection.servers.remove": "הסר חיבור שמור",
+  "folderSelection.servers.kind.remoteServer": "שרת",
+  "folderSelection.servers.kind.ssh": "ssh",
   "folderSelection.servers.lastConnected": "חיבור אחרון {time}",
   "folderSelection.servers.skipTls": "TLS בחתימה עצמית",
   "folderSelection.servers.errorTitle": "החיבור המרוחק נכשל",

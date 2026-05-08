@@ -57,6 +57,8 @@ export const folderSelectionMessages = {
   "folderSelection.servers.connectSubtitle": "保存远程 CodeNomad 服务器并在新窗口中打开它",
   "folderSelection.servers.connectButton": "连接到服务器",
   "folderSelection.servers.remove": "删除已保存连接",
+  "folderSelection.servers.kind.remoteServer": "服务器",
+  "folderSelection.servers.kind.ssh": "ssh",
   "folderSelection.servers.lastConnected": "上次连接 {time}",
   "folderSelection.servers.skipTls": "自签名 TLS",
   "folderSelection.servers.errorTitle": "远程连接失败",

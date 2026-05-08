@@ -57,6 +57,8 @@ export const folderSelectionMessages = {
   "folderSelection.servers.connectSubtitle": "リモート CodeNomad サーバーを保存して新しいウィンドウで開きます",
   "folderSelection.servers.connectButton": "サーバーに接続",
   "folderSelection.servers.remove": "保存した接続を削除",
+  "folderSelection.servers.kind.remoteServer": "サーバー",
+  "folderSelection.servers.kind.ssh": "ssh",
   "folderSelection.servers.lastConnected": "最終接続 {time}",
   "folderSelection.servers.skipTls": "自己署名 TLS",
   "folderSelection.servers.errorTitle": "リモート接続に失敗しました",

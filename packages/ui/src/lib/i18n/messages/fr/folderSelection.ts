@@ -57,6 +57,8 @@ export const folderSelectionMessages = {
   "folderSelection.servers.connectSubtitle": "Enregistrez un serveur CodeNomad distant et ouvrez-le dans une nouvelle fenêtre",
   "folderSelection.servers.connectButton": "Se connecter à un serveur",
   "folderSelection.servers.remove": "Supprimer la connexion enregistrée",
+  "folderSelection.servers.kind.remoteServer": "serveur",
+  "folderSelection.servers.kind.ssh": "ssh",
   "folderSelection.servers.lastConnected": "Dernière connexion {time}",
   "folderSelection.servers.skipTls": "TLS auto-signé",
   "folderSelection.servers.errorTitle": "Échec de la connexion distante",

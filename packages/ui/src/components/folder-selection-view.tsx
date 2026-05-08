@@ -26,6 +26,16 @@ const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028
 
 type HomeTab = "local" | "servers"
 
+function buildConnectionProfileTarget(profile: ConnectionProfile): string {
+  if (profile.kind === "remote-server") {
+    return profile.baseUrl
+  }
+
+  const host = `${profile.username ? `${profile.username}@` : ""}${profile.host}`
+  const port = profile.port ? `:${profile.port}` : ""
+  const remotePath = profile.remotePath ? ` · ${profile.remotePath}` : ""
+  return `${host}${port}${remotePath}`
+}
 
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string, binaryPath?: string, options?: { executionProfileId?: string }) => void
@@ -934,13 +944,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                             <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
                                           </Show>
                                           <span class="text-sm font-medium truncate text-primary">{server.name}</span>
-                                          <span class="text-[10px] uppercase text-muted">{server.kind === "remote-server" ? "server" : "ssh"}</span>
+                                          <span class="text-[10px] uppercase text-muted">
+                                            {t(server.kind === "remote-server" ? "folderSelection.servers.kind.remoteServer" : "folderSelection.servers.kind.ssh")}
+                                          </span>
                                         </div>
                                         <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
                                           <span class="font-mono truncate-start flex-1 min-w-0">
-                                            {server.kind === "remote-server"
-                                              ? server.baseUrl
-                                              : `${server.username ? `${server.username}@` : ""}${server.host}${server.remotePath ? ` · ${server.remotePath}` : ""}`}
+                                            {buildConnectionProfileTarget(server)}
                                           </span>
                                         </div>
                                         <Show when={server.lastConnectedAt}>
