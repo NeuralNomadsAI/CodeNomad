@@ -1,7 +1,9 @@
+import type { HiddenPromptDisplayMetadata } from "../lib/hidden-prompt-sections"
+
 const STORAGE_KEY = "codenomad:hidden-prompt-display:v1"
 
 let loaded = false
-const promptDisplayOverrides = new Map<string, string>()
+const promptDisplayOverrides = new Map<string, HiddenPromptDisplayMetadata>()
 
 function makeKey(instanceId: string, sessionId: string, messageId: string): string {
   return `${instanceId}:${sessionId}:${messageId}`
@@ -25,9 +27,9 @@ function ensureLoaded(): void {
   try {
     const raw = storage.getItem(STORAGE_KEY)
     if (!raw) return
-    const parsed = JSON.parse(raw) as Record<string, string>
+    const parsed = JSON.parse(raw) as Record<string, HiddenPromptDisplayMetadata>
     for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string" && value.length > 0) {
+      if (isPromptDisplayMetadata(value)) {
         promptDisplayOverrides.set(key, value)
       }
     }
@@ -47,7 +49,21 @@ function persist(): void {
   }
 }
 
-export function getPromptDisplayOverride(instanceId: string, sessionId: string, messageId: string): string | undefined {
+function isPromptDisplayMetadata(value: unknown): value is HiddenPromptDisplayMetadata {
+  if (!value || typeof value !== "object") return false
+  const segments = (value as HiddenPromptDisplayMetadata).segments
+  if (!Array.isArray(segments) || segments.length === 0) return false
+  return segments.every(
+    (segment) =>
+      segment && typeof segment === "object" && typeof segment.hidden === "boolean" && typeof segment.length === "number" && segment.length >= 0,
+  )
+}
+
+export function getPromptDisplayOverride(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+): HiddenPromptDisplayMetadata | undefined {
   ensureLoaded()
   return promptDisplayOverrides.get(makeKey(instanceId, sessionId, messageId))
 }
@@ -56,14 +72,15 @@ export function setPromptDisplayOverride(
   instanceId: string,
   sessionId: string,
   messageId: string,
-  displayText: string | undefined,
+  displayMetadata: HiddenPromptDisplayMetadata | undefined,
 ): void {
   ensureLoaded()
   const key = makeKey(instanceId, sessionId, messageId)
   const previous = promptDisplayOverrides.get(key)
-  if (displayText && displayText.length > 0) {
-    if (previous === displayText) return
-    promptDisplayOverrides.set(key, displayText)
+  if (displayMetadata && isPromptDisplayMetadata(displayMetadata)) {
+    const serialized = JSON.stringify(displayMetadata)
+    if (previous && JSON.stringify(previous) === serialized) return
+    promptDisplayOverrides.set(key, displayMetadata)
   } else {
     if (!promptDisplayOverrides.has(key)) return
     promptDisplayOverrides.delete(key)

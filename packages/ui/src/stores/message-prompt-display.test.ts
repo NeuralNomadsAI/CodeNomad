@@ -49,17 +49,19 @@ describe("message prompt display overrides", () => {
 
     clearPromptDisplayOverridesForInstance(instanceId)
 
-    setPromptDisplayOverride(instanceId, sessionId, oldMessageId, "Visible<codenomad:hide>Hidden</codenomad:hide>")
-    assert.equal(
+    const metadata = { segments: [{ hidden: false, length: 7 }, { hidden: true, length: 6 }] }
+
+    setPromptDisplayOverride(instanceId, sessionId, oldMessageId, metadata)
+    assert.deepEqual(
       getPromptDisplayOverride(instanceId, sessionId, oldMessageId),
-      "Visible<codenomad:hide>Hidden</codenomad:hide>",
+      metadata,
     )
 
     movePromptDisplayOverride(instanceId, sessionId, oldMessageId, newMessageId)
     assert.equal(getPromptDisplayOverride(instanceId, sessionId, oldMessageId), undefined)
-    assert.equal(
+    assert.deepEqual(
       getPromptDisplayOverride(instanceId, sessionId, newMessageId),
-      "Visible<codenomad:hide>Hidden</codenomad:hide>",
+      metadata,
     )
 
     clearPromptDisplayOverride(instanceId, sessionId, newMessageId)

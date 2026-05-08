@@ -179,7 +179,7 @@ async function sendMessage(
     createdAt,
     updatedAt: createdAt,
     isEphemeral: true,
-    clientPromptDisplayText: preparedPrompt.displayText,
+    clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
   })
 
   withSession(instanceId, sessionId, () => {

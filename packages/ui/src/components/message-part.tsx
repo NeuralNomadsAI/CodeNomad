@@ -4,7 +4,7 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 import { useI18n } from "../lib/i18n"
-import { splitHiddenPromptSections } from "../lib/hidden-prompt-sections"
+import { splitHiddenPromptSections, type HiddenPromptDisplayMetadata } from "../lib/hidden-prompt-sections"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -18,7 +18,7 @@ interface MessagePartProps {
   // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
-  displayTextOverride?: string
+  displayMetadataOverride?: HiddenPromptDisplayMetadata
   onRendered?: () => void
 }
 
@@ -59,10 +59,9 @@ export default function MessagePart(props: MessagePartProps) {
   const hiddenPromptSegments = createMemo(() => {
     if (props.messageType !== "user") return null
     if (props.part?.type !== "text") return null
-    if (typeof props.displayTextOverride !== "string" || props.displayTextOverride.length === 0) return null
+    if (typeof props.part.text !== "string") return null
 
-    const segments = splitHiddenPromptSections(props.displayTextOverride)
-    return segments.some((segment) => segment.hidden) ? segments : null
+    return splitHiddenPromptSections(props.part.text, props.displayMetadataOverride)
   })
 
   function reasoningSegmentHasText(segment: unknown): boolean {
