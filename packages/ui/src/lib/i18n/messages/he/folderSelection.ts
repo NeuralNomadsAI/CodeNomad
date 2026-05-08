@@ -23,6 +23,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "פתח תיקייה או התחבר לשרת",
   "folderSelection.actions.subtitle": "פתח תיקייה מקומית או התחבר לשרת CodeNomad",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
+  "folderSelection.executionProfile.label": "פרופיל הרצה",
+  "folderSelection.executionProfile.subtitle": "בחר איך להפעיל את OpenCode עבור סביבות עבודה מקומיות חדשות",
 
   "folderSelection.advancedSettings": "הגדרות מתקדמות",
   "folderSelection.opencode": "OpenCode",

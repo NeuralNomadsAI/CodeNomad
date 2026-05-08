@@ -23,6 +23,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "打开文件夹或连接服务器",
   "folderSelection.actions.subtitle": "打开本地文件夹或连接到 CodeNomad 服务器",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",
+  "folderSelection.executionProfile.label": "执行配置",
+  "folderSelection.executionProfile.subtitle": "选择新本地工作区启动 OpenCode 的方式",
 
   "folderSelection.advancedSettings": "高级设置",
   "folderSelection.opencode": "OpenCode",

@@ -22,6 +22,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { SshConnectionSessionManager } from "./server/ssh-connections"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
@@ -400,6 +401,7 @@ async function main() {
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
+  const sshConnectionSessionManager = new SshConnectionSessionManager(logger.child({ component: "ssh-connections" }))
   const voiceModeManager = new VoiceModeManager({
     connections: clientConnectionManager,
     channel: pluginChannel,
@@ -440,6 +442,7 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        sshConnectionSessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -466,6 +469,7 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        sshConnectionSessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -574,6 +578,12 @@ async function main() {
         clientConnectionManager.shutdown()
       } catch (error) {
         logger.warn({ err: error }, "Client connection manager shutdown failed")
+      }
+
+      try {
+        await sshConnectionSessionManager.shutdown()
+      } catch (error) {
+        logger.warn({ err: error }, "SSH connection session shutdown failed")
       }
 
       try {

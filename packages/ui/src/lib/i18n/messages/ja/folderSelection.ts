@@ -23,6 +23,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "フォルダを開くかサーバーに接続",
   "folderSelection.actions.subtitle": "ローカルフォルダを開くか CodeNomad サーバーに接続します",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
+  "folderSelection.executionProfile.label": "実行プロファイル",
+  "folderSelection.executionProfile.subtitle": "新しいローカルワークスペースで OpenCode をどう起動するか選択します",
 
   "folderSelection.advancedSettings": "詳細設定",
   "folderSelection.opencode": "OpenCode",

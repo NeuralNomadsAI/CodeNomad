@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, type Component } from "solid-js
 import { ChevronDown, Terminal } from "lucide-solid"
 import OpenCodeBinarySelector from "../opencode-binary-selector"
 import EnvironmentVariablesEditor from "../environment-variables-editor"
+import { ExecutionProfilesSettingsSection } from "./execution-profiles-settings-section"
 import { useConfig } from "../../stores/preferences"
 import type { ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
@@ -52,6 +53,8 @@ export const OpenCodeSettingsSection: Component = () => {
 
         <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
       </div>
+
+      <ExecutionProfilesSettingsSection />
 
       <div class="settings-card">
         <div class="settings-card-header">

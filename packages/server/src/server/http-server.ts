@@ -27,6 +27,7 @@ import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
+import { registerRemoteConnectionRoutes } from "./routes/remote-connections"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
@@ -40,6 +41,7 @@ import { PluginChannelManager } from "../plugins/channel"
 import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
+import type { SshConnectionSessionManager } from "./ssh-connections"
 
 interface HttpServerDeps {
   bindHost: string
@@ -61,6 +63,7 @@ interface HttpServerDeps {
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
+  sshConnectionSessionManager: SshConnectionSessionManager
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -282,6 +285,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteConnectionRoutes(app, {
+    logger: apiLogger,
+    sshConnectionSessionManager: deps.sshConnectionSessionManager,
+  })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })

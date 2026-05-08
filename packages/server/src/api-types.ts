@@ -14,6 +14,44 @@ import type {
 
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
+export type ExecutionProfileKind = "local" | "wsl" | "docker" | "command"
+export type ExecutionProfileCwdMode = "workspace" | "inherit"
+
+export interface ExecutionProfileBase {
+  id: string
+  name: string
+  kind: ExecutionProfileKind
+}
+
+export interface LocalExecutionProfile extends ExecutionProfileBase {
+  kind: "local"
+  binaryPath: string
+}
+
+export interface WslExecutionProfile extends ExecutionProfileBase {
+  kind: "wsl"
+  distro: string
+  binaryPath: string
+}
+
+export interface DockerExecutionProfile extends ExecutionProfileBase {
+  kind: "docker"
+  image: string
+  workspaceMountPath: string
+  configMountPath: string
+  command?: string[]
+  extraDockerArgs?: string[]
+}
+
+export interface CommandExecutionProfile extends ExecutionProfileBase {
+  kind: "command"
+  executable: string
+  args?: string[]
+  cwdMode?: ExecutionProfileCwdMode
+}
+
+export type ExecutionProfile = LocalExecutionProfile | WslExecutionProfile | DockerExecutionProfile | CommandExecutionProfile
+
 export interface WorkspaceDescriptor {
   id: string
   /** Absolute path on the server host. */
@@ -29,6 +67,9 @@ export interface WorkspaceDescriptor {
   binaryId: string
   binaryLabel: string
   binaryVersion?: string
+  executionProfileId?: string
+  executionProfileName?: string
+  executionProfileKind?: ExecutionProfileKind
   createdAt: string
   updatedAt: string
   /** Present when `status` is "error". */
@@ -38,6 +79,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  executionProfileId?: string
 }
 
 export type WorkspaceCreateResponse = WorkspaceDescriptor
@@ -320,6 +362,17 @@ export interface VoiceModeStateResponse {
   enabled: boolean
 }
 
+export type ConnectionProfileKind = "remote-server" | "ssh"
+
+export interface ConnectionProfileBase {
+  id: string
+  name: string
+  kind: ConnectionProfileKind
+  createdAt: string
+  updatedAt: string
+  lastConnectedAt?: string
+}
+
 export interface RemoteServerProfile {
   id: string
   name: string
@@ -329,6 +382,42 @@ export interface RemoteServerProfile {
   updatedAt: string
   lastConnectedAt?: string
 }
+
+export interface RemoteServerConnectionProfile extends ConnectionProfileBase {
+  kind: "remote-server"
+  baseUrl: string
+  skipTlsVerify: boolean
+}
+
+export interface SshConnectionProfile extends ConnectionProfileBase {
+  kind: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath?: string
+  remoteServerPort?: number
+  bootstrapScript?: string
+}
+
+export interface SshConnectionBootstrapRequest {
+  connectionProfileId?: string
+  name?: string
+  host: string
+  port?: number
+  username?: string
+  remotePath?: string
+  remoteServerPort?: number
+  bootstrapScript?: string
+}
+
+export interface SshConnectionBootstrapResponse {
+  sessionId: string
+  baseUrl: string
+  localPort: number
+  remoteServerPort: number
+}
+
+export type ConnectionProfile = RemoteServerConnectionProfile | SshConnectionProfile
 
 export interface RemoteServerProbeRequest {
   baseUrl: string

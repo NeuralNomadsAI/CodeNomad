@@ -11,6 +11,7 @@ import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import { getOpencodeConfigDir } from "../opencode-config.js"
+import { buildLaunchCommand } from "./execution-launch"
 import {
   OPENCODE_SERVER_BASE_URL_ENV,
   buildOpencodeBasicAuthHeader,
@@ -89,15 +90,17 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
-  async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
+  async create(folder: string, name?: string, options?: { executionProfileId?: string }): Promise<WorkspaceDescriptor> {
  
     const id = `${Date.now().toString(36)}`
-    const binary = this.options.binaryResolver.resolveDefault()
-    const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
+    const execution = this.options.binaryResolver.resolveActive(options?.executionProfileId)
+    const resolvedBinaryPath = this.resolveBinaryPath(
+      execution.kind === "command" ? execution.executable : execution.kind === "docker" ? "docker" : execution.path,
+    )
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
 
-    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
+    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath, executionKind: execution.kind }, "Creating workspace")
 
     const proxyPath = `/workspaces/${id}/worktrees/root/instance`
 
@@ -109,8 +112,11 @@ export class WorkspaceManager {
       status: "starting",
       proxyPath,
       binaryId: resolvedBinaryPath,
-      binaryLabel: binary.label,
-      binaryVersion: binary.version,
+      binaryLabel: execution.label,
+      binaryVersion: execution.version,
+      executionProfileId: execution.executionProfileId,
+      executionProfileName: execution.executionProfileName,
+      executionProfileKind: execution.executionProfileKind,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -148,13 +154,21 @@ export class WorkspaceManager {
     }
 
     const logLevel = (serverConfig as any)?.logLevel
+    const launchCommand = buildLaunchCommand({
+      execution,
+      workspacePath,
+      environment,
+      logLevel: typeof logLevel === "string" ? logLevel.toUpperCase() : "DEBUG",
+    })
 
     try {
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
-        binaryPath: resolvedBinaryPath,
-        environment,
+        binaryPath: launchCommand.command,
+        commandArgs: launchCommand.args,
+        spawnCwd: launchCommand.cwd,
+        environment: launchCommand.environment,
         logLevel,
         onExit: (info) => this.handleProcessExit(info.workspaceId, info),
       })

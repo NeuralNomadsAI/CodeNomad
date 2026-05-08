@@ -1,6 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
+import { Component, createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js"
+import type { ConnectionProfile, RemoteServerConnectionProfile, SshConnectionProfile } from "../../../server/src/api-types"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2 } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -27,7 +28,7 @@ type HomeTab = "local" | "servers"
 
 
 interface FolderSelectionViewProps {
-  onSelectFolder: (folder: string, binaryPath?: string) => void
+  onSelectFolder: (folder: string, binaryPath?: string, options?: { executionProfileId?: string }) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
@@ -40,15 +41,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     preferences,
     updatePreferences,
     serverSettings,
-    remoteServers,
+    executionProfiles,
+    defaultExecutionProfileId,
+    lastSelectedExecutionProfileId,
+    setLastSelectedExecutionProfileId,
+    connectionProfiles,
+    saveConnectionProfile,
+    removeConnectionProfile,
     saveRemoteServerProfile,
     markRemoteServerConnected,
-    removeRemoteServerProfile,
   } = useConfig()
   const { t, locale } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
+  const [selectedExecutionProfileId, setSelectedExecutionProfileId] = createSignal<string | null>(lastSelectedExecutionProfileId() ?? defaultExecutionProfileId() ?? null)
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
   const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
@@ -61,6 +68,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
+  type ExecutionProfileOption = { value: string; label: string; subtitle: string }
 
   const languageOptions: LanguageOption[] = [
     { value: "en", label: "English" },
@@ -73,9 +81,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   ]
 
   const selectedLanguageOption = () => languageOptions.find((opt) => opt.value === locale()) ?? languageOptions[0]
+  const executionProfileOptions = createMemo<ExecutionProfileOption[]>(() =>
+    executionProfiles().map((profile) => ({
+      value: profile.id,
+      label: profile.name,
+      subtitle: profile.kind,
+    })),
+  )
+  const selectedExecutionProfileOption = createMemo(() => {
+    const options = executionProfileOptions()
+    const selectedId = selectedExecutionProfileId()
+    return options.find((option) => option.value === selectedId) ?? options[0]
+  })
   
   const folders = () => recentFolders()
-  const serverList = () => remoteServers()
+  const serverList = () => connectionProfiles()
   const isLoading = () => Boolean(props.isLoading)
   const canUseRemoteServerWindows = () => canOpenRemoteWindows()
 
@@ -88,6 +108,34 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     const lastUsed = serverSettings().opencodeBinary
     if (!lastUsed) return
     setSelectedBinary((current) => (current === lastUsed ? current : lastUsed))
+  })
+
+  createEffect(() => {
+    const options = executionProfileOptions()
+    if (options.length === 0) {
+      setSelectedExecutionProfileId(null)
+      return
+    }
+
+    const defaultId = defaultExecutionProfileId()
+    const selectedId = selectedExecutionProfileId()
+    const targetId =
+      selectedId && options.some((option) => option.value === selectedId)
+        ? selectedId
+        : lastSelectedExecutionProfileId() && options.some((option) => option.value === lastSelectedExecutionProfileId())
+          ? lastSelectedExecutionProfileId()!
+        : defaultId && options.some((option) => option.value === defaultId)
+          ? defaultId
+          : options[0]?.value
+
+    setSelectedExecutionProfileId((current) => (current === targetId ? current : targetId ?? null))
+  })
+
+  createEffect(() => {
+    const selectedId = selectedExecutionProfileId()
+    if (!selectedId) return
+    if (lastSelectedExecutionProfileId() === selectedId) return
+    setLastSelectedExecutionProfileId(selectedId)
   })
 
 
@@ -200,7 +248,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const server = serverList()[index]
     if (server) {
-      void handleConnectSavedServer(server.id)
+      void handleConnectSavedConnection(server.id)
     }
   }
 
@@ -273,7 +321,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   function handleFolderSelect(path: string) {
     if (isLoading()) return
-    props.onSelectFolder(path, selectedBinary())
+    props.onSelectFolder(path, selectedBinary(), {
+      executionProfileId: selectedExecutionProfileId() ?? undefined,
+    })
   }
 
   function resetServerDialog() {
@@ -362,13 +412,41 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
-  async function handleConnectSavedServer(id: string) {
+  async function handleConnectSavedConnection(id: string) {
     if (!canUseRemoteServerWindows()) return
-    const target = remoteServers().find((entry) => entry.id === id)
+    const target = connectionProfiles().find((entry) => entry.id === id)
     if (!target || connectingServerId()) return
     setConnectingServerId(id)
     try {
-      await probeAndOpenServer(target, true)
+      if (target.kind === "remote-server") {
+        await probeAndOpenServer(target, true)
+        return
+      }
+
+      const result = await serverApi.connectSshRemote({
+        connectionProfileId: target.id,
+        name: target.name,
+        host: target.host,
+        port: target.port,
+        username: target.username,
+        remotePath: target.remotePath,
+        remoteServerPort: target.remoteServerPort,
+        bootstrapScript: target.bootstrapScript,
+      })
+
+      const now = new Date().toISOString()
+      await saveConnectionProfile({
+        ...target,
+        updatedAt: now,
+        lastConnectedAt: now,
+      })
+
+      await openRemoteServerWindow({
+        id: target.id,
+        name: target.name,
+        baseUrl: result.baseUrl,
+        skipTlsVerify: false,
+      })
     } catch (error) {
       showAlertDialog(error instanceof Error ? error.message : String(error), {
         title: t("folderSelection.servers.errorTitle"),
@@ -377,6 +455,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } finally {
       setConnectingServerId(null)
     }
+  }
+
+  async function handleRemoveSavedConnection(profile: ConnectionProfile) {
+    if (profile.kind === "ssh") {
+      await serverApi.disconnectSshRemote(profile.id).catch(() => undefined)
+    }
+    removeConnectionProfile(profile.id)
   }
 
   async function handleBrowse() {
@@ -685,7 +770,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
                             }}
                           >
-                            {t("folderSelection.servers.count", { count: remoteServers().length })}
+                            {t("folderSelection.servers.count", { count: serverList().length })}
                           </p>
                         </button>
                       </Show>
@@ -696,7 +781,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     when={activeTab() === "local"}
                     fallback={
                       <Show
-                        when={canUseRemoteServerWindows() && remoteServers().length > 0}
+                        when={canUseRemoteServerWindows() && serverList().length > 0}
                         fallback={
                           <Show when={canUseRemoteServerWindows()}>
                             <div class="panel-empty-state flex-1">
@@ -721,7 +806,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
                           ref={(el) => (recentListRef = el)}
                         >
-                          <For each={remoteServers()}>
+                          <For each={serverList()}>
                             {(server, index) => (
                               <div
                                 class="panel-list-item"
@@ -733,7 +818,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   <button
                                     data-list-index={index()}
                                     class="panel-list-item-content flex-1"
-                                    onClick={() => void handleConnectSavedServer(server.id)}
+                                    onClick={() => void handleConnectSavedConnection(server.id)}
                                     onMouseEnter={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())
@@ -742,11 +827,18 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     <div class="flex items-center justify-between gap-3 w-full">
                                       <div class="flex-1 min-w-0 text-left">
                                         <div class="flex items-center gap-2 mb-1">
-                                          <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                          <Show when={server.kind === "remote-server"} fallback={<MonitorUp class="w-4 h-4 flex-shrink-0 icon-muted" />}>
+                                            <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                          </Show>
                                           <span class="text-sm font-medium truncate text-primary">{server.name}</span>
+                                          <span class="text-[10px] uppercase text-muted">{server.kind === "remote-server" ? "server" : "ssh"}</span>
                                         </div>
                                         <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
-                                          <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
+                                          <span class="font-mono truncate-start flex-1 min-w-0">
+                                            {server.kind === "remote-server"
+                                              ? server.baseUrl
+                                              : `${server.username ? `${server.username}@` : ""}${server.host}${server.remotePath ? ` · ${server.remotePath}` : ""}`}
+                                          </span>
                                         </div>
                                       </div>
                                       <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
@@ -755,7 +847,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     </div>
                                   </button>
                                   <button
-                                    onClick={() => removeRemoteServerProfile(server.id)}
+                                    onClick={() => void handleRemoveSavedConnection(server)}
                                     class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
                                     title={t("folderSelection.servers.remove")}
                                   >
@@ -853,7 +945,58 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <p class="panel-subtitle">{t("folderSelection.actions.subtitle")}</p>
                 </div>
 
-                <div class="panel-body flex flex-col gap-3">
+                 <div class="panel-body flex flex-col gap-3">
+                  <Show when={executionProfileOptions().length > 0}>
+                    <div class="flex flex-col gap-2">
+                      <div>
+                        <div class="text-sm font-medium text-secondary">{t("folderSelection.executionProfile.label")}</div>
+                        <div class="text-xs text-muted">{t("folderSelection.executionProfile.subtitle")}</div>
+                      </div>
+                      <Select<ExecutionProfileOption>
+                        value={selectedExecutionProfileOption()}
+                        onChange={(option) => {
+                          if (!option) return
+                          setSelectedExecutionProfileId(option.value)
+                        }}
+                        options={executionProfileOptions()}
+                        optionValue="value"
+                        optionTextValue="label"
+                        itemComponent={(itemProps) => (
+                          <Select.Item item={itemProps.item} class="selector-option">
+                            <div class="flex flex-col">
+                              <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                              <span class="text-xs text-muted uppercase">{itemProps.item.rawValue.subtitle}</span>
+                            </div>
+                          </Select.Item>
+                        )}
+                      >
+                        <Select.Trigger class="selector-trigger" aria-label={t("folderSelection.executionProfile.label")}>
+                          <div class="flex-1 min-w-0 text-left">
+                            <Select.Value<ExecutionProfileOption>>
+                              {(state) => (
+                                <div class="flex flex-col min-w-0">
+                                  <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                                    {state.selectedOption()?.label}
+                                  </span>
+                                  <span class="text-xs text-muted uppercase">{state.selectedOption()?.subtitle}</span>
+                                </div>
+                              )}
+                            </Select.Value>
+                          </div>
+                          <Select.Icon class="selector-trigger-icon">
+                            <ChevronDown class="w-3 h-3" />
+                          </Select.Icon>
+                        </Select.Trigger>
+
+                        <Select.Portal>
+                          <Select.Content class="selector-popover">
+                            <Select.Listbox class="selector-listbox" />
+                          </Select.Content>
+                        </Select.Portal>
+                      </Select>
+                    </div>
+                  </Show>
+
                   <button
                     onClick={() => void handleBrowse()}
                     disabled={props.isLoading}

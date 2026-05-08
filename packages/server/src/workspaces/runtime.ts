@@ -25,6 +25,8 @@ interface LaunchOptions {
   workspaceId: string
   folder: string
   binaryPath: string
+  commandArgs?: string[]
+  spawnCwd?: string
   environment?: Record<string, string>
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
@@ -55,7 +57,7 @@ export class WorkspaceRuntime {
     this.validateFolder(options.folder)
 
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
-    const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
+    const args = options.commandArgs ?? ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null
@@ -83,7 +85,7 @@ export class WorkspaceRuntime {
     return new Promise((resolve, reject) => {
       const propagatedEnvKeys = Object.keys(options.environment ?? {})
       const spec = buildSpawnSpec(options.binaryPath, args, {
-        cwd: options.folder,
+        cwd: options.spawnCwd ?? options.folder,
         env,
         propagateEnvKeys: propagatedEnvKeys,
         wslPidMarker: WSL_PID_MARKER,

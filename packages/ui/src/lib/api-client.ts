@@ -14,6 +14,8 @@ import type {
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
+  SshConnectionBootstrapRequest,
+  SshConnectionBootstrapResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
@@ -264,6 +266,15 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify(payload),
     })
+  },
+  connectSshRemote(payload: SshConnectionBootstrapRequest): Promise<SshConnectionBootstrapResponse> {
+    return request<SshConnectionBootstrapResponse>("/api/remote-connections/ssh/connect", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  disconnectSshRemote(id: string): Promise<void> {
+    return request(`/api/remote-connections/ssh/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   deleteRemoteProxySession(id: string): Promise<void> {
     return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })

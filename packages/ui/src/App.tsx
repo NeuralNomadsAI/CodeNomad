@@ -257,7 +257,7 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string) {
+  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { executionProfileId?: string }) {
     if (!folderPath) {
       return
     }
@@ -266,7 +266,9 @@ const App: Component = () => {
     try {
       recordWorkspaceLaunch(folderPath, selectedBinary)
       clearLaunchError()
-      const instanceId = await createInstance(folderPath, selectedBinary)
+      const instanceId = await createInstance(folderPath, selectedBinary, {
+        executionProfileId: options?.executionProfileId,
+      })
       selectInstanceTab(instanceId)
       setShowFolderSelection(false)
 
