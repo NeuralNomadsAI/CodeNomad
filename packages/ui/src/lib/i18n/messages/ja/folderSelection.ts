@@ -28,7 +28,7 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.repositoryUrl": "リポジトリ URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "保存先フォルダ",
-  "folderSelection.clone.dialog.destinationPathPlaceholder": "C:\\Users\\you\\Code\\repo",
+  "folderSelection.clone.dialog.destinationPathPlaceholder": "保存先フォルダを選択または入力",
   "folderSelection.clone.dialog.browseDestination": "参照",
   "folderSelection.clone.dialog.cleanupDestination": "保存先フォルダが既に存在する場合は先に削除します。",
   "folderSelection.clone.dialog.cancel": "キャンセル",

@@ -952,7 +952,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     type="button"
                     onClick={openCloneDialog}
                     disabled={props.isLoading}
-                    class="selector-button selector-button-secondary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
                   >
                     <div class="flex items-center gap-2">
                       <GitBranch class="w-4 h-4" />

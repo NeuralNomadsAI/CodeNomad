@@ -28,7 +28,7 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.repositoryUrl": "כתובת המאגר",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "תיקיית יעד",
-  "folderSelection.clone.dialog.destinationPathPlaceholder": "C:\\Users\\you\\Code\\repo",
+  "folderSelection.clone.dialog.destinationPathPlaceholder": "בחר או הזן תיקיית יעד",
   "folderSelection.clone.dialog.browseDestination": "עיון",
   "folderSelection.clone.dialog.cleanupDestination": "מחק תחילה את תיקיית היעד אם היא כבר קיימת.",
   "folderSelection.clone.dialog.cancel": "ביטול",

@@ -28,7 +28,7 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.repositoryUrl": "URL репозитория",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Папка назначения",
-  "folderSelection.clone.dialog.destinationPathPlaceholder": "C:\\Users\\you\\Code\\repo",
+  "folderSelection.clone.dialog.destinationPathPlaceholder": "Выберите или введите папку назначения",
   "folderSelection.clone.dialog.browseDestination": "Обзор",
   "folderSelection.clone.dialog.cleanupDestination": "Сначала удалить папку назначения, если она уже существует.",
   "folderSelection.clone.dialog.cancel": "Отмена",

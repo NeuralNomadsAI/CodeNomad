@@ -28,7 +28,7 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.repositoryUrl": "仓库 URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "目标文件夹",
-  "folderSelection.clone.dialog.destinationPathPlaceholder": "C:\\Users\\you\\Code\\repo",
+  "folderSelection.clone.dialog.destinationPathPlaceholder": "选择或输入目标文件夹",
   "folderSelection.clone.dialog.browseDestination": "浏览",
   "folderSelection.clone.dialog.cleanupDestination": "如果目标文件夹已存在，先将其删除。",
   "folderSelection.clone.dialog.cancel": "取消",

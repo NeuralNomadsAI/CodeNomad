@@ -28,7 +28,7 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.repositoryUrl": "URL du depot",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Dossier de destination",
-  "folderSelection.clone.dialog.destinationPathPlaceholder": "C:\\Users\\vous\\Code\\repo",
+  "folderSelection.clone.dialog.destinationPathPlaceholder": "Sélectionnez ou saisissez un dossier de destination",
   "folderSelection.clone.dialog.browseDestination": "Parcourir",
   "folderSelection.clone.dialog.cleanupDestination": "Supprimer d'abord le dossier de destination s'il existe deja.",
   "folderSelection.clone.dialog.cancel": "Annuler",
