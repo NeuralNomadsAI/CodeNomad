@@ -18,10 +18,13 @@ interface BuildLaunchCommandParams {
   workspacePath: string
   environment: Record<string, string>
   logLevel: string
+  reservedPort?: number
+  callbackPort?: number
 }
 
 export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchCommandSpec {
-  const openCodeArgs = ["serve", "--port", "0", "--print-logs", "--log-level", params.logLevel]
+  const openCodePort = params.execution.kind === "ssh" && params.reservedPort ? String(params.reservedPort) : "0"
+  const openCodeArgs = ["serve", "--port", openCodePort, "--print-logs", "--log-level", params.logLevel]
 
   if (params.execution.kind === "docker") {
     return buildDockerLaunchCommand(params.execution, params.workspacePath, params.environment, openCodeArgs)
@@ -36,12 +39,71 @@ export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchComm
     }
   }
 
+  if (params.execution.kind === "ssh") {
+    if (!params.reservedPort || !params.callbackPort) {
+      throw new Error("Reserved local and callback ports are required for SSH execution profiles")
+    }
+    return buildSshLaunchCommand(params.execution, params.reservedPort, params.callbackPort, params.environment, openCodeArgs)
+  }
+
   return {
     command: params.execution.path,
     args: openCodeArgs,
     cwd: params.workspacePath,
     environment: params.environment,
     wslDistro: params.execution.kind === "wsl" ? params.execution.wslDistro : undefined,
+  }
+}
+
+function buildSshLaunchCommand(
+  execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+  forwardedPort: number,
+  callbackPort: number,
+  environment: Record<string, string>,
+  openCodeArgs: string[],
+): LaunchCommandSpec {
+  const host = execution.host.trim()
+  if (!host || host.startsWith("-") || /\s/.test(host)) {
+    throw new Error("SSH host must not be empty, start with '-', or contain whitespace")
+  }
+
+  const username = execution.username?.trim()
+  if (username && (username.startsWith("-") || /[@\s]/.test(username))) {
+    throw new Error("SSH username must not start with '-' or contain '@' or whitespace")
+  }
+
+  const target = username ? `${username}@${host}` : host
+  const remoteEnvironment = rewriteSshCallbackEnvironment(environment, callbackPort)
+  const remoteCommand = [
+    "cd",
+    shellQuote(execution.remotePath),
+    "&&",
+    "env",
+    ...Object.entries(remoteEnvironment).map(([key, value]) => `${key}=${shellQuote(value)}`),
+    shellQuote(execution.binaryPath),
+    ...(execution.args ?? []).map(shellQuote),
+    ...openCodeArgs.map(shellQuote),
+  ].join(" ")
+
+  return {
+    command: "ssh",
+    args: [
+      "-p",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      "-L",
+      `127.0.0.1:${forwardedPort}:127.0.0.1:${forwardedPort}`,
+      "-R",
+      `127.0.0.1:${callbackPort}:127.0.0.1:${getUrlPort(environment.CODENOMAD_BASE_URL) ?? 9898}`,
+      target,
+      "sh",
+      "-lc",
+      remoteCommand,
+    ],
+    environment: {},
   }
 }
 
@@ -164,6 +226,43 @@ function formatCommandToken(token: string): string {
   }
 
   return /[\s"'`$&|<>()[\]{};\\]/.test(token) ? JSON.stringify(token) : token
+}
+
+function shellQuote(value: string): string {
+  if (!value) return "''"
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function rewriteSshCallbackEnvironment(environment: Record<string, string>, callbackPort: number): Record<string, string> {
+  const rewritten = { ...environment }
+  for (const key of ["CODENOMAD_BASE_URL", "OPENCODE_SERVER_BASE_URL"]) {
+    const value = rewritten[key]
+    if (!value) continue
+    rewritten[key] = rewriteUrlHostPort(value, "127.0.0.1", callbackPort)
+  }
+  return rewritten
+}
+
+function rewriteUrlHostPort(value: string, host: string, port: number): string {
+  try {
+    const url = new URL(value)
+    url.hostname = host
+    url.port = String(port)
+    return url.toString().replace(/\/$/, "")
+  } catch {
+    return value
+  }
+}
+
+function getUrlPort(value?: string): number | undefined {
+  if (!value) return undefined
+  try {
+    const url = new URL(value)
+    const parsed = Number(url.port || (url.protocol === "https:" ? 443 : 80))
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function rewriteDockerBaseUrl(input: string): string {

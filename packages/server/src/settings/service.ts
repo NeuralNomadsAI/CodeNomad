@@ -53,11 +53,24 @@ const CommandExecutionProfileSchema = z.object({
   cwdMode: z.enum(["workspace", "inherit"]).optional(),
 })
 
+const SshExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("ssh"),
+  host: z.string().trim().min(1),
+  port: z.number().int().positive().max(65535).optional(),
+  username: z.string().trim().optional(),
+  remotePath: z.string().trim().min(1),
+  binaryPath: z.string().trim().min(1),
+  args: ExecutionProfileStringListSchema.optional(),
+})
+
 const ExecutionProfileSchema = z.discriminatedUnion("kind", [
   LocalExecutionProfileSchema,
   WslExecutionProfileSchema,
   DockerExecutionProfileSchema,
   CommandExecutionProfileSchema,
+  SshExecutionProfileSchema,
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

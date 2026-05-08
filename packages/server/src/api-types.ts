@@ -14,7 +14,7 @@ import type {
 
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
-export type ExecutionProfileKind = "local" | "wsl" | "docker" | "command"
+export type ExecutionProfileKind = "local" | "wsl" | "docker" | "command" | "ssh"
 export type ExecutionProfileCwdMode = "workspace" | "inherit"
 
 export interface ExecutionProfileBase {
@@ -50,7 +50,17 @@ export interface CommandExecutionProfile extends ExecutionProfileBase {
   cwdMode?: ExecutionProfileCwdMode
 }
 
-export type ExecutionProfile = LocalExecutionProfile | WslExecutionProfile | DockerExecutionProfile | CommandExecutionProfile
+export interface SshExecutionProfile extends ExecutionProfileBase {
+  kind: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath: string
+  binaryPath: string
+  args?: string[]
+}
+
+export type ExecutionProfile = LocalExecutionProfile | WslExecutionProfile | DockerExecutionProfile | CommandExecutionProfile | SshExecutionProfile
 
 export interface ExecutionProfilePreviewRequest {
   profile: ExecutionProfile

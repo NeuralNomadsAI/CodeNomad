@@ -34,6 +34,8 @@ function buildProfileSummary(profile: ExecutionProfile): string {
       return `${profile.image} · ${profile.workspaceMountPath}`
     case "command":
       return profile.executable
+    case "ssh":
+      return `${profile.username ? `${profile.username}@` : ""}${profile.host}${profile.port ? `:${profile.port}` : ""} · ${profile.remotePath}`
   }
 }
 
@@ -75,6 +77,10 @@ export const ExecutionProfilesSettingsSection: Component = () => {
   const [executable, setExecutable] = createSignal("")
   const [argsText, setArgsText] = createSignal("")
   const [cwdMode, setCwdMode] = createSignal<"workspace" | "inherit">("workspace")
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshPort, setSshPort] = createSignal("22")
+  const [sshUsername, setSshUsername] = createSignal("")
+  const [sshRemotePath, setSshRemotePath] = createSignal("")
   const [previewWorkspacePath, setPreviewWorkspacePath] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [previewing, setPreviewing] = createSignal(false)
@@ -90,6 +96,7 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     { value: "wsl" as const, label: t("settings.opencode.executionProfiles.kind.wsl") },
     { value: "docker" as const, label: t("settings.opencode.executionProfiles.kind.docker") },
     { value: "command" as const, label: t("settings.opencode.executionProfiles.kind.command") },
+    { value: "ssh" as const, label: t("settings.opencode.executionProfiles.kind.ssh") },
   ])
 
   createEffect(() => {
@@ -105,6 +112,10 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     executable()
     argsText()
     cwdMode()
+    sshHost()
+    sshPort()
+    sshUsername()
+    sshRemotePath()
     previewWorkspacePath()
     setPreviewError(null)
     setTestError(null)
@@ -116,7 +127,7 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     setEditingId(profile?.id ?? null)
     setKind(profile?.kind ?? "local")
     setName(profile?.name ?? "")
-    setBinaryPath(profile?.kind === "local" || profile?.kind === "wsl" ? profile.binaryPath : "")
+    setBinaryPath(profile?.kind === "local" || profile?.kind === "wsl" || profile?.kind === "ssh" ? profile.binaryPath : "")
     setDistro(profile?.kind === "wsl" ? profile.distro : "")
     setImage(profile?.kind === "docker" ? profile.image : "")
     setWorkspaceMountPath(profile?.kind === "docker" ? profile.workspaceMountPath : "/workspace")
@@ -124,8 +135,12 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     setCommandText(profile?.kind === "docker" ? formatStringList(profile.command) : "")
     setExtraDockerArgsText(profile?.kind === "docker" ? formatStringList(profile.extraDockerArgs) : "")
     setExecutable(profile?.kind === "command" ? profile.executable : "")
-    setArgsText(profile?.kind === "command" ? formatStringList(profile.args) : "")
+    setArgsText(profile?.kind === "command" || profile?.kind === "ssh" ? formatStringList(profile.args) : "")
     setCwdMode(profile?.kind === "command" ? profile.cwdMode ?? "workspace" : "workspace")
+    setSshHost(profile?.kind === "ssh" ? profile.host : "")
+    setSshPort(profile?.kind === "ssh" ? String(profile.port ?? 22) : "22")
+    setSshUsername(profile?.kind === "ssh" ? profile.username ?? "" : "")
+    setSshRemotePath(profile?.kind === "ssh" ? profile.remotePath : "")
     setPreviewWorkspacePath("")
     setFormError(null)
   }
@@ -187,6 +202,36 @@ export const ExecutionProfilesSettingsSection: Component = () => {
         configMountPath: trimmedConfigMountPath,
         command: parseStringList(commandText()),
         extraDockerArgs: parseStringList(extraDockerArgsText()),
+      }
+    }
+
+    if (kind() === "ssh") {
+      const trimmedHost = requireValue(sshHost())
+      const trimmedRemotePath = requireValue(sshRemotePath())
+      const trimmedBinaryPath = requireValue(binaryPath())
+      const nextPort = sshPort().trim().length > 0 ? Number(sshPort()) : undefined
+      if (!trimmedHost) {
+        throw new Error(t("settings.opencode.executionProfiles.validation.sshHost"))
+      }
+      if (nextPort !== undefined && (!Number.isInteger(nextPort) || nextPort <= 0 || nextPort > 65535)) {
+        throw new Error(t("settings.opencode.executionProfiles.validation.sshPort"))
+      }
+      if (!trimmedRemotePath) {
+        throw new Error(t("settings.opencode.executionProfiles.validation.sshRemotePath"))
+      }
+      if (!trimmedBinaryPath) {
+        throw new Error(t("settings.opencode.executionProfiles.validation.binaryPath"))
+      }
+      return {
+        id: editingId() ?? createProfileId(),
+        kind: "ssh",
+        name: trimmedName,
+        host: trimmedHost,
+        port: nextPort,
+        username: sshUsername().trim() || undefined,
+        remotePath: trimmedRemotePath,
+        binaryPath: trimmedBinaryPath,
+        args: parseStringList(argsText()),
       }
     }
 
@@ -319,13 +364,52 @@ export const ExecutionProfilesSettingsSection: Component = () => {
             <input class="selector-input w-full max-w-xs" value={name()} placeholder={t("settings.opencode.executionProfiles.form.name.placeholder")} onInput={(event) => setName(event.currentTarget.value)} />
           </div>
 
-          <Show when={kind() === "local" || kind() === "wsl"}>
+          <Show when={kind() === "local" || kind() === "wsl" || kind() === "ssh"}>
             <div class="settings-toggle-row settings-toggle-row-compact">
               <div>
                 <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.binaryPath.label")}</div>
                 <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.binaryPath.subtitle")}</div>
               </div>
               <input class="selector-input w-full max-w-xs" value={binaryPath()} placeholder={t("settings.opencode.executionProfiles.form.binaryPath.placeholder")} onInput={(event) => setBinaryPath(event.currentTarget.value)} />
+            </div>
+          </Show>
+
+          <Show when={kind() === "ssh"}>
+            <div class="settings-toggle-row settings-toggle-row-compact">
+              <div>
+                <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.sshHost.label")}</div>
+                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.sshHost.subtitle")}</div>
+              </div>
+              <input class="selector-input w-full max-w-xs" value={sshHost()} placeholder={t("settings.opencode.executionProfiles.form.sshHost.placeholder")} onInput={(event) => setSshHost(event.currentTarget.value)} />
+            </div>
+
+            <div class="settings-toggle-row settings-toggle-row-compact">
+              <div>
+                <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.sshPort.label")}</div>
+                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.sshPort.subtitle")}</div>
+              </div>
+              <input class="selector-input w-full max-w-xs" value={sshPort()} inputMode="numeric" placeholder={t("settings.opencode.executionProfiles.form.sshPort.placeholder")} onInput={(event) => setSshPort(event.currentTarget.value)} />
+            </div>
+
+            <div class="settings-toggle-row settings-toggle-row-compact">
+              <div>
+                <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.sshUsername.label")}</div>
+                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.sshUsername.subtitle")}</div>
+              </div>
+              <input class="selector-input w-full max-w-xs" value={sshUsername()} placeholder={t("settings.opencode.executionProfiles.form.sshUsername.placeholder")} onInput={(event) => setSshUsername(event.currentTarget.value)} />
+            </div>
+
+            <div class="settings-toggle-row settings-toggle-row-compact">
+              <div>
+                <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.sshRemotePath.label")}</div>
+                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.sshRemotePath.subtitle")}</div>
+              </div>
+              <input class="selector-input w-full max-w-xs" value={sshRemotePath()} placeholder={t("settings.opencode.executionProfiles.form.sshRemotePath.placeholder")} onInput={(event) => setSshRemotePath(event.currentTarget.value)} />
+            </div>
+
+            <div class="settings-form-group">
+              <label class="settings-form-label">{t("settings.opencode.executionProfiles.form.args.label")}</label>
+              <textarea class="selector-input w-full min-h-[6rem]" value={argsText()} placeholder={t("settings.opencode.executionProfiles.form.args.placeholder")} onInput={(event) => setArgsText(event.currentTarget.value)} />
             </div>
           </Show>
 

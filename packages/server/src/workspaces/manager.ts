@@ -1,6 +1,6 @@
 import path from "path"
 import { spawnSync } from "child_process"
-import { connect } from "net"
+import { connect, createServer } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
 import type { BinaryResolver } from "../settings/binaries"
@@ -95,7 +95,7 @@ export class WorkspaceManager {
     const id = `${Date.now().toString(36)}`
     const execution = this.options.binaryResolver.resolveActive(options?.executionProfileId)
     const resolvedBinaryPath = this.resolveBinaryPath(
-      execution.kind === "command" ? execution.executable : execution.kind === "docker" ? "docker" : execution.path,
+      execution.kind === "command" ? execution.executable : execution.kind === "docker" ? "docker" : execution.kind === "ssh" ? "ssh" : execution.path,
     )
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
@@ -154,11 +154,15 @@ export class WorkspaceManager {
     }
 
     const logLevel = (serverConfig as any)?.logLevel
+    const reservedPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
+    const callbackPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
     const launchCommand = buildLaunchCommand({
       execution,
       workspacePath,
       environment,
       logLevel: typeof logLevel === "string" ? logLevel.toUpperCase() : "DEBUG",
+      reservedPort,
+      callbackPort,
     })
 
     let launchedPid: number | undefined
@@ -471,6 +475,29 @@ export class WorkspaceManager {
       }
 
       tryConnect()
+    })
+  }
+
+  private async getAvailablePort(): Promise<number> {
+    return await new Promise<number>((resolve, reject) => {
+      const server = createServer()
+      server.unref()
+      server.once("error", reject)
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address()
+        if (!address || typeof address === "string") {
+          server.close(() => reject(new Error("Failed to reserve a local port for SSH execution profile")))
+          return
+        }
+        const port = address.port
+        server.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve(port)
+        })
+      })
     })
   }
 

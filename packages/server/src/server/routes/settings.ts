@@ -56,6 +56,17 @@ const ExecutionProfileSchema = z.discriminatedUnion("kind", [
     args: z.array(z.string().trim().min(1)).optional(),
     cwdMode: z.enum(["workspace", "inherit"]).optional(),
   }),
+  z.object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    kind: z.literal("ssh"),
+    host: z.string().trim().min(1),
+    port: z.number().int().positive().max(65535).optional(),
+    username: z.string().trim().optional(),
+    remotePath: z.string().trim().min(1),
+    binaryPath: z.string().trim().min(1),
+    args: z.array(z.string().trim().min(1)).optional(),
+  }),
 ])
 
 const ExecutionProfilePreviewSchema = z.object({
@@ -162,6 +173,14 @@ function buildRequestBaseUrl(request: FastifyRequest): string {
   return `${request.protocol}://${host}`.replace(/\/+$/, "")
 }
 
+function getPreviewReservedPort(profile: z.infer<typeof ExecutionProfileSchema>): number | undefined {
+  return profile.kind === "ssh" ? 17600 : undefined
+}
+
+function getPreviewCallbackPort(profile: z.infer<typeof ExecutionProfileSchema>): number | undefined {
+  return profile.kind === "ssh" ? 17601 : undefined
+}
+
 function buildExecutionProfilePreview(
   input: z.infer<typeof ExecutionProfilePreviewSchema>,
   options: { settings: SettingsService; requestBaseUrl: string },
@@ -191,13 +210,24 @@ function buildExecutionProfilePreview(
               command: input.profile.command,
               extraDockerArgs: input.profile.extraDockerArgs,
             }
-          : {
-              kind: "command" as const,
-              label: input.profile.name,
-              executable: input.profile.executable,
-              args: input.profile.args,
-              cwdMode: input.profile.cwdMode,
-            }
+          : input.profile.kind === "command"
+            ? {
+                kind: "command" as const,
+                label: input.profile.name,
+                executable: input.profile.executable,
+                args: input.profile.args,
+                cwdMode: input.profile.cwdMode,
+              }
+            : {
+                kind: "ssh" as const,
+                label: input.profile.name,
+                host: input.profile.host,
+                port: input.profile.port,
+                username: input.profile.username,
+                remotePath: input.profile.remotePath,
+                binaryPath: input.profile.binaryPath,
+                args: input.profile.args,
+              }
 
   const userEnvironment = readConfiguredServerEnvironment(options.settings)
   const previewInstanceId = "preview-instance"
@@ -222,6 +252,8 @@ function buildExecutionProfilePreview(
     workspacePath,
     environment,
     logLevel: readConfiguredLogLevel(options.settings),
+    reservedPort: getPreviewReservedPort(input.profile),
+    callbackPort: getPreviewCallbackPort(input.profile),
   })
 
   const redactedArgs = redactPreviewArgs(launch.args)
@@ -245,7 +277,9 @@ function testExecutionProfile(
       ? validateDockerImage(input.profile.image)
       : input.profile.kind === "command"
         ? validateBinaryPath(input.profile.executable)
-        : validateBinaryPath(input.profile.binaryPath, input.profile.kind === "wsl" ? { wslDistro: input.profile.distro } : {})
+        : input.profile.kind === "ssh"
+          ? validateBinaryPath("ssh")
+          : validateBinaryPath(input.profile.binaryPath, input.profile.kind === "wsl" ? { wslDistro: input.profile.distro } : {})
 
   return {
     ...preview,

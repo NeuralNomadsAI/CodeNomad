@@ -5,6 +5,7 @@ import type {
   ExecutionProfile,
   ExecutionProfileKind,
   LocalExecutionProfile,
+  SshExecutionProfile,
   WslExecutionProfile,
 } from "../api-types"
 
@@ -45,7 +46,17 @@ export interface ResolvedCommandExecution extends ResolvedExecutionBase {
   cwdMode?: "workspace" | "inherit"
 }
 
-export type ResolvedBinary = ResolvedHostExecution | ResolvedDockerExecution | ResolvedCommandExecution
+export interface ResolvedSshExecution extends ResolvedExecutionBase {
+  kind: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath: string
+  binaryPath: string
+  args?: string[]
+}
+
+export type ResolvedBinary = ResolvedHostExecution | ResolvedDockerExecution | ResolvedCommandExecution | ResolvedSshExecution
 
 function prettyLabel(p: string): string {
   const parts = p.split(/[\\/]/)
@@ -147,7 +158,11 @@ export class BinaryResolver {
       return this.resolveDockerProfile(profile, shared)
     }
 
-    return this.resolveCommandProfile(profile, shared)
+    if (profile.kind === "command") {
+      return this.resolveCommandProfile(profile, shared)
+    }
+
+    return this.resolveSshProfile(profile, shared)
   }
 
   private resolveLocalProfile(profile: LocalExecutionProfile, shared: Omit<ResolvedHostExecution, "kind" | "path">): ResolvedHostExecution {
@@ -186,6 +201,19 @@ export class BinaryResolver {
       executable: profile.executable,
       args: profile.args,
       cwdMode: profile.cwdMode,
+    }
+  }
+
+  private resolveSshProfile(profile: SshExecutionProfile, shared: Omit<ResolvedSshExecution, "kind" | "host" | "remotePath" | "binaryPath">): ResolvedSshExecution {
+    return {
+      ...shared,
+      kind: "ssh",
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      remotePath: profile.remotePath,
+      binaryPath: profile.binaryPath,
+      args: profile.args,
     }
   }
 }

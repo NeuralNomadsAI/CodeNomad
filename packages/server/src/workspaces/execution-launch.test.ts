@@ -64,6 +64,37 @@ describe("buildLaunchCommand", () => {
     assert.deepEqual(result.args.slice(-6), ["serve", "--port", "0", "--print-logs", "--log-level", "INFO"])
   })
 
+  it("builds an SSH execution profile launch with forward and reverse tunnels", () => {
+    const execution: ResolvedBinary = {
+      kind: "ssh",
+      label: "SSH Linux",
+      host: "vm.example.com",
+      port: 2222,
+      username: "ubuntu",
+      remotePath: "/srv/project",
+      binaryPath: "opencode",
+    }
+
+    const result = buildLaunchCommand({
+      execution,
+      workspacePath: "/unused/local/path",
+      environment: {
+        CODENOMAD_BASE_URL: "http://127.0.0.1:9898",
+        OPENCODE_SERVER_BASE_URL: "http://127.0.0.1:9898/workspaces/abc/worktrees/root/instance",
+      },
+      logLevel: "DEBUG",
+      reservedPort: 17600,
+      callbackPort: 17601,
+    })
+
+    assert.equal(result.command, "ssh")
+    assert.ok(result.args.includes("127.0.0.1:17600:127.0.0.1:17600"))
+    assert.ok(result.args.includes("127.0.0.1:17601:127.0.0.1:9898"))
+    assert.ok(result.args.includes("ubuntu@vm.example.com"))
+    assert.ok(result.args.some((arg) => arg.includes("opencode") && arg.includes("--port") && arg.includes("17600")))
+    assert.ok(result.args.some((arg) => arg.includes("OPENCODE_SERVER_BASE_URL='http://127.0.0.1:17601/workspaces/abc/worktrees/root/instance'")))
+  })
+
   it("formats preview command lines with quoting", () => {
     assert.equal(formatCommandLine("docker", ["run", "C:/Program Files/OpenCode/opencode.exe", "--flag"]), 'docker run "C:/Program Files/OpenCode/opencode.exe" --flag')
   })

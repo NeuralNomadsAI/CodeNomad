@@ -152,6 +152,40 @@ describe("BinaryResolver", () => {
     })
   })
 
+  it("resolves an SSH execution profile", () => {
+    const profile: ExecutionProfile = {
+      id: "ssh-linux",
+      name: "SSH Linux",
+      kind: "ssh",
+      host: "vm.example.com",
+      port: 2222,
+      username: "ubuntu",
+      remotePath: "/srv/project",
+      binaryPath: "opencode",
+      args: ["--experimental"],
+    }
+
+    const resolver = new BinaryResolver(
+      createSettings({
+        server: { executionProfiles: [profile] },
+      }) as any,
+    )
+
+    assert.deepEqual(resolver.resolveActive(profile.id), {
+      kind: "ssh",
+      label: "SSH Linux",
+      host: "vm.example.com",
+      port: 2222,
+      username: "ubuntu",
+      remotePath: "/srv/project",
+      binaryPath: "opencode",
+      args: ["--experimental"],
+      executionProfileId: "ssh-linux",
+      executionProfileName: "SSH Linux",
+      executionProfileKind: "ssh",
+    })
+  })
+
   it("throws when an explicit execution profile id does not exist", () => {
     const resolver = new BinaryResolver(createSettings() as any)
     assert.throws(() => resolver.resolveActive("missing-profile"), /Execution profile not found/)
