@@ -3,6 +3,8 @@ import type {
   BackgroundProcessListResponse,
   BackgroundProcessOutputResponse,
   BinaryValidationResult,
+  ExecutionProfilePreviewRequest,
+  ExecutionProfilePreviewResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
   FileSystemListResponse,
@@ -396,6 +398,12 @@ export const serverApi = {
     return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
+    })
+  },
+  previewExecutionProfile(payload: ExecutionProfilePreviewRequest): Promise<ExecutionProfilePreviewResponse> {
+    return request<ExecutionProfilePreviewResponse>("/api/storage/execution-profiles/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ResolvedBinary } from "../settings/binaries"
-import { buildLaunchCommand } from "./execution-launch"
+import { buildLaunchCommand, buildLaunchPreview, formatCommandLine } from "./execution-launch"
 
 describe("buildLaunchCommand", () => {
   it("builds a command execution profile launch", () => {
@@ -60,4 +60,41 @@ describe("buildLaunchCommand", () => {
     assert.ok(result.args.includes("NODE_EXTRA_CA_CERTS=/tmp/codenomad-node-extra-ca.pem"))
     assert.deepEqual(result.args.slice(-6), ["serve", "--port", "0", "--print-logs", "--log-level", "INFO"])
   })
+
+  it("formats preview command lines with quoting", () => {
+    assert.equal(formatCommandLine("docker", ["run", "C:/Program Files/OpenCode/opencode.exe", "--flag"]), 'docker run "C:/Program Files/OpenCode/opencode.exe" --flag')
+  })
+
+  if (process.platform === "win32") {
+    it("builds a WSL preview using the actual spawn command", () => {
+      const execution: ResolvedBinary = {
+        kind: "wsl",
+        label: "Ubuntu",
+        path: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      }
+
+      const result = buildLaunchPreview({
+        execution,
+        workspacePath: String.raw`D:\CodeNomad`,
+        environment: {
+          OPENCODE_CONFIG_DIR: String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\opencode-config`,
+          CODENOMAD_INSTANCE_ID: "preview-instance",
+          OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:9898/workspaces/preview-instance/worktrees/root/instance",
+          OPENCODE_SERVER_PASSWORD: "REDACTED",
+        },
+        logLevel: "DEBUG",
+      })
+
+      assert.equal(result.command, "wsl.exe")
+      assert.deepEqual(result.args.slice(0, 6), [
+        "--distribution",
+        "Ubuntu",
+        "--exec",
+        "sh",
+        "-lc",
+        'printf \'%s%s\\n\' \'__CODENOMAD_WSL_PID__:\' "$$" && cd "$(wslpath -au "$1")" && shift && exec "$@"',
+      ])
+      assert.equal(result.environment?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
+    })
+  }
 })

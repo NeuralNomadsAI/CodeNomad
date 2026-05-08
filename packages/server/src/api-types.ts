@@ -52,6 +52,19 @@ export interface CommandExecutionProfile extends ExecutionProfileBase {
 
 export type ExecutionProfile = LocalExecutionProfile | WslExecutionProfile | DockerExecutionProfile | CommandExecutionProfile
 
+export interface ExecutionProfilePreviewRequest {
+  profile: ExecutionProfile
+  workspacePath?: string
+}
+
+export interface ExecutionProfilePreviewResponse {
+  command: string
+  args: string[]
+  commandLine: string
+  cwd?: string
+  environment: Record<string, string>
+}
+
 export interface WorkspaceDescriptor {
   id: string
   /** Absolute path on the server host. */

@@ -3,6 +3,7 @@ import path from "path"
 
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
+export const WSL_PID_MARKER = "__CODENOMAD_WSL_PID__:"
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i

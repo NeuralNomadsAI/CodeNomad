@@ -4,10 +4,9 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-import { buildSpawnSpec, buildWslSignalSpec } from "./spawn"
+import { buildSpawnSpec, buildWslSignalSpec, WSL_PID_MARKER } from "./spawn"
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
-const WSL_PID_MARKER = "__CODENOMAD_WSL_PID__:"
 
 function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const redacted: Record<string, string | undefined> = {}

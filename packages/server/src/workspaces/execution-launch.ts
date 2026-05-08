@@ -1,5 +1,6 @@
 import { URL } from "url"
 import type { ResolvedBinary } from "../settings/binaries"
+import { buildSpawnSpec, WSL_PID_MARKER } from "./spawn"
 
 const DOCKER_HOST_ALIAS = "host.docker.internal"
 const DOCKER_CA_CERT_PATH = "/tmp/codenomad-node-extra-ca.pem"
@@ -40,6 +41,29 @@ export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchComm
     cwd: params.workspacePath,
     environment: params.environment,
   }
+}
+
+export function buildLaunchPreview(params: BuildLaunchCommandParams): LaunchCommandSpec {
+  const launch = buildLaunchCommand(params)
+  const explicitEnvironment = launch.environment ?? {}
+  const mergedEnvironment = { ...process.env, ...explicitEnvironment }
+  const spawnSpec = buildSpawnSpec(launch.command, launch.args, {
+    cwd: launch.cwd,
+    env: mergedEnvironment,
+    propagateEnvKeys: Object.keys(explicitEnvironment),
+    wslPidMarker: WSL_PID_MARKER,
+  })
+
+  return {
+    command: spawnSpec.command,
+    args: spawnSpec.args,
+    cwd: spawnSpec.cwd,
+    environment: collectPreviewEnvironment(explicitEnvironment, mergedEnvironment, spawnSpec.env),
+  }
+}
+
+export function formatCommandLine(command: string, args: string[]): string {
+  return [command, ...args].map(formatCommandToken).join(" ")
 }
 
 function buildDockerLaunchCommand(
@@ -99,6 +123,43 @@ function buildDockerLaunchCommand(
     command: "docker",
     args: dockerArgs,
   }
+}
+
+function collectPreviewEnvironment(
+  explicitEnvironment: Record<string, string>,
+  mergedEnvironment: NodeJS.ProcessEnv,
+  spawnEnvironment: NodeJS.ProcessEnv | undefined,
+): Record<string, string> {
+  const previewKeys = new Set(Object.keys(explicitEnvironment))
+
+  if (spawnEnvironment) {
+    for (const [key, value] of Object.entries(spawnEnvironment)) {
+      if (typeof value !== "string") {
+        continue
+      }
+      if (value !== mergedEnvironment[key]) {
+        previewKeys.add(key)
+      }
+    }
+  }
+
+  const previewEnvironment: Record<string, string> = {}
+  for (const key of previewKeys) {
+    const value = spawnEnvironment?.[key] ?? mergedEnvironment[key]
+    if (typeof value === "string") {
+      previewEnvironment[key] = value
+    }
+  }
+
+  return previewEnvironment
+}
+
+function formatCommandToken(token: string): string {
+  if (!token) {
+    return '""'
+  }
+
+  return /[\s"'`$&|<>()[\]{};\\]/.test(token) ? JSON.stringify(token) : token
 }
 
 function rewriteDockerBaseUrl(input: string): string {

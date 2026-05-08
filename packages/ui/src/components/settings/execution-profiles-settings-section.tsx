@@ -1,6 +1,7 @@
-import { createMemo, createSignal, For, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { Pencil, Plus, Star, Trash2 } from "lucide-solid"
-import type { ExecutionProfile } from "../../../../server/src/api-types"
+import type { ExecutionProfile, ExecutionProfilePreviewResponse } from "../../../../server/src/api-types"
+import { serverApi } from "../../lib/api-client"
 import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 
@@ -36,6 +37,13 @@ function buildProfileSummary(profile: ExecutionProfile): string {
   }
 }
 
+function formatPreviewEnvironment(environment: Record<string, string>): string {
+  return Object.entries(environment)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n")
+}
+
 export const ExecutionProfilesSettingsSection: Component = () => {
   const { t } = useI18n()
   const {
@@ -59,8 +67,12 @@ export const ExecutionProfilesSettingsSection: Component = () => {
   const [executable, setExecutable] = createSignal("")
   const [argsText, setArgsText] = createSignal("")
   const [cwdMode, setCwdMode] = createSignal<"workspace" | "inherit">("workspace")
+  const [previewWorkspacePath, setPreviewWorkspacePath] = createSignal("")
   const [saving, setSaving] = createSignal(false)
+  const [previewing, setPreviewing] = createSignal(false)
   const [formError, setFormError] = createSignal<string | null>(null)
+  const [previewError, setPreviewError] = createSignal<string | null>(null)
+  const [previewResult, setPreviewResult] = createSignal<ExecutionProfilePreviewResponse | null>(null)
 
   const kindOptions = createMemo(() => [
     { value: "local" as const, label: t("settings.opencode.executionProfiles.kind.local") },
@@ -68,6 +80,24 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     { value: "docker" as const, label: t("settings.opencode.executionProfiles.kind.docker") },
     { value: "command" as const, label: t("settings.opencode.executionProfiles.kind.command") },
   ])
+
+  createEffect(() => {
+    kind()
+    name()
+    binaryPath()
+    distro()
+    image()
+    workspaceMountPath()
+    configMountPath()
+    commandText()
+    extraDockerArgsText()
+    executable()
+    argsText()
+    cwdMode()
+    previewWorkspacePath()
+    setPreviewError(null)
+    setPreviewResult(null)
+  })
 
   function resetForm(profile?: ExecutionProfile) {
     setEditingId(profile?.id ?? null)
@@ -83,6 +113,7 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     setExecutable(profile?.kind === "command" ? profile.executable : "")
     setArgsText(profile?.kind === "command" ? formatStringList(profile.args) : "")
     setCwdMode(profile?.kind === "command" ? profile.cwdMode ?? "workspace" : "workspace")
+    setPreviewWorkspacePath("")
     setFormError(null)
   }
 
@@ -90,53 +121,51 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     return value.trim().length > 0 ? value.trim() : null
   }
 
-  async function handleSave() {
+  function buildProfileFromForm(): ExecutionProfile {
     const trimmedName = requireValue(name())
     if (!trimmedName) {
-      setFormError(t("settings.opencode.executionProfiles.validation.name"))
-      return
+      throw new Error(t("settings.opencode.executionProfiles.validation.name"))
     }
 
-    let profile: ExecutionProfile | null = null
     if (kind() === "local") {
       const trimmedBinaryPath = requireValue(binaryPath())
       if (!trimmedBinaryPath) {
-        setFormError(t("settings.opencode.executionProfiles.validation.binaryPath"))
-        return
+        throw new Error(t("settings.opencode.executionProfiles.validation.binaryPath"))
       }
-      profile = {
+      return {
         id: editingId() ?? createProfileId(),
         kind: "local",
         name: trimmedName,
         binaryPath: trimmedBinaryPath,
       }
-    } else if (kind() === "wsl") {
+    }
+
+    if (kind() === "wsl") {
       const trimmedDistro = requireValue(distro())
       const trimmedBinaryPath = requireValue(binaryPath())
       if (!trimmedDistro) {
-        setFormError(t("settings.opencode.executionProfiles.validation.distro"))
-        return
+        throw new Error(t("settings.opencode.executionProfiles.validation.distro"))
       }
       if (!trimmedBinaryPath) {
-        setFormError(t("settings.opencode.executionProfiles.validation.binaryPath"))
-        return
+        throw new Error(t("settings.opencode.executionProfiles.validation.binaryPath"))
       }
-      profile = {
+      return {
         id: editingId() ?? createProfileId(),
         kind: "wsl",
         name: trimmedName,
         distro: trimmedDistro,
         binaryPath: trimmedBinaryPath,
       }
-    } else if (kind() === "docker") {
+    }
+
+    if (kind() === "docker") {
       const trimmedImage = requireValue(image())
       const trimmedWorkspaceMountPath = requireValue(workspaceMountPath())
       const trimmedConfigMountPath = requireValue(configMountPath())
       if (!trimmedImage || !trimmedWorkspaceMountPath || !trimmedConfigMountPath) {
-        setFormError(t("settings.opencode.executionProfiles.validation.docker"))
-        return
+        throw new Error(t("settings.opencode.executionProfiles.validation.docker"))
       }
-      profile = {
+      return {
         id: editingId() ?? createProfileId(),
         kind: "docker",
         name: trimmedName,
@@ -146,24 +175,33 @@ export const ExecutionProfilesSettingsSection: Component = () => {
         command: parseStringList(commandText()),
         extraDockerArgs: parseStringList(extraDockerArgsText()),
       }
-    } else {
-      const trimmedExecutable = requireValue(executable())
-      if (!trimmedExecutable) {
-        setFormError(t("settings.opencode.executionProfiles.validation.executable"))
-        return
-      }
-      profile = {
-        id: editingId() ?? createProfileId(),
-        kind: "command",
-        name: trimmedName,
-        executable: trimmedExecutable,
-        args: parseStringList(argsText()),
-        cwdMode: cwdMode(),
-      }
+    }
+
+    const trimmedExecutable = requireValue(executable())
+    if (!trimmedExecutable) {
+      throw new Error(t("settings.opencode.executionProfiles.validation.executable"))
+    }
+    return {
+      id: editingId() ?? createProfileId(),
+      kind: "command",
+      name: trimmedName,
+      executable: trimmedExecutable,
+      args: parseStringList(argsText()),
+      cwdMode: cwdMode(),
+    }
+  }
+
+  async function handleSave() {
+    let profile: ExecutionProfile
+    setFormError(null)
+    try {
+      profile = buildProfileFromForm()
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : String(error))
+      return
     }
 
     setSaving(true)
-    setFormError(null)
     try {
       await saveExecutionProfile(profile)
       resetForm()
@@ -171,6 +209,33 @@ export const ExecutionProfilesSettingsSection: Component = () => {
       setFormError(error instanceof Error ? error.message : String(error))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handlePreview() {
+    let profile: ExecutionProfile
+    setFormError(null)
+    setPreviewError(null)
+
+    try {
+      profile = buildProfileFromForm()
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : String(error))
+      return
+    }
+
+    setPreviewing(true)
+    try {
+      const result = await serverApi.previewExecutionProfile({
+        profile,
+        workspacePath: requireValue(previewWorkspacePath()) ?? undefined,
+      })
+      setPreviewResult(result)
+    } catch (error) {
+      setPreviewResult(null)
+      setPreviewError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPreviewing(false)
     }
   }
 
@@ -286,8 +351,20 @@ export const ExecutionProfilesSettingsSection: Component = () => {
             </div>
           </Show>
 
+          <div class="settings-toggle-row settings-toggle-row-compact">
+            <div>
+              <div class="settings-toggle-title">{t("settings.opencode.executionProfiles.form.previewWorkspacePath.label")}</div>
+              <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.form.previewWorkspacePath.subtitle")}</div>
+            </div>
+            <input class="selector-input w-full max-w-xs" value={previewWorkspacePath()} placeholder={t("settings.opencode.executionProfiles.form.previewWorkspacePath.placeholder")} onInput={(event) => setPreviewWorkspacePath(event.currentTarget.value)} />
+          </div>
+
           <Show when={formError()}>
             <div class="settings-error-message">{formError()}</div>
+          </Show>
+
+          <Show when={previewError()}>
+            <div class="settings-error-message">{previewError()}</div>
           </Show>
 
           <div class="flex justify-end gap-2 mt-4">
@@ -296,13 +373,42 @@ export const ExecutionProfilesSettingsSection: Component = () => {
                 {t("settings.opencode.executionProfiles.form.cancelEdit")}
               </button>
             </Show>
-            <button type="button" class="selector-button selector-button-primary" disabled={saving()} onClick={() => void handleSave()}>
+            <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing()} onClick={() => void handlePreview()}>
+              <span>{previewing() ? t("settings.opencode.executionProfiles.form.previewing") : t("settings.opencode.executionProfiles.form.preview")}</span>
+            </button>
+            <button type="button" class="selector-button selector-button-primary" disabled={saving() || previewing()} onClick={() => void handleSave()}>
               <Show when={saving()} fallback={<Plus class="w-4 h-4" />}>
                 <Plus class="w-4 h-4" />
               </Show>
               <span>{editingId() ? t("settings.opencode.executionProfiles.form.update") : t("settings.opencode.executionProfiles.form.save")}</span>
             </button>
           </div>
+
+          <Show when={previewResult()}>
+            {(result) => (
+              <div class="settings-form-group mt-4">
+                <div class="settings-form-label">{t("settings.opencode.executionProfiles.preview.title")}</div>
+                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.preview.subtitle")}</div>
+
+                <div class="mt-3 rounded-lg border border-base bg-surface-secondary p-3 flex flex-col gap-3">
+                  <div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.commandLine")}</div>
+                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().commandLine}</pre>
+                  </div>
+
+                  <div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.cwd")}</div>
+                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().cwd ?? t("settings.opencode.executionProfiles.preview.cwd.inherit")}</pre>
+                  </div>
+
+                  <div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.environment")}</div>
+                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{formatPreviewEnvironment(result().environment)}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Show>
         </div>
       </div>
 
