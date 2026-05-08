@@ -1,4 +1,4 @@
-import { mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import { isSelectablePrimaryAgent, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -236,8 +236,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
   const instanceAgents = agents().get(instanceId) || []
-  const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
-  const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
+  const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
+  const selectedAgent = agent || (primaryAgents.length > 0 ? primaryAgents[0].name : "")
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
 
