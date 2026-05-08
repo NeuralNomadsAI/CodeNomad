@@ -943,6 +943,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                               : `${server.username ? `${server.username}@` : ""}${server.host}${server.remotePath ? ` · ${server.remotePath}` : ""}`}
                                           </span>
                                         </div>
+                                        <Show when={server.lastConnectedAt}>
+                                          {(lastConnectedAt) => (
+                                            <div class="pl-6 text-[11px] text-muted mt-1">
+                                              {t("folderSelection.servers.lastConnected", { time: formatRelativeTime(new Date(lastConnectedAt()).getTime()) })}
+                                            </div>
+                                          )}
+                                        </Show>
                                       </div>
                                       <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
                                         <Loader2 class="w-4 h-4 animate-spin icon-muted" />

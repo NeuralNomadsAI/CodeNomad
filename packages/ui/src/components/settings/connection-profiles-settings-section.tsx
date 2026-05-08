@@ -23,6 +23,13 @@ function buildConnectionSummary(profile: ConnectionProfile): string {
   return parts.join(" ")
 }
 
+function formatConnectionTimestamp(value?: string): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString()
+}
+
 function duplicateConnectionProfile(profile: ConnectionProfile, nameSuffix: string): ConnectionProfile {
   const timestamp = new Date().toISOString()
   return {
@@ -231,6 +238,13 @@ export const ConnectionProfilesSettingsSection: Component = () => {
                         <span class="text-xs text-muted uppercase">{t(`settings.remoteConnections.kind.${profile.kind}`)}</span>
                       </div>
                       <div class="settings-toggle-caption">{buildConnectionSummary(profile)}</div>
+                      <Show when={formatConnectionTimestamp(profile.lastConnectedAt)}>
+                        {(lastConnected) => (
+                          <div class="settings-toggle-caption">
+                            {t("settings.remoteConnections.list.lastConnected", { time: lastConnected() })}
+                          </div>
+                        )}
+                      </Show>
                     </div>
 
                     <div class="flex items-center gap-2">

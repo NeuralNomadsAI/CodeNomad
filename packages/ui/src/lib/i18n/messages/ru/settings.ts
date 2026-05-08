@@ -133,6 +133,7 @@ export const settingsMessages = {
   "settings.remoteConnections.list.title": "Saved and recent connections",
   "settings.remoteConnections.list.subtitle": "Review remote server shortcuts and SSH bootstrap profiles available on this device.",
   "settings.remoteConnections.list.empty": "No connection profiles saved yet.",
+  "settings.remoteConnections.list.lastConnected": "Last connected {time}",
   "settings.remoteConnections.list.actions.edit": "Edit connection",
   "settings.remoteConnections.list.actions.duplicate": "Duplicate connection",
   "settings.remoteConnections.list.actions.delete": "Delete connection",
