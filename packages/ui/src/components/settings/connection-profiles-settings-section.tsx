@@ -17,8 +17,7 @@ function buildConnectionSummary(profile: ConnectionProfile): string {
     return profile.baseUrl
   }
 
-  const parts = [profile.username ? `${profile.username}@${profile.host}` : profile.host]
-  if (profile.port) parts.push(`:${profile.port}`)
+  const parts = [`${profile.username ? `${profile.username}@` : ""}${profile.host}${profile.port ? `:${profile.port}` : ""}`]
   if (profile.remotePath) parts.push(`· ${profile.remotePath}`)
   return parts.join(" ")
 }
