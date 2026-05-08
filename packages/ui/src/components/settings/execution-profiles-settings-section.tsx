@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
-import { Pencil, Plus, Star, Trash2 } from "lucide-solid"
+import { Copy, Pencil, Plus, Star, Trash2 } from "lucide-solid"
 import type { ExecutionProfile, ExecutionProfilePreviewResponse, ExecutionProfileTestResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useConfig } from "../../stores/preferences"
@@ -42,6 +42,14 @@ function formatPreviewEnvironment(environment: Record<string, string>): string {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n")
+}
+
+function duplicateProfile(profile: ExecutionProfile, nameSuffix: string): ExecutionProfile {
+  return {
+    ...profile,
+    id: createProfileId(),
+    name: `${profile.name} ${nameSuffix}`.trim(),
+  }
 }
 
 export const ExecutionProfilesSettingsSection: Component = () => {
@@ -272,6 +280,15 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     }
   }
 
+  async function handleDuplicate(profile: ExecutionProfile) {
+    setFormError(null)
+    try {
+      await saveExecutionProfile(duplicateProfile(profile, t("settings.common.duplicateSuffix")))
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <div class="settings-section-stack">
       <div class="settings-card">
@@ -498,6 +515,9 @@ export const ExecutionProfilesSettingsSection: Component = () => {
                     <div class="flex items-center gap-2">
                       <button type="button" class="selector-button selector-button-secondary" onClick={() => resetForm(profile)} title={t("settings.opencode.executionProfiles.list.actions.edit")}>
                         <Pencil class="w-4 h-4" />
+                      </button>
+                      <button type="button" class="selector-button selector-button-secondary" onClick={() => void handleDuplicate(profile)} title={t("settings.opencode.executionProfiles.list.actions.duplicate")}>
+                        <Copy class="w-4 h-4" />
                       </button>
                       <button type="button" class="selector-button selector-button-secondary" disabled={isDefault()} onClick={() => void setDefaultExecutionProfileId(profile.id)} title={t("settings.opencode.executionProfiles.list.actions.makeDefault")}>
                         <Star class="w-4 h-4" />

@@ -1,5 +1,5 @@
 import { createSignal, For, Show, type Component } from "solid-js"
-import { Pencil, Plus, Trash2 } from "lucide-solid"
+import { Copy, Pencil, Plus, Trash2 } from "lucide-solid"
 import type { ConnectionProfile, SshConnectionProfile } from "../../../../server/src/api-types"
 import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
@@ -21,6 +21,18 @@ function buildConnectionSummary(profile: ConnectionProfile): string {
   if (profile.port) parts.push(`:${profile.port}`)
   if (profile.remotePath) parts.push(`· ${profile.remotePath}`)
   return parts.join(" ")
+}
+
+function duplicateConnectionProfile(profile: ConnectionProfile, nameSuffix: string): ConnectionProfile {
+  const timestamp = new Date().toISOString()
+  return {
+    ...profile,
+    id: createConnectionProfileId(),
+    name: `${profile.name} ${nameSuffix}`.trim(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastConnectedAt: undefined,
+  }
 }
 
 export const ConnectionProfilesSettingsSection: Component = () => {
@@ -109,6 +121,15 @@ export const ConnectionProfilesSettingsSection: Component = () => {
       await serverApi.disconnectSshRemote(profile.id).catch(() => undefined)
     }
     removeConnectionProfile(profile.id)
+  }
+
+  async function handleDuplicate(profile: ConnectionProfile) {
+    setFormError(null)
+    try {
+      await saveConnectionProfile(duplicateConnectionProfile(profile, t("settings.common.duplicateSuffix")))
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return (
@@ -223,6 +244,14 @@ export const ConnectionProfilesSettingsSection: Component = () => {
                           <Pencil class="w-4 h-4" />
                         </button>
                       </Show>
+                      <button
+                        type="button"
+                        class="selector-button selector-button-secondary"
+                        onClick={() => void handleDuplicate(profile)}
+                        title={t("settings.remoteConnections.list.actions.duplicate")}
+                      >
+                        <Copy class="w-4 h-4" />
+                      </button>
                       <button
                         type="button"
                         class="selector-button selector-button-secondary"
