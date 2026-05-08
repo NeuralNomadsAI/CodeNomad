@@ -99,6 +99,7 @@
   background-color: transparent;
   color: var(--text-primary);
   border-bottom: 1px solid var(--tool-call-border-color);
+  min-width: 0;
 }
 
 .tool-call-header:hover {
@@ -112,6 +113,7 @@
   border-radius: 0;
   color: var(--text-primary);
   flex: 1;
+  min-width: 0;
 }
 
 .tool-call-header-toggle::before {
@@ -186,6 +188,14 @@
 .tool-call-summary {
   @apply flex-1 text-start inline-flex items-center gap-2;
   color: var(--text-primary);
+  min-width: 0;
+}
+
+.tool-call-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-call-summary::before {
@@ -247,7 +257,7 @@
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  max-height: var(--tool-call-max-height-compact, calc(25 * 1.4em));
+  max-height: calc(6 * var(--tool-call-line-unit));
   overflow-y: scroll;
 }
 

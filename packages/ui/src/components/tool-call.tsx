@@ -29,6 +29,7 @@ import type {
   ToolScrollHelpers,
 } from "./tool-call/types"
 import {
+  buildToolPreview,
   buildToolSpeechText,
   ensureMarkdownContent,
   getRelativePath,
@@ -606,7 +607,7 @@ export default function ToolCall(props: ToolCallProps) {
     return undefined
   })
 
-  const toolOutputDefaultExpanded = createMemo(() => (preferences().toolOutputExpansion || "expanded") === "expanded")
+  const toolOutputDefaultExpanded = createMemo(() => (preferences().toolOutputExpansion || "collapsed") === "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => (preferences().diagnosticsExpansion || "expanded") === "expanded")
 
   const defaultExpandedForTool = createMemo(() => {
@@ -678,6 +679,7 @@ export default function ToolCall(props: ToolCallProps) {
   const [toolCallRootEl, setToolCallRootEl] = createSignal<HTMLDivElement | undefined>()
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
+  const collapsedPreview = createMemo(() => buildToolPreview(toolName(), toolState()))
 
   const diagnosticsExpanded = () => {
     if (isPermissionActive() || isQuestionActive()) return true
@@ -885,7 +887,7 @@ export default function ToolCall(props: ToolCallProps) {
           aria-expanded={expanded()}
         >
           <span class="tool-call-summary" data-tool-icon={getToolIcon(toolName())}>
-            {headerText()}
+            <span class="tool-call-summary-text">{headerText()}</span>
           </span>
         </button>
 
@@ -968,6 +970,17 @@ export default function ToolCall(props: ToolCallProps) {
           scrollTopSnapshot={scrollTopSnapshot}
           setScrollTopSnapshot={setScrollTopSnapshot}
         />
+      </Show>
+
+      <Show when={!expanded() && collapsedPreview()}>
+        {(preview) => (
+          <div class="tool-call-preview">
+            <div class="tool-call-preview-label">
+              {preview().kind === "output" ? t("toolCall.io.output") : t("toolCall.io.input")}
+            </div>
+            <div class="tool-call-preview-text">{preview().text}</div>
+          </div>
+        )}
       </Show>
  
       <Show when={diagnosticsEntries().length}>

@@ -152,6 +152,97 @@ export function formatUnknown(value: unknown): { text: string; language?: string
   return null
 }
 
+function joinPreviewParts(...parts: Array<string | undefined>): string | null {
+  const text = parts
+    .map((part) => (typeof part === "string" ? part.trim() : ""))
+    .filter(Boolean)
+    .join("\n")
+
+  return text.length > 0 ? text : null
+}
+
+function getToolInputPreview(toolName: string, input: Record<string, any>): unknown {
+  switch (toolName) {
+    case "bash":
+      return joinPreviewParts(
+        typeof input.command === "string" ? `$ ${input.command}` : undefined,
+        typeof input.description === "string" ? input.description : undefined,
+      )
+    case "read":
+    case "edit":
+    case "write":
+    case "patch":
+    case "apply_patch":
+    case "list":
+      return typeof input.filePath === "string"
+        ? input.filePath
+        : typeof input.path === "string"
+          ? input.path
+          : input
+    case "glob":
+      return joinPreviewParts(
+        typeof input.pattern === "string" ? input.pattern : undefined,
+        typeof input.path === "string" ? input.path : undefined,
+      )
+    case "grep":
+      return joinPreviewParts(
+        typeof input.pattern === "string" ? input.pattern : undefined,
+        typeof input.include === "string" ? input.include : undefined,
+        typeof input.path === "string" ? input.path : undefined,
+      )
+    case "webfetch":
+      return typeof input.url === "string" ? input.url : input
+    case "task":
+      return joinPreviewParts(
+        typeof input.description === "string" ? input.description : undefined,
+        typeof input.prompt === "string" ? input.prompt : undefined,
+      )
+    default:
+      return input
+  }
+}
+
+function formatPreviewText(value: unknown): string | null {
+  if (Array.isArray(value) && value.length === 0) {
+    return null
+  }
+
+  if (value && typeof value === "object" && Object.keys(value as Record<string, unknown>).length === 0) {
+    return null
+  }
+
+  const formatted = formatUnknown(value)
+  const text = formatted?.text?.trim()
+  return text ? text : null
+}
+
+export function buildToolPreview(toolName: string, state?: ToolState): {
+  kind: "input" | "output"
+  text: string
+} | null {
+  const { input, metadata } = readToolStatePayload(state)
+
+  const outputCandidate = !state
+    ? undefined
+    : isToolStateCompleted(state)
+      ? state.output ?? metadata.output ?? metadata.diff ?? metadata.preview
+      : (isToolStateRunning(state) || isToolStateError(state))
+        ? metadata.output ?? metadata.diff ?? metadata.preview
+        : metadata.preview ?? metadata.diff
+
+  const outputText = formatPreviewText(outputCandidate)
+  if (outputText) {
+    return { kind: "output", text: outputText }
+  }
+
+  const inputText = formatPreviewText(getToolInputPreview(toolName, input))
+  if (inputText) {
+    return { kind: "input", text: inputText }
+  }
+
+  return null
+}
+
 export function inferLanguageFromPath(path?: string): string | undefined {
   return getLanguageFromPath(path || "")
 }

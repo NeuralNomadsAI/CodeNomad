@@ -182,7 +182,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.toolOutputsDefault",
       titleKey: "settings.behavior.toolOutputsDefault.title",
       subtitleKey: "settings.behavior.toolOutputsDefault.subtitle",
-      get: (p) => (p.toolOutputExpansion ?? "expanded") as ExpansionPreference,
+      get: (p) => (p.toolOutputExpansion ?? "collapsed") as ExpansionPreference,
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ toolOutputExpansion: next as ExpansionPreference })
@@ -418,7 +418,7 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
     {
       id: "tool-output-default-visibility",
       label: () => {
-        const mode = actions.preferences().toolOutputExpansion || "expanded"
+        const mode = actions.preferences().toolOutputExpansion || "collapsed"
         const state = mode === "expanded" ? tGlobal("commands.common.expanded") : tGlobal("commands.common.collapsed")
         return tGlobal("commands.toolOutputsDefault.label", { state })
       },
@@ -426,7 +426,7 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       category: "System",
       keywords: () => splitKeywords("commands.toolOutputsDefault.keywords"),
       action: () => {
-        const mode = actions.preferences().toolOutputExpansion || "expanded"
+        const mode = actions.preferences().toolOutputExpansion || "collapsed"
         const next: ExpansionPreference = mode === "expanded" ? "collapsed" : "expanded"
         actions.setToolOutputExpansion(next)
       },

@@ -141,7 +141,7 @@ const defaultUiSettings: UiSettings = {
   promptSubmitOnEnter: false,
   showPromptVoiceInput: true,
   diffViewMode: "split",
-  toolOutputExpansion: "expanded",
+  toolOutputExpansion: "collapsed",
   diagnosticsExpansion: "expanded",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
