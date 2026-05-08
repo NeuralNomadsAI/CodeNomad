@@ -69,8 +69,3 @@
   font-size: var(--font-size-sm);
 }
 
-.settings-info-update-note {
-  margin-top: 0.5rem;
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}

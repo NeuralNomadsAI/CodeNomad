@@ -14,15 +14,21 @@ interface LogScopeOption {
   label: string
 }
 
+interface UserAgentData {
+  platform?: string
+  getHighEntropyValues?: (hints: string[]) => Promise<Record<string, string>>
+}
+
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, "sk-***"],
-  [/gh[pousr]_[A-Za-z0-9]{20,}/g, "$&-redacted"],
+  [/gh[pousr]_[A-Za-z0-9]{20,}/g, "***"],
   [/Bearer\s+[A-Za-z0-9._=-]{20,}/g, "Bearer ***"],
   [/xox[bprs]-\d+-[A-Za-z0-9]+/g, "xox*-***"],
   [/[?&](token|key|secret|password|passwd|auth)=[^&\s]+/g, "$1=***"],
   [/[?&](api_?key|apikey)=[^&\s]+/g, "$1=***"],
   [/^([A-Z][A-Z0-9_]*_?(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*.+/gim, "$1=***"],
-  [/(?:["'])?(?:apiKey|api_key|apikey|authToken|auth_token|accessToken|access_token)(?:["'])?\s*[:=]\s*["'][^"']{8,}["']/gi, "$&"],
+  [/(\b(?:api_?key|apikey|authToken|accessToken|refreshToken|secret)\b)\s*[:=]\s*["'][^"']{8,}["']/gi, "$1=***"],
+  [/(\b(?:api_?key|apikey|authToken|accessToken|refreshToken|secret)\b)\s*[:=]\s*\S{8,}/gi, "$1=***"],
 ]
 
 function redactSecrets(text: string): string {
@@ -33,10 +39,14 @@ function redactSecrets(text: string): string {
   return result
 }
 
+function getUserAgentData(): UserAgentData | undefined {
+  return (navigator as any).userAgentData
+}
+
 function detectOs(): string {
   if (typeof navigator === "undefined") return "Unknown"
 
-  const uaData = (navigator as any).userAgentData
+  const uaData = getUserAgentData()
   if (uaData?.platform) {
     const arch = extractArchFromUA(navigator.userAgent)
     return arch ? `${uaData.platform} ${arch}` : uaData.platform
@@ -62,7 +72,7 @@ function extractArchFromUA(ua: string): string | null {
 
 async function resolveArchitecture(): Promise<string | null> {
   try {
-    const uaData = (navigator as any).userAgentData
+    const uaData = getUserAgentData()
     if (!uaData?.getHighEntropyValues) return null
     const values = await uaData.getHighEntropyValues(["architecture", "bitness"])
     const parts: string[] = []
@@ -88,6 +98,7 @@ function formatTimestamp(ts: number): string {
 function buildDiagnosticReport(
   meta: ServerMeta | null,
   scope: LogScope,
+  osDisplay: string,
 ): string {
   const lines: string[] = []
   lines.push("CodeNomad Diagnostic Report")
@@ -98,7 +109,7 @@ function buildDiagnosticReport(
   lines.push(`Runtime: ${runtimeEnv.host}`)
   lines.push(`Platform: ${runtimeEnv.platform}`)
   lines.push(`Window context: ${runtimeEnv.windowContext}`)
-  lines.push(`OS: ${detectOs()}`)
+  lines.push(`OS: ${osDisplay}`)
   lines.push(`Server URL: ${meta?.localUrl ?? "unknown"}`)
   lines.push(`Workspace root: ${meta?.workspaceRoot ?? "unknown"}`)
   lines.push(`UI source: ${meta?.ui?.source ?? "unknown"}`)
@@ -151,17 +162,39 @@ function downloadTextFile(filename: string, text: string) {
   anchor.href = url
   anchor.download = filename
   document.body.appendChild(anchor)
+  // Note: anchor.click() may display a native download dialog.
+  // If the dialog blocks (user cancel or confirm), removeChild
+  // below won't execute until the dialog closes. The anchor element
+  // temporarily remains in document.body. This is harmless at the
+  // scale of an infrequent settings action.
   anchor.click()
   document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
 }
 
+function extractReleasePrefix(version: string): string {
+  return version.replace(/^v/, "").split("-")[0]
+}
+
+function versionNewer(current: string, latest: string): boolean | null {
+  const c = extractReleasePrefix(current).split(".").map(Number)
+  const l = extractReleasePrefix(latest).split(".").map(Number)
+  if (c.some(isNaN) || l.some(isNaN)) return null
+  if (l[0] > c[0]) return true
+  if (l[0] < c[0]) return false
+  if (l[1] > c[1]) return true
+  if (l[1] < c[1]) return false
+  if (l[2] > c[2]) return true
+  return false
+}
+
 export const InfoSettingsSection: Component = () => {
   const { t } = useI18n()
-  const [meta, { refetch }] = createResource(() => getServerMeta())
+  const [meta, { mutate }] = createResource(() => getServerMeta())
   const [logScope, setLogScope] = createSignal<LogScope>("summary")
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
   const [osArch, setOsArch] = createSignal<string | null>(null)
+  const [logExportConfirmed, setLogExportConfirmed] = createSignal(false)
 
   createEffect(() => {
     resolveArchitecture().then((arch) => {
@@ -178,6 +211,13 @@ export const InfoSettingsSection: Component = () => {
     scopeOptions().find((opt) => opt.value === logScope()),
   )
 
+  createEffect(() => {
+    const current = logScope()
+    if (current !== "summary_logs") {
+      setLogExportConfirmed(false)
+    }
+  })
+
   const updateInfo = createMemo(() => {
     const m = meta()
     if (!m?.update) return null
@@ -186,32 +226,23 @@ export const InfoSettingsSection: Component = () => {
 
   const supportInfo = createMemo(() => meta()?.support ?? null)
 
-  const updateUrl = createMemo(() => {
-    const update = updateInfo()
-    if (update?.url) return update.url
-    return supportInfo()?.latestServerUrl ?? null
-  })
-
   const latestVersion = createMemo(() => {
     const update = updateInfo()
     if (update?.version) return update.version
     return supportInfo()?.latestServerVersion ?? null
   })
 
-  const updateAvailable = createMemo(() => {
-    if (updateInfo()) return true
-    const support = supportInfo()
-    if (!support?.latestServerVersion || !support?.supported) return false
+  const showDownloadLink = createMemo(() => {
+    let url: string | null = null
+    const update = updateInfo()
+    if (update?.url) url = update.url
+    else if (supportInfo()?.latestServerUrl) url = supportInfo()!.latestServerUrl ?? null
+    if (!url) return { url: null, show: false }
+    if (update?.url) return { url, show: true }
     const current = meta()?.serverVersion
-    if (!current) return false
-    try {
-      const [cMaj, cMin, cPatch] = current.split(".").map(Number)
-      const [lMaj, lMin, lPatch] = support.latestServerVersion.split(".").map(Number)
-      if (lMaj > cMaj) return true
-      if (lMaj === cMaj && lMin > cMin) return true
-      if (lMaj === cMaj && lMin === cMin && lPatch > cPatch) return true
-    } catch { /* ignore parse errors */ }
-    return false
+    const latest = latestVersion()
+    if (!current || !latest) return { url: null, show: false }
+    return { url, show: versionNewer(current, latest) !== false }
   })
 
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined
@@ -225,17 +256,9 @@ export const InfoSettingsSection: Component = () => {
 
   onCleanup(() => clearTimeout(feedbackTimer))
 
-  const handleCopy = async () => {
-    const report = buildDiagnosticReport(meta() ?? null, logScope())
-    const ok = await copyToClipboard(report)
-    if (ok) setCopyFeedback("success")
-    else setCopyFeedback("error")
-  }
-
-  const handleDownload = () => {
-    const report = buildDiagnosticReport(meta() ?? null, logScope())
-    const ts = new Date().toISOString().replace(/[:.]/g, "-")
-    downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
+  const handleRefresh = async () => {
+    const fresh = await getServerMeta(true)
+    mutate(fresh)
   }
 
   const osDisplay = createMemo(() => {
@@ -243,6 +266,24 @@ export const InfoSettingsSection: Component = () => {
     const arch = osArch()
     return arch ? `${base} (${arch})` : base
   })
+
+  const canExport = createMemo(() => {
+    if (logScope() === "summary_logs") return logExportConfirmed()
+    return true
+  })
+
+  const handleCopy = async () => {
+    const report = buildDiagnosticReport(meta() ?? null, logScope(), osDisplay())
+    const ok = await copyToClipboard(report)
+    if (ok) setCopyFeedback("success")
+    else setCopyFeedback("error")
+  }
+
+  const handleDownload = () => {
+    const report = buildDiagnosticReport(meta() ?? null, logScope(), osDisplay())
+    const ts = new Date().toISOString().replace(/[:.]/g, "-")
+    downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
+  }
 
   return (
     <div class="settings-section-stack">
@@ -321,9 +362,9 @@ export const InfoSettingsSection: Component = () => {
         </div>
 
         <div class="settings-info-actions">
-          {updateAvailable() && updateUrl() && (
+          {showDownloadLink().show && (
             <a
-              href={updateUrl()!}
+              href={showDownloadLink().url!}
               target="_blank"
               rel="noopener noreferrer"
               class="settings-pill-button"
@@ -334,7 +375,7 @@ export const InfoSettingsSection: Component = () => {
           <button
             type="button"
             class="settings-pill-button"
-            onClick={() => { refetch() }}
+            onClick={handleRefresh}
             disabled={meta.loading}
           >
             {t("settings.info.updates.refresh")}
@@ -389,9 +430,20 @@ export const InfoSettingsSection: Component = () => {
         </div>
 
         {logScope() === "summary_logs" && (
-          <div class="settings-card-message" role="alert">
-            {t("settings.info.diagnostics.warning")}
-          </div>
+          <>
+            <div class="settings-card-message" role="alert">
+              {t("settings.info.diagnostics.warning")}
+            </div>
+            <div class="settings-checkbox-toggle">
+              <input
+                type="checkbox"
+                id="log-export-confirm"
+                checked={logExportConfirmed()}
+                onChange={(e) => setLogExportConfirmed(e.currentTarget.checked)}
+              />
+              <label for="log-export-confirm">{t("settings.info.diagnostics.confirm")}</label>
+            </div>
+          </>
         )}
 
         <div class="settings-info-actions">
@@ -399,6 +451,7 @@ export const InfoSettingsSection: Component = () => {
             type="button"
             class="settings-pill-button"
             onClick={handleCopy}
+            disabled={!canExport()}
           >
             {t("settings.info.diagnostics.copy")}
           </button>
@@ -406,6 +459,7 @@ export const InfoSettingsSection: Component = () => {
             type="button"
             class="settings-pill-button"
             onClick={handleDownload}
+            disabled={!canExport()}
           >
             {t("settings.info.diagnostics.download")}
           </button>
