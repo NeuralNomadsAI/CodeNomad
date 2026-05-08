@@ -19,7 +19,13 @@ export default function VersionPill() {
   const serverVersion = () => meta()?.serverVersion
   const uiVersion = () => meta()?.ui?.version
   const uiSource = () => meta()?.ui?.source
-  const update = () => availableUpdate() ?? meta()?.update ?? null
+  const update = () => {
+    const refreshedUpdate = availableUpdate()
+    if (refreshedUpdate !== undefined) {
+      return refreshedUpdate
+    }
+    return meta()?.update ?? null
+  }
 
   const uiLabel = () => (uiVersion() ? t("versionPill.uiWithVersion", { version: uiVersion() }) : t("versionPill.ui"))
 

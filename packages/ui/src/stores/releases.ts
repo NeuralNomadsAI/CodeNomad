@@ -9,7 +9,7 @@ import { hasInstances, showFolderSelection } from "./ui"
 const log = getLogger("actions")
 
 const [supportInfo, setSupportInfo] = createSignal<SupportMeta | null>(null)
-const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null>(null)
+const [availableUpdate, setAvailableUpdate] = createSignal<ServerMeta["update"] | null | undefined>(undefined)
 
 const UI_VERSION_STORAGE_KEY = "codenomad:lastSeenUiVersion"
 const DEV_RELEASE_STORAGE_KEY = "codenomad:lastSeenDevRelease"
