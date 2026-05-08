@@ -126,6 +126,7 @@ export const settingsMessages = {
   "settings.remoteConnections.form.remotePath.label": "Remote workspace path",
   "settings.remoteConnections.form.remotePath.placeholder": "/srv/project",
   "settings.remoteConnections.form.bootstrapScript.label": "Bootstrap script",
+  "settings.remoteConnections.form.bootstrapScript.help": "Use this only to start a remote CodeNomad server installation that already has its server-side opencode-config available. This SSH flow tunnels to that server and does not copy local plugin config to the host.",
   "settings.remoteConnections.form.bootstrapScript.placeholder": "Optional shell script run after connecting",
   "settings.remoteConnections.form.save": "Save connection",
   "settings.remoteConnections.form.update": "Update connection",

@@ -91,6 +91,7 @@ export const folderSelectionMessages = {
   "folderSelection.ssh.dialog.remotePath": "Remote workspace path",
   "folderSelection.ssh.dialog.remotePathPlaceholder": "/srv/project",
   "folderSelection.ssh.dialog.bootstrapScript": "Bootstrap script",
+  "folderSelection.ssh.dialog.bootstrapScriptHelp": "Optional script for starting a remote CodeNomad server that already has its server-side opencode-config available. The SSH flow tunnels to that server; it does not copy local plugin config to the host.",
   "folderSelection.ssh.dialog.bootstrapScriptPlaceholder": "Optional shell script run after the SSH connection is established",
   "folderSelection.ssh.dialog.cancel": "Cancel",
   "folderSelection.ssh.dialog.save": "Save",

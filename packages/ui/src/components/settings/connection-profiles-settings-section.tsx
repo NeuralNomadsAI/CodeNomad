@@ -196,6 +196,7 @@ export const ConnectionProfilesSettingsSection: Component = () => {
 
           <div class="settings-form-group">
             <label class="settings-form-label">{t("settings.remoteConnections.form.bootstrapScript.label")}</label>
+            <p class="settings-toggle-caption">{t("settings.remoteConnections.form.bootstrapScript.help")}</p>
             <textarea class="selector-input w-full min-h-[8rem]" value={bootstrapScript()} placeholder={t("settings.remoteConnections.form.bootstrapScript.placeholder")} onInput={(event) => setBootstrapScript(event.currentTarget.value)} />
           </div>
 

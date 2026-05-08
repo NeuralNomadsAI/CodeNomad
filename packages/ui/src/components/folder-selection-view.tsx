@@ -1397,6 +1397,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
               <label class="flex flex-col gap-2 text-sm text-secondary">
                 <span>{t("folderSelection.ssh.dialog.bootstrapScript")}</span>
+                <span class="text-xs text-muted leading-relaxed">{t("folderSelection.ssh.dialog.bootstrapScriptHelp")}</span>
                 <textarea
                   class="selector-input w-full min-h-[8rem]"
                   value={sshBootstrapScript()}
