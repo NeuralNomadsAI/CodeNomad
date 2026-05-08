@@ -105,7 +105,6 @@ export interface VirtualFollowListProps<T> {
    * rendered item grows taller than the viewport and reaches the top edge.
    */
   autoPinHoldTargetKey?: Accessor<string | null>
-  autoPinHoldEnabled?: Accessor<boolean>
 
   /**
    * Optional resolver for the specific element inside an item wrapper that
@@ -170,7 +169,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const initialAutoScroll = () => (props.initialAutoScroll ? props.initialAutoScroll() : true)
   const externalSuspendAutoPinToBottom = () => (props.suspendAutoPinToBottom ? props.suspendAutoPinToBottom() : false)
   const streamingActive = () => props.streamingActive?.() ?? false
-  const autoPinHoldEnabled = () => props.autoPinHoldEnabled?.() ?? false
   const holdTargetKey = () => (props.autoPinHoldTargetKey ? props.autoPinHoldTargetKey() : null)
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
 
@@ -392,7 +390,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function canRejoinFollowFromDownScroll(metrics: ScrollControllerMetrics) {
     if (!streamingActive()) return false
-    if (autoPinHoldEnabled()) return false
     if (effectiveSuspendAutoPinToBottom()) return false
     if (activeHoldTargetKey() !== null) return false
     const items = props.items()

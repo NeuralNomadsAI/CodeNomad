@@ -655,14 +655,24 @@ export default function MessageSection(props: MessageSectionProps) {
   const initialAutoScroll = createMemo(() => initialScrollSnapshot()?.atBottom ?? true)
 
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
-  let lastGoodScrollSnapshot: VirtualFollowScrollSnapshot | undefined
+  const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   let restoringScrollSnapshot = false
+
+  function getLastGoodScrollSnapshot(sessionId: string) {
+    return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+  }
+
+  function setLastGoodScrollSnapshot(sessionId: string, snapshot: VirtualFollowScrollSnapshot) {
+    lastGoodScrollSnapshots.set(sessionId, snapshot)
+  }
+
   createEffect(
     on(
       () => props.sessionId,
       () => {
         setDidRestoreScroll(false)
-        lastGoodScrollSnapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+        const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+        if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
       },
     ),
   )
@@ -702,12 +712,13 @@ export default function MessageSection(props: MessageSectionProps) {
     if (allowCapture && canCapture) {
       const snapshot = listApi()?.captureScrollSnapshot()
       if (snapshot) {
-        lastGoodScrollSnapshot = snapshot
+        setLastGoodScrollSnapshot(sessionId, snapshot)
         store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
         return
       }
     }
 
+    const lastGoodScrollSnapshot = getLastGoodScrollSnapshot(sessionId)
     if (lastGoodScrollSnapshot) {
       store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
       return
@@ -720,8 +731,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const maxScrollTop = Math.max(element.scrollHeight - element.clientHeight, 0)
     const scrollRatio = maxScrollTop > 0 ? scrollTop / maxScrollTop : 0
     const atBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 48
-    lastGoodScrollSnapshot = { scrollTop, scrollRatio, maxScrollTop, atBottom }
-    store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
+    const snapshot = { scrollTop, scrollRatio, maxScrollTop, atBottom }
+    setLastGoodScrollSnapshot(sessionId, snapshot)
+    store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
   }
 
   // Persist scroll position when switching sessions. This effect's cleanup runs
@@ -813,7 +825,7 @@ export default function MessageSection(props: MessageSectionProps) {
         // Keep follow mode consistent with the restored state.
         api.setAutoScroll(snapshot.atBottom)
         restoringScrollSnapshot = false
-        lastGoodScrollSnapshot = snapshot
+        setLastGoodScrollSnapshot(props.sessionId, snapshot)
         setDidRestoreScroll(true)
       },
     })
@@ -1311,7 +1323,6 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollSentinelMarginPx={SCROLL_SENTINEL_MARGIN_PX}
           suspendMeasurements={() => !isActive()}
           streamingActive={streamingActive}
-          autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
           isActive={isActive}
           scrollToBottomOnActivate={() => false}
           initialScrollToBottom={() => false}
