@@ -539,8 +539,13 @@ async function createInstance(folder: string, _binaryPath?: string): Promise<str
 }
 
 function normalizeInstanceFolderPath(folder: string): string {
-  const normalized = folder.replace(/[\\/]+$/, "")
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized
+  const trimmed = folder.replace(/[\\/]+$/, "")
+  const windowsLike = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(trimmed)
+  if (!windowsLike) {
+    return trimmed
+  }
+
+  return trimmed.replace(/\\/g, "/").toLowerCase()
 }
 
 function getExistingInstanceForFolder(folder: string): Instance | null {
