@@ -22,6 +22,8 @@ import type {
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  WorkspaceCloneRequest,
+  WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
   WorktreeGitCommitResponse,
   WorktreeGitDiffRequest,
@@ -293,6 +295,12 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
+    return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })

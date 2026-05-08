@@ -3,6 +3,7 @@ import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
+import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
 import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 
@@ -14,6 +15,12 @@ const WorkspaceCreateSchema = z.object({
   path: z.string(),
   name: z.string().optional(),
   executionProfileId: z.string().trim().optional(),
+})
+
+const WorkspaceCloneSchema = z.object({
+  repositoryUrl: z.string().trim().min(1, "Repository URL is required"),
+  destinationPath: z.string().trim().min(1, "Destination path is required"),
+  cleanup: z.boolean().optional(),
 })
 
 const WorkspaceFilesQuerySchema = z.object({
@@ -69,6 +76,17 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       request.log.error({ err: error }, "Failed to create workspace")
       const message = error instanceof Error ? error.message : "Failed to create workspace"
       reply.code(400).type("text/plain").send(message)
+    }
+  })
+
+  app.post("/api/workspaces/clone", async (request, reply) => {
+    try {
+      const body = WorkspaceCloneSchema.parse(request.body ?? {})
+      const result = await cloneGitRepository(body)
+      reply.code(201)
+      return result
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
     }
   })
 
@@ -267,6 +285,10 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (isGitCloneError(error)) {
+    reply.code(error.statusCode)
+    return { error: error.message }
+  }
   if (isGitMutationError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }
