@@ -1,5 +1,5 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Settings, Bell, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
+import { Settings, Bell, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -10,6 +10,7 @@ import {
   type SettingsSectionId,
 } from "../stores/settings-screen"
 import { AppearanceSettingsSection } from "./settings/appearance-settings-section"
+import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
@@ -27,6 +28,7 @@ export const SettingsScreen: Component = () => {
       { id: "speech" as SettingsSectionId, icon: Volume2, label: t("settings.nav.speech") },
       { id: "sidecars" as SettingsSectionId, icon: Globe, label: t("settings.nav.sidecars") },
       { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
+      { id: "info" as SettingsSectionId, icon: Info, label: t("settings.nav.info") },
     ]
 
     if (canOpenRemoteWindows()) {
@@ -48,6 +50,8 @@ export const SettingsScreen: Component = () => {
         return <SideCarsSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
+      case "info":
+        return <InfoSettingsSection />
       case "appearance":
       default:
         return <AppearanceSettingsSection />

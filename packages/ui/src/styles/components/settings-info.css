@@ -1,0 +1,76 @@
+.settings-info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.72rem 0;
+  border-top: 1px solid color-mix(in oklab, var(--border-base) 78%, transparent);
+}
+
+.settings-info-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.settings-info-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.settings-info-value {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  text-align: end;
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+.settings-info-value-muted {
+  color: var(--text-muted);
+}
+
+.settings-info-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.settings-info-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 0;
+}
+
+.settings-info-select-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+
+.settings-info-toast {
+  margin-top: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--border-base);
+  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-base));
+  border-radius: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-info-update-note {
+  margin-top: 0.5rem;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
