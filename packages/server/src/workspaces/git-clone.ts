@@ -58,6 +58,13 @@ function assertDestinationIsUsable(destinationPath: string, cleanup: boolean): v
   }
 }
 
+function ensureDestinationParentExists(destinationPath: string): void {
+  const parentPath = path.dirname(destinationPath)
+  if (fs.existsSync(parentPath)) return
+
+  fs.mkdirSync(parentPath, { recursive: true })
+}
+
 export function isGitCloneError(error: unknown): error is GitCloneError {
   return error instanceof GitCloneError
 }
@@ -78,7 +85,7 @@ export async function cloneGitRepository(params: {
   }
 
   const destinationPath = path.resolve(requestedDestinationPath)
-  fs.mkdirSync(path.dirname(destinationPath), { recursive: true })
+  ensureDestinationParentExists(destinationPath)
   assertDestinationIsUsable(destinationPath, Boolean(params.cleanup))
   await runGitClone(repositoryUrl, destinationPath)
   return { path: destinationPath }

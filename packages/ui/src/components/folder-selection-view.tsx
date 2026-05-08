@@ -451,6 +451,31 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function handleCloneDestinationSelect(path: string) {
     setIsCloneDestinationBrowserOpen(false)
     setCloneDestinationPath(path)
+    setIsCloneDialogOpen(true)
+  }
+
+  function handleCloneDestinationBrowserClose() {
+    setIsCloneDestinationBrowserOpen(false)
+    setIsCloneDialogOpen(true)
+  }
+
+  async function handleCloneDestinationBrowse() {
+    if (isCloningRepository()) return
+
+    const defaultPath = cloneDestinationPath() || folders()[0]?.path
+    if (supportsNativeDialogsInCurrentWindow()) {
+      const selected = await openNativeFolderDialog({
+        title: t("folderSelection.clone.destination.title"),
+        defaultPath,
+      })
+      if (selected) {
+        setCloneDestinationPath(selected)
+      }
+      return
+    }
+
+    setIsCloneDialogOpen(false)
+    setIsCloneDestinationBrowserOpen(true)
   }
 
   function handleRemove(path: string, e?: Event) {
@@ -1035,7 +1060,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         title={t("folderSelection.clone.destination.title")}
         description={t("folderSelection.clone.destination.description")}
         initialPath={cloneDestinationPath() || folders()[0]?.path}
-        onClose={() => setIsCloneDestinationBrowserOpen(false)}
+        onClose={handleCloneDestinationBrowserClose}
         onSelect={handleCloneDestinationSelect}
       />
 
@@ -1043,7 +1068,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         <Dialog.Portal>
           <Dialog.Overlay class="modal-overlay" />
           <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
-            <Dialog.Content class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5" tabIndex={-1}>
+            <Dialog.Content
+              class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5"
+              tabIndex={-1}
+              onInteractOutside={(event) => {
+                if (isCloneDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+              onEscapeKeyDown={(event) => {
+                if (isCloneDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+            >
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">
                   {t("folderSelection.clone.dialog.title")}
@@ -1074,14 +1112,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     placeholder={t("folderSelection.clone.dialog.destinationPathPlaceholder")}
                     disabled={isCloningRepository()}
                   />
-                  <button
-                    type="button"
-                    class="selector-button selector-button-secondary w-auto px-4"
-                    disabled={isCloningRepository()}
-                    onClick={() => setIsCloneDestinationBrowserOpen(true)}
-                  >
-                    {t("folderSelection.clone.dialog.browseDestination")}
-                  </button>
+                   <button
+                     type="button"
+                     class="selector-button selector-button-secondary w-auto px-4"
+                     disabled={isCloningRepository()}
+                     onClick={() => void handleCloneDestinationBrowse()}
+                   >
+                     {t("folderSelection.clone.dialog.browseDestination")}
+                   </button>
                 </div>
               </label>
 
