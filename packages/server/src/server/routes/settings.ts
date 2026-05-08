@@ -1,6 +1,7 @@
+import { spawnSync } from "child_process"
 import { FastifyInstance, type FastifyRequest } from "fastify"
 import { z } from "zod"
-import type { ExecutionProfilePreviewResponse } from "../../api-types"
+import type { ExecutionProfilePreviewResponse, ExecutionProfileTestResponse } from "../../api-types"
 import { getOpencodeConfigDir } from "../../opencode-config.js"
 import { buildLaunchPreview, formatCommandLine } from "../../workspaces/execution-launch"
 import {
@@ -67,6 +68,36 @@ const PREVIEW_SECRET_KEY = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY)/i
 function validateBinaryPath(binaryPath: string): { valid: boolean; version?: string; error?: string } {
   const result = probeBinaryVersion(binaryPath)
   return { valid: result.valid, version: result.version, error: result.error }
+}
+
+function validateDockerImage(image: string): { valid: boolean; version?: string; error?: string } {
+  const docker = validateBinaryPath("docker")
+  if (!docker.valid) {
+    return docker
+  }
+
+  try {
+    const result = spawnSync("docker", ["image", "inspect", image], { encoding: "utf8" })
+    if (result.error) {
+      return { valid: false, version: docker.version, error: result.error.message }
+    }
+
+    if (result.status !== 0) {
+      const stderr = result.stderr?.trim()
+      const stdout = result.stdout?.trim()
+      const combined = stderr || stdout
+      const details = combined ? `: ${combined}` : ""
+      return {
+        valid: false,
+        version: docker.version,
+        error: `Docker image \"${image}\" is not available locally${details}`,
+      }
+    }
+
+    return { valid: true, version: docker.version }
+  } catch (error) {
+    return { valid: false, version: docker.version, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 function normalizeRecord(value: unknown): Record<string, string> {
@@ -185,6 +216,26 @@ function buildExecutionProfilePreview(
   }
 }
 
+function testExecutionProfile(
+  input: z.infer<typeof ExecutionProfilePreviewSchema>,
+  options: { settings: SettingsService; requestBaseUrl: string },
+): ExecutionProfileTestResponse {
+  const preview = buildExecutionProfilePreview(input, options)
+  const validation =
+    input.profile.kind === "docker"
+      ? validateDockerImage(input.profile.image)
+      : input.profile.kind === "command"
+        ? validateBinaryPath(input.profile.executable)
+        : validateBinaryPath(input.profile.binaryPath)
+
+  return {
+    ...preview,
+    valid: validation.valid,
+    version: validation.version,
+    ...(validation.error ? { error: validation.error } : {}),
+  }
+}
+
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
@@ -257,6 +308,20 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
       })
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to preview execution profile")
+      reply.code(400)
+      return { error: error instanceof Error ? error.message : "Invalid request" }
+    }
+  })
+
+  app.post("/api/storage/execution-profiles/test", async (request, reply) => {
+    try {
+      const body = ExecutionProfilePreviewSchema.parse(request.body ?? {})
+      return testExecutionProfile(body, {
+        settings: deps.settings,
+        requestBaseUrl: buildRequestBaseUrl(request),
+      })
+    } catch (error) {
+      deps.logger.warn({ err: error }, "Failed to test execution profile")
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid request" }
     }

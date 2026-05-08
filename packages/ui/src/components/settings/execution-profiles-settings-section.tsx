@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { Pencil, Plus, Star, Trash2 } from "lucide-solid"
-import type { ExecutionProfile, ExecutionProfilePreviewResponse } from "../../../../server/src/api-types"
+import type { ExecutionProfile, ExecutionProfilePreviewResponse, ExecutionProfileTestResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
@@ -70,9 +70,12 @@ export const ExecutionProfilesSettingsSection: Component = () => {
   const [previewWorkspacePath, setPreviewWorkspacePath] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [previewing, setPreviewing] = createSignal(false)
+  const [testing, setTesting] = createSignal(false)
   const [formError, setFormError] = createSignal<string | null>(null)
   const [previewError, setPreviewError] = createSignal<string | null>(null)
+  const [testError, setTestError] = createSignal<string | null>(null)
   const [previewResult, setPreviewResult] = createSignal<ExecutionProfilePreviewResponse | null>(null)
+  const [testResult, setTestResult] = createSignal<ExecutionProfileTestResponse | null>(null)
 
   const kindOptions = createMemo(() => [
     { value: "local" as const, label: t("settings.opencode.executionProfiles.kind.local") },
@@ -96,7 +99,9 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     cwdMode()
     previewWorkspacePath()
     setPreviewError(null)
+    setTestError(null)
     setPreviewResult(null)
+    setTestResult(null)
   })
 
   function resetForm(profile?: ExecutionProfile) {
@@ -239,6 +244,34 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     }
   }
 
+  async function handleTest() {
+    let profile: ExecutionProfile
+    setFormError(null)
+    setTestError(null)
+
+    try {
+      profile = buildProfileFromForm()
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : String(error))
+      return
+    }
+
+    setTesting(true)
+    try {
+      const result = await serverApi.testExecutionProfile({
+        profile,
+        workspacePath: requireValue(previewWorkspacePath()) ?? undefined,
+      })
+      setPreviewResult(result)
+      setTestResult(result)
+    } catch (error) {
+      setTestResult(null)
+      setTestError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <div class="settings-section-stack">
       <div class="settings-card">
@@ -367,22 +400,46 @@ export const ExecutionProfilesSettingsSection: Component = () => {
             <div class="settings-error-message">{previewError()}</div>
           </Show>
 
+          <Show when={testError()}>
+            <div class="settings-error-message">{testError()}</div>
+          </Show>
+
           <div class="flex justify-end gap-2 mt-4">
             <Show when={editingId()}>
               <button type="button" class="selector-button selector-button-secondary" onClick={() => resetForm()}>
                 {t("settings.opencode.executionProfiles.form.cancelEdit")}
               </button>
             </Show>
-            <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing()} onClick={() => void handlePreview()}>
+            <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing() || testing()} onClick={() => void handleTest()}>
+              <span>{testing() ? t("settings.opencode.executionProfiles.form.testing") : t("settings.opencode.executionProfiles.form.test")}</span>
+            </button>
+            <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing() || testing()} onClick={() => void handlePreview()}>
               <span>{previewing() ? t("settings.opencode.executionProfiles.form.previewing") : t("settings.opencode.executionProfiles.form.preview")}</span>
             </button>
-            <button type="button" class="selector-button selector-button-primary" disabled={saving() || previewing()} onClick={() => void handleSave()}>
+            <button type="button" class="selector-button selector-button-primary" disabled={saving() || previewing() || testing()} onClick={() => void handleSave()}>
               <Show when={saving()} fallback={<Plus class="w-4 h-4" />}>
                 <Plus class="w-4 h-4" />
               </Show>
               <span>{editingId() ? t("settings.opencode.executionProfiles.form.update") : t("settings.opencode.executionProfiles.form.save")}</span>
             </button>
           </div>
+
+          <Show when={testResult()}>
+            {(result) => (
+              <div class="settings-form-group mt-4">
+                <div class="settings-form-label">{t("settings.opencode.executionProfiles.test.title")}</div>
+                <div class="mt-3 rounded-lg border border-base bg-surface-secondary p-3 text-sm text-primary">
+                  <Show when={result().valid} fallback={<span>{result().error ?? t("settings.opencode.executionProfiles.test.failureFallback")}</span>}>
+                    <span>
+                      {result().version
+                        ? t("settings.opencode.executionProfiles.test.successWithVersion", { version: result().version })
+                        : t("settings.opencode.executionProfiles.test.success")}
+                    </span>
+                  </Show>
+                </div>
+              </div>
+            )}
+          </Show>
 
           <Show when={previewResult()}>
             {(result) => (

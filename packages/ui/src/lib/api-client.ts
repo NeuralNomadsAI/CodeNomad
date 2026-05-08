@@ -5,6 +5,7 @@ import type {
   BinaryValidationResult,
   ExecutionProfilePreviewRequest,
   ExecutionProfilePreviewResponse,
+  ExecutionProfileTestResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
   FileSystemListResponse,
@@ -402,6 +403,12 @@ export const serverApi = {
   },
   previewExecutionProfile(payload: ExecutionProfilePreviewRequest): Promise<ExecutionProfilePreviewResponse> {
     return request<ExecutionProfilePreviewResponse>("/api/storage/execution-profiles/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  testExecutionProfile(payload: ExecutionProfilePreviewRequest): Promise<ExecutionProfileTestResponse> {
+    return request<ExecutionProfileTestResponse>("/api/storage/execution-profiles/test", {
       method: "POST",
       body: JSON.stringify(payload),
     })

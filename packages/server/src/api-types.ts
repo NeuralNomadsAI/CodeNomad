@@ -65,6 +65,12 @@ export interface ExecutionProfilePreviewResponse {
   environment: Record<string, string>
 }
 
+export interface ExecutionProfileTestResponse extends ExecutionProfilePreviewResponse {
+  valid: boolean
+  version?: string
+  error?: string
+}
+
 export interface WorkspaceDescriptor {
   id: string
   /** Absolute path on the server host. */
