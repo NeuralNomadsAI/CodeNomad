@@ -538,6 +538,25 @@ async function createInstance(folder: string, _binaryPath?: string): Promise<str
   }
 }
 
+function normalizeInstanceFolderPath(folder: string): string {
+  const normalized = folder.replace(/[\\/]+$/, "")
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized
+}
+
+function getExistingInstanceForFolder(folder: string): Instance | null {
+  if (!folder) return null
+  const target = normalizeInstanceFolderPath(folder)
+  const matches = Array.from(instances().values()).filter((instance) => {
+    if (instance.status === "stopped") return false
+    return normalizeInstanceFolderPath(instance.folder) === target
+  })
+
+  if (matches.length === 0) return null
+
+  const activeId = activeInstanceId()
+  return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
+}
+
 async function stopInstance(id: string) {
   const instance = instances().get(id)
   if (!instance) return
@@ -1115,6 +1134,7 @@ export {
   updateInstance,
   removeInstance,
   createInstance,
+  getExistingInstanceForFolder,
   stopInstance,
   getActiveInstance,
   addLog,

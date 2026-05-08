@@ -15,6 +15,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "{count} folder available",
   "folderSelection.recent.subtitle.other": "{count} folders available",
   "folderSelection.recent.remove": "Remove from recent",
+  "folderSelection.recent.openBadge": "Open",
+  "folderSelection.recent.openAnotherInstance": "Open another instance",
 
   "folderSelection.browse.title": "Browse for Folder",
   "folderSelection.browse.subtitle": "Select any folder on your computer",
@@ -38,6 +40,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "Open Folder or Connect Server",
   "folderSelection.actions.subtitle": "Open local folder or connect to a CodeNomad server",
   "folderSelection.actions.connectButton": "Connect CodeNomad Server",
+  "folderSelection.actions.returnToProject": "Return to Active Project",
+  "folderSelection.actions.returnToProjectSubtitle": "Go back to {name}",
 
   "folderSelection.advancedSettings": "Advanced Settings",
   "folderSelection.opencode": "OpenCode",

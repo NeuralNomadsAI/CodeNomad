@@ -15,6 +15,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "{count} 个文件夹可用",
   "folderSelection.recent.subtitle.other": "{count} 个文件夹可用",
   "folderSelection.recent.remove": "从最近列表移除",
+  "folderSelection.recent.openBadge": "已打开",
+  "folderSelection.recent.openAnotherInstance": "打开另一个实例",
 
   "folderSelection.browse.title": "浏览文件夹",
   "folderSelection.browse.subtitle": "选择你电脑上的任意文件夹",
@@ -38,6 +40,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "打开文件夹或连接服务器",
   "folderSelection.actions.subtitle": "打开本地文件夹或连接到 CodeNomad 服务器",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",
+  "folderSelection.actions.returnToProject": "返回当前项目",
+  "folderSelection.actions.returnToProjectSubtitle": "返回到 {name}",
 
   "folderSelection.advancedSettings": "高级设置",
   "folderSelection.opencode": "OpenCode",

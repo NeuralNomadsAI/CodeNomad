@@ -15,6 +15,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "{count} 件のフォルダ",
   "folderSelection.recent.subtitle.other": "{count} 件のフォルダ",
   "folderSelection.recent.remove": "履歴から削除",
+  "folderSelection.recent.openBadge": "開いています",
+  "folderSelection.recent.openAnotherInstance": "別のインスタンスを開く",
 
   "folderSelection.browse.title": "フォルダを参照",
   "folderSelection.browse.subtitle": "コンピュータ上の任意のフォルダを選択",
@@ -38,6 +40,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "フォルダを開くかサーバーに接続",
   "folderSelection.actions.subtitle": "ローカルフォルダを開くか CodeNomad サーバーに接続します",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
+  "folderSelection.actions.returnToProject": "アクティブなプロジェクトに戻る",
+  "folderSelection.actions.returnToProjectSubtitle": "{name} に戻る",
 
   "folderSelection.advancedSettings": "詳細設定",
   "folderSelection.opencode": "OpenCode",

@@ -34,6 +34,7 @@ import {
 import { useConfig } from "./stores/preferences"
 import {
   createInstance,
+  getExistingInstanceForFolder,
   instances,
   stopInstance,
   disconnectedInstance,
@@ -257,15 +258,26 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string) {
+  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
     if (!folderPath) {
       return
     }
-    setIsSelectingFolder(true)
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
+    recordWorkspaceLaunch(folderPath, selectedBinary)
+    clearLaunchError()
+
+    if (!options?.forceNew) {
+      const existingInstance = getExistingInstanceForFolder(folderPath)
+      if (existingInstance) {
+        selectInstanceTab(existingInstance.id)
+        setShowFolderSelection(false)
+        log.info("Selected existing instance", { instanceId: existingInstance.id, folderPath })
+        return
+      }
+    }
+
+    setIsSelectingFolder(true)
     try {
-      recordWorkspaceLaunch(folderPath, selectedBinary)
-      clearLaunchError()
       const instanceId = await createInstance(folderPath, selectedBinary)
       selectInstanceTab(instanceId)
       setShowFolderSelection(false)
@@ -607,6 +619,7 @@ const App: Component = () => {
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
+                activeProjectLabel={activeInstance()?.folder ?? null}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()

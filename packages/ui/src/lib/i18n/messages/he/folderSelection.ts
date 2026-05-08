@@ -15,6 +15,8 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "תיקייה אחת זמינה",
   "folderSelection.recent.subtitle.other": "{count} תיקיות זמינות",
   "folderSelection.recent.remove": "הסר מהרשימה האחרונה",
+  "folderSelection.recent.openBadge": "פתוח",
+  "folderSelection.recent.openAnotherInstance": "פתח מופע נוסף",
 
   "folderSelection.browse.title": "עיון בתיקייה",
   "folderSelection.browse.subtitle": "בחר כל תיקייה במחשב שלך",
@@ -38,6 +40,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "פתח תיקייה או התחבר לשרת",
   "folderSelection.actions.subtitle": "פתח תיקייה מקומית או התחבר לשרת CodeNomad",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
+  "folderSelection.actions.returnToProject": "חזור לפרויקט הפעיל",
+  "folderSelection.actions.returnToProjectSubtitle": "חזור אל {name}",
 
   "folderSelection.advancedSettings": "הגדרות מתקדמות",
   "folderSelection.opencode": "OpenCode",
