@@ -702,10 +702,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const title = activeSessionForInstance()?.title?.trim()
     return title || t("sessionList.session.untitled")
   })
-  const showHeaderLeftSlot = createMemo(() => leftDrawerState() === "floating-closed")
-  const showHeaderSessionTitle = createMemo(() => showHeaderLeftSlot() && Boolean(activeSessionTitle()))
+  const showHeaderLeftSlot = createMemo(() => !leftPinned())
+  const showHeaderSessionTitle = createMemo(() => leftDrawerState() === "floating-closed" && Boolean(activeSessionTitle()))
   const headerToolbarHorizontalInset = createMemo(() => (isPhoneLayout() ? 16 : 24))
   const headerLeftSlotWidth = createMemo(() => Math.max(0, sessionSidebarWidth() - headerToolbarHorizontalInset()))
+  const headerLeftSlotStyle = createMemo(() =>
+    leftDrawerState() === "floating-open" || showHeaderSessionTitle() ? { width: `${headerLeftSlotWidth()}px` } : undefined,
+  )
 
   const renderActiveSessionHeaderTitle = () => (
     <Show when={showHeaderSessionTitle()}>
@@ -723,18 +726,20 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     <Show when={showHeaderLeftSlot()}>
       <div
         class="session-header-left-slot"
-        style={showHeaderSessionTitle() ? { width: `${headerLeftSlotWidth()}px` } : undefined}
+        style={headerLeftSlotStyle()}
       >
-        <IconButton
-          ref={setLeftToggleButtonEl}
-          color="inherit"
-          onClick={handleLeftAppBarButtonClick}
-          aria-label={leftAppBarButtonLabel()}
-          size="small"
-          aria-expanded={leftDrawerState() !== "floating-closed"}
-        >
-          {leftAppBarButtonIcon()}
-        </IconButton>
+        <Show when={leftDrawerState() === "floating-closed"}>
+          <IconButton
+            ref={setLeftToggleButtonEl}
+            color="inherit"
+            onClick={handleLeftAppBarButtonClick}
+            aria-label={leftAppBarButtonLabel()}
+            size="small"
+            aria-expanded={leftDrawerState() !== "floating-closed"}
+          >
+            {leftAppBarButtonIcon()}
+          </IconButton>
+        </Show>
         {renderActiveSessionHeaderTitle()}
       </div>
     </Show>
