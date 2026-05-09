@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
 import { canUseDesktopFolderDrop, isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
+import { getFilePath } from "./file-path"
 
 const log = getLogger("actions")
 
@@ -15,19 +16,6 @@ function normalizePathList(input: unknown): string[] {
     return []
   }
   return input.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-}
-
-export function getFilePath(file: File): string | null {
-  if (typeof file.path === "string" && file.path.trim().length > 0) {
-    return file.path
-  }
-  if (isElectronHost()) {
-    const electronPath = (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.getPathForFile?.(file)
-    if (typeof electronPath === "string" && electronPath.trim().length > 0) {
-      return electronPath
-    }
-  }
-  return null
 }
 
 async function resolveElectronDirectoryPaths(paths: string[]): Promise<string[]> {

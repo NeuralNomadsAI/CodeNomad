@@ -2,7 +2,9 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
-import { getFilePath } from "../../lib/native/desktop-file-drop"
+import { tGlobal } from "../../lib/i18n"
+import { getFilePath } from "../../lib/native/file-path"
+import { showToastNotification } from "../../lib/notifications"
 import {
   bracketedImageDisplayCounterRegex,
   findHighestAttachmentCounters,
@@ -34,6 +36,7 @@ type PromptAttachments = {
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
   handleFileSelection: (files: FileList | File[] | null) => void
+  handleNativeFilePathSelection: (paths: string[]) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
   handleExpandTextAttachment: (attachment: Attachment) => void
@@ -297,10 +300,41 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   }
 
   function handleDragOver(e: DragEvent) {
-    if (options.disabled?.()) return
     e.preventDefault()
     e.stopPropagation()
+    if (options.disabled?.()) {
+      setIsDragging(false)
+      return
+    }
     setIsDragging(true)
+  }
+
+  function getFilenameFromPath(path: string) {
+    const normalized = path.replace(/\\/g, "/")
+    return normalized.split("/").pop() || path
+  }
+
+  function showSkippedFilesWarning(count: number) {
+    if (count <= 0) return
+    const messageKey = count === 1
+      ? "promptInput.attachFiles.skipped.one"
+      : "promptInput.attachFiles.skipped.other"
+    showToastNotification({
+      variant: "warning",
+      title: tGlobal("promptInput.attachFiles.skipped.title"),
+      message: tGlobal(messageKey, { count }),
+    })
+  }
+
+  function handleNativeFilePathSelection(paths: string[]) {
+    if (options.disabled?.()) return
+    for (const path of paths) {
+      if (!path || path.trim().length === 0) continue
+      const filename = getFilenameFromPath(path)
+      const attachment = createFileAttachment(path, filename, "application/octet-stream", undefined, options.instanceFolder())
+      addAttachment(options.instanceId(), options.sessionId(), attachment)
+    }
+    options.getTextarea()?.focus()
   }
 
   function handleDragLeave(e: DragEvent) {
@@ -313,6 +347,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     if (options.disabled?.()) return
     if (!files || files.length === 0) return
 
+    let skippedCount = 0
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       const nativePath = getFilePath(file)
@@ -321,6 +357,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const canInlinePreview = (mime.startsWith("image/") || mime.startsWith("text/")) && file.size <= MAX_INLINE_PICKED_FILE_BYTES
 
       if (!nativePath && !canInlinePreview) {
+        skippedCount += 1
         continue
       }
 
@@ -351,6 +388,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       }
     }
 
+    showSkippedFilesWarning(skippedCount)
+
     options.getTextarea()?.focus()
   }
 
@@ -375,6 +414,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     handleDragLeave,
     handleDrop,
     handleFileSelection,
+    handleNativeFilePathSelection,
     handleRemoveAttachment,
     handleExpandTextAttachment,
   }

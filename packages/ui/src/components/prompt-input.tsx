@@ -11,6 +11,7 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { openNativeFileDialogs, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
@@ -100,6 +101,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragLeave,
     handleDrop,
     handleFileSelection,
+    handleNativeFilePathSelection,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -393,8 +395,13 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
-  function handleAttachFiles() {
+  async function handleAttachFiles() {
     if (props.disabled) return
+    if (supportsNativeDialogsInCurrentWindow()) {
+      const paths = await openNativeFileDialogs({ title: t("promptInput.attachFiles.dialogTitle") })
+      handleNativeFilePathSelection(paths)
+      return
+    }
     fileInputRef?.click()
   }
 
