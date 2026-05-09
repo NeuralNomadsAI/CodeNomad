@@ -32,7 +32,7 @@ import { setSessionPendingPermission, setSessionPendingQuestion } from "./sessio
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
-import { drainAutoAcceptPermissions } from "./permission-auto-accept"
+import { clearAutoAcceptPermission, drainAutoAcceptPermissions, isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -105,6 +105,32 @@ function hasRecentlyRepliedPermission(instanceId: string, permissionId: string):
     return false
   }
   return true
+}
+
+function mergePermissionRequest(previous: PermissionRequestLike | undefined, next: PermissionRequestLike): PermissionRequestLike {
+  if (!previous) return next
+  const merged = {
+    ...previous,
+    ...next,
+    metadata: {
+      ...(previous.metadata ?? {}),
+      ...(next.metadata ?? {}),
+    },
+    time: {
+      ...(previous.time ?? {}),
+      ...(next.time ?? {}),
+    },
+    tool: previous.tool || next.tool ? {
+      ...(previous.tool ?? {}),
+      ...(next.tool ?? {}),
+    } : undefined,
+  }
+  for (const key of ["sessionID", "sessionId", "messageID", "messageId", "callID", "callId", "partID", "partId", "toolCallID", "toolCallId"] as const) {
+    if ((next as any)[key] === undefined && (previous as any)[key] !== undefined) {
+      ;(merged as any)[key] = (previous as any)[key]
+    }
+  }
+  return merged
 }
 interface DisconnectedInstanceInfo {
   id: string
@@ -233,8 +259,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
 
     // Upsert all server-side pending permissions.
     for (const permission of pendingRemote) {
-      addPermissionToQueue(instanceId, permission)
-      upsertPermissionV2(instanceId, permission)
+      const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+      upsertPermissionV2(instanceId, queuedPermission)
     }
     drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
   } catch (error) {
@@ -792,10 +818,11 @@ function clearQuestionSessionPendingCounts(instanceId: string): void {
   questionSessionCounts.delete(instanceId)
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): PermissionRequestLike | undefined {
   let inserted = false
   let updated = false
   let previousPermission: PermissionRequestLike | undefined
+  let queuedPermission = permission
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
@@ -804,27 +831,28 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
 
     if (existingIndex !== -1) {
       previousPermission = queue[existingIndex]
+      queuedPermission = mergePermissionRequest(previousPermission, permission)
       const updatedQueue = queue.slice()
-      updatedQueue[existingIndex] = permission
+      updatedQueue[existingIndex] = queuedPermission
       next.set(instanceId, updatedQueue.sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b)))
       updated = true
       return next
     }
 
-    const updatedQueue = [...queue, permission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
+    const updatedQueue = [...queue, queuedPermission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
     next.set(instanceId, updatedQueue)
     inserted = true
     return next
   })
 
   if (!inserted && !updated) {
-    return
+    return undefined
   }
 
   recomputeActiveInterruption(instanceId)
 
   const previousSessionId = previousPermission ? getPermissionSessionId(previousPermission) : undefined
-  const sessionId = getPermissionSessionId(permission)
+  const sessionId = getPermissionSessionId(queuedPermission)
   if (previousSessionId && previousSessionId !== sessionId) {
     const remaining = decrementSessionPendingCount(instanceId, previousSessionId)
     setSessionPendingPermission(instanceId, previousSessionId, remaining > 0)
@@ -843,10 +871,11 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
       byPermissionId = new Map()
       permissionWorktreeSlugByInstance.set(instanceId, byPermissionId)
     }
-    byPermissionId.set(permission.id, slug)
+    byPermissionId.set(queuedPermission.id, slug)
   }
 
-  drainAutoAcceptPermissions(instanceId, [permission], sendPermissionResponse, hasPendingPermission)
+  drainAutoAcceptPermissions(instanceId, [queuedPermission], sendPermissionResponse, hasPendingPermission)
+  return queuedPermission
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
@@ -883,13 +912,27 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
     permissionWorktreeSlugByInstance.get(instanceId)?.delete(permissionId)
     const removedSessionId = getPermissionSessionId(removed)
     if (removedSessionId) {
+      clearAutoAcceptPermission(instanceId, removedSessionId, permissionId)
       const remaining = decrementSessionPendingCount(instanceId, removedSessionId)
       setSessionPendingPermission(instanceId, removedSessionId, remaining > 0)
     }
   }
 }
 
+function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
+  const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
+  togglePermissionAutoAccept(instanceId, sessionId)
+  if (!willEnable) return
+  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
+}
+
 function clearPermissionQueue(instanceId: string): void {
+  for (const permission of getPermissionQueue(instanceId)) {
+    const sessionId = getPermissionSessionId(permission)
+    if (sessionId) {
+      clearAutoAcceptPermission(instanceId, sessionId, permission.id)
+    }
+  }
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     next.delete(instanceId)
@@ -1186,6 +1229,7 @@ export {
   removePermissionFromQueue,
   markPermissionReplied,
   hasRecentlyRepliedPermission,
+  togglePermissionAutoAcceptForSession,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

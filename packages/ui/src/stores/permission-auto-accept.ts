@@ -65,6 +65,9 @@ export function setPermissionAutoAcceptEnabled(instanceId: string, sessionId: st
     persist(next)
     return next
   })
+  if (!enabled) {
+    clearAutoAcceptSession(instanceId, sessionId)
+  }
 }
 
 export function togglePermissionAutoAccept(instanceId: string, sessionId: string) {
@@ -82,6 +85,31 @@ function clearRetry(requestKey: string) {
     retryTimers.delete(requestKey)
   }
   retryAttempts.delete(requestKey)
+}
+
+export function clearAutoAcceptPermission(instanceId: string, sessionId: string, requestId: string) {
+  const requestKey = makeRequestKey(instanceId, sessionId, requestId)
+  inFlight.delete(requestKey)
+  clearRetry(requestKey)
+}
+
+export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
+  const prefix = `${makeKey(instanceId, sessionId)}:`
+  for (const requestKey of Array.from(inFlight)) {
+    if (requestKey.startsWith(prefix)) {
+      inFlight.delete(requestKey)
+    }
+  }
+  for (const requestKey of Array.from(retryTimers.keys())) {
+    if (requestKey.startsWith(prefix)) {
+      clearRetry(requestKey)
+    }
+  }
+  for (const requestKey of Array.from(retryAttempts.keys())) {
+    if (requestKey.startsWith(prefix)) {
+      retryAttempts.delete(requestKey)
+    }
+  }
 }
 
 function scheduleRetry(

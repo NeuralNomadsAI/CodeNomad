@@ -3,6 +3,7 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
+import type { PermissionRequestLike } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
   InstanceMessageState,
@@ -604,6 +605,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     )
   }
 
+  function partsRepresentSameUserInput(a: ClientPart, b: ClientPart): boolean {
+    if (a.type !== b.type) return false
+    if (a.type === "text" && b.type === "text") {
+      return typeof (a as any).text === "string" && (a as any).text === (b as any).text
+    }
+    if (a.type === "file" && b.type === "file") {
+      const left = a as any
+      const right = b as any
+      return (
+        typeof left.url === "string" &&
+        left.url === right.url &&
+        (left.filename ?? "") === (right.filename ?? "") &&
+        (left.mime ?? "") === (right.mime ?? "")
+      )
+    }
+    return false
+  }
+
+  function shouldReplaceSyntheticUserPart(message: MessageRecord, incoming: ClientPart, existing: ClientPart): boolean {
+    if (message.role !== "user") return false
+    if ((incoming as any).synthetic) return false
+    if (!(existing as any).synthetic) return false
+    return partsRepresentSameUserInput(incoming, existing)
+  }
+
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
@@ -621,6 +647,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         if (!draft.partIds.includes(partId)) {
           draft.partIds = [...draft.partIds, partId]
         }
+        draft.partIds = draft.partIds.filter((id) => {
+          if (id === partId) return true
+          const existingPart = draft.parts[id]?.data
+          if (!existingPart || !shouldReplaceSyntheticUserPart(message, cloned, existingPart)) return true
+          delete draft.parts[id]
+          return false
+        })
         const existing = draft.parts[partId]
         const nextRevision = existing ? existing.revision + 1 : (cloned as any).version ?? 0
         draft.parts[partId] = {
@@ -817,8 +850,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       id: options.newId,
       isEphemeral: false,
       updatedAt: Date.now(),
-      partIds: options.clearParts ? [] : existing.partIds,
-      parts: options.clearParts ? {} : existing.parts,
+      partIds: existing.partIds,
+      parts: existing.parts,
     }
 
     setState("messages", options.newId, cloned)
@@ -904,7 +937,45 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return messageInfoCache.get(messageId)
   }
 
-  function upsertPermission(entry: PermissionEntry) {
+  function mergePermissionPayload(previous: PermissionRequestLike, next: PermissionRequestLike): PermissionRequestLike {
+    const merged = {
+      ...previous,
+      ...next,
+      metadata: {
+        ...(previous.metadata ?? {}),
+        ...(next.metadata ?? {}),
+      },
+      time: {
+        ...(previous.time ?? {}),
+        ...(next.time ?? {}),
+      },
+      tool: previous.tool || next.tool ? {
+        ...(previous.tool ?? {}),
+        ...(next.tool ?? {}),
+      } : undefined,
+    }
+    for (const key of ["sessionID", "sessionId", "messageID", "messageId", "callID", "callId", "partID", "partId", "toolCallID", "toolCallId"] as const) {
+      if ((next as any)[key] === undefined && (previous as any)[key] !== undefined) {
+        ;(merged as any)[key] = (previous as any)[key]
+      }
+    }
+    return merged
+  }
+
+  function mergePermissionEntry(entry: PermissionEntry): PermissionEntry {
+    const existing = state.permissions.queue.find((item) => item.permission.id === entry.permission.id)
+    if (!existing) return entry
+    return {
+      ...entry,
+      permission: mergePermissionPayload(existing.permission, entry.permission),
+      messageId: entry.messageId ?? existing.messageId,
+      partId: entry.partId ?? existing.partId,
+      enqueuedAt: Math.min(existing.enqueuedAt, entry.enqueuedAt),
+    }
+  }
+
+  function upsertPermission(input: PermissionEntry) {
+    const entry = mergePermissionEntry(input)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
 

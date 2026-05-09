@@ -349,7 +349,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     if (!record) {
       const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
       if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
+        replaceMessageIdV2(instanceId, pendingId, messageId)
         record = store.getMessage(messageId)
       }
     }
@@ -415,7 +415,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     if (!record) {
       const pendingId = findPendingSyntheticMessageId(store, sessionId, role)
       if (pendingId && pendingId !== messageId) {
-        replaceMessageIdV2(instanceId, pendingId, messageId, { clearParts: role === "user" })
+        replaceMessageIdV2(instanceId, pendingId, messageId)
         record = store.getMessage(messageId)
       }
     }
@@ -700,8 +700,8 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   }
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  addPermissionToQueue(instanceId, permission)
-  upsertPermissionV2(instanceId, permission)
+  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
 
