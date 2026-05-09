@@ -86,13 +86,6 @@ fn message_part_updated_event(text: &str) -> Value {
     })
 }
 
-fn active_target() -> ActiveSessionTarget {
-    ActiveSessionTarget {
-        instance_id: "inst-1".to_string(),
-        session_id: "sess-1".to_string(),
-    }
-}
-
 #[test]
 fn coalesces_message_part_delta_events() {
     let mut pending = PendingBatch::default();
@@ -295,14 +288,12 @@ fn holds_single_delta_within_stream_window() {
         events: vec![PendingEntry::Delta {
             key: "delta-key".to_string(),
             scope: "delta-scope".to_string(),
-            instance_id: "inst-1".to_string(),
-            session_id: Some("sess-1".to_string()),
             event: delta_event("Hello"),
             started_at: Instant::now(),
         }],
     };
 
-    assert!(pending.should_hold_single_delta(Instant::now(), None));
+    assert!(pending.should_hold_single_delta(Instant::now()));
 }
 
 #[test]
@@ -312,235 +303,12 @@ fn flushes_single_delta_after_stream_window() {
         events: vec![PendingEntry::Delta {
             key: "delta-key".to_string(),
             scope: "delta-scope".to_string(),
-            instance_id: "inst-1".to_string(),
-            session_id: Some("sess-1".to_string()),
             event: delta_event("Hello"),
             started_at,
         }],
     };
 
-    assert!(!pending.should_hold_single_delta(Instant::now(), None));
-}
-
-#[test]
-fn active_session_uses_shorter_hold_window() {
-    // Delta aged past the active-stream window but within the base window.
-    // Active session should flush faster, so this should NOT be held.
-    let started_at = Instant::now() - Duration::from_millis(ACTIVE_STREAM_HOLD_WINDOW_MS + 10);
-    let pending = PendingBatch {
-        events: vec![PendingEntry::Delta {
-            key: "delta-key".to_string(),
-            scope: "delta-scope".to_string(),
-            instance_id: "inst-1".to_string(),
-            session_id: Some("sess-1".to_string()),
-            event: delta_event("Hello"),
-            started_at,
-        }],
-    };
-
-    let active_target = active_target();
-    let other_target = ActiveSessionTarget {
-        instance_id: "inst-1".to_string(),
-        session_id: "sess-2".to_string(),
-    };
-
-    // Active session: uses ACTIVE_STREAM_HOLD_WINDOW_MS, so this stale delta is not held.
-    assert!(!pending.should_hold_single_delta(Instant::now(), Some(&active_target)));
-    // Non-matching session: still uses the wider base window.
-    assert!(pending.should_hold_single_delta(Instant::now(), Some(&other_target)));
-}
-
-#[test]
-fn active_session_holds_fresh_delta() {
-    // A very fresh delta should be held even for the active session's shorter window.
-    let started_at = Instant::now() - Duration::from_millis(5);
-    let pending = PendingBatch {
-        events: vec![PendingEntry::Delta {
-            key: "delta-key".to_string(),
-            scope: "delta-scope".to_string(),
-            instance_id: "inst-1".to_string(),
-            session_id: Some("sess-1".to_string()),
-            event: delta_event("Hello"),
-            started_at,
-        }],
-    };
-
-    let active_target = active_target();
-
-    assert!(pending.should_hold_single_delta(Instant::now(), Some(&active_target)));
-}
-
-#[test]
-fn assembler_emits_first_preview_chunk_immediately() {
-    let mut assembler = ActiveTextAssembler::default();
-    let now = Instant::now();
-
-    let emitted = assembler.absorb(
-        ActiveTextDelta {
-            instance_id: "inst-1".to_string(),
-            session_id: "sess-1".to_string(),
-            message_id: "msg-1".to_string(),
-            part_id: "part-1".to_string(),
-            delta: "Hello".to_string(),
-        },
-        now,
-    );
-
-    assert_eq!(emitted.len(), 1);
-    assert_eq!(
-        coalesced_payload_event(&emitted[0])
-            .get("type")
-            .and_then(Value::as_str),
-        Some("assistant.stream.chunk")
-    );
-    assert_eq!(
-        coalesced_payload_event(&emitted[0])
-            .get("properties")
-            .and_then(|props| props.get("delta"))
-            .and_then(Value::as_str),
-        Some("Hello")
-    );
-}
-
-#[test]
-fn snapshot_buffer_coalesces_updates_within_window() {
-    let mut buffer = ActiveTextSnapshotBuffer::default();
-    let now = Instant::now();
-
-    buffer.buffer(
-        parse_active_text_snapshot(&message_part_updated_event("A"), Some(&active_target()))
-            .unwrap(),
-        now,
-    );
-    buffer.buffer(
-        parse_active_text_snapshot(&message_part_updated_event("AB"), Some(&active_target()))
-            .unwrap(),
-        now + Duration::from_millis(40),
-    );
-    buffer.buffer(
-        parse_active_text_snapshot(&message_part_updated_event("ABC"), Some(&active_target()))
-            .unwrap(),
-        now + Duration::from_millis(80),
-    );
-
-    let early = buffer.take_due(now + Duration::from_millis(ACTIVE_STREAM_SNAPSHOT_WINDOW_MS - 1));
-    assert!(early.is_empty());
-
-    let emitted =
-        buffer.take_due(now + Duration::from_millis(ACTIVE_STREAM_SNAPSHOT_WINDOW_MS + 1));
-    assert_eq!(emitted.len(), 1);
-    assert_eq!(
-        emitted[0]["event"]["properties"]["part"]["text"].as_str(),
-        Some("ABC")
-    );
-}
-
-#[test]
-fn snapshot_buffer_flushes_latest_snapshot_before_message_update() {
-    let mut buffer = ActiveTextSnapshotBuffer::default();
-    let now = Instant::now();
-
-    buffer.buffer(
-        parse_active_text_snapshot(&message_part_updated_event("Hello"), Some(&active_target()))
-            .unwrap(),
-        now,
-    );
-    buffer.buffer(
-        parse_active_text_snapshot(
-            &message_part_updated_event("Hello world"),
-            Some(&active_target()),
-        )
-        .unwrap(),
-        now + Duration::from_millis(25),
-    );
-
-    let flushed = buffer.flush_for_event(&json!({
-        "type": "instance.event",
-        "instanceId": "inst-1",
-        "event": {
-            "type": "message.updated",
-            "properties": {
-                "info": {
-                    "id": "msg-1",
-                    "sessionID": "sess-1"
-                }
-            }
-        }
-    }));
-
-    assert_eq!(flushed.len(), 1);
-    assert_eq!(
-        flushed[0]["event"]["properties"]["part"]["text"].as_str(),
-        Some("Hello world")
-    );
-}
-
-#[test]
-fn assembler_keeps_first_delta_after_full_flush() {
-    let mut assembler = ActiveTextAssembler::default();
-    let now = Instant::now();
-    let delta = ActiveTextDelta {
-        instance_id: "inst-1".to_string(),
-        session_id: "sess-1".to_string(),
-        message_id: "msg-1".to_string(),
-        part_id: "part-1".to_string(),
-        delta: "Hello".to_string(),
-    };
-
-    let _ = assembler.absorb(delta.clone(), now);
-    let _ = assembler.flush_message("inst-1", "sess-1", "msg-1", now);
-    let _ = assembler.absorb(
-        ActiveTextDelta {
-            delta: " world".to_string(),
-            ..delta
-        },
-        now,
-    );
-    let emitted = assembler.flush_store_only_all(now + Duration::from_millis(1));
-
-    assert!(emitted.iter().any(|event| {
-        coalesced_payload_event(event)
-            .get("type")
-            .and_then(Value::as_str)
-            == Some("message.part.delta")
-            && coalesced_payload_event(event)
-                .get("properties")
-                .and_then(|props| props.get("delta"))
-                .and_then(Value::as_str)
-                == Some(" world")
-    }));
-}
-
-#[test]
-fn flush_store_only_all_preserves_canonical_text_without_preview() {
-    let mut assembler = ActiveTextAssembler::default();
-    let now = Instant::now();
-    let _ = assembler.absorb(
-        ActiveTextDelta {
-            instance_id: "inst-1".to_string(),
-            session_id: "sess-1".to_string(),
-            message_id: "msg-1".to_string(),
-            part_id: "part-1".to_string(),
-            delta: "Hello".to_string(),
-        },
-        now,
-    );
-
-    let emitted = assembler.flush_store_only_all(now + Duration::from_millis(1));
-    assert_eq!(emitted.len(), 1);
-    assert_eq!(
-        coalesced_payload_event(&emitted[0])
-            .get("type")
-            .and_then(Value::as_str),
-        Some("message.part.delta")
-    );
-    assert_eq!(
-        coalesced_payload_event(&emitted[0])
-            .get("properties")
-            .and_then(|props| props.get("delta"))
-            .and_then(Value::as_str),
-        Some("Hello")
-    );
+    assert!(!pending.should_hold_single_delta(Instant::now()));
 }
 
 #[test]

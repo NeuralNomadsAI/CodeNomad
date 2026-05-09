@@ -317,6 +317,15 @@ fn generate_auth_cookie_name() -> String {
     format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
 }
 
+fn generate_transport_connection_id() -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let tid = std::thread::current().id();
+    format!("tauri-{}-{:?}", ts, tid)
+}
+
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
 
 #[derive(Debug, Deserialize)]
@@ -646,6 +655,7 @@ impl CliProcessManager {
             base_url,
             events_url,
             client_id,
+            connection_id: generate_transport_connection_id(),
             cookie_name,
             session_cookie: self.session_cookie.lock().clone(),
         })
@@ -1276,7 +1286,8 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
 }
 
 fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
-    let mut candidates = Vec::new();
+    let base = workspace_root();
+    let mut candidates = vec![base.as_ref().map(|p| p.join("packages/server/dist/bin.js"))];
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -1293,12 +1304,6 @@ fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
             }
         }
     }
-
-    let base = workspace_root();
-    candidates.push(
-        base.as_ref()
-            .map(|p| p.join("packages/server/dist/bin.js")),
-    );
 
     first_existing(candidates)
 }

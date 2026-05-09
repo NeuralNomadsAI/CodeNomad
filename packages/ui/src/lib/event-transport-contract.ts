@@ -44,22 +44,6 @@ export interface DesktopEventsStartResult {
   reason?: string
 }
 
-export interface DesktopEventActiveSessionTarget {
-  instanceId: string
-  sessionId: string
-}
-
-export interface AssistantStreamChunkEvent {
-  type: "assistant.stream.chunk"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
-    field: "text"
-    delta: string
-  }
-}
-
 export const DEFAULT_DESKTOP_EVENT_RECONNECT_POLICY: DesktopEventTransportReconnectPolicy = {
   initialDelayMs: 1000,
   maxDelayMs: 10000,

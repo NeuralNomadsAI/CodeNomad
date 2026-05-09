@@ -1,8 +1,23 @@
 use super::*;
 
+fn send_connection_pong(client: &Client, config: &DesktopEventStreamConfig, payload: &Value) {
+    let body = serde_json::json!({
+        "clientId": config.client_id,
+        "connectionId": config.connection_id,
+        "pingTs": payload.get("ts").and_then(Value::as_u64),
+    });
+
+    let _ = client
+        .post(format!(
+            "{}/api/client-connections/pong",
+            config.base_url.trim_end_matches('/')
+        ))
+        .json(&body)
+        .send();
+}
+
 pub(super) fn run_transport_loop(
     app: AppHandle,
-    state: Arc<Mutex<DesktopEventTransportState>>,
     generation_atomic: Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
@@ -63,8 +78,9 @@ pub(super) fn run_transport_loop(
 
                 let disconnect_reason = consume_stream(
                     &app,
+                    &client,
+                    &config.stream,
                     response,
-                    &state,
                     &generation_atomic,
                     generation,
                     stop.clone(),
@@ -194,8 +210,9 @@ fn wait_with_cancellation(
 
 fn consume_stream(
     app: &AppHandle,
+    client: &Client,
+    stream_config: &DesktopEventStreamConfig,
     response: Response,
-    state: &Arc<Mutex<DesktopEventTransportState>>,
     generation_atomic: &Arc<AtomicU64>,
     generation: u64,
     stop: Arc<AtomicBool>,
@@ -215,10 +232,7 @@ fn consume_stream(
     });
 
     let mut pending = PendingBatch::default();
-    let mut active_text_assembler = ActiveTextAssembler::default();
-    let mut active_text_snapshots = ActiveTextSnapshotBuffer::default();
     let mut sequence = 0_u64;
-    let mut last_active_target: Option<ActiveSessionTarget> = None;
     let mut last_reader_activity = Instant::now();
 
     loop {
@@ -230,132 +244,16 @@ fn consume_stream(
             Ok(ReaderMessage::Activity) => {
                 last_reader_activity = Instant::now();
             }
+            Ok(ReaderMessage::Ping(payload)) => {
+                last_reader_activity = Instant::now();
+                send_connection_pong(client, stream_config, &payload);
+            }
             Ok(ReaderMessage::Event(event)) => {
                 last_reader_activity = Instant::now();
                 stats.raw_events = stats.raw_events.saturating_add(1);
 
-                let now = Instant::now();
-                let active_target = state.lock().active_target.clone();
-                let max_batch_events = if active_target.is_some() {
-                    ACTIVE_SESSION_MAX_BATCH_EVENTS
-                } else {
-                    MAX_BATCH_EVENTS
-                };
-                let mut should_flush_active = false;
-                if active_target != last_active_target {
-                    for flushed in active_text_assembler.flush_store_only_all(now) {
-                        pending.push(flushed, stats);
-                    }
-                    for flushed in active_text_snapshots.flush_all() {
-                        pending.push(flushed, stats);
-                    }
-                    last_active_target = active_target.clone();
-                }
-
-                let due = active_text_assembler.take_due(now);
-                if !due.is_empty() {
-                    should_flush_active = true;
-                }
-                for flushed in due {
-                    pending.push(flushed, stats);
-                }
-
-                let snapshot_due = active_text_snapshots.take_due(now);
-                if !snapshot_due.is_empty() {
-                    should_flush_active = true;
-                }
-                for flushed in snapshot_due {
-                    pending.push(flushed, stats);
-                }
-
-                let flushes = active_text_assembler.flush_for_event(&event, now);
-                if !flushes.is_empty() {
-                    should_flush_active = true;
-                }
-                for flushed in flushes {
-                    pending.push(flushed, stats);
-                }
-
-                let snapshot_flushes = active_text_snapshots.flush_for_event(&event);
-                if !snapshot_flushes.is_empty() {
-                    should_flush_active = true;
-                }
-                for flushed in snapshot_flushes {
-                    pending.push(flushed, stats);
-                }
-
-                if let Some(snapshot) = parse_active_text_snapshot(&event, active_target.as_ref()) {
-                    active_text_snapshots.buffer(snapshot, now);
-
-                    if should_flush_active {
-                        emit_pending_batch(
-                            app,
-                            generation,
-                            &mut pending,
-                            &mut sequence,
-                            generation_atomic,
-                            stats,
-                        );
-                    }
-
-                    if pending.pending_len() >= max_batch_events {
-                        emit_pending_batch(
-                            app,
-                            generation,
-                            &mut pending,
-                            &mut sequence,
-                            generation_atomic,
-                            stats,
-                        );
-                    }
-                    continue;
-                }
-
-                if let Some(delta) = parse_active_text_delta(&event, active_target.as_ref()) {
-                    let assembled_events = active_text_assembler.absorb(delta, now);
-                    if !assembled_events.is_empty() {
-                        should_flush_active = true;
-                    }
-                    for assembled in assembled_events {
-                        pending.push(assembled, stats);
-                    }
-
-                    if should_flush_active {
-                        emit_pending_batch(
-                            app,
-                            generation,
-                            &mut pending,
-                            &mut sequence,
-                            generation_atomic,
-                            stats,
-                        );
-                    }
-
-                    if pending.pending_len() >= max_batch_events {
-                        emit_pending_batch(
-                            app,
-                            generation,
-                            &mut pending,
-                            &mut sequence,
-                            generation_atomic,
-                            stats,
-                        );
-                    }
-                    continue;
-                }
-
                 pending.push(event, stats);
-                if should_flush_active {
-                    emit_pending_batch(
-                        app,
-                        generation,
-                        &mut pending,
-                        &mut sequence,
-                        generation_atomic,
-                        stats,
-                    );
-                }
-                if pending.pending_len() >= max_batch_events {
+                if pending.pending_len() >= MAX_BATCH_EVENTS {
                     emit_pending_batch(
                         app,
                         generation,
@@ -367,18 +265,6 @@ fn consume_stream(
                 }
             }
             Ok(ReaderMessage::End(reason)) => {
-                for flushed in active_text_assembler.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_assembler.flush_store_only_all(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_snapshots.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_snapshots.flush_all() {
-                    pending.push(flushed, stats);
-                }
                 if !pending.is_empty() {
                     emit_pending_batch(
                         app,
@@ -394,18 +280,6 @@ fn consume_stream(
             Err(RecvTimeoutError::Timeout) => {
                 if last_reader_activity.elapsed() >= Duration::from_millis(STREAM_STALL_TIMEOUT_MS)
                 {
-                    for flushed in active_text_assembler.take_due(Instant::now()) {
-                        pending.push(flushed, stats);
-                    }
-                    for flushed in active_text_assembler.flush_store_only_all(Instant::now()) {
-                        pending.push(flushed, stats);
-                    }
-                    for flushed in active_text_snapshots.take_due(Instant::now()) {
-                        pending.push(flushed, stats);
-                    }
-                    for flushed in active_text_snapshots.flush_all() {
-                        pending.push(flushed, stats);
-                    }
                     if !pending.is_empty() {
                         sequence += 1;
                         emit_batch(
@@ -420,17 +294,8 @@ fn consume_stream(
                     return Some("stream stalled".to_string());
                 }
 
-                for flushed in active_text_assembler.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_snapshots.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
                 if !pending.is_empty() {
-                    if pending.should_hold_single_delta(
-                        Instant::now(),
-                        state.lock().active_target.as_ref(),
-                    ) {
+                    if pending.should_hold_single_delta(Instant::now()) {
                         continue;
                     }
                     emit_pending_batch(
@@ -444,18 +309,6 @@ fn consume_stream(
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
-                for flushed in active_text_assembler.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_assembler.flush_store_only_all(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_snapshots.take_due(Instant::now()) {
-                    pending.push(flushed, stats);
-                }
-                for flushed in active_text_snapshots.flush_all() {
-                    pending.push(flushed, stats);
-                }
                 if !pending.is_empty() {
                     emit_pending_batch(
                         app,

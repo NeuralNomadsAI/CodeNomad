@@ -24,10 +24,9 @@ pub(super) fn open_stream(
     client: &Client,
     config: &DesktopEventStreamConfig,
 ) -> Result<Response, OpenStreamError> {
-    let connection_id = generate_connection_id();
     let url = format!(
         "{}?clientId={}&connectionId={}",
-        config.events_url, config.client_id, connection_id
+        config.events_url, config.client_id, config.connection_id
     );
 
     let mut request = client.get(&url).header("Accept", "text/event-stream");
@@ -67,15 +66,6 @@ fn resolve_session_cookie(app: &AppHandle, config: &DesktopEventStreamConfig) ->
     read_session_cookie_from_webview(app, &config.base_url, &config.cookie_name)
         .or_else(|| config.session_cookie.clone())
         .filter(|value| !value.is_empty())
-}
-
-fn generate_connection_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let tid = std::thread::current().id();
-    format!("tauri-{}-{:?}", ts, tid)
 }
 
 fn read_session_cookie_from_webview(
@@ -120,6 +110,7 @@ pub(super) fn read_sse(
 ) {
     let mut reader = BufReader::new(response);
     let mut line = String::new();
+    let mut event_name: Option<String> = None;
     let mut data_lines: Vec<String> = Vec::new();
 
     loop {
@@ -131,9 +122,7 @@ pub(super) fn read_sse(
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                if let Some(event) = parse_sse_payload(&data_lines) {
-                    let _ = tx.send(ReaderMessage::Event(event));
-                }
+                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some("stream closed".to_string())));
                 return;
             }
@@ -143,11 +132,10 @@ pub(super) fn read_sse(
                 }
                 let trimmed = line.trim_end_matches(['\r', '\n']);
                 if trimmed.is_empty() {
-                    if let Some(event) = parse_sse_payload(&data_lines) {
-                        if tx.send(ReaderMessage::Event(event)).is_err() {
-                            return; // consumer dropped
-                        }
+                    if flush_sse_frame(&tx, &event_name, &data_lines).is_err() {
+                        return;
                     }
+                    event_name = None;
                     data_lines.clear();
                     continue;
                 }
@@ -156,18 +144,37 @@ pub(super) fn read_sse(
                     continue;
                 }
 
+                if let Some(name) = trimmed.strip_prefix("event:") {
+                    event_name = Some(name.strip_prefix(' ').unwrap_or(name).to_string());
+                    continue;
+                }
+
                 if let Some(data) = trimmed.strip_prefix("data:") {
                     data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
                 }
             }
             Err(error) => {
-                if let Some(event) = parse_sse_payload(&data_lines) {
-                    let _ = tx.send(ReaderMessage::Event(event));
-                }
+                let _ = flush_sse_frame(&tx, &event_name, &data_lines);
                 let _ = tx.send(ReaderMessage::End(Some(error.to_string())));
                 return;
             }
         }
+    }
+}
+
+fn flush_sse_frame(
+    tx: &SyncSender<ReaderMessage>,
+    event_name: &Option<String>,
+    lines: &[String],
+) -> Result<(), ()> {
+    let Some(payload) = parse_sse_payload(lines) else {
+        return Ok(());
+    };
+
+    if event_name.as_deref() == Some("codenomad.client.ping") {
+        tx.send(ReaderMessage::Ping(payload)).map_err(|_| ())
+    } else {
+        tx.send(ReaderMessage::Event(payload)).map_err(|_| ())
     }
 }
 

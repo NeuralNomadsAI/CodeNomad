@@ -3,7 +3,6 @@ use reqwest::blocking::{Client, Response};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
@@ -23,12 +22,6 @@ const EVENT_BATCH_NAME: &str = "desktop:event-batch";
 const EVENT_STATUS_NAME: &str = "desktop:event-stream-status";
 const FLUSH_INTERVAL_MS: u64 = 16;
 const DELTA_STREAM_WINDOW_MS: u64 = 48;
-const ACTIVE_STREAM_DISPLAY_WINDOW_MS: u64 = 16;
-const ACTIVE_STREAM_DISPLAY_CHUNK_MAX: usize = 96;
-const ACTIVE_STREAM_STORE_WINDOW_MS: u64 = 250;
-const ACTIVE_STREAM_SNAPSHOT_WINDOW_MS: u64 = 200;
-const ACTIVE_STREAM_HOLD_WINDOW_MS: u64 = 12;
-const ACTIVE_SESSION_MAX_BATCH_EVENTS: usize = 64;
 const MAX_BATCH_EVENTS: usize = 256;
 const DEFAULT_RECONNECT_INITIAL_DELAY_MS: u64 = 1_000;
 const DEFAULT_RECONNECT_MAX_DELAY_MS: u64 = 10_000;
@@ -42,6 +35,7 @@ pub struct DesktopEventStreamConfig {
     pub base_url: String,
     pub events_url: String,
     pub client_id: String,
+    pub connection_id: String,
     pub cookie_name: String,
     pub session_cookie: Option<String>,
 }
@@ -156,13 +150,6 @@ struct DesktopEventTransportStats {
 struct DesktopEventTransportState {
     stop: Option<Arc<AtomicBool>>,
     config: Option<DesktopEventTransportConfig>,
-    active_target: Option<ActiveSessionTarget>,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct ActiveSessionTarget {
-    pub instance_id: String,
-    pub session_id: String,
 }
 
 pub struct DesktopEventTransportManager {
@@ -173,6 +160,7 @@ pub struct DesktopEventTransportManager {
 enum ReaderMessage {
     Activity,
     Event(Value),
+    Ping(Value),
     End(Option<String>),
 }
 
@@ -180,8 +168,6 @@ enum PendingEntry {
     Delta {
         key: String,
         scope: String,
-        instance_id: String,
-        session_id: Option<String>,
         event: Value,
         started_at: Instant,
     },
@@ -220,85 +206,15 @@ struct PendingBatch {
     events: Vec<PendingEntry>,
 }
 
-#[derive(Clone)]
-struct ActiveTextDelta {
-    instance_id: String,
-    session_id: String,
-    message_id: String,
-    part_id: String,
-    delta: String,
-}
-
-struct ActiveTextPartBuffer {
-    instance_id: String,
-    session_id: String,
-    message_id: String,
-    part_id: String,
-    display_pending: String,
-    store_pending: String,
-    last_display_emit: Instant,
-    last_store_emit: Instant,
-}
-
-impl ActiveTextPartBuffer {
-    fn new(delta: ActiveTextDelta, now: Instant) -> Self {
-        Self {
-            instance_id: delta.instance_id,
-            session_id: delta.session_id,
-            message_id: delta.message_id,
-            part_id: delta.part_id,
-            display_pending: delta.delta.clone(),
-            store_pending: delta.delta,
-            last_display_emit: now,
-            last_store_emit: now,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ActiveTextSnapshot {
-    key: String,
-    instance_id: String,
-    session_id: String,
-    message_id: String,
-    part_id: String,
-    event: Value,
-}
-
-struct BufferedTextSnapshot {
-    instance_id: String,
-    session_id: String,
-    message_id: String,
-    part_id: String,
-    event: Value,
-    buffered_at: Instant,
-}
-
-#[derive(Default)]
-struct ActiveTextAssembler {
-    parts: HashMap<String, ActiveTextPartBuffer>,
-}
-
-#[derive(Default)]
-struct ActiveTextSnapshotBuffer {
-    parts: HashMap<String, BufferedTextSnapshot>,
-}
-
 impl DesktopEventTransportManager {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(DesktopEventTransportState {
                 stop: None,
                 config: None,
-                active_target: None,
             })),
             generation: Arc::new(AtomicU64::new(0)),
         }
-    }
-
-    pub fn set_active_session_target(&self, target: Option<ActiveSessionTarget>) {
-        let mut state = self.state.lock();
-        state.active_target = target;
     }
 
     pub fn start(
@@ -339,19 +255,11 @@ impl DesktopEventTransportManager {
         let stop = Arc::new(AtomicBool::new(false));
         state.stop = Some(stop.clone());
         state.config = Some(transport_config.clone());
-        let shared_state = self.state.clone();
         let shared_generation = self.generation.clone();
         drop(state);
 
         thread::spawn(move || {
-            run_transport_loop(
-                app,
-                shared_state,
-                shared_generation,
-                generation,
-                stop,
-                transport_config,
-            )
+            run_transport_loop(app, shared_generation, generation, stop, transport_config)
         });
 
         DesktopEventsStartResult {
@@ -367,7 +275,6 @@ impl DesktopEventTransportManager {
             stop.store(true, Ordering::SeqCst);
         }
         state.config = None;
-        state.active_target = None;
         self.generation.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -401,173 +308,6 @@ fn coalesced_instance_id(event: &Value) -> &str {
         .get("instanceId")
         .and_then(Value::as_str)
         .unwrap_or_default()
-}
-
-fn event_session_id(event: &Value) -> Option<&str> {
-    let inner = coalesced_payload_event(event);
-    let inner_type = inner.get("type")?.as_str()?;
-    let props = inner.get("properties")?;
-
-    match inner_type {
-        "session.updated" => props
-            .get("info")
-            .and_then(|info| info.get("id"))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                props
-                    .get("sessionID")
-                    .or_else(|| props.get("sessionId"))
-                    .and_then(Value::as_str)
-            }),
-        "message.updated" => props
-            .get("info")
-            .and_then(|info| info.get("sessionID").or_else(|| info.get("sessionId")))
-            .and_then(Value::as_str),
-        "message.part.updated" => props
-            .get("part")
-            .and_then(|part| part.get("sessionID").or_else(|| part.get("sessionId")))
-            .and_then(Value::as_str),
-        "message.part.delta"
-        | "message.removed"
-        | "message.part.removed"
-        | "session.compacted"
-        | "session.diff"
-        | "session.idle"
-        | "session.status" => props
-            .get("sessionID")
-            .or_else(|| props.get("sessionId"))
-            .and_then(Value::as_str),
-        _ => None,
-    }
-}
-
-fn parse_active_text_delta(
-    event: &Value,
-    active_target: Option<&ActiveSessionTarget>,
-) -> Option<ActiveTextDelta> {
-    let active_target = active_target?;
-    let instance_id = coalesced_instance_id(event);
-    if instance_id != active_target.instance_id {
-        return None;
-    }
-    let inner = coalesced_payload_event(event);
-    if inner.get("type")?.as_str()? != "message.part.delta" {
-        return None;
-    }
-
-    let props = inner.get("properties")?;
-    let field = props.get("field")?.as_str()?;
-    if field != "text" {
-        return None;
-    }
-
-    let event_session = props
-        .get("sessionID")
-        .or_else(|| props.get("sessionId"))
-        .and_then(Value::as_str)?;
-    if event_session != active_target.session_id {
-        return None;
-    }
-
-    Some(ActiveTextDelta {
-        instance_id: instance_id.to_string(),
-        session_id: event_session.to_string(),
-        message_id: props
-            .get("messageID")
-            .or_else(|| props.get("messageId"))
-            .and_then(Value::as_str)?
-            .to_string(),
-        part_id: props
-            .get("partID")
-            .or_else(|| props.get("partId"))
-            .and_then(Value::as_str)?
-            .to_string(),
-        delta: props.get("delta")?.as_str()?.to_string(),
-    })
-}
-
-fn make_assistant_stream_chunk_event(entry: &ActiveTextPartBuffer, delta: &str) -> Value {
-    serde_json::json!({
-        "type": "instance.event",
-        "instanceId": entry.instance_id,
-        "event": {
-            "type": "assistant.stream.chunk",
-            "properties": {
-                "sessionID": entry.session_id,
-                "messageID": entry.message_id,
-                "partID": entry.part_id,
-                "field": "text",
-                "delta": delta,
-            }
-        }
-    })
-}
-
-fn make_message_part_delta_event(entry: &ActiveTextPartBuffer, delta: &str) -> Value {
-    serde_json::json!({
-        "type": "instance.event",
-        "instanceId": entry.instance_id,
-        "event": {
-            "type": "message.part.delta",
-            "properties": {
-                "sessionID": entry.session_id,
-                "messageID": entry.message_id,
-                "partID": entry.part_id,
-                "field": "text",
-                "delta": delta,
-            }
-        }
-    })
-}
-
-fn parse_active_text_snapshot(
-    event: &Value,
-    active_target: Option<&ActiveSessionTarget>,
-) -> Option<ActiveTextSnapshot> {
-    let active_target = active_target?;
-    let instance_id = coalesced_instance_id(event);
-    if instance_id != active_target.instance_id {
-        return None;
-    }
-
-    let inner = coalesced_payload_event(event);
-    if inner.get("type")?.as_str()? != "message.part.updated" {
-        return None;
-    }
-
-    let part = inner.get("properties")?.get("part")?;
-    if part.get("type")?.as_str()? != "text" {
-        return None;
-    }
-    if part.get("text")?.as_str().is_none() {
-        return None;
-    }
-
-    let event_session = part
-        .get("sessionID")
-        .or_else(|| part.get("sessionId"))
-        .and_then(Value::as_str)?;
-    if event_session != active_target.session_id {
-        return None;
-    }
-
-    let message_id = part
-        .get("messageID")
-        .or_else(|| part.get("messageId"))
-        .and_then(Value::as_str)?;
-    let part_id = part.get("id")?.as_str()?;
-
-    Some(ActiveTextSnapshot {
-        key: format!(
-            "{}:{}:{}:{}",
-            instance_id, event_session, message_id, part_id
-        ),
-        instance_id: instance_id.to_string(),
-        session_id: event_session.to_string(),
-        message_id: message_id.to_string(),
-        part_id: part_id.to_string(),
-        event: event.clone(),
-    })
 }
 
 fn snapshot_key(event: &Value) -> Option<String> {

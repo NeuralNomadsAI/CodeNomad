@@ -200,7 +200,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/perf-log"])
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
     const publicPagePaths = new Set(["/login"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
