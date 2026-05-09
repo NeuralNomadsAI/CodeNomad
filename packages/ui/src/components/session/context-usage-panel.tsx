@@ -64,10 +64,11 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     let outputTokens = 0
     for (const session of family) {
       const info = map?.get(session.id)
-      if (info?.isSubscriptionModel) continue
-      cost += info?.cost ?? 0
       inputTokens += info?.inputTokens ?? 0
       outputTokens += info?.outputTokens ?? 0
+      if (!info?.isSubscriptionModel) {
+        cost += info?.cost ?? 0
+      }
     }
     return { cost, inputTokens, outputTokens }
   })
