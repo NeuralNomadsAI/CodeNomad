@@ -89,22 +89,34 @@ function markPermissionReplied(instanceId: string, permissionId: string): void {
     replied = new Map()
     repliedPermissionIdsByInstance.set(instanceId, replied)
   }
+  pruneRepliedPermissions(instanceId, replied)
   replied.set(permissionId, Date.now())
 }
 
 function hasRecentlyRepliedPermission(instanceId: string, permissionId: string): boolean {
   const replied = repliedPermissionIdsByInstance.get(instanceId)
   if (!replied) return false
+  pruneRepliedPermissions(instanceId, replied)
   const repliedAt = replied.get(permissionId)
   if (!repliedAt) return false
-  if (Date.now() - repliedAt > REPLIED_PERMISSION_TOMBSTONE_MS) {
-    replied.delete(permissionId)
-    if (replied.size === 0) {
-      repliedPermissionIdsByInstance.delete(instanceId)
+  return Date.now() - repliedAt <= REPLIED_PERMISSION_TOMBSTONE_MS
+}
+
+function pruneRepliedPermissions(instanceId: string, replied = repliedPermissionIdsByInstance.get(instanceId)): void {
+  if (!replied) return
+  const now = Date.now()
+  for (const [permissionId, repliedAt] of replied) {
+    if (now - repliedAt > REPLIED_PERMISSION_TOMBSTONE_MS) {
+      replied.delete(permissionId)
     }
-    return false
   }
-  return true
+  if (replied.size === 0) {
+    repliedPermissionIdsByInstance.delete(instanceId)
+  }
+}
+
+function clearRepliedPermissions(instanceId: string): void {
+  repliedPermissionIdsByInstance.delete(instanceId)
 }
 
 function mergePermissionRequest(previous: PermissionRequestLike | undefined, next: PermissionRequestLike): PermissionRequestLike {
@@ -132,10 +144,12 @@ function mergePermissionRequest(previous: PermissionRequestLike | undefined, nex
   }
   return merged
 }
+
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
   reason: string
+  details?: string
 }
 const [disconnectedInstance, setDisconnectedInstance] = createSignal<DisconnectedInstanceInfo | null>(null)
 
@@ -568,6 +582,7 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
+  clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
 
@@ -901,8 +916,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
     }
     return next
   })
-
-  const updatedQueue = getPermissionQueue(instanceId)
 
   recomputeActiveInterruption(instanceId)
 
