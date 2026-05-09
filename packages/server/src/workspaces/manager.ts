@@ -522,32 +522,31 @@ export class WorkspaceManager {
 
   private async syncSshOpencodeConfig(execution: Extract<ResolvedBinary, { kind: "ssh" }>, workspaceId: string): Promise<string> {
     const remoteConfigDir = `/tmp/codenomad-opencode-config-${workspaceId}`
-    const tarResult = spawnSync("tar", ["-C", this.opencodeConfigDir, "-cf", "-", "."], {
-      encoding: "buffer",
-      maxBuffer: 50 * 1024 * 1024,
-    })
-    if (tarResult.error) {
-      throw tarResult.error
-    }
-    if (tarResult.status !== 0 || !tarResult.stdout?.length) {
-      throw new Error(`Failed to archive OpenCode config for SSH profile: ${tarResult.stderr?.toString() || `tar exited with ${tarResult.status}`}`)
-    }
-
     const sshArgs = this.buildSshCommandArgs(execution, [
       "sh",
       "-lc",
-      `rm -rf ${shellQuote(remoteConfigDir)} && mkdir -p ${shellQuote(remoteConfigDir)} && tar -xf - -C ${shellQuote(remoteConfigDir)}`,
+      `rm -rf ${shellQuote(remoteConfigDir)}`,
     ])
-    const sshResult = spawnSync("ssh", sshArgs, {
-      input: tarResult.stdout,
-      encoding: "buffer",
+    const cleanupResult = spawnSync("ssh", sshArgs, {
+      encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
     })
-    if (sshResult.error) {
-      throw sshResult.error
+    if (cleanupResult.error) {
+      throw cleanupResult.error
     }
-    if (sshResult.status !== 0) {
-      throw new Error(`Failed to sync OpenCode config to SSH host: ${sshResult.stderr?.toString() || `ssh exited with ${sshResult.status}`}`)
+    if (cleanupResult.status !== 0) {
+      throw new Error(`Failed to prepare SSH OpenCode config directory: ${cleanupResult.stderr || `ssh exited with ${cleanupResult.status}`}`)
+    }
+
+    const scpResult = spawnSync("scp", this.buildScpCommandArgs(execution, ["-r", this.opencodeConfigDir, `${this.buildSshTarget(execution)}:${remoteConfigDir}`]), {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    if (scpResult.error) {
+      throw scpResult.error
+    }
+    if (scpResult.status !== 0) {
+      throw new Error(`Failed to copy OpenCode config to SSH host: ${scpResult.stderr || `scp exited with ${scpResult.status}`}`)
     }
 
     return remoteConfigDir
@@ -564,6 +563,29 @@ export class WorkspaceManager {
   }
 
   private buildSshCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteArgs: string[]): string[] {
+    return [
+      "-p",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      this.buildSshTarget(execution),
+      ...remoteArgs,
+    ]
+  }
+
+  private buildScpCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, args: string[]): string[] {
+    return [
+      "-P",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      ...args,
+    ]
+  }
+
+  private buildSshTarget(execution: Extract<ResolvedBinary, { kind: "ssh" }>): string {
     const host = execution.host.trim()
     if (!host || host.startsWith("-") || /\s/.test(host)) {
       throw new Error("SSH host must not be empty, start with '-', or contain whitespace")
@@ -574,16 +596,7 @@ export class WorkspaceManager {
       throw new Error("SSH username must not start with '-' or contain '@' or whitespace")
     }
 
-    return [
-      "-p",
-      String(execution.port ?? 22),
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "ExitOnForwardFailure=yes",
-      username ? `${username}@${host}` : host,
-      ...remoteArgs,
-    ]
+    return username ? `${username}@${host}` : host
   }
 
   private delay(durationMs: number): Promise<void> {
