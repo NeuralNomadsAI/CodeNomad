@@ -8,8 +8,8 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markViewedSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
-import { IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -17,6 +17,7 @@ import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
+import { useConfig } from "../../stores/preferences"
 
 const log = getLogger("session")
 
@@ -41,6 +42,7 @@ interface SessionViewProps {
 
 export const SessionView: Component<SessionViewProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
   const messagesLoading = createMemo(() => isSessionMessagesLoading(props.instanceId, props.sessionId))
   const messageStore = createMemo(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -82,14 +84,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     })
   }
 
-  function getSeenIdleEntries(currentSession: Session): Array<{ id: string; idleSince: number }> {
+  function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
     const entries: Array<{ id: string; idleSince: number }> = []
 
     if (currentSession.status === "idle" && typeof currentSession.idleSince === "number") {
       entries.push({ id: currentSession.id, idleSince: currentSession.idleSince })
     }
 
-    if (currentSession.parentId === null) {
+    if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
       for (const child of props.activeSessions.values()) {
         if (child.parentId !== currentSession.id) continue
         if (child.status !== "idle") continue
@@ -99,10 +101,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     return entries
-  }
-
-  function getSeenIdleSignature(entries: Array<{ id: string; idleSince: number }>): string {
-    return entries.map((entry) => `${entry.id}:${entry.idleSince}`).sort().join("|")
   }
 
   createEffect(
@@ -121,23 +119,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const currentSession = session()
     if (!props.isActive || !currentSession) return
 
-    const seenIdleEntries = getSeenIdleEntries(currentSession)
-    const seenIdleSignature = getSeenIdleSignature(seenIdleEntries)
-    if (!seenIdleSignature) return
-    const timerKey = `${props.instanceId}:${currentSession.id}:${seenIdleSignature}`
-    if (pendingIdleSeenTimers.has(timerKey)) return
-    pendingIdleSeenTimers.add(timerKey)
+    const seenIdleEntries = getSeenIdleEntries(currentSession, preferences().keepUnseenSubagentIdleStatus)
     for (const entry of seenIdleEntries) {
+      const timerKey = `${props.instanceId}:${entry.id}:${entry.idleSince}`
+      if (pendingIdleSeenTimers.has(timerKey)) continue
+      pendingIdleSeenTimers.add(timerKey)
       markSessionIdleFadeStarted(props.instanceId, entry.id)
-    }
 
-    window.setTimeout(() => {
-      pendingIdleSeenTimers.delete(timerKey)
-      const latestSession = session()
-      if (!latestSession) return
-      if (getSeenIdleSignature(getSeenIdleEntries(latestSession)) !== seenIdleSignature) return
-      markViewedSessionIdleSeen(props.instanceId, latestSession.id, false)
-    }, IDLE_STATUS_VISIBILITY_MS)
+      window.setTimeout(() => {
+        pendingIdleSeenTimers.delete(timerKey)
+        const latestEntry = props.activeSessions.get(entry.id)
+        if (latestEntry?.status === "idle" && latestEntry.idleSince === entry.idleSince) {
+          markSessionIdleSeen(props.instanceId, entry.id)
+        }
+        clearSessionIdleFade(props.instanceId, entry.id, entry.idleSince)
+      }, IDLE_STATUS_VISIBILITY_MS)
+    }
   })
 
   createEffect(

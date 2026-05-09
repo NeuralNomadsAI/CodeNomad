@@ -54,16 +54,16 @@ export function markSessionIdleFadeStarted(instanceId: string, sessionId: string
     next.set(key, Date.now())
     return next
   })
-  if (typeof window !== "undefined") {
-    window.setTimeout(() => {
-      setIdleFadeStarts((prev) => {
-        if (!prev.has(key)) return prev
-        const next = new Map(prev)
-        next.delete(key)
-        return next
-      })
-    }, IDLE_STATUS_VISIBILITY_MS + 1000)
-  }
+}
+
+export function clearSessionIdleFade(instanceId: string, sessionId: string, idleSince: number): void {
+  const key = idleFadeKey(instanceId, sessionId, idleSince)
+  setIdleFadeStarts((prev) => {
+    if (!prev.has(key)) return prev
+    const next = new Map(prev)
+    next.delete(key)
+    return next
+  })
 }
 
 export function getSessionIdleFadeClass(instanceId: string, sessionId: string): string {

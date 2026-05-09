@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
-import { IDLE_STATUS_VISIBILITY_MS, shouldShowIdleStatus } from "./session-status.ts"
+import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus } from "./session-status.ts"
+import { setSessions } from "./session-state.ts"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
 describe("shouldSessionHoldWakeLock", () => {
@@ -60,5 +61,38 @@ describe("idle status visibility", () => {
 
     assert.equal(idleSince, null)
     assert.equal(shouldShowIdleStatus({ status: "working", idleSince, parentId: null }), false)
+  })
+
+  it("clears idle fade state for a specific idle transition", () => {
+    const instanceId = "instance"
+    const sessionId = "session"
+    const idleSince = 1_000
+
+    setSessions(
+      new Map([
+        [
+          instanceId,
+          new Map([
+            [
+              sessionId,
+              {
+                id: sessionId,
+                status: "idle",
+                idleSince,
+                parentId: null,
+              } as any,
+            ],
+          ]),
+        ],
+      ]),
+    )
+
+    markSessionIdleFadeStarted(instanceId, sessionId)
+    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
+
+    clearSessionIdleFade(instanceId, sessionId, idleSince)
+    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
+
+    setSessions(new Map())
   })
 })
