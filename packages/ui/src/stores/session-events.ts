@@ -35,6 +35,8 @@ import {
   instances,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRecentlyRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
 } from "./instances"
@@ -689,8 +691,13 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
 function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {
   const permission = event?.properties as PermissionRequestLike | undefined
   if (!permission) return
+  const permissionId = getPermissionId(permission)
+  if (permissionId && hasRecentlyRepliedPermission(instanceId, permissionId)) {
+    log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
+    return
+  }
 
-  log.info(`[SSE] Permission request: ${getPermissionId(permission)} (${getPermissionKind(permission)})`)
+  log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
   addPermissionToQueue(instanceId, permission)
   upsertPermissionV2(instanceId, permission)
 
@@ -710,6 +717,7 @@ function handlePermissionReplied(instanceId: string, event: { type: string; prop
   if (!requestId) return
 
   log.info(`[SSE] Permission replied: ${requestId}`)
+  markPermissionReplied(instanceId, requestId)
   removePermissionFromQueue(instanceId, requestId)
   removePermissionV2(instanceId, requestId)
 }

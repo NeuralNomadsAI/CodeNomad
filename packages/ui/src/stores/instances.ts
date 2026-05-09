@@ -52,6 +52,8 @@ const [activePermissionId, setActivePermissionId] = createSignal<Map<string, str
 const permissionSessionCounts = new Map<string, Map<string, number>>()
 // Track which worktree a permission was enqueued under (by permission request id).
 const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
+const REPLIED_PERMISSION_TOMBSTONE_MS = 30_000
+const repliedPermissionIdsByInstance = new Map<string, Map<string, number>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
 // Track which worktree a question was enqueued under (by question request id).
@@ -77,6 +79,43 @@ const [activeInterruption, setActiveInterruption] = createSignal<Map<string, Act
 function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
   setHasInstances(readyExists)
+}
+
+function pruneRepliedPermissions(instanceId: string, replied = repliedPermissionIdsByInstance.get(instanceId)): void {
+  if (!replied) return
+  const now = Date.now()
+  for (const [permissionId, repliedAt] of replied) {
+    if (now - repliedAt > REPLIED_PERMISSION_TOMBSTONE_MS) {
+      replied.delete(permissionId)
+    }
+  }
+  if (replied.size === 0) {
+    repliedPermissionIdsByInstance.delete(instanceId)
+  }
+}
+
+function markPermissionReplied(instanceId: string, permissionId: string): void {
+  if (!permissionId) return
+  let replied = repliedPermissionIdsByInstance.get(instanceId)
+  if (!replied) {
+    replied = new Map()
+    repliedPermissionIdsByInstance.set(instanceId, replied)
+  }
+  pruneRepliedPermissions(instanceId, replied)
+  replied.set(permissionId, Date.now())
+}
+
+function hasRecentlyRepliedPermission(instanceId: string, permissionId: string): boolean {
+  const replied = repliedPermissionIdsByInstance.get(instanceId)
+  if (!replied) return false
+  pruneRepliedPermissions(instanceId, replied)
+  const repliedAt = replied.get(permissionId)
+  if (!repliedAt) return false
+  return Date.now() - repliedAt <= REPLIED_PERMISSION_TOMBSTONE_MS
+}
+
+function clearRepliedPermissions(instanceId: string): void {
+  repliedPermissionIdsByInstance.delete(instanceId)
 }
 interface DisconnectedInstanceInfo {
   id: string
@@ -191,7 +230,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
       "permission.list",
     )
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    const pendingRemote = remote.filter((item) => !hasRecentlyRepliedPermission(instanceId, item.id))
+    const remoteIds = new Set(pendingRemote.map((item) => item.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
@@ -203,7 +243,7 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending permissions.
-    for (const permission of remote) {
+    for (const permission of pendingRemote) {
       addPermissionToQueue(instanceId, permission)
       upsertPermissionV2(instanceId, permission)
     }
@@ -512,6 +552,7 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
+  clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
 
@@ -1034,8 +1075,11 @@ async function sendPermissionResponse(
       "permission.reply",
     )
 
-    // Remove from queue after successful response
+    markPermissionReplied(instanceId, requestId)
+    // Remove from both local queues after successful response; the SSE replied event
+    // is still accepted, but the UI no longer depends on receiving it.
     removePermissionFromQueue(instanceId, requestId)
+    removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
@@ -1130,6 +1174,8 @@ export {
   getPermissionQueueLength,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRecentlyRepliedPermission,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
