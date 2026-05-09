@@ -380,7 +380,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={handleOverlayClick}>
+      <div class="fixed inset-0 z-[1305] flex items-center justify-center bg-black/60 p-6" onClick={handleOverlayClick}>
         <div class="modal-surface directory-browser-modal" role="dialog" aria-modal="true">
           <div class="panel directory-browser-panel">
             <div class="directory-browser-header">
