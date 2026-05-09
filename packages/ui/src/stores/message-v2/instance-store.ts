@@ -911,6 +911,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState(
       "permissions",
       produce((draft) => {
+        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
+          const partEntries = draft.byMessage[existingMessageKey]
+          Object.keys(partEntries).forEach((existingPartKey) => {
+            if (partEntries[existingPartKey].permission.id === entry.permission.id) {
+              delete partEntries[existingPartKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[existingMessageKey]
+          }
+        })
         draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
         draft.byMessage[messageKey][partKey] = entry
         const existingIndex = draft.queue.findIndex((item) => item.permission.id === entry.permission.id)
@@ -919,9 +930,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         } else {
           draft.queue[existingIndex] = entry
         }
-        if (!draft.active || draft.active.permission.id === entry.permission.id) {
-          draft.active = entry
-        }
+        draft.queue.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+        draft.active = draft.queue[0] ?? null
       }),
     )
   }

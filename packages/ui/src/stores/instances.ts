@@ -52,6 +52,8 @@ const [activePermissionId, setActivePermissionId] = createSignal<Map<string, str
 const permissionSessionCounts = new Map<string, Map<string, number>>()
 // Track which worktree a permission was enqueued under (by permission request id).
 const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
+const REPLIED_PERMISSION_TOMBSTONE_MS = 30_000
+const repliedPermissionIdsByInstance = new Map<string, Map<string, number>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
 // Track which worktree a question was enqueued under (by question request id).
@@ -77,6 +79,31 @@ const [activeInterruption, setActiveInterruption] = createSignal<Map<string, Act
 function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
   setHasInstances(readyExists)
+}
+
+function markPermissionReplied(instanceId: string, permissionId: string): void {
+  if (!permissionId) return
+  let replied = repliedPermissionIdsByInstance.get(instanceId)
+  if (!replied) {
+    replied = new Map()
+    repliedPermissionIdsByInstance.set(instanceId, replied)
+  }
+  replied.set(permissionId, Date.now())
+}
+
+function hasRecentlyRepliedPermission(instanceId: string, permissionId: string): boolean {
+  const replied = repliedPermissionIdsByInstance.get(instanceId)
+  if (!replied) return false
+  const repliedAt = replied.get(permissionId)
+  if (!repliedAt) return false
+  if (Date.now() - repliedAt > REPLIED_PERMISSION_TOMBSTONE_MS) {
+    replied.delete(permissionId)
+    if (replied.size === 0) {
+      repliedPermissionIdsByInstance.delete(instanceId)
+    }
+    return false
+  }
+  return true
 }
 interface DisconnectedInstanceInfo {
   id: string
@@ -760,12 +787,20 @@ function clearQuestionSessionPendingCounts(instanceId: string): void {
 
 function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
   let inserted = false
+  let updated = false
+  let previousPermission: PermissionRequestLike | undefined
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
+    const existingIndex = queue.findIndex((p) => p.id === permission.id)
 
-    if (queue.some((p) => p.id === permission.id)) {
+    if (existingIndex !== -1) {
+      previousPermission = queue[existingIndex]
+      const updatedQueue = queue.slice()
+      updatedQueue[existingIndex] = permission
+      next.set(instanceId, updatedQueue.sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b)))
+      updated = true
       return next
     }
 
@@ -775,19 +810,26 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
     return next
   })
 
-  if (!inserted) {
+  if (!inserted && !updated) {
     return
   }
 
   recomputeActiveInterruption(instanceId)
 
+  const previousSessionId = previousPermission ? getPermissionSessionId(previousPermission) : undefined
   const sessionId = getPermissionSessionId(permission)
+  if (previousSessionId && previousSessionId !== sessionId) {
+    const remaining = decrementSessionPendingCount(instanceId, previousSessionId)
+    setSessionPendingPermission(instanceId, previousSessionId, remaining > 0)
+  }
+
   if (sessionId) {
-    incrementSessionPendingCount(instanceId, sessionId)
+    if (inserted || previousSessionId !== sessionId) {
+      incrementSessionPendingCount(instanceId, sessionId)
+    }
     setSessionPendingPermission(instanceId, sessionId, true)
 
-    // Record the worktree slug at the time the permission is enqueued.
-    // This is used to respond in the same worktree context even from the global permission center.
+    // Refresh this when duplicate permission events carry better session/worktree hydration.
     const slug = getWorktreeSlugForSession(instanceId, sessionId)
     let byPermissionId = permissionWorktreeSlugByInstance.get(instanceId)
     if (!byPermissionId) {
@@ -1034,8 +1076,11 @@ async function sendPermissionResponse(
       "permission.reply",
     )
 
-    // Remove from queue after successful response
+    markPermissionReplied(instanceId, requestId)
+    // Remove from both local queues after successful response; the SSE replied event
+    // is still accepted, but the UI no longer depends on receiving it.
     removePermissionFromQueue(instanceId, requestId)
+    removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
@@ -1130,6 +1175,8 @@ export {
   getPermissionQueueLength,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRecentlyRepliedPermission,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
