@@ -703,6 +703,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return title || t("sessionList.session.untitled")
   })
   const showHeaderSessionTitle = createMemo(() => !leftPinned() && Boolean(activeSessionTitle()))
+  const headerToolbarHorizontalInset = createMemo(() => (isPhoneLayout() ? 16 : 24))
+  const headerLeftSlotWidth = createMemo(() => Math.max(0, sessionSidebarWidth() - headerToolbarHorizontalInset()))
 
   const renderActiveSessionHeaderTitle = () => (
     <Show when={showHeaderSessionTitle()}>
@@ -722,7 +724,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const renderHeaderLeftSlot = () => (
     <Show when={showHeaderSessionTitle()}>
-      <div class="session-header-left-slot" style={{ width: `${sessionSidebarWidth()}px` }}>
+      <div class="session-header-left-slot" style={{ width: `${headerLeftSlotWidth()}px` }}>
         <Show when={leftDrawerState() === "floating-closed"}>
           <IconButton
             ref={setLeftToggleButtonEl}
