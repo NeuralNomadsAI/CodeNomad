@@ -595,7 +595,14 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 }
 
-async function loadMessages(instanceId: string, sessionId: string, force = false): Promise<void> {
+async function loadMessages(
+  instanceId: string,
+  sessionId: string,
+  options?: { force?: boolean; skipDiff?: boolean },
+): Promise<void> {
+  const force = options?.force ?? false
+  const skipDiff = options?.skipDiff ?? false
+
   if (force) {
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -631,10 +638,11 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     throw new Error("Session not found")
   }
 
-  // Fetch session-level diffs in the background once the session is opened.
-  void loadSessionDiff(instanceId, sessionId).catch((error) => {
-    log.warn("Failed to load session diff", { instanceId, sessionId, error })
-  })
+  if (!skipDiff) {
+    void loadSessionDiff(instanceId, sessionId).catch((error) => {
+      log.warn("Failed to load session diff", { instanceId, sessionId, error })
+    })
+  }
 
   setLoading((prev) => {
     const next = { ...prev }
