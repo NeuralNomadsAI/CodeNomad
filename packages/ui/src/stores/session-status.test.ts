@@ -37,14 +37,15 @@ describe("idle status visibility", () => {
   it("keeps subagent idle visible until the parent or child session is seen", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 2_000, true), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 10_000, true), true)
   })
 
-  it("does not use the keep-unseen setting to age out visible idle markers", () => {
+  it("ages out subagent idle markers unless keep-unseen is enabled", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 2_000, false), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 7_000, false), false)
   })
 
   it("does not show idle for sessions that started idle", () => {
