@@ -1,12 +1,8 @@
-import { createEffect, createMemo, Show, untrack, type Component } from "solid-js"
-import { getChildSessions, getSessionFamily, getSessionInfo, loadMessages, sessionInfoByInstance } from "../../stores/sessions"
+import { createMemo, Show, type Component } from "solid-js"
+import { getChildSessions, getSessionInfo, getThreadTotals } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
-import { computeThreadTotals } from "../../lib/thread-totals"
 import { useI18n } from "../../lib/i18n"
-import { getLogger } from "../../lib/logger"
 import { useConfig } from "../../stores/preferences"
-
-const log = getLogger("session")
 
 interface ContextUsagePanelProps {
   instanceId: string
@@ -39,32 +35,9 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const children = createMemo(() => getChildSessions(props.instanceId, props.sessionId))
   const hasChildren = createMemo(() => children().length > 0)
 
-  const instanceInfoMap = createMemo(() =>
-    sessionInfoByInstance().get(props.instanceId),
-  )
-
-  createEffect(() => {
-    if (!showUsage()) return
-    const instanceId = props.instanceId
-    const childSessions = children()
-    untrack(() => {
-      for (const child of childSessions) {
-        loadMessages(instanceId, child.id, { skipDiff: true }).catch((error) =>
-          log.error("Failed to load child session messages", {
-            instanceId,
-            sessionId: child.id,
-            error,
-          }),
-        )
-      }
-    })
-  })
-
   const threadTotals = createMemo(() => {
     if (!hasChildren()) return { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
-    const map = instanceInfoMap()
-    const family = getSessionFamily(props.instanceId, props.sessionId)
-    return computeThreadTotals(family, map)
+    return getThreadTotals(props.instanceId, props.sessionId) ?? { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
   })
 
   const totalCostDisplay = createMemo(() => `$${threadTotals().cost.toFixed(2)}`)
