@@ -3,7 +3,7 @@ import { spawnSync } from "child_process"
 import { connect, createServer } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
-import type { BinaryResolver } from "../settings/binaries"
+import type { BinaryResolver, ResolvedBinary } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
@@ -34,6 +34,11 @@ interface WorkspaceManagerOptions {
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
+
+function shellQuote(value: string): string {
+  if (!value) return "''"
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
 
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
@@ -153,6 +158,11 @@ export class WorkspaceManager {
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
+    const sshRemoteConfigDir = execution.kind === "ssh" ? await this.syncSshOpencodeConfig(execution, id) : undefined
+    if (sshRemoteConfigDir) {
+      environment.OPENCODE_CONFIG_DIR = sshRemoteConfigDir
+    }
+
     const logLevel = (serverConfig as any)?.logLevel
     const reservedPort = execution.kind === "docker" || execution.kind === "ssh" ? await this.getAvailablePort() : undefined
     const callbackPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
@@ -178,7 +188,12 @@ export class WorkspaceManager {
         wslDistro: launchCommand.wslDistro,
         stdin: launchCommand.stdin,
         logLevel,
-        onExit: (info) => this.handleProcessExit(info.workspaceId, info),
+        onExit: (info) => {
+          if (execution.kind === "ssh" && sshRemoteConfigDir) {
+            this.cleanupSshOpencodeConfig(execution, sshRemoteConfigDir)
+          }
+          this.handleProcessExit(info.workspaceId, info)
+        },
       })
       launchedPid = pid
 
@@ -204,6 +219,9 @@ export class WorkspaceManager {
         await this.runtime.stop(id).catch((stopError) => {
           this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup failure")
         })
+      }
+      if (execution.kind === "ssh" && sshRemoteConfigDir) {
+        this.cleanupSshOpencodeConfig(execution, sshRemoteConfigDir)
       }
       throw error
     }
@@ -500,6 +518,72 @@ export class WorkspaceManager {
         })
       })
     })
+  }
+
+  private async syncSshOpencodeConfig(execution: Extract<ResolvedBinary, { kind: "ssh" }>, workspaceId: string): Promise<string> {
+    const remoteConfigDir = `/tmp/codenomad-opencode-config-${workspaceId}`
+    const tarResult = spawnSync("tar", ["-C", this.opencodeConfigDir, "-cf", "-", "."], {
+      encoding: "buffer",
+      maxBuffer: 50 * 1024 * 1024,
+    })
+    if (tarResult.error) {
+      throw tarResult.error
+    }
+    if (tarResult.status !== 0 || !tarResult.stdout?.length) {
+      throw new Error(`Failed to archive OpenCode config for SSH profile: ${tarResult.stderr?.toString() || `tar exited with ${tarResult.status}`}`)
+    }
+
+    const sshArgs = this.buildSshCommandArgs(execution, [
+      "sh",
+      "-lc",
+      `rm -rf ${shellQuote(remoteConfigDir)} && mkdir -p ${shellQuote(remoteConfigDir)} && tar -xf - -C ${shellQuote(remoteConfigDir)}`,
+    ])
+    const sshResult = spawnSync("ssh", sshArgs, {
+      input: tarResult.stdout,
+      encoding: "buffer",
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    if (sshResult.error) {
+      throw sshResult.error
+    }
+    if (sshResult.status !== 0) {
+      throw new Error(`Failed to sync OpenCode config to SSH host: ${sshResult.stderr?.toString() || `ssh exited with ${sshResult.status}`}`)
+    }
+
+    return remoteConfigDir
+  }
+
+  private cleanupSshOpencodeConfig(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteConfigDir: string): void {
+    const result = spawnSync("ssh", this.buildSshCommandArgs(execution, ["sh", "-lc", `rm -rf ${shellQuote(remoteConfigDir)}`]), {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    if (result.error || result.status !== 0) {
+      this.options.logger.debug({ err: result.error, stderr: result.stderr, status: result.status }, "Failed to clean SSH OpenCode config directory")
+    }
+  }
+
+  private buildSshCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteArgs: string[]): string[] {
+    const host = execution.host.trim()
+    if (!host || host.startsWith("-") || /\s/.test(host)) {
+      throw new Error("SSH host must not be empty, start with '-', or contain whitespace")
+    }
+
+    const username = execution.username?.trim()
+    if (username && (username.startsWith("-") || /[@\s]/.test(username))) {
+      throw new Error("SSH username must not start with '-' or contain '@' or whitespace")
+    }
+
+    return [
+      "-p",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      username ? `${username}@${host}` : host,
+      ...remoteArgs,
+    ]
   }
 
   private delay(durationMs: number): Promise<void> {
