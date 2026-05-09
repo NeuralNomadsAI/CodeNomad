@@ -110,6 +110,7 @@ export default function PromptInput(props: PromptInputProps) {
     prompt,
     setPrompt,
     getTextarea: () => textareaRef ?? null,
+    disabled: () => Boolean(props.disabled),
   })
 
   createEffect(() => {
@@ -399,6 +400,10 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleFileInputChange(event: Event) {
     const input = event.currentTarget as HTMLInputElement
+    if (props.disabled) {
+      input.value = ""
+      return
+    }
     handleFileSelection(input.files)
     input.value = ""
   }
@@ -726,6 +731,7 @@ export default function PromptInput(props: PromptInputProps) {
                 multiple
                 class="sr-only"
                 tabindex="-1"
+                disabled={props.disabled}
                 onChange={handleFileInputChange}
               />
               <button

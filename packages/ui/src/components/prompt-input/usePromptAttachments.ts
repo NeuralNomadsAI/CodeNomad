@@ -2,6 +2,7 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
+import { getFilePath } from "../../lib/native/desktop-file-drop"
 import {
   bracketedImageDisplayCounterRegex,
   findHighestAttachmentCounters,
@@ -18,6 +19,7 @@ type PromptAttachmentsOptions = {
   prompt: Accessor<string>
   setPrompt: (value: string) => void
   getTextarea: () => HTMLTextAreaElement | null
+  disabled?: Accessor<boolean>
 }
 
 type PromptAttachments = {
@@ -42,6 +44,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [isDragging, setIsDragging] = createSignal(false)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
+  const MAX_INLINE_PICKED_FILE_BYTES = 5 * 1024 * 1024
 
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
@@ -294,6 +297,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   }
 
   function handleDragOver(e: DragEvent) {
+    if (options.disabled?.()) return
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(true)
@@ -306,14 +310,21 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   }
 
   function handleFileSelection(files: FileList | File[] | null) {
+    if (options.disabled?.()) return
     if (!files || files.length === 0) return
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const nativePath = (file as File & { path?: string }).path
-      const path = nativePath || file.name
+      const nativePath = getFilePath(file)
       const filename = file.name
       const mime = file.type || "application/octet-stream"
+      const canInlinePreview = (mime.startsWith("image/") || mime.startsWith("text/")) && file.size <= MAX_INLINE_PICKED_FILE_BYTES
+
+      if (!nativePath && !canInlinePreview) {
+        continue
+      }
+
+      const path = nativePath || filename
 
       const createAndStoreAttachment = (previewUrl?: string) => {
         const attachment = createFileAttachment(path, filename, mime, undefined, options.instanceFolder())
@@ -323,12 +334,16 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
         addAttachment(options.instanceId(), options.sessionId(), attachment)
       }
 
-      const shouldReadDataUrl = !nativePath || mime.startsWith("image/") || mime.startsWith("text/")
-      if (shouldReadDataUrl && typeof FileReader !== "undefined") {
+      if (canInlinePreview && typeof FileReader !== "undefined") {
         const reader = new FileReader()
         reader.onload = () => {
           const result = typeof reader.result === "string" ? reader.result : undefined
           createAndStoreAttachment(result)
+        }
+        reader.onerror = () => {
+          if (nativePath) {
+            createAndStoreAttachment()
+          }
         }
         reader.readAsDataURL(file)
       } else {
@@ -343,6 +358,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
+
+    if (options.disabled?.()) return
 
     handleFileSelection(e.dataTransfer?.files ?? null)
   }

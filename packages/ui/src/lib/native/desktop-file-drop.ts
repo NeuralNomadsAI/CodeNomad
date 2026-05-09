@@ -17,7 +17,7 @@ function normalizePathList(input: unknown): string[] {
   return input.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
 }
 
-function getFilePath(file: File): string | null {
+export function getFilePath(file: File): string | null {
   if (typeof file.path === "string" && file.path.trim().length > 0) {
     return file.path
   }
