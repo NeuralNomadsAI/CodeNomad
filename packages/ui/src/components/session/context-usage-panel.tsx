@@ -45,7 +45,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   createEffect(() => {
     if (!showUsage()) return
     for (const child of children()) {
-      loadMessages(props.instanceId, child.id).catch((error) =>
+      loadMessages(props.instanceId, child.id, false, true).catch((error) =>
         log.error("Failed to load child session messages", {
           instanceId: props.instanceId,
           sessionId: child.id,
@@ -64,6 +64,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     let outputTokens = 0
     for (const session of family) {
       const info = map?.get(session.id)
+      if (info?.isSubscriptionModel) continue
       cost += info?.cost ?? 0
       inputTokens += info?.inputTokens ?? 0
       outputTokens += info?.outputTokens ?? 0
