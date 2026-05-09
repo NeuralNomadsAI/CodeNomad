@@ -172,6 +172,19 @@ class ServerEvents {
     this.openHandlers.add(handler)
     return () => this.openHandlers.delete(handler)
   }
+
+  restart(reason = "manual restart"): void {
+    this.retryDelay = RETRY_BASE_DELAY
+    this.clearReconnectTimer()
+
+    if (this.connection) {
+      this.connection.disconnect()
+      this.connection = null
+    }
+
+    logSse("Restarting backend events stream", { reason })
+    void this.connect()
+  }
 }
 
 export const serverEvents = new ServerEvents()

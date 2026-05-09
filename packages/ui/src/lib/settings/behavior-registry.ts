@@ -6,7 +6,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isWebHost } from "../runtime-env"
+import { isTauriHost, isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -280,6 +280,22 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
+    ...(isTauriHost()
+      ? [
+          {
+            kind: "toggle" as const,
+            id: "behavior.tauriNativeEventTransport",
+            titleKey: "settings.behavior.tauriNativeEventTransport.title",
+            subtitleKey: "settings.behavior.tauriNativeEventTransport.subtitle",
+            get: (p: Preferences) => Boolean(p.useTauriNativeEventTransport ?? true),
+            set: (next: boolean) => {
+              if (updatePreferences) {
+                updatePreferences({ useTauriNativeEventTransport: next })
+              }
+            },
+          },
+        ]
+      : []),
     {
       kind: "toggle",
       id: "behavior.promptVoiceInput",
