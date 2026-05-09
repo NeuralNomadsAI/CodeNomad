@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Volume2, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -63,6 +63,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
+  let fileInputRef: HTMLInputElement | undefined
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -98,6 +99,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handleFileSelection,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -388,6 +390,17 @@ export default function PromptInput(props: PromptInputProps) {
     setIgnoredAtPositions(new Set<number>())
     syncAttachmentCounters("")
     textareaRef?.focus()
+  }
+
+  function handleAttachFiles() {
+    if (props.disabled) return
+    fileInputRef?.click()
+  }
+
+  function handleFileInputChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    handleFileSelection(input.files)
+    input.value = ""
   }
 
   function insertBlockContent(block: string) {
@@ -707,6 +720,24 @@ export default function PromptInput(props: PromptInputProps) {
                   <Volume2 class="h-4 w-4" aria-hidden="true" />
                 </button>
               </Show>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                class="sr-only"
+                tabindex="-1"
+                onChange={handleFileInputChange}
+              />
+              <button
+                type="button"
+                class="prompt-attach-button"
+                onClick={handleAttachFiles}
+                disabled={props.disabled}
+                aria-label={t("promptInput.attachFiles.ariaLabel")}
+                title={t("promptInput.attachFiles.title")}
+              >
+                <Paperclip class="h-4 w-4" aria-hidden="true" />
+              </button>
               <button
                 type="button"
                 class="prompt-clear-button"

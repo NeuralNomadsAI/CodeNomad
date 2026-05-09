@@ -158,6 +158,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "à nouveau pour interrompre la session",
   "promptInput.stopSession.ariaLabel": "Arrêter la session",
   "promptInput.stopSession.title": "Arrêter la session",
+  "promptInput.attachFiles.ariaLabel": "Joindre des fichiers",
+  "promptInput.attachFiles.title": "Joindre des fichiers",
   "promptInput.clear.ariaLabel": "Effacer le texte du prompt",
   "promptInput.clear.title": "Effacer le texte du prompt",
   "promptInput.send.ariaLabel": "Envoyer le message",

@@ -158,6 +158,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "再次按下以中止会话",
   "promptInput.stopSession.ariaLabel": "停止会话",
   "promptInput.stopSession.title": "停止会话",
+  "promptInput.attachFiles.ariaLabel": "附加文件",
+  "promptInput.attachFiles.title": "附加文件",
   "promptInput.clear.ariaLabel": "清除输入框文本",
   "promptInput.clear.title": "清除输入框文本",
   "promptInput.send.ariaLabel": "发送消息",

@@ -31,6 +31,7 @@ type PromptAttachments = {
   handleDragOver: (e: DragEvent) => void
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
+  handleFileSelection: (files: FileList | File[] | null) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
   handleExpandTextAttachment: (attachment: Attachment) => void
@@ -304,40 +305,30 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     setIsDragging(false)
   }
 
-  function handleDrop(e: DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-
-    const files = e.dataTransfer?.files
+  function handleFileSelection(files: FileList | File[] | null) {
     if (!files || files.length === 0) return
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const path = (file as File & { path?: string }).path || file.name
+      const nativePath = (file as File & { path?: string }).path
+      const path = nativePath || file.name
       const filename = file.name
-      const mime = file.type || "text/plain"
+      const mime = file.type || "application/octet-stream"
 
       const createAndStoreAttachment = (previewUrl?: string) => {
         const attachment = createFileAttachment(path, filename, mime, undefined, options.instanceFolder())
-        if (previewUrl && (mime.startsWith("image/") || mime.startsWith("text/"))) {
+        if (previewUrl) {
           attachment.url = previewUrl
         }
         addAttachment(options.instanceId(), options.sessionId(), attachment)
       }
 
-      if (mime.startsWith("image/") && typeof FileReader !== "undefined") {
+      const shouldReadDataUrl = !nativePath || mime.startsWith("image/") || mime.startsWith("text/")
+      if (shouldReadDataUrl && typeof FileReader !== "undefined") {
         const reader = new FileReader()
         reader.onload = () => {
           const result = typeof reader.result === "string" ? reader.result : undefined
           createAndStoreAttachment(result)
-        }
-        reader.readAsDataURL(file)
-      } else if (mime.startsWith("text/") && typeof FileReader !== "undefined") {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const dataUrl = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(dataUrl)
         }
         reader.readAsDataURL(file)
       } else {
@@ -346,6 +337,14 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     }
 
     options.getTextarea()?.focus()
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    handleFileSelection(e.dataTransfer?.files ?? null)
   }
 
   return {
@@ -358,6 +357,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handleFileSelection,
     handleRemoveAttachment,
     handleExpandTextAttachment,
   }

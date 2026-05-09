@@ -156,6 +156,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "again to abort session",
   "promptInput.stopSession.ariaLabel": "Stop session",
   "promptInput.stopSession.title": "Stop session",
+  "promptInput.attachFiles.ariaLabel": "Attach files",
+  "promptInput.attachFiles.title": "Attach files",
   "promptInput.clear.ariaLabel": "Clear prompt text",
   "promptInput.clear.title": "Clear prompt text",
   "promptInput.send.ariaLabel": "Send message",

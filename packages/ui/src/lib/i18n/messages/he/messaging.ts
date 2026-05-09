@@ -156,6 +156,8 @@ export const messagingMessages = {
   "promptInput.overlay.againToAbort": "שוב כדי לבטל את הסשן",
   "promptInput.stopSession.ariaLabel": "עצור סשן",
   "promptInput.stopSession.title": "עצור סשן",
+  "promptInput.attachFiles.ariaLabel": "צרף קבצים",
+  "promptInput.attachFiles.title": "צרף קבצים",
   "promptInput.clear.ariaLabel": "נקה את טקסט הפרומפט",
   "promptInput.clear.title": "נקה את טקסט הפרומפט",
   "promptInput.send.ariaLabel": "שלח הודעה",
