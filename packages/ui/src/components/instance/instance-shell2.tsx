@@ -702,41 +702,39 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const title = activeSessionForInstance()?.title?.trim()
     return title || t("sessionList.session.untitled")
   })
-  const showHeaderSessionTitle = createMemo(() => !leftPinned() && Boolean(activeSessionTitle()))
+  const showHeaderLeftSlot = createMemo(() => leftDrawerState() === "floating-closed")
+  const showHeaderSessionTitle = createMemo(() => showHeaderLeftSlot() && Boolean(activeSessionTitle()))
   const headerToolbarHorizontalInset = createMemo(() => (isPhoneLayout() ? 16 : 24))
   const headerLeftSlotWidth = createMemo(() => Math.max(0, sessionSidebarWidth() - headerToolbarHorizontalInset()))
 
   const renderActiveSessionHeaderTitle = () => (
     <Show when={showHeaderSessionTitle()}>
       <div
-        class="session-header-active-title session-item-base session-item-active"
+        class="session-header-active-title"
         dir="auto"
         title={activeSessionTitle() ?? undefined}
       >
-        <div class="session-item-row session-item-header">
-          <div class="session-item-title-row">
-            <span class="session-item-title session-item-title--clamp">{activeSessionTitle()}</span>
-          </div>
-        </div>
+        <span class="session-header-active-title-text">{activeSessionTitle()}</span>
       </div>
     </Show>
   )
 
   const renderHeaderLeftSlot = () => (
-    <Show when={showHeaderSessionTitle()}>
-      <div class="session-header-left-slot" style={{ width: `${headerLeftSlotWidth()}px` }}>
-        <Show when={leftDrawerState() === "floating-closed"}>
-          <IconButton
-            ref={setLeftToggleButtonEl}
-            color="inherit"
-            onClick={handleLeftAppBarButtonClick}
-            aria-label={leftAppBarButtonLabel()}
-            size="small"
-            aria-expanded={leftDrawerState() !== "floating-closed"}
-          >
-            {leftAppBarButtonIcon()}
-          </IconButton>
-        </Show>
+    <Show when={showHeaderLeftSlot()}>
+      <div
+        class="session-header-left-slot"
+        style={showHeaderSessionTitle() ? { width: `${headerLeftSlotWidth()}px` } : undefined}
+      >
+        <IconButton
+          ref={setLeftToggleButtonEl}
+          color="inherit"
+          onClick={handleLeftAppBarButtonClick}
+          aria-label={leftAppBarButtonLabel()}
+          size="small"
+          aria-expanded={leftDrawerState() !== "floating-closed"}
+        >
+          {leftAppBarButtonIcon()}
+        </IconButton>
         {renderActiveSessionHeaderTitle()}
       </div>
     </Show>
