@@ -132,7 +132,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
   try {
     const projectResponse = await rootClient.project.current()
     const projectId = projectResponse.data?.id
-    const sessionListOptions = projectId === "global" ? { directory: instance.folder } : undefined
+    const sessionListOptions = instance.folder ? { directory: instance.folder } : undefined
 
     log.info("session.list", { instanceId, projectId, directory: sessionListOptions?.directory })
     const response = sessionListOptions
