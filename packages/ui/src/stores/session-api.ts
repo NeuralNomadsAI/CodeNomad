@@ -1,5 +1,11 @@
-import { isSelectablePrimaryAgent, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
-import { getIdleSinceForStatusTransition, mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import {
+  getIdleSinceForStatusTransition,
+  isSelectablePrimaryAgent,
+  mapSdkSessionRetry,
+  mapSdkSessionStatus,
+  type Session,
+  type SessionStatus,
+} from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
