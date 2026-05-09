@@ -314,6 +314,56 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     return normalized.split("/").pop() || path
   }
 
+  function inferMimeTypeFromPath(path: string) {
+    const extension = path.split(/[\\/]/).pop()?.toLowerCase().match(/\.([^.]+)$/)?.[1]
+    if (!extension) return "application/octet-stream"
+
+    const imageMimeTypes: Record<string, string> = {
+      apng: "image/apng",
+      avif: "image/avif",
+      gif: "image/gif",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      svg: "image/svg+xml",
+      webp: "image/webp",
+    }
+    const textMimeTypes: Record<string, string> = {
+      bashrc: "text/plain",
+      c: "text/x-c",
+      config: "text/plain",
+      cpp: "text/x-c++src",
+      cs: "text/x-csharp",
+      css: "text/css",
+      csv: "text/csv",
+      env: "text/plain",
+      gitignore: "text/plain",
+      go: "text/x-go",
+      h: "text/x-c",
+      hpp: "text/x-c++hdr",
+      html: "text/html",
+      java: "text/x-java-source",
+      js: "text/javascript",
+      json: "application/json",
+      jsx: "text/javascript",
+      log: "text/plain",
+      md: "text/markdown",
+      mjs: "text/javascript",
+      py: "text/x-python",
+      rs: "text/x-rust",
+      sh: "text/x-shellscript",
+      toml: "text/toml",
+      ts: "text/typescript",
+      tsx: "text/typescript",
+      txt: "text/plain",
+      xml: "application/xml",
+      yaml: "application/yaml",
+      yml: "application/yaml",
+    }
+
+    return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? "application/octet-stream"
+  }
+
   function showSkippedFilesWarning(count: number) {
     if (count <= 0) return
     const messageKey = count === 1
@@ -331,7 +381,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     for (const path of paths) {
       if (!path || path.trim().length === 0) continue
       const filename = getFilenameFromPath(path)
-      const attachment = createFileAttachment(path, filename, "application/octet-stream", undefined, options.instanceFolder())
+      const attachment = createFileAttachment(path, filename, inferMimeTypeFromPath(path), undefined, options.instanceFolder())
       addAttachment(options.instanceId(), options.sessionId(), attachment)
     }
     options.getTextarea()?.focus()
