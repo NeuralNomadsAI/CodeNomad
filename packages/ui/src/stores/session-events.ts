@@ -59,6 +59,7 @@ import {
   applyPartUpdateV2,
   applyPartDeltaV2,
   replaceMessageIdV2,
+  reconcilePendingPermissionsV2,
   reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
   upsertPermissionV2,
@@ -370,8 +371,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
-    if (part.type === "tool" && part.tool === "question") {
-      // Questions can arrive before their tool part exists; re-link now.
+    if (part.type === "tool") {
+      // Interruptions can arrive before their tool part exists; re-link now.
+      reconcilePendingPermissionsV2(instanceId, sessionId)
       reconcilePendingQuestionsV2(instanceId, sessionId)
     }
 
@@ -691,8 +693,8 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   if (!permission) return
 
   log.info(`[SSE] Permission request: ${getPermissionId(permission)} (${getPermissionKind(permission)})`)
-  addPermissionToQueue(instanceId, permission)
-  upsertPermissionV2(instanceId, permission)
+  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
 

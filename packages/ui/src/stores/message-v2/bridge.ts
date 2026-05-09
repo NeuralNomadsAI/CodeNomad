@@ -189,7 +189,7 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
   if (!pending || pending.length === 0) return
 
   for (const entry of pending) {
-    if (!entry || entry.partId) continue
+    if (!entry) continue
     const permission = entry.permission
     if (!permission) continue
 
@@ -199,6 +199,9 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
     }
 
     const messageId = entry.messageId ?? extractPermissionMessageId(permission)
+    if (entry.partId && messageId && store.getPermissionState(messageId, entry.partId)) {
+      continue
+    }
     const callId = extractPermissionCallId(permission)
     const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
     if (!resolvedPartId) continue
