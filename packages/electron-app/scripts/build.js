@@ -16,39 +16,52 @@ const workspaceNodeModulesPath = join(workspaceRoot, "node_modules")
 
 const platforms = {
   mac: {
-    args: ["--mac", "--x64", "--arm64"],
+    jobs: [
+      { args: ["--mac", "--x64"], nodeTarget: "darwin-x64" },
+      { args: ["--mac", "--arm64"], nodeTarget: "darwin-arm64" },
+    ],
     description: "macOS (Intel & Apple Silicon)",
   },
   "mac-x64": {
-    args: ["--mac", "--x64"],
+    jobs: [{ args: ["--mac", "--x64"], nodeTarget: "darwin-x64" }],
     description: "macOS (Intel only)",
   },
   "mac-arm64": {
-    args: ["--mac", "--arm64"],
+    jobs: [{ args: ["--mac", "--arm64"], nodeTarget: "darwin-arm64" }],
     description: "macOS (Apple Silicon only)",
   },
   win: {
-    args: ["--win", "--x64"],
+    jobs: [{ args: ["--win", "--x64"], nodeTarget: "win32-x64" }],
     description: "Windows (x64)",
   },
   "win-arm64": {
-    args: ["--win", "--arm64"],
+    jobs: [{ args: ["--win", "--arm64"], nodeTarget: "win32-arm64" }],
     description: "Windows (ARM64)",
   },
   linux: {
-    args: ["--linux", "--x64"],
+    jobs: [{ args: ["--linux", "--x64"], nodeTarget: "linux-x64" }],
     description: "Linux (x64)",
   },
   "linux-arm64": {
-    args: ["--linux", "--arm64"],
+    jobs: [{ args: ["--linux", "--arm64"], nodeTarget: "linux-arm64" }],
     description: "Linux (ARM64)",
   },
   "linux-rpm": {
-    args: ["--linux", "rpm", "--x64", "--arm64"],
+    jobs: [
+      { args: ["--linux", "rpm", "--x64"], nodeTarget: "linux-x64" },
+      { args: ["--linux", "rpm", "--arm64"], nodeTarget: "linux-arm64" },
+    ],
     description: "Linux RPM packages (x64 & ARM64)",
   },
   all: {
-    args: ["--mac", "--win", "--linux", "--x64", "--arm64"],
+    jobs: [
+      { args: ["--mac", "--x64"], nodeTarget: "darwin-x64" },
+      { args: ["--mac", "--arm64"], nodeTarget: "darwin-arm64" },
+      { args: ["--win", "--x64"], nodeTarget: "win32-x64" },
+      { args: ["--win", "--arm64"], nodeTarget: "win32-arm64" },
+      { args: ["--linux", "--x64"], nodeTarget: "linux-x64" },
+      { args: ["--linux", "--arm64"], nodeTarget: "linux-arm64" },
+    ],
     description: "All platforms (macOS, Windows, Linux)",
   },
 }
@@ -111,14 +124,8 @@ async function build(platform) {
       env: { NODE_PATH: workspaceNodeModulesPath },
     })
 
-    console.log("\n📦 Step 1.5/3: Preparing packaged server resources...\n")
-    await run(process.execPath, [join(appDir, "scripts", "prepare-resources.js")], {
-      cwd: workspaceRoot,
-      env: { NODE_PATH: workspaceNodeModulesPath },
-    })
-
     console.log("\n📦 Step 2/3: Building Electron app...\n")
-    await run(npmCmd, ["run", "build"])
+    await run(npxCmd, ["electron-vite", "build"])
 
     console.log("\n📦 Step 3/3: Packaging binaries...\n")
     const distPath = join(appDir, "dist")
@@ -126,7 +133,18 @@ async function build(platform) {
       throw new Error("dist/ directory not found. Build failed.")
     }
 
-    await run(npxCmd, ["electron-builder", "--publish=never", ...config.args])
+    for (const job of config.jobs) {
+      console.log(`\n📦 Preparing resources for ${job.nodeTarget}...\n`)
+      await run(process.execPath, [join(appDir, "scripts", "prepare-resources.js")], {
+        cwd: workspaceRoot,
+        env: { NODE_PATH: workspaceNodeModulesPath, CODENOMAD_NODE_TARGET: job.nodeTarget },
+      })
+
+      console.log(`\n📦 Packaging ${job.nodeTarget}...\n`)
+      await run(npxCmd, ["electron-builder", "--publish=never", ...job.args], {
+        env: { CODENOMAD_NODE_TARGET: job.nodeTarget },
+      })
+    }
 
     console.log("\n✅ Build complete!")
     console.log(`📁 Binaries available in: ${join(appDir, "release")}\n`)

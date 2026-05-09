@@ -3,3 +3,4 @@ dist/
 release/
 .vite/
 electron/resources/server/
+electron/resources/node/

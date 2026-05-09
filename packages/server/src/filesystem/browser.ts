@@ -12,6 +12,7 @@ import {
 interface FileSystemBrowserOptions {
   rootDir: string
   unrestricted?: boolean
+  platform?: NodeJS.Platform
 }
 
 interface DirectoryReadOptions {
@@ -32,7 +33,7 @@ export class FileSystemBrowser {
     this.root = path.resolve(options.rootDir)
     this.unrestricted = Boolean(options.unrestricted)
     this.homeDir = os.homedir()
-    this.isWindows = process.platform === "win32"
+    this.isWindows = (options.platform ?? process.platform) === "win32"
   }
 
   list(relativePath = ".", options: { includeFiles?: boolean } = {}): FileSystemEntry[] {
@@ -138,7 +139,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: resolvedPath,
       parentPath,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: resolvedPath,
       pathKind: "absolute",
@@ -181,7 +182,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: WINDOWS_DRIVES_ROOT,
       parentPath: undefined,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: "Drives",
       pathKind: "drives",
@@ -318,7 +319,7 @@ export class FileSystemBrowser {
 
   private resolveUnrestrictedPath(input: string | undefined): string {
     if (!input || input === "." || input === "./") {
-      return this.homeDir
+      return this.root
     }
 
     if (this.isWindows) {

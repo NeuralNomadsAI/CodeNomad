@@ -145,6 +145,8 @@ export const settingsMessages = {
   "settings.behavior.usageMetrics.subtitle": "הצג או הסתר נתוני טוקנים ועלות להודעות הסוכן.",
   "settings.behavior.autoCleanup.title": "ניקוי אוטומטי של סשנים ריקים",
   "settings.behavior.autoCleanup.subtitle": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים.",
+  "settings.behavior.keepUnseenSubagentIdle.title": "השאר סמני idle של תתי-סוכנים",
+  "settings.behavior.keepUnseenSubagentIdle.subtitle": "השאר סמני idle של תתי-סוכנים גלויים עד צפייה במקום להסתיר אותם אחרי 5 שניות.",
   "settings.behavior.promptVoiceInput.title": "קלט קולי לפרומפט",
   "settings.behavior.promptVoiceInput.subtitle": "הצג את כפתור המיקרופון לקלט דיבור-לטקסט כאשר תכונת הקול מוגדרת.",
   "settings.behavior.promptSubmit.title": "Enter לשליחה",

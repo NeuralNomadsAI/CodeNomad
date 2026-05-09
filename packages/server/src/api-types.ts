@@ -40,6 +40,16 @@ export interface WorkspaceCreateRequest {
   name?: string
 }
 
+export interface WorkspaceCloneRequest {
+  repositoryUrl: string
+  destinationPath: string
+  cleanup?: boolean
+}
+
+export interface WorkspaceCloneResponse {
+  path: string
+}
+
 export type WorkspaceCreateResponse = WorkspaceDescriptor
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor

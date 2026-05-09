@@ -1,7 +1,9 @@
 import type { ToolRenderer } from "../types"
+import { getQuestionToolSearchText } from "../search-text"
 
 export const questionRenderer: ToolRenderer = {
   tools: ["question"],
+  getSearchText: getQuestionToolSearchText,
   getAction: ({ t }) => t("toolCall.question.action.awaitingAnswers"),
   getTitle({ toolState, t }) {
     const state = toolState()

@@ -18,6 +18,7 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { formatElapsedClock, getMessageStartedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
+import type { SessionSearchMatch } from "../lib/session-search"
 
 function DeleteUpToIcon() {
   return (
@@ -189,6 +190,83 @@ function clearInstanceCaches(instanceId: string) {
 }
 
 messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
+
+function removeSearchMarks(root: HTMLElement) {
+  const marks = Array.from(root.querySelectorAll("mark.session-search-match"))
+  for (const mark of marks) {
+    const parent = mark.parentNode
+    if (!parent) continue
+    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark)
+    parent.normalize()
+  }
+}
+
+function getPartIdForSearchContainer(container: HTMLElement): string | undefined {
+  const target = container.closest<HTMLElement>("[data-part-id]") ?? container
+  const id = target.dataset.partId
+  return id && id.length > 0 ? id : undefined
+}
+
+function applySearchMarks(root: HTMLElement, query: string, activeMatch?: SessionSearchMatch | null, scrollActive = false) {
+  removeSearchMarks(root)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (!normalizedQuery) return
+
+  const containers = Array.from(root.querySelectorAll<HTMLElement>(".message-text, .tool-call, .message-reasoning-text"))
+  let occurrenceInActivePart = 0
+  let activeMark: HTMLElement | null = null
+
+  for (const container of containers) {
+    const containerPartId = getPartIdForSearchContainer(container)
+    const canContainActiveMatch = Boolean(activeMatch) && (!activeMatch?.partId || activeMatch.partId === containerPartId)
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement
+        if (!parent) return NodeFilter.FILTER_REJECT
+        if (parent.closest("button, input, textarea, select, mark.session-search-match")) return NodeFilter.FILTER_REJECT
+        if (!node.nodeValue || !node.nodeValue.toLocaleLowerCase().includes(normalizedQuery)) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
+      },
+    })
+
+    const textNodes: Text[] = []
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode as Text)
+    }
+
+    for (const textNode of textNodes) {
+      const original = textNode.nodeValue ?? ""
+      const lower = original.toLocaleLowerCase()
+      const fragment = document.createDocumentFragment()
+      let cursor = 0
+      while (cursor < original.length) {
+        const index = lower.indexOf(normalizedQuery, cursor)
+        if (index === -1) break
+        if (index > cursor) {
+          fragment.appendChild(document.createTextNode(original.slice(cursor, index)))
+        }
+        const mark = document.createElement("mark")
+        const isActive = Boolean(canContainActiveMatch && activeMatch && occurrenceInActivePart === activeMatch.occurrence)
+        mark.className = isActive ? "session-search-match session-search-match-active" : "session-search-match"
+        mark.textContent = original.slice(index, index + normalizedQuery.length)
+        fragment.appendChild(mark)
+        if (canContainActiveMatch) {
+          if (isActive) activeMark = mark
+          occurrenceInActivePart += 1
+        }
+        cursor = index + normalizedQuery.length
+      }
+      if (cursor < original.length) {
+        fragment.appendChild(document.createTextNode(original.slice(cursor)))
+      }
+      textNode.parentNode?.replaceChild(fragment, textNode)
+    }
+  }
+
+  if (activeMark && scrollActive) {
+    requestAnimationFrame(() => activeMark?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }))
+  }
+}
 
 interface ContentDisplayItem {
   type: "content"
@@ -592,6 +670,9 @@ interface MessageBlockProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  searchQuery?: Accessor<string>
+  searchResultMessageIds?: Accessor<Set<string>>
+  activeSearchMatch?: Accessor<SessionSearchMatch | null>
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -599,6 +680,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
+  let blockRef: HTMLDivElement | undefined
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
 
@@ -622,6 +704,31 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     return false
   }
+
+  const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
+  const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
+  const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
+  let lastInlineScrolledSearchMatchId: string | null = null
+
+  createEffect(() => {
+    const query = props.searchQuery?.() ?? ""
+    const active = activeSearchMatch()
+    const relevantActiveMatch = active?.messageId === props.messageId ? active : null
+    const shouldScrollActive = Boolean(relevantActiveMatch && relevantActiveMatch.id !== lastInlineScrolledSearchMatchId)
+    if (shouldScrollActive && relevantActiveMatch) {
+      lastInlineScrolledSearchMatchId = relevantActiveMatch.id
+    }
+    const current = record()
+    if (current) void current.revision
+    const element = blockRef
+    if (!element) return
+
+    const frame = requestAnimationFrame(() => applySearchMarks(element, query, relevantActiveMatch, shouldScrollActive))
+    onCleanup(() => {
+      cancelAnimationFrame(frame)
+      removeSearchMarks(element)
+    })
+  })
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
     const current = record()
@@ -814,9 +921,14 @@ export default function MessageBlock(props: MessageBlockProps) {
     <Show when={block()}>
       {(resolvedBlock) => (
         <div
+          ref={(el) => {
+            blockRef = el
+          }}
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
           data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
+          data-search-result={isSearchResult() ? "true" : undefined}
+          data-search-active={isActiveSearchResult() ? "true" : undefined}
         >
           <Index each={resolvedBlock().items}>
             {(item, index) => (
@@ -844,7 +956,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                   {(() => {
                     const toolItem = item() as ToolDisplayItem
                     return (
-                      <div class="tool-call-message" data-key={toolItem.key}>
+                      <div class="tool-call-message" data-key={toolItem.key} data-part-id={toolItem.partId}>
                           <ToolCallItem
                             instanceId={props.instanceId}
                             sessionId={props.sessionId}
@@ -928,6 +1040,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
+                    forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
                   />
                 </Match>
               </Switch>
@@ -1314,6 +1427,7 @@ interface ReasoningCardProps {
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
+  forceExpanded?: boolean
 }
 
 function ReasoningStreamOutput(props: {
@@ -1393,6 +1507,12 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   createEffect(() => {
     setExpanded(Boolean(props.defaultExpanded))
+  })
+
+  createEffect(() => {
+    if (props.forceExpanded) {
+      setExpanded(true)
+    }
   })
 
   const timestamp = () => {
@@ -1504,7 +1624,10 @@ function ReasoningCard(props: ReasoningCardProps) {
   }
 
   return (
-    <div class="delete-hover-scope message-reasoning-card">
+    <div
+      class="delete-hover-scope message-reasoning-card"
+      data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+    >
       <div class="message-reasoning-header">
         <button
           type="button"

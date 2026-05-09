@@ -1,9 +1,11 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromPath, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
+import { getReadToolSearchText } from "../search-text"
 
 export const readRenderer: ToolRenderer = {
   tools: ["read"],
+  getSearchText: getReadToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.readingFile"),
   getTitle({ toolState }) {
     const state = toolState()
