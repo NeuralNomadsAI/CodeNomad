@@ -1,4 +1,4 @@
-import { runtimeEnv } from "../runtime-env"
+import { canUseNativeDialogs, isElectronHost, isTauriHost } from "../runtime-env"
 import type { NativeDialogOptions } from "./types"
 import { openElectronNativeDialog } from "./electron/functions"
 import { openTauriNativeDialog } from "./tauri/functions"
@@ -6,18 +6,21 @@ import { openTauriNativeDialog } from "./tauri/functions"
 export type { NativeDialogOptions, NativeDialogFilter, NativeDialogMode } from "./types"
 
 function resolveNativeHandler(): ((options: NativeDialogOptions) => Promise<string | null>) | null {
-  switch (runtimeEnv.host) {
-    case "electron":
-      return openElectronNativeDialog
-    case "tauri":
-      return openTauriNativeDialog
-    default:
-      return null
+  if (isElectronHost()) {
+    return openElectronNativeDialog
   }
+  if (isTauriHost()) {
+    return openTauriNativeDialog
+  }
+  return null
 }
 
 export function supportsNativeDialogs(): boolean {
   return resolveNativeHandler() !== null
+}
+
+export function supportsNativeDialogsInCurrentWindow(): boolean {
+  return canUseNativeDialogs()
 }
 
 async function openNativeDialog(options: NativeDialogOptions): Promise<string | null> {

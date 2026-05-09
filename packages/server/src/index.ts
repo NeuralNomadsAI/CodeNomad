@@ -21,6 +21,7 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
+import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
@@ -28,6 +29,7 @@ import { SideCarManager } from "./sidecars/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
+import { runCliUpgrade } from "./cli-upgrade"
 
 const require = createRequire(import.meta.url)
 
@@ -62,6 +64,7 @@ interface CliOptions {
   authCookieName: string
   generateToken: boolean
   dangerouslySkipAuth: boolean
+  upgrade?: string | boolean
 }
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -123,6 +126,7 @@ function parseCliOptions(argv: string[]): CliOptions {
         .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
+    .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -152,8 +156,10 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: string
     generateToken?: boolean
     dangerouslySkipAuth?: boolean
+    upgrade?: string | boolean
   }>()
 
+  const upgrade = parsed.upgrade
   const parseBooleanEnv = (value: string | undefined): boolean => {
     const normalized = (value ?? "").trim().toLowerCase()
     return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y" || normalized === "on"
@@ -169,7 +175,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   const httpsEnabled = parseBooleanEnv(parsed.https)
   const httpEnabled = parseBooleanEnv(parsed.http)
 
-  if (!httpsEnabled && !httpEnabled) {
+  if (upgrade === undefined && !httpsEnabled && !httpEnabled) {
     throw new InvalidArgumentError("At least one listener must be enabled (--https or --http)")
   }
 
@@ -199,6 +205,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     authCookieName: parsed.authCookieName,
     generateToken: Boolean(parsed.generateToken),
     dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    upgrade,
   }
 }
 
@@ -231,6 +238,12 @@ function programHasArg(argv: string[], flag: string): boolean {
 
 async function main() {
   const options = parseCliOptions(process.argv.slice(2))
+  if (options.upgrade !== undefined) {
+    const version = typeof options.upgrade === "string" ? options.upgrade : undefined
+    process.exitCode = await runCliUpgrade(version)
+    return
+  }
+
   const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app" })
   const workspaceLogger = logger.child({ component: "workspace" })
   const configLogger = logger.child({ component: "config" })
@@ -316,7 +329,10 @@ async function main() {
     getServerBaseUrl: () => serverMeta.localUrl,
     nodeExtraCaCertsPath,
   })
-  const fileSystemBrowser = new FileSystemBrowser({ rootDir: options.rootDir, unrestricted: options.unrestrictedRoot })
+  const fileSystemBrowser = new FileSystemBrowser({
+    rootDir: options.rootDir,
+    unrestricted: options.unrestrictedRoot,
+  })
   const instanceStore = new InstanceStore(configLocation.instancesDir)
   const speechService = new SpeechService(settings, logger.child({ component: "speech" }))
   const sidecarManager = new SideCarManager({
@@ -375,14 +391,15 @@ async function main() {
       })
     : null
 
-  if (uiResolution.uiDevServerUrl && options.https) {
-    throw new InvalidArgumentError("UI dev proxy is only supported with --https=false --http=true")
-  }
-
   const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
+  const remoteProxySessionManager = new RemoteProxySessionManager({
+    authManager,
+    logger: logger.child({ component: "remote-proxy" }),
+    httpsOptions: tlsResolution?.httpsOptions,
+  })
   const voiceModeManager = new VoiceModeManager({
     connections: clientConnectionManager,
     channel: pluginChannel,
@@ -422,6 +439,7 @@ async function main() {
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -447,6 +465,7 @@ async function main() {
         clientConnectionManager,
         pluginChannel,
         voiceModeManager,
+        remoteProxySessionManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,

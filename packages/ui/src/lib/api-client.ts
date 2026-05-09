@@ -12,9 +12,13 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   ServerMeta,
+  RemoteProxySessionCreateRequest,
+  RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  WorkspaceCloneRequest,
+  WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
   WorktreeGitCommitResponse,
   WorktreeGitDiffRequest,
@@ -36,6 +40,7 @@ import type {
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
+import { attachEventSourceHandlers } from "./event-source-handlers"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -256,6 +261,15 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
+  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteRemoteProxySession(id: string): Promise<void> {
+    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
   },
@@ -267,6 +281,12 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
+    return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
@@ -499,26 +519,7 @@ export const serverApi = {
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
     const source = new EventSource(url, { withCredentials: true } as any)
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as WorkspaceEventPayload
-        onEvent(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse event", error)
-      }
-    }
-    source.onerror = () => {
-      sseLogger.warn("EventSource error, closing stream")
-      onError?.()
-    }
-    source.addEventListener("codenomad.client.ping", (event: MessageEvent) => {
-      try {
-        const payload = event.data ? (JSON.parse(event.data) as { ts?: number }) : {}
-        onPing?.(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse ping event", error)
-      }
-    })
+    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
     return source
   },
 }

@@ -1,11 +1,11 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2 } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
-import { openNativeFolderDialog, supportsNativeDialogs } from "../lib/native/native-functions"
+import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
@@ -16,6 +16,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
+import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
@@ -49,6 +50,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
   const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
+  const [isCloneDialogOpen, setIsCloneDialogOpen] = createSignal(false)
+  const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
+  const [cloneRepositoryUrl, setCloneRepositoryUrl] = createSignal("")
+  const [cloneDestinationPath, setCloneDestinationPath] = createSignal("")
+  const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
+  const [cloneDialogError, setCloneDialogError] = createSignal<string | null>(null)
+  const [isCloningRepository, setIsCloningRepository] = createSignal(false)
   const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
   const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
   const [serverName, setServerName] = createSignal("")
@@ -57,7 +65,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
-  const nativeDialogsAvailable = supportsNativeDialogs()
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -77,6 +84,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
+  const canUseRemoteServerWindows = () => canOpenRemoteWindows()
 
   function getActiveListLength() {
     return activeTab() === "local" ? folders().length : serverList().length
@@ -123,17 +131,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const normalizedKey = e.key.toLowerCase()
     const isBrowseShortcut = (e.metaKey || e.ctrlKey) && !e.shiftKey && normalizedKey === "n"
-    const blockedKeys = [
-      "ArrowDown",
-      "ArrowUp",
-      "PageDown",
-      "PageUp",
-      "Home",
-      "End",
-      "Enter",
-      "Backspace",
-      "Delete",
-    ]
+    const blockedKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Enter"]
 
     if (isLoading()) {
       if (isBrowseShortcut || blockedKeys.includes(e.key)) {
@@ -191,21 +189,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } else if (e.key === "Enter") {
       e.preventDefault()
       handleEnterKey()
-    } else if (e.key === "Backspace" || e.key === "Delete") {
-      e.preventDefault()
-      if (listLength > 0 && focusMode() === "recent") {
-        if (activeTab() === "local") {
-          const folder = folders()[selectedIndex()]
-          if (folder) {
-            handleRemove(folder.path)
-          }
-        } else {
-          const server = serverList()[selectedIndex()]
-          if (server) {
-            removeRemoteServerProfile(server.id)
-          }
-        }
-      }
     }
   }
 
@@ -230,6 +213,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   createEffect(() => {
     activeTab()
+    if (!canUseRemoteServerWindows() && activeTab() !== "local") {
+      setActiveTab("local")
+      return
+    }
     setSelectedIndex(0)
     setFocusMode("recent")
   })
@@ -296,6 +283,46 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     props.onSelectFolder(path, selectedBinary())
   }
 
+  function resetCloneDialog() {
+    setCloneRepositoryUrl("")
+    setCloneDestinationPath("")
+    setCleanupCloneDestination(false)
+    setCloneDialogError(null)
+  }
+
+  function openCloneDialog() {
+    if (isLoading()) return
+    resetCloneDialog()
+    setIsCloneDialogOpen(true)
+  }
+
+  async function handleCloneRepository() {
+    if (isCloningRepository()) return
+    const repositoryUrl = cloneRepositoryUrl().trim()
+    const destinationPath = cloneDestinationPath().trim()
+    if (!repositoryUrl || !destinationPath) {
+      setCloneDialogError(t("folderSelection.clone.dialog.errorRequired"))
+      return
+    }
+
+    setIsCloningRepository(true)
+    setCloneDialogError(null)
+    try {
+      const result = await serverApi.cloneWorkspaceRepository({
+        repositoryUrl,
+        destinationPath,
+        cleanup: cleanupCloneDestination(),
+      })
+      setIsCloneDialogOpen(false)
+      resetCloneDialog()
+      handleFolderSelect(result.path)
+    } catch (error) {
+      setCloneDialogError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsCloningRepository(false)
+    }
+  }
+
   function resetServerDialog() {
     setServerName("")
     setServerUrl("")
@@ -304,11 +331,16 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   function openServerDialog() {
+    if (!canUseRemoteServerWindows()) return
     resetServerDialog()
     setIsServerDialogOpen(true)
   }
 
   async function probeAndOpenServer(input: { id?: string; name: string; baseUrl: string; skipTlsVerify: boolean }, openWindow: boolean) {
+    if (openWindow && !canUseRemoteServerWindows()) {
+      throw new Error("Remote server windows can only be opened from a local desktop window")
+    }
+
     const trimmedName = input.name.trim()
     const trimmedUrl = input.baseUrl.trim()
     if (!trimmedName || !trimmedUrl) {
@@ -332,7 +364,23 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     })
 
     if (openWindow) {
-      await openRemoteServerWindow(profile)
+      const remoteProxySession =
+        isTauriHost() && profile.skipTlsVerify && profile.baseUrl.startsWith("https://")
+          ? await serverApi.createRemoteProxySession({
+              baseUrl: profile.baseUrl,
+              skipTlsVerify: profile.skipTlsVerify,
+            })
+          : undefined
+
+      try {
+        await openRemoteServerWindow(profile, remoteProxySession?.windowUrl, remoteProxySession?.sessionId)
+      } catch (error) {
+        if (remoteProxySession) {
+          void serverApi.deleteRemoteProxySession(remoteProxySession.sessionId).catch(() => {})
+        }
+        throw error
+      }
+
       await markRemoteServerConnected(profile.id)
     }
 
@@ -362,6 +410,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   async function handleConnectSavedServer(id: string) {
+    if (!canUseRemoteServerWindows()) return
     const target = remoteServers().find((entry) => entry.id === id)
     if (!target || connectingServerId()) return
     setConnectingServerId(id)
@@ -380,7 +429,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   async function handleBrowse() {
     if (isLoading()) return
     setFocusMode("new")
-    if (nativeDialogsAvailable) {
+    if (supportsNativeDialogsInCurrentWindow()) {
       const fallbackPath = folders()[0]?.path
       const selected = await openNativeFolderDialog({
         title: t("folderSelection.dialog.title"),
@@ -398,7 +447,37 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsFolderBrowserOpen(false)
     handleFolderSelect(path)
   }
- 
+
+  function handleCloneDestinationSelect(path: string) {
+    setIsCloneDestinationBrowserOpen(false)
+    setCloneDestinationPath(path)
+    setIsCloneDialogOpen(true)
+  }
+
+  function handleCloneDestinationBrowserClose() {
+    setIsCloneDestinationBrowserOpen(false)
+    setIsCloneDialogOpen(true)
+  }
+
+  async function handleCloneDestinationBrowse() {
+    if (isCloningRepository()) return
+
+    const defaultPath = cloneDestinationPath() || folders()[0]?.path
+    if (supportsNativeDialogsInCurrentWindow()) {
+      const selected = await openNativeFolderDialog({
+        title: t("folderSelection.clone.destination.title"),
+        defaultPath,
+      })
+      if (selected) {
+        setCloneDestinationPath(selected)
+      }
+      return
+    }
+
+    setIsCloneDialogOpen(false)
+    setIsCloneDestinationBrowserOpen(true)
+  }
+
   function handleRemove(path: string, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
@@ -537,15 +616,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             >
               <Settings class="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-              onClick={() => openSettings("remote")}
-              aria-label={t("instanceTabs.remote.ariaLabel")}
-              title={t("instanceTabs.remote.title")}
-            >
-              <MonitorUp class="w-4 h-4" />
-            </button>
+            <Show when={canUseRemoteServerWindows()}>
+              <button
+                type="button"
+                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+                onClick={() => openSettings("remote")}
+                aria-label={t("instanceTabs.remote.ariaLabel")}
+                title={t("instanceTabs.remote.title")}
+              >
+                <MonitorUp class="w-4 h-4" />
+              </button>
+            </Show>
             <Show when={props.onClose}>
               <button
                 type="button"
@@ -610,7 +691,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <DiscordSymbolIcon class="w-4 h-4" />
               </a>
             </div>
-            <p class="mt-3 text-base text-secondary">{t("folderSelection.tagline")}</p>
           </div>
 
           <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
@@ -619,7 +699,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
                 <div class="panel flex flex-col flex-1 min-h-0">
                   <div class="panel-header !gap-0 !p-0">
-                    <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none">
+                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
                       <button
                         type="button"
                         class="border-r border-base px-4 py-3 text-left transition-colors"
@@ -654,35 +734,37 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           )}
                         </p>
                       </button>
-                      <button
-                        type="button"
-                        class="px-4 py-3 text-left transition-colors"
-                        classList={{
-                          "text-primary": activeTab() === "servers",
-                          "text-muted hover:text-secondary": activeTab() !== "servers",
-                        }}
-                        style={{
-                          "background-color": "var(--surface-secondary)",
-                        }}
-                        onClick={() => setActiveTab("servers")}
-                      >
-                        <div
-                          class="panel-title text-base"
-                          style={{
-                            color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
+                      <Show when={canUseRemoteServerWindows()}>
+                        <button
+                          type="button"
+                          class="px-4 py-3 text-left transition-colors"
+                          classList={{
+                            "text-primary": activeTab() === "servers",
+                            "text-muted hover:text-secondary": activeTab() !== "servers",
                           }}
-                        >
-                          {t("folderSelection.tabs.servers")}
-                        </div>
-                        <p
-                          class="panel-subtitle mt-1"
                           style={{
-                            color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
+                            "background-color": "var(--surface-secondary)",
                           }}
+                          onClick={() => setActiveTab("servers")}
                         >
-                          {t("folderSelection.servers.count", { count: remoteServers().length })}
-                        </p>
-                      </button>
+                          <div
+                            class="panel-title text-base"
+                            style={{
+                              color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
+                            }}
+                          >
+                            {t("folderSelection.tabs.servers")}
+                          </div>
+                          <p
+                            class="panel-subtitle mt-1"
+                            style={{
+                              color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
+                            }}
+                          >
+                            {t("folderSelection.servers.count", { count: remoteServers().length })}
+                          </p>
+                        </button>
+                      </Show>
                     </div>
                   </div>
 
@@ -690,23 +772,25 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     when={activeTab() === "local"}
                     fallback={
                       <Show
-                        when={remoteServers().length > 0}
+                        when={canUseRemoteServerWindows() && remoteServers().length > 0}
                         fallback={
-                          <div class="panel-empty-state flex-1">
-                            <div class="panel-empty-state-icon">
-                              <Globe class="w-12 h-12 mx-auto" />
+                          <Show when={canUseRemoteServerWindows()}>
+                            <div class="panel-empty-state flex-1">
+                              <div class="panel-empty-state-icon">
+                                <Globe class="w-12 h-12 mx-auto" />
+                              </div>
+                              <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
+                              <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
+                              <button
+                                type="button"
+                                class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
+                                onClick={openServerDialog}
+                              >
+                                <Globe class="w-4 h-4" />
+                                <span>{t("folderSelection.actions.connectButton")}</span>
+                              </button>
                             </div>
-                            <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                            <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
-                            <button
-                              type="button"
-                              class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
-                              onClick={openServerDialog}
-                            >
-                              <Globe class="w-4 h-4" />
-                              <span>{t("folderSelection.actions.connectButton")}</span>
-                            </button>
-                          </div>
+                          </Show>
                         }
                       >
                         <div
@@ -865,8 +949,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
                   <button
                     type="button"
+                    onClick={openCloneDialog}
+                    disabled={props.isLoading}
+                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
+                  >
+                    <div class="flex items-center gap-2">
+                      <GitBranch class="w-4 h-4" />
+                      <span>{t("folderSelection.clone.button")}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => props.onOpenSidecar?.()}
-                    class="button-primary mt-3 w-full flex items-center justify-center text-sm"
+                    class="button-primary w-full flex items-center justify-center text-sm"
                   >
                     <div class="flex items-center gap-2">
                       <MonitorUp class="w-4 h-4" />
@@ -874,15 +970,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button>
 
-                  <button
-                    onClick={openServerDialog}
-                    class="button-primary w-full flex items-center justify-center text-sm"
-                  >
-                    <div class="flex items-center gap-2">
-                      <Globe class="w-4 h-4" />
-                      <span>{t("folderSelection.actions.connectButton")}</span>
-                    </div>
-                  </button>
+                  <Show when={canUseRemoteServerWindows()}>
+                    <button
+                      onClick={openServerDialog}
+                      class="button-primary w-full flex items-center justify-center text-sm"
+                    >
+                      <div class="flex items-center gap-2">
+                        <Globe class="w-4 h-4" />
+                        <span>{t("folderSelection.actions.connectButton")}</span>
+                      </div>
+                    </button>
+                  </Show>
                 </div>
 
                 {/* OpenCode settings section */}
@@ -918,10 +1016,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     <kbd class="kbd">Enter</kbd>
                     <span>{t("folderSelection.hints.select")}</span>
                   </div>
-                  <div class="flex items-center gap-1.5">
-                    <kbd class="kbd">Del</kbd>
-                    <span>{t("folderSelection.hints.remove")}</span>
-                  </div>
                 </Show>
                 <div class="flex items-center gap-1.5">
                   <Kbd shortcut="cmd+n" class="kbd-hint" />
@@ -955,9 +1049,114 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         open={isFolderBrowserOpen()}
         title={t("folderSelection.dialog.title")}
         description={t("folderSelection.dialog.description")}
+        initialPath={folders()[0]?.path}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
       />
+
+      <DirectoryBrowserDialog
+        open={isCloneDestinationBrowserOpen()}
+        title={t("folderSelection.clone.destination.title")}
+        description={t("folderSelection.clone.destination.description")}
+        initialPath={cloneDestinationPath() || folders()[0]?.path}
+        onClose={handleCloneDestinationBrowserClose}
+        onSelect={handleCloneDestinationSelect}
+      />
+
+      <Dialog open={isCloneDialogOpen()} onOpenChange={(open) => !open && setIsCloneDialogOpen(false)}>
+        <Dialog.Portal>
+          <Dialog.Overlay class="modal-overlay" />
+          <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
+            <Dialog.Content
+              class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5"
+              tabIndex={-1}
+              onInteractOutside={(event) => {
+                if (isCloneDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+              onEscapeKeyDown={(event) => {
+                if (isCloneDestinationBrowserOpen()) {
+                  event.preventDefault()
+                }
+              }}
+            >
+              <div>
+                <Dialog.Title class="text-xl font-semibold text-primary">
+                  {t("folderSelection.clone.dialog.title")}
+                </Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-2">
+                  {t("folderSelection.clone.dialog.description")}
+                </Dialog.Description>
+              </div>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.clone.dialog.repositoryUrl")}</span>
+                <input
+                  class="selector-input w-full"
+                  value={cloneRepositoryUrl()}
+                  onInput={(event) => setCloneRepositoryUrl(event.currentTarget.value)}
+                  placeholder={t("folderSelection.clone.dialog.repositoryUrlPlaceholder")}
+                  disabled={isCloningRepository()}
+                />
+              </label>
+
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.clone.dialog.destinationPath")}</span>
+                <div class="flex gap-2">
+                  <input
+                    class="selector-input w-full"
+                    value={cloneDestinationPath()}
+                    onInput={(event) => setCloneDestinationPath(event.currentTarget.value)}
+                    placeholder={t("folderSelection.clone.dialog.destinationPathPlaceholder")}
+                    disabled={isCloningRepository()}
+                  />
+                   <button
+                     type="button"
+                     class="selector-button selector-button-secondary w-auto px-4"
+                     disabled={isCloningRepository()}
+                     onClick={() => void handleCloneDestinationBrowse()}
+                   >
+                     {t("folderSelection.clone.dialog.browseDestination")}
+                   </button>
+                </div>
+              </label>
+
+              <label class="flex items-start gap-3 text-sm text-secondary">
+                <input
+                  type="checkbox"
+                  checked={cleanupCloneDestination()}
+                  disabled={isCloningRepository()}
+                  onChange={(event) => setCleanupCloneDestination(event.currentTarget.checked)}
+                />
+                <span>{t("folderSelection.clone.dialog.cleanupDestination")}</span>
+              </label>
+
+              <Show when={cloneDialogError()}>
+                {(message) => <p class="text-sm text-red-500 break-words">{message()}</p>}
+              </Show>
+
+              <div class="flex items-center justify-end gap-3">
+                <button class="selector-button selector-button-secondary w-auto px-4" disabled={isCloningRepository()} onClick={() => setIsCloneDialogOpen(false)}>
+                  {t("folderSelection.clone.dialog.cancel")}
+                </button>
+                <button
+                  class="selector-button selector-button-primary w-auto px-4"
+                  disabled={isCloningRepository()}
+                  onClick={() => void handleCloneRepository()}
+                >
+                  <Show when={isCloningRepository()} fallback={<span>{t("folderSelection.clone.dialog.clone")}</span>}>
+                    <span class="inline-flex items-center gap-2">
+                      <Loader2 class="w-4 h-4 animate-spin" />
+                      {t("folderSelection.clone.dialog.cloning")}
+                    </span>
+                  </Show>
+                </button>
+              </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog>
 
       <Dialog open={isServerDialogOpen()} onOpenChange={(open) => !open && setIsServerDialogOpen(false)}>
         <Dialog.Portal>

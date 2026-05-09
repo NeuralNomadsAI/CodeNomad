@@ -105,7 +105,7 @@ export async function listWorktrees(params: {
 
   const result = await runGit(["worktree", "list", "--porcelain"], workspaceFolder)
   if (!result.ok) {
-    const rootDescriptor: WorktreeDescriptor = { slug: "root", directory: repoRoot, kind: "root" }
+    const rootDescriptor: WorktreeDescriptor = { slug: "root", directory: workspaceFolder, kind: "root" }
     logger?.debug?.({ repoRoot, err: result.error }, "Failed to list git worktrees; returning root only")
     return [rootDescriptor]
   }
@@ -114,7 +114,7 @@ export async function listWorktrees(params: {
   const rootRecord = records.find((record) => path.resolve(record.worktree) === path.resolve(repoRoot))
   const rootDescriptor: WorktreeDescriptor = {
     slug: "root",
-    directory: repoRoot,
+    directory: workspaceFolder,
     kind: "root",
     branch: rootRecord?.branch,
   }

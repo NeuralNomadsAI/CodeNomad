@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "コマンドパレットを開く",
   "instanceShell.commandPalette.button": "コマンドパレット",
+  "instanceShell.chatSearch.openAriaLabel": "チャット履歴を検索",
 
   "instanceShell.connection.ariaLabel": "接続 {status}",
   "instanceShell.connection.connected": "接続済み",
@@ -148,6 +149,17 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "変更ビューア",
   "instanceShell.filesShell.viewerPlaceholder": "詳細な変更表示は次のステップで追加します。",
   "instanceShell.filesShell.viewerEmpty": "ファイルが選択されていません。",
+  "instanceShell.filesShell.listEmpty": "このフォルダーにファイルはありません。",
+  "instanceShell.filesShell.search.placeholder": "このフォルダーのファイルを絞り込む",
+  "instanceShell.filesShell.search.ariaLabel": "このフォルダーのファイルを絞り込む",
+  "instanceShell.filesShell.search.empty": "一致するファイルがありません。",
+  "instanceShell.filesShell.actions.copyPath": "パスをコピー",
+  "instanceShell.filesShell.toast.copyPathSuccess": "パスをコピーしました",
+  "instanceShell.filesShell.toast.copyPathError": "パスをコピーできませんでした",
+  "instanceShell.filesShell.previewMarkdown": "Markdown プレビュー",
+  "instanceShell.filesShell.showSource": "ソースを表示",
+  "instanceShell.filesShell.enableWordWrap": "折り返しを有効化",
+  "instanceShell.filesShell.disableWordWrap": "折り返しを無効化",
 
   "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
   "instanceShell.plan.empty": "まだ計画はありません。",

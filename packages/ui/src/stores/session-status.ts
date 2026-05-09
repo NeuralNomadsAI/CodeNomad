@@ -1,9 +1,27 @@
 import type { Session, SessionRetryState, SessionStatus } from "../types/session"
 import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
+import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
+
+export const IDLE_STATUS_VISIBILITY_MS = 5000
 
 function getSession(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
   return instanceSessions?.get(sessionId) ?? null
+}
+
+export function hasWakeLockEligibleWork(instanceId: string): boolean {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) {
+    return false
+  }
+
+  for (const session of instanceSessions.values()) {
+    if (shouldSessionHoldWakeLock(session)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 export function getSessionStatus(instanceId: string, sessionId: string): SessionStatus {
@@ -19,14 +37,62 @@ export function getSessionRetry(instanceId: string, sessionId: string): SessionR
   return session?.retry ?? null
 }
 
+export function shouldShowIdleStatus(
+  session: Pick<Session, "status" | "idleSince" | "parentId"> | null | undefined,
+): boolean {
+  if (!session || session.status !== "idle") {
+    return false
+  }
+
+  if (typeof session.idleSince !== "number") {
+    return false
+  }
+
+  return true
+}
+
+export function shouldShowSessionStatus(
+  instanceId: string,
+  sessionId: string,
+): boolean {
+  const session = getSession(instanceId, sessionId)
+  if (!session) {
+    return false
+  }
+
+  if (session.pendingPermission || session.pendingQuestion || session.retry) {
+    return true
+  }
+
+  return session.status !== "idle" || shouldShowIdleStatus(session)
+}
+
 export function getRetrySeconds(next: number, now = Date.now()): number {
   return Math.max(0, Math.round((next - now) / 1000))
 }
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
-export function getInstanceSessionIndicatorStatus(instanceId: string): InstanceSessionIndicatorStatus {
-  return getInstanceSessionIndicatorStatusCached(instanceId)
+export function getInstanceSessionIndicatorStatus(
+  instanceId: string,
+): InstanceSessionIndicatorStatus | null {
+  const aggregated = getInstanceSessionIndicatorStatusCached(instanceId)
+  if (aggregated !== "idle") {
+    return aggregated
+  }
+
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) {
+    return null
+  }
+
+  for (const session of instanceSessions.values()) {
+    if (shouldShowIdleStatus(session)) {
+      return "idle"
+    }
+  }
+
+  return null
 }
 
 export function isSessionBusy(instanceId: string, sessionId: string): boolean {

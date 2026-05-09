@@ -92,7 +92,7 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
         return { enabled: true }
       }
       try {
-        wakeLockId = powerSaveBlocker.start("prevent-display-sleep")
+        wakeLockId = powerSaveBlocker.start("prevent-app-suspension")
       } catch {
         wakeLockId = null
         return { enabled: false }

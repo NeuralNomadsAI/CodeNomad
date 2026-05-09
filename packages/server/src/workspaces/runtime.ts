@@ -4,100 +4,10 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-
-export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
-export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
-
-const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
-
-export function buildSpawnSpec(binaryPath: string, args: string[]) {
-  if (process.platform !== "win32") {
-    return { command: binaryPath, args, options: {} as const }
-  }
-
-  const extension = path.extname(binaryPath).toLowerCase()
-
-  if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
-    const comspec = process.env.ComSpec || "cmd.exe"
-    // cmd.exe requires the full command as a single string.
-    // Using the ""<script> <args>"" pattern ensures paths with spaces are handled.
-    const commandLine = `""${binaryPath}" ${args.join(" ")}"`
-
-    return {
-      command: comspec,
-      args: ["/d", "/s", "/c", commandLine],
-      options: { windowsVerbatimArguments: true } as const,
-    }
-  }
-
-  if (WINDOWS_POWERSHELL_EXTENSIONS.has(extension)) {
-    // powershell.exe ships with Windows. (pwsh may not.)
-    return {
-      command: "powershell.exe",
-      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", binaryPath, ...args],
-      options: {} as const,
-    }
-  }
-
-  return { command: binaryPath, args, options: {} as const }
-}
-
-export function probeBinaryVersion(binaryPath: string): {
-  valid: boolean
-  version?: string
-  reported?: string
-  error?: string
-} {
-  if (!binaryPath) {
-    return { valid: false, error: "Missing binary path" }
-  }
-
-  const spec = buildSpawnSpec(binaryPath, ["--version"])
-
-  try {
-    const result = spawnSync(spec.command, spec.args, {
-      encoding: "utf8",
-      windowsVerbatimArguments: Boolean(
-        (spec.options as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments,
-      ),
-    })
-
-    if (result.error) {
-      return { valid: false, error: result.error.message }
-    }
-
-    if (result.status !== 0) {
-      const stderr = result.stderr?.trim()
-      const stdout = result.stdout?.trim()
-      const combined = stderr || stdout
-      const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
-      return { valid: false, error }
-    }
-
-    const stdoutLines = String(result.stdout ?? "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-    const stderrLines = String(result.stderr ?? "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-
-    // Prefer stdout; fall back to stderr (some tools report version there).
-    const reported = stdoutLines[0] ?? stderrLines[0]
-    if (!reported) {
-      return { valid: true }
-    }
-
-    const versionMatch = reported.match(VERSION_REGEX)
-    const version = versionMatch?.[1]
-    return { valid: true, version, reported }
-  } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) }
-  }
-}
+import { buildSpawnSpec, buildWslSignalSpec } from "./spawn"
 
 const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
+const WSL_PID_MARKER = "__CODENOMAD_WSL_PID__:"
 
 function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const redacted: Record<string, string | undefined> = {}
@@ -130,6 +40,10 @@ export interface ProcessExitInfo {
 interface ManagedProcess {
   child: ChildProcess
   requestedStop: boolean
+  wsl?: {
+    distro: string
+    linuxPid: number | null
+  }
 }
 
 export class WorkspaceRuntime {
@@ -167,7 +81,13 @@ export class WorkspaceRuntime {
     }
 
     return new Promise((resolve, reject) => {
-      const spec = buildSpawnSpec(options.binaryPath, args)
+      const propagatedEnvKeys = Object.keys(options.environment ?? {})
+      const spec = buildSpawnSpec(options.binaryPath, args, {
+        cwd: options.folder,
+        env,
+        propagateEnvKeys: propagatedEnvKeys,
+        wslPidMarker: WSL_PID_MARKER,
+      })
       const commandLine = [spec.command, ...spec.args].join(" ")
       this.logger.info(
         {
@@ -197,14 +117,18 @@ export class WorkspaceRuntime {
       )
       const detached = process.platform !== "win32"
       const child = spawn(spec.command, spec.args, {
-        cwd: options.folder,
-        env,
+        cwd: spec.cwd,
+        env: spec.env,
         stdio: ["ignore", "pipe", "pipe"],
         detached,
         ...spec.options,
       })
 
-      const managed: ManagedProcess = { child, requestedStop: false }
+      const managed: ManagedProcess = {
+        child,
+        requestedStop: false,
+        ...(spec.wsl ? { wsl: { distro: spec.wsl.distro, linuxPid: null } } : {}),
+      }
       this.processes.set(options.workspaceId, managed)
 
       let stdoutBuffer = ""
@@ -283,6 +207,15 @@ export class WorkspaceRuntime {
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed) continue
+
+          if (managed.wsl && trimmed.startsWith(WSL_PID_MARKER)) {
+            const linuxPid = Number.parseInt(trimmed.slice(WSL_PID_MARKER.length), 10)
+            if (Number.isFinite(linuxPid) && linuxPid > 0) {
+              managed.wsl.linuxPid = linuxPid
+              this.logger.debug({ workspaceId: options.workspaceId, linuxPid }, "Captured WSL OpenCode PID")
+            }
+            continue
+          }
 
           recentStdout.push(trimmed)
           if (recentStdout.length > MAX_OUTPUT_LINES) {
@@ -398,11 +331,44 @@ export class WorkspaceRuntime {
       }
     }
 
+    const trySignalWslProcess = (signal: NodeJS.Signals) => {
+      if (process.platform !== "win32" || !managed.wsl?.linuxPid) {
+        return false
+      }
+
+      try {
+        const spec = buildWslSignalSpec(managed.wsl.distro, managed.wsl.linuxPid, signal)
+        const result = spawnSync(spec.command, spec.args, { encoding: "utf8" })
+        const exitCode = result.status
+        if (exitCode === 0) {
+          return true
+        }
+
+        const stderr = (result.stderr ?? "").toString().toLowerCase()
+        const stdout = (result.stdout ?? "").toString().toLowerCase()
+        const combined = `${stdout}\n${stderr}`
+        if (combined.includes("no such process") || combined.includes("not found")) {
+          return true
+        }
+
+        this.logger.debug(
+          { workspaceId, pid, linuxPid: managed.wsl.linuxPid, distro: managed.wsl.distro, exitCode, stderr: result.stderr, stdout: result.stdout },
+          "WSL kill failed",
+        )
+        return false
+      } catch (error) {
+        this.logger.debug({ workspaceId, pid, linuxPid: managed.wsl.linuxPid, distro: managed.wsl.distro, err: error }, "WSL kill failed to execute")
+        return false
+      }
+    }
+
     const sendStopSignal = (signal: NodeJS.Signals) => {
       if (process.platform === "win32") {
-        // Best-effort: terminate the whole process tree rooted at pid.
-        // Use /F only for escalation.
-        tryTaskkill(signal === "SIGKILL")
+        // WSL-backed launches need a Linux signal first because the tracked Windows PID belongs to wsl.exe.
+        if (!trySignalWslProcess(signal)) {
+          // Fallback to the Windows process tree rooted at pid. Use /F only for escalation.
+          tryTaskkill(signal === "SIGKILL")
+        }
         return
       }
 

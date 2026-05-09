@@ -1,9 +1,11 @@
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, extractDiffPayload, getRelativePath, getToolName, isToolStateCompleted, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
+import { getDiffToolSearchText } from "../search-text"
 
 export const patchRenderer: ToolRenderer = {
   tools: ["patch"],
+  getSearchText: getDiffToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.preparingPatch"),
   getTitle({ toolState }) {
     const state = toolState()

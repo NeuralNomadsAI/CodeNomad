@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "Ouvrir la palette de commandes",
   "instanceShell.commandPalette.button": "Palette de commandes",
+  "instanceShell.chatSearch.openAriaLabel": "Rechercher dans l'historique du chat",
 
   "instanceShell.connection.ariaLabel": "Connexion {status}",
   "instanceShell.connection.connected": "Connecté",
@@ -148,6 +149,17 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerTitle": "Visionneuse de changements",
   "instanceShell.filesShell.viewerPlaceholder": "Le rendu détaillé sera ajouté à l'étape suivante.",
   "instanceShell.filesShell.viewerEmpty": "Aucun fichier sélectionné.",
+  "instanceShell.filesShell.listEmpty": "Aucun fichier dans ce dossier.",
+  "instanceShell.filesShell.search.placeholder": "Filtrer les fichiers de ce dossier",
+  "instanceShell.filesShell.search.ariaLabel": "Filtrer les fichiers de ce dossier",
+  "instanceShell.filesShell.search.empty": "Aucun fichier correspondant.",
+  "instanceShell.filesShell.actions.copyPath": "Copier le chemin",
+  "instanceShell.filesShell.toast.copyPathSuccess": "Chemin copié",
+  "instanceShell.filesShell.toast.copyPathError": "Impossible de copier le chemin",
+  "instanceShell.filesShell.previewMarkdown": "Aperçu Markdown",
+  "instanceShell.filesShell.showSource": "Afficher la source",
+  "instanceShell.filesShell.enableWordWrap": "Activer le retour à la ligne",
+  "instanceShell.filesShell.disableWordWrap": "Désactiver le retour à la ligne",
 
   "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
   "instanceShell.plan.empty": "Aucun plan pour l'instant.",

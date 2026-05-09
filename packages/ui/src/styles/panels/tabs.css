@@ -30,16 +30,30 @@
   @apply flex items-center gap-1 flex-shrink-0;
 }
 
-.tab-bar-session-title {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 400;
-  line-height: 1.2;
-  margin-left: 0.375rem;
-  max-width: min(24rem, 28vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tab-draggable {
+  @apply flex-shrink-0;
+  user-select: none;
+  transition: transform 140ms ease, opacity 140ms ease;
+  will-change: transform;
+}
+
+.tab-draggable-active {
+  opacity: 0.72;
+  position: relative;
+  z-index: 20;
+  transition: none;
+}
+
+.tab-draggable .tab-base,
+.tab-draggable .tab-pill,
+.tab-draggable .tab-pill-button {
+  cursor: grab;
+}
+
+.tab-draggable .tab-base:active,
+.tab-draggable .tab-pill:active,
+.tab-draggable .tab-pill-button:active {
+  cursor: grabbing;
 }
 
 .tab-strip-spacer {
@@ -171,6 +185,13 @@
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
   border-bottom: 2px solid var(--tab-active-bg);
+  outline: none;
+}
+
+.tab-pill:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
 }
 
 .tab-pill-active {

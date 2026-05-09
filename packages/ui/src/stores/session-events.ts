@@ -41,6 +41,7 @@ import {
 import { showAlertDialog } from "./alerts"
 import {
   createClientSession,
+  getIdleSinceForStatusTransition,
   mapSdkSessionRetry,
   mapSdkSessionStatus,
   type Session,
@@ -161,6 +162,7 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
 
     session.status = status
     session.retry = status === "working" ? nextRetry : null
+    session.idleSince = getIdleSinceForStatusTransition(current, status, session.idleSince)
 
     // Auto-expand the parent thread when a child session starts working.
     // Users can still collapse it; we only expand on the transition.
@@ -227,6 +229,11 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         model: existing?.model ?? fetched.model,
         status: existing?.status === "compacting" ? "compacting" : fetched.status,
         retry: existing?.status === "compacting" ? null : fetched.retry,
+        idleSince: getIdleSinceForStatusTransition(
+          existing?.status,
+          existing?.status === "compacting" ? "compacting" : fetched.status,
+          existing?.idleSince,
+        ),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
         pendingQuestion: existing?.pendingQuestion ?? false,
       }
@@ -397,7 +404,8 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
 
     const role: MessageRole = info.role === "user" ? "user" : "assistant"
     const hasError = Boolean((info as any).error)
-    const status: MessageStatus = hasError ? "error" : "complete"
+    const hasEnded = typeof timeInfo.end === "number" && timeInfo.end > 0
+    const status: MessageStatus = hasError ? "error" : hasEnded ? "complete" : "streaming"
 
     let record = store.getMessage(messageId)
     if (!record) {
@@ -457,6 +465,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       },
       status: "idle",
       retry: null,
+      idleSince: null,
       version: info.version || "0",
       time: info.time
         ? { ...info.time }
@@ -599,6 +608,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
     withSession(instanceId, sessionID, (session) => {
       session.status = "working"
       session.retry = null
+      session.idleSince = null
     })
   } else {
     ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)

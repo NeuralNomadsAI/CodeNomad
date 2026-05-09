@@ -1,4 +1,4 @@
-import { Component, createMemo } from "solid-js"
+import { Component, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceSessionIndicatorStatus } from "../stores/session-status"
 import { FolderOpen, ShieldAlert, X } from "lucide-solid"
@@ -20,9 +20,11 @@ function getPathBasename(path: string): string {
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
+
   const aggregatedStatus = createMemo(() => getInstanceSessionIndicatorStatus(props.instance.id))
   const statusClassName = createMemo(() => {
     const status = aggregatedStatus()
+    if (!status) return null
     return status === "permission" ? "session-permission" : `session-${status}`
   })
   const statusTitle = createMemo(() => {
@@ -33,8 +35,10 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         return t("instanceTab.status.compacting")
       case "working":
         return t("instanceTab.status.working")
-      default:
+      case "idle":
         return t("instanceTab.status.idle")
+      default:
+        return null
     }
   })
 
@@ -51,23 +55,26 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
         <span class="tab-label">
           {getPathBasename(props.instance.folder)}
         </span>
-        <span
-          class={`status-indicator session-status ml-auto ${statusClassName()}`}
-          title={statusTitle()}
-          aria-label={t("instanceTab.status.ariaLabel", { status: statusTitle() })}
-        >
-          {aggregatedStatus() === "permission" ? (
-            <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
-          ) : (
-            <span class="status-dot" />
-          )}
-        </span>
+        <Show when={statusClassName() && statusTitle()}>
+          <span
+            class={`status-indicator session-status ml-auto ${statusClassName()}`}
+            title={statusTitle() ?? undefined}
+            aria-label={t("instanceTab.status.ariaLabel", { status: statusTitle() ?? "" })}
+          >
+            {aggregatedStatus() === "permission" ? (
+              <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
+            ) : (
+              <span class="status-dot" />
+            )}
+          </span>
+        </Show>
         <span
           class="tab-close"
           onClick={(e) => {
             e.stopPropagation()
             props.onClose()
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           role="button"
           tabIndex={0}
           aria-label={t("instanceTab.actions.close.ariaLabel")}

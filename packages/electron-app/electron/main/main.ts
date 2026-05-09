@@ -1,7 +1,7 @@
 import { app, BrowserView, BrowserWindow, nativeImage, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { existsSync, mkdirSync } from "fs"
+import { existsSync, mkdirSync, rmSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { createApplicationMenu } from "./menu"
@@ -38,6 +38,49 @@ function configureDevStoragePaths() {
 }
 
 configureDevStoragePaths()
+
+function configurePackagedStoragePaths() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  try {
+    const sessionDataPath = join(app.getPath("userData"), "session-data-v2")
+    mkdirSync(sessionDataPath, { recursive: true })
+    app.setPath("sessionData", sessionDataPath)
+  } catch (error) {
+    console.warn("[electron-startup] failed to configure packaged session data path", error)
+  }
+}
+
+configurePackagedStoragePaths()
+
+function cleanupPackagedChromiumStorage() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  const roots = [app.getPath("sessionData"), app.getPath("userData"), join(app.getPath("userData"), "session-data")]
+  const names = ["Service Worker", "QuotaManager", "QuotaManager-journal"]
+
+  for (const root of roots) {
+    for (const name of names) {
+      const candidate = join(root, name)
+      if (!existsSync(candidate)) {
+        continue
+      }
+
+      try {
+        rmSync(candidate, { recursive: true, force: true })
+        console.info("[electron-startup] removed stale Chromium storage", candidate)
+      } catch (error) {
+        console.warn("[electron-startup] failed to remove stale Chromium storage", candidate, error)
+      }
+    }
+  }
+}
+
+cleanupPackagedChromiumStorage()
 
 const cliManager = new CliProcessManager()
 let mainWindow: BrowserWindow | null = null
@@ -116,8 +159,21 @@ function loadLoadingScreen(window: BrowserWindow) {
       : window.loadFile(target.source)
 
   loader.catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to load loading screen:", error)
   })
+}
+
+function isIgnorableNavigationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : ""
+  return code === "ERR_ABORTED" || code === "ERR_FAILED" || message.includes("ERR_ABORTED") || message.includes("ERR_FAILED")
 }
 
 function getAllowedRendererOrigins(window?: BrowserWindow | null): string[] {
@@ -277,6 +333,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=local"],
     },
   })
 
@@ -385,6 +442,9 @@ function startCliPreload(url: string) {
   })
 
   view.webContents.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
     console.error("[cli] failed to preload CLI view:", error)
     if (preloadingView === view) {
       destroyPreloadingView(view)
@@ -405,7 +465,12 @@ function finalizeCliSwap(url: string) {
   currentCliUrl = url
   setWindowAllowedOrigin(window, url)
   pendingCliUrl = null
-  window.loadURL(url).catch((error) => console.error("[cli] failed to load CLI view:", error))
+  window.loadURL(url).catch((error) => {
+    if (isIgnorableNavigationError(error)) {
+      return
+    }
+    console.error("[cli] failed to load CLI view:", error)
+  })
 }
 
 function buildRemoteWindowTitle(name: string, baseUrl: string) {
@@ -440,6 +505,7 @@ async function openRemoteWindow(payload: { id: string; name: string; baseUrl: st
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: !isMac,
+      additionalArguments: ["--codenomad-window-context=remote"],
     },
   })
 

@@ -12,6 +12,7 @@ import {
 interface FileSystemBrowserOptions {
   rootDir: string
   unrestricted?: boolean
+  platform?: NodeJS.Platform
 }
 
 interface DirectoryReadOptions {
@@ -32,7 +33,7 @@ export class FileSystemBrowser {
     this.root = path.resolve(options.rootDir)
     this.unrestricted = Boolean(options.unrestricted)
     this.homeDir = os.homedir()
-    this.isWindows = process.platform === "win32"
+    this.isWindows = (options.platform ?? process.platform) === "win32"
   }
 
   list(relativePath = ".", options: { includeFiles?: boolean } = {}): FileSystemEntry[] {
@@ -138,7 +139,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: resolvedPath,
       parentPath,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: resolvedPath,
       pathKind: "absolute",
@@ -181,7 +182,7 @@ export class FileSystemBrowser {
       scope: "unrestricted",
       currentPath: WINDOWS_DRIVES_ROOT,
       parentPath: undefined,
-      rootPath: this.homeDir,
+      rootPath: this.root,
       homePath: this.homeDir,
       displayPath: "Drives",
       pathKind: "drives",
@@ -263,6 +264,19 @@ export class FileSystemBrowser {
     if (!input || input === "." || input === "./" || input === "/") {
       return "."
     }
+
+    if (path.isAbsolute(input)) {
+      const resolved = path.resolve(input)
+      const relativeToRoot = path.relative(this.root, resolved)
+      if (relativeToRoot === "") {
+        return "."
+      }
+      if (this.isOutsideRoot(relativeToRoot)) {
+        throw new Error("Access outside of root is not allowed")
+      }
+      return relativeToRoot.replace(/\\+/g, "/")
+    }
+
     let normalized = input.replace(/\\+/g, "/")
     if (normalized.startsWith("./")) {
       normalized = normalized.replace(/^\.\/+/, "")
@@ -293,15 +307,19 @@ export class FileSystemBrowser {
     const normalized = this.normalizeRelativePath(relativePath)
     const target = path.resolve(this.root, normalized)
     const relativeToRoot = path.relative(this.root, target)
-    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot) && relativeToRoot !== "") {
+    if (this.isOutsideRoot(relativeToRoot)) {
       throw new Error("Access outside of root is not allowed")
     }
     return target
   }
 
+  private isOutsideRoot(relativeToRoot: string) {
+    return relativeToRoot === ".." || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)
+  }
+
   private resolveUnrestrictedPath(input: string | undefined): string {
     if (!input || input === "." || input === "./") {
-      return this.homeDir
+      return this.root
     }
 
     if (this.isWindows) {

@@ -22,7 +22,7 @@ import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
-import { runtimeEnv } from "./lib/runtime-env"
+import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import {
@@ -50,7 +50,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 
-import { getInstanceSessionIndicatorStatus } from "./stores/session-status"
+import { hasWakeLockEligibleWork } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import {
   closeSidecarTab,
@@ -64,6 +64,7 @@ import {
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
+  moveAppTab,
   selectAppTab,
   selectInstanceTab,
   selectSidecarTab,
@@ -138,7 +139,7 @@ const App: Component = () => {
   createEffect(() => {
     if (typeof document === "undefined") return
     const shouldShow =
-      runtimeEnv.host !== "web" && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? true)
+      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? true)
     document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
   })
 
@@ -205,8 +206,7 @@ const App: Component = () => {
   const shouldHoldWakeLock = createMemo(() => {
     const map = instances()
     for (const id of map.keys()) {
-      const status = getInstanceSessionIndicatorStatus(id)
-      if (status !== "idle") {
+      if (hasWakeLockEligibleWork(id)) {
         return true
       }
     }
@@ -461,7 +461,7 @@ const App: Component = () => {
 
   // Listen for Tauri menu events
   onMount(() => {
-    if (runtimeEnv.host === "tauri") {
+    if (isTauriHost()) {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
@@ -561,6 +561,7 @@ const App: Component = () => {
                   onSelect={selectAppTab}
                   onClose={(tabId) => void handleCloseAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
+                  onMoveTab={moveAppTab}
                 />
               </Show>
 

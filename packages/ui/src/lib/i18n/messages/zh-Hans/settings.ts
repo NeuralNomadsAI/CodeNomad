@@ -146,6 +146,8 @@ export const settingsMessages = {
   "settings.behavior.usageMetrics.subtitle": "显示或隐藏助手消息的令牌与成本统计。",
   "settings.behavior.autoCleanup.title": "自动清理空会话",
   "settings.behavior.autoCleanup.subtitle": "创建新会话时自动清理空会话。",
+  "settings.behavior.keepUnseenSubagentIdle.title": "保留子智能体 idle 标记",
+  "settings.behavior.keepUnseenSubagentIdle.subtitle": "让子智能体 idle 标记保持可见直到查看，而不是 5 秒后隐藏。",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "回车发送",

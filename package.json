@@ -1,6 +1,6 @@
 {
   "name": "codenomad-workspace",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "description": "CodeNomad monorepo workspace",
   "license": "MIT",
@@ -9,7 +9,8 @@
       "packages/server",
       "packages/ui",
       "packages/electron-app",
-      "packages/tauri-app"
+      "packages/tauri-app",
+      "packages/opencode-config"
     ]
   },
   "scripts": {
@@ -30,5 +31,13 @@
   },
   "devDependencies": {
     "baseline-browser-mapping": "^2.9.11"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-arm64": "4.52.5",
+    "@rollup/rollup-darwin-x64": "4.52.5",
+    "@rollup/rollup-linux-arm64-gnu": "4.52.5",
+    "@rollup/rollup-linux-x64-gnu": "4.52.5",
+    "@rollup/rollup-win32-arm64-msvc": "4.52.5",
+    "@rollup/rollup-win32-x64-msvc": "4.52.5"
   }
 }
