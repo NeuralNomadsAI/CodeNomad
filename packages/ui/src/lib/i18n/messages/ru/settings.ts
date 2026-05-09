@@ -55,6 +55,7 @@ export const settingsMessages = {
   "contextUsagePanel.labels.totalInput": "Всего ввод",
   "contextUsagePanel.labels.totalOutput": "Всего вывод",
   "contextUsagePanel.labels.totalCost": "Общая стоимость",
+  "contextUsagePanel.labels.totalReasoning": "Всего рассуждений",
   "contextUsagePanel.labels.used": "Использовано",
   "contextUsagePanel.labels.available": "Доступно",
   "contextUsagePanel.unavailable": "--",

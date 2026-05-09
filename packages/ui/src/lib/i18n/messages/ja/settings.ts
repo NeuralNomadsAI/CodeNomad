@@ -55,6 +55,7 @@ export const settingsMessages = {
   "contextUsagePanel.labels.totalInput": "合計入力",
   "contextUsagePanel.labels.totalOutput": "合計出力",
   "contextUsagePanel.labels.totalCost": "合計コスト",
+  "contextUsagePanel.labels.totalReasoning": "合計推論",
   "contextUsagePanel.labels.used": "使用",
   "contextUsagePanel.labels.available": "残り",
   "contextUsagePanel.unavailable": "--",

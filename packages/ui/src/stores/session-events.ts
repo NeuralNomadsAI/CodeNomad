@@ -614,7 +614,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
     ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
   }
 
-  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload session after compaction", error))
+  loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)

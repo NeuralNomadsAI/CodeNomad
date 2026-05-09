@@ -55,6 +55,7 @@ export const settingsMessages = {
   "contextUsagePanel.labels.totalInput": "总输入",
   "contextUsagePanel.labels.totalOutput": "总输出",
   "contextUsagePanel.labels.totalCost": "总费用",
+  "contextUsagePanel.labels.totalReasoning": "总推理",
   "contextUsagePanel.labels.used": "已用",
   "contextUsagePanel.labels.available": "可用",
   "contextUsagePanel.unavailable": "--",

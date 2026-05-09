@@ -55,6 +55,7 @@ export const settingsMessages = {
   "contextUsagePanel.labels.totalInput": "Entrée totale",
   "contextUsagePanel.labels.totalOutput": "Sortie totale",
   "contextUsagePanel.labels.totalCost": "Coût total",
+  "contextUsagePanel.labels.totalReasoning": "Raisonnement total",
   "contextUsagePanel.labels.used": "Utilisé",
   "contextUsagePanel.labels.available": "Dispo",
   "contextUsagePanel.unavailable": "--",

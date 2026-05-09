@@ -55,6 +55,7 @@ export const settingsMessages = {
   "contextUsagePanel.labels.totalInput": "קלט כולל",
   "contextUsagePanel.labels.totalOutput": "פלט כולל",
   "contextUsagePanel.labels.totalCost": "עלות כוללת",
+  "contextUsagePanel.labels.totalReasoning": "חשיבה כוללת",
   "contextUsagePanel.labels.used": "בשימוש",
   "contextUsagePanel.labels.available": "זמין",
   "contextUsagePanel.unavailable": "--",

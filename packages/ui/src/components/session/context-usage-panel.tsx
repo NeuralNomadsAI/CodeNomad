@@ -1,6 +1,7 @@
-import { createEffect, createMemo, Show, type Component } from "solid-js"
+import { createEffect, createMemo, Show, untrack, type Component } from "solid-js"
 import { getChildSessions, getSessionFamily, getSessionInfo, loadMessages, sessionInfoByInstance } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
+import { computeThreadTotals } from "../../lib/thread-totals"
 import { useI18n } from "../../lib/i18n"
 import { getLogger } from "../../lib/logger"
 import { useConfig } from "../../stores/preferences"
@@ -44,39 +45,33 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
 
   createEffect(() => {
     if (!showUsage()) return
-    for (const child of children()) {
-      loadMessages(props.instanceId, child.id, false, true).catch((error) =>
-        log.error("Failed to load child session messages", {
-          instanceId: props.instanceId,
-          sessionId: child.id,
-          error,
-        }),
-      )
-    }
+    const instanceId = props.instanceId
+    const childSessions = children()
+    untrack(() => {
+      for (const child of childSessions) {
+        loadMessages(instanceId, child.id, { skipDiff: true }).catch((error) =>
+          log.error("Failed to load child session messages", {
+            instanceId,
+            sessionId: child.id,
+            error,
+          }),
+        )
+      }
+    })
   })
 
   const threadTotals = createMemo(() => {
-    if (!hasChildren()) return { cost: 0, inputTokens: 0, outputTokens: 0 }
+    if (!hasChildren()) return { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
     const map = instanceInfoMap()
     const family = getSessionFamily(props.instanceId, props.sessionId)
-    let cost = 0
-    let inputTokens = 0
-    let outputTokens = 0
-    for (const session of family) {
-      const info = map?.get(session.id)
-      inputTokens += info?.inputTokens ?? 0
-      outputTokens += info?.outputTokens ?? 0
-      if (!info?.isSubscriptionModel) {
-        cost += info?.cost ?? 0
-      }
-    }
-    return { cost, inputTokens, outputTokens }
+    return computeThreadTotals(family, map)
   })
 
   const totalCostDisplay = createMemo(() => `$${threadTotals().cost.toFixed(2)}`)
 
   const totalInputTokens = createMemo(() => threadTotals().inputTokens)
   const totalOutputTokens = createMemo(() => threadTotals().outputTokens)
+  const totalReasoningTokens = createMemo(() => threadTotals().reasoningTokens)
 
   const inputTokens = createMemo(() => info().inputTokens ?? 0)
   const outputTokens = createMemo(() => info().outputTokens ?? 0)
@@ -114,6 +109,10 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
           <div class={chipClass}>
             <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalCost")}</span>
             <span class="font-semibold text-primary">{totalCostDisplay()}</span>
+          </div>
+          <div class={chipClass}>
+            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalReasoning")}</span>
+            <span class="font-semibold text-primary">{formatTokenTotal(totalReasoningTokens())}</span>
           </div>
         </Show>
       </div>

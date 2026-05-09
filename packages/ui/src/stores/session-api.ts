@@ -595,7 +595,14 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 }
 
-async function loadMessages(instanceId: string, sessionId: string, force = false, skipDiff = false): Promise<void> {
+async function loadMessages(
+  instanceId: string,
+  sessionId: string,
+  options?: { force?: boolean; skipDiff?: boolean },
+): Promise<void> {
+  const force = options?.force ?? false
+  const skipDiff = options?.skipDiff ?? false
+
   if (force) {
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
