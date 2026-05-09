@@ -80,9 +80,10 @@ export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), k
   let hasVisibleIdle = false
   for (const session of instanceSessions.values()) {
     if (!session.id) continue
-    if (!shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
+    const isFading = Boolean(getSessionIdleFadeClass(instanceId, session.id))
+    if (!isFading && !shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
     hasVisibleIdle = true
-    if (!getSessionIdleFadeClass(instanceId, session.id)) return ""
+    if (!isFading) return ""
   }
 
   return hasVisibleIdle ? "session-status-fading" : ""
@@ -123,6 +124,10 @@ export function shouldShowSessionStatus(
     return true
   }
 
+  if (session.status === "idle" && getSessionIdleFadeClass(instanceId, sessionId)) {
+    return true
+  }
+
   return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
 }
 
@@ -148,6 +153,9 @@ export function getInstanceSessionIndicatorStatus(
   }
 
   for (const session of instanceSessions.values()) {
+    if (session.id && getSessionIdleFadeClass(instanceId, session.id)) {
+      return "idle"
+    }
     if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) {
       return "idle"
     }

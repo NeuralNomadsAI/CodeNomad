@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
-import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus } from "./session-status.ts"
+import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatus } from "./session-status.ts"
 import { setSessions } from "./session-state.ts"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
@@ -93,6 +93,39 @@ describe("idle status visibility", () => {
     clearSessionIdleFade(instanceId, sessionId, idleSince)
     assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
 
+    setSessions(new Map())
+  })
+
+  it("keeps a default-mode subagent visible while its parent-triggered fade runs", () => {
+    const instanceId = "instance"
+    const sessionId = "subsession"
+    const idleSince = 1_000
+
+    setSessions(
+      new Map([
+        [
+          instanceId,
+          new Map([
+            [
+              sessionId,
+              {
+                id: sessionId,
+                status: "idle",
+                idleSince,
+                parentId: "parent",
+              } as any,
+            ],
+          ]),
+        ],
+      ]),
+    )
+
+    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), false)
+
+    markSessionIdleFadeStarted(instanceId, sessionId)
+    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), true)
+
+    clearSessionIdleFade(instanceId, sessionId, idleSince)
     setSessions(new Map())
   })
 })
