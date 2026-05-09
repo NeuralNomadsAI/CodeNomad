@@ -743,7 +743,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <DiscordSymbolIcon class="w-4 h-4" />
               </a>
             </div>
-            <p class="mt-3 text-base text-secondary">{t("folderSelection.tagline")}</p>
           </div>
 
           <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
@@ -1078,7 +1077,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <button
                     type="button"
                     onClick={() => props.onOpenSidecar?.()}
-                    class="button-primary mt-3 w-full flex items-center justify-center text-sm"
+                    class="button-primary w-full flex items-center justify-center text-sm"
                   >
                     <div class="flex items-center gap-2">
                       <MonitorUp class="w-4 h-4" />
