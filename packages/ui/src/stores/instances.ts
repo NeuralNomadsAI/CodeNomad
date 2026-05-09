@@ -32,6 +32,7 @@ import { setSessionPendingPermission, setSessionPendingQuestion } from "./sessio
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import { drainAutoAcceptPermissions } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -218,7 +219,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
       "permission.list",
     )
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    const pendingRemote = remote.filter((item) => !hasRecentlyRepliedPermission(instanceId, item.id))
+    const remoteIds = new Set(pendingRemote.map((item) => item.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
@@ -230,10 +232,11 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending permissions.
-    for (const permission of remote) {
+    for (const permission of pendingRemote) {
       addPermissionToQueue(instanceId, permission)
       upsertPermissionV2(instanceId, permission)
     }
+    drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
   }
@@ -642,6 +645,10 @@ function getPermissionQueueLength(instanceId: string): number {
   return getPermissionQueue(instanceId).length
 }
 
+function hasPendingPermission(instanceId: string, permissionId: string): boolean {
+  return getPermissionQueue(instanceId).some((permission) => permission.id === permissionId)
+}
+
 function getQuestionQueue(instanceId: string): QuestionRequest[] {
   const queue = questionQueues().get(instanceId)
   if (!queue) {
@@ -838,6 +845,8 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
     }
     byPermissionId.set(permission.id, slug)
   }
+
+  drainAutoAcceptPermissions(instanceId, [permission], sendPermissionResponse, hasPendingPermission)
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {

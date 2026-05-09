@@ -13,7 +13,8 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "../../../../../stores/permission-auto-accept"
+import { getPermissionQueue, sendPermissionResponse } from "../../../../../stores/instances"
+import { drainAutoAcceptPermissions, isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "../../../../../stores/permission-auto-accept"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -51,6 +52,18 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       )
     }
 
+    const toggleYoloMode = () => {
+      const willEnable = !isPermissionAutoAcceptEnabled(props.instanceId, session.id)
+      togglePermissionAutoAccept(props.instanceId, session.id)
+      if (!willEnable) return
+      drainAutoAcceptPermissions(
+        props.instanceId,
+        getPermissionQueue(props.instanceId),
+        sendPermissionResponse,
+        (instanceId, permissionId) => getPermissionQueue(instanceId).some((permission) => permission.id === permissionId),
+      )
+    }
+
     return (
       <div class="rounded-md border border-base bg-surface-secondary px-3 py-2">
         <div class="flex items-start justify-between gap-3">
@@ -63,7 +76,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
             color="warning"
             size="small"
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAccept(props.instanceId, session.id)}
+            onChange={toggleYoloMode}
           />
         </div>
       </div>
