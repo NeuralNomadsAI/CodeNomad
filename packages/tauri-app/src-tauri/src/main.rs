@@ -3,9 +3,9 @@
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
-mod managed_node;
 #[cfg(target_os = "linux")]
 mod linux_tls;
+mod managed_node;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
@@ -42,7 +42,46 @@ const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
-const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
+fn build_remote_window_context_script(title: &str) -> String {
+    let title_json = serde_json::to_string(title).unwrap_or_else(|_| "\"CodeNomad\"".to_string());
+    format!(
+        r#"
+window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';
+window.__CODENOMAD_WINDOW_TITLE__ = {title_json};
+(function () {{
+  var lockedTitle = {title_json};
+  var descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+  function applyTitle() {{
+    if (descriptor && typeof descriptor.set === 'function') {{
+      descriptor.set.call(document, lockedTitle);
+    }} else {{
+      var titleElement = document.querySelector('title');
+      if (!titleElement && document.head) {{
+        titleElement = document.createElement('title');
+        document.head.appendChild(titleElement);
+      }}
+      if (titleElement) {{
+        titleElement.textContent = lockedTitle;
+      }}
+    }}
+  }}
+  Object.defineProperty(document, 'title', {{
+    configurable: true,
+    get: function () {{ return lockedTitle; }},
+    set: applyTitle,
+  }});
+  applyTitle();
+  if (document.documentElement) {{
+    new MutationObserver(applyTitle).observe(document.documentElement, {{
+      childList: true,
+      subtree: true,
+      characterData: true,
+    }});
+  }}
+}})();
+"#
+    )
+}
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -231,7 +270,10 @@ async fn open_remote_window_impl(
     app: AppHandle,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+    let entry_url = payload
+        .entry_url
+        .as_deref()
+        .unwrap_or(payload.base_url.as_str());
     let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
     let title = format!(
@@ -245,8 +287,8 @@ async fn open_remote_window_impl(
 
     let window_url = parsed.clone();
 
-    let allow_linux_tls_certificate =
-        parsed.scheme() == "https" && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
+    let allow_linux_tls_certificate = parsed.scheme() == "https"
+        && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
 
     app.state::<AppState>()
         .remote_origins
@@ -290,25 +332,28 @@ async fn open_remote_window_impl(
     }
 
     #[cfg(target_os = "linux")]
-    let initial_url = if linux_tls::should_bootstrap_tls_navigation(
-        &window_url,
-        allow_linux_tls_certificate,
-    ) {
-        Url::parse("about:blank").map_err(|err| err.to_string())?
-    } else {
-        window_url.clone()
-    };
+    let initial_url =
+        if linux_tls::should_bootstrap_tls_navigation(&window_url, allow_linux_tls_certificate) {
+            Url::parse("about:blank").map_err(|err| err.to_string())?
+        } else {
+            window_url.clone()
+        };
 
     #[cfg(not(target_os = "linux"))]
     let initial_url = window_url.clone();
 
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(initial_url.clone()))
-        .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
-        .title(title)
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(800.0, 600.0)
-        .build()
-        .map_err(|err| err.to_string())?;
+    let remote_context_script = build_remote_window_context_script(&title);
+    let window = WebviewWindowBuilder::new(
+        &app,
+        label.clone(),
+        WebviewUrl::External(initial_url.clone()),
+    )
+    .initialization_script(remote_context_script)
+    .title(title)
+    .inner_size(1400.0, 900.0)
+    .min_inner_size(800.0, 600.0)
+    .build()
+    .map_err(|err| err.to_string())?;
 
     #[cfg(target_os = "linux")]
     {
@@ -364,7 +409,10 @@ fn needs_local_certificate_install() -> Result<bool, String> {
 async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
     #[cfg(not(target_os = "linux"))]
     {
-        let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+        let entry_url = payload
+            .entry_url
+            .as_deref()
+            .unwrap_or(payload.base_url.as_str());
         let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
         if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
             let local_cert = cert_manager::ensure_local_cert().map_err(|err| {

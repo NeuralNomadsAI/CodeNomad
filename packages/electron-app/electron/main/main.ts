@@ -482,6 +482,14 @@ function buildRemoteWindowTitle(name: string, baseUrl: string) {
   }
 }
 
+function lockWindowTitle(window: BrowserWindow, title: string) {
+  window.setTitle(title)
+  window.webContents.on("page-title-updated", (event) => {
+    event.preventDefault()
+    window.setTitle(title)
+  })
+}
+
 function buildRemoteErrorHtml(name: string, baseUrl: string, message: string) {
   const escapedName = name.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char] ?? char))
   const escapedUrl = baseUrl.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char] ?? char))
@@ -508,6 +516,7 @@ async function openRemoteWindow(payload: { id: string; name: string; baseUrl: st
       additionalArguments: ["--codenomad-window-context=remote"],
     },
   })
+  lockWindowTitle(window, title)
 
   setWindowAllowedOrigin(window, targetUrl.toString())
   if (payload.skipTlsVerify) {
