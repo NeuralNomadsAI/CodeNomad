@@ -100,6 +100,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   const canComment = createMemo(() => Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
+  const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
 
   const getEditablePathFromUrl = (url: string): string => {
@@ -340,12 +341,16 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         </Show>
       </div>
       <div ref={frameWrapRef} class="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div class="absolute inset-0 overflow-auto bg-surface-secondary p-4">
+        <div
+          class={isResponsiveViewport()
+            ? "absolute inset-0 overflow-hidden bg-surface"
+            : "absolute inset-0 overflow-auto bg-surface-secondary p-4"}
+        >
           <iframe
             ref={iframeRef}
             src={frameSrc()}
             title={props.title}
-            class="block border-0 bg-surface shadow-xl"
+            class={isResponsiveViewport() ? "block border-0 bg-surface" : "block border-0 bg-surface shadow-xl"}
             style={{
               width: viewport().width ? `${viewport().width}px` : "100%",
               height: viewport().height ? `${viewport().height}px` : "100%",

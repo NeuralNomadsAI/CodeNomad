@@ -6,7 +6,7 @@ import fs from "fs"
 import { connect as connectTcp, type Socket } from "net"
 import path from "path"
 import { connect as connectTls, type TLSSocket } from "tls"
-import { fetch } from "undici"
+import { fetch, type Headers } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
 import { isValidWorktreeSlug, listWorktrees, resolveRepoRoot } from "../workspaces/git-worktrees"
@@ -313,9 +313,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
 
   if (deps.uiDevServerUrl) {
-    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager)
+    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager)
+    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger)
   }
 
   return {
@@ -842,7 +842,13 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
-function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthManager) {
+function setupStaticUi(
+  app: FastifyInstance,
+  uiDir: string,
+  authManager: AuthManager,
+  previewManager: PreviewManager,
+  logger: Logger,
+) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
     return
@@ -869,6 +875,10 @@ function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthMan
     }
 
     const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+
     if (!session && wantsHtml(request)) {
       reply.redirect("/login")
       return
@@ -882,7 +892,13 @@ function setupStaticUi(app: FastifyInstance, uiDir: string, authManager: AuthMan
   })
 }
 
-function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: AuthManager) {
+function setupDevProxy(
+  app: FastifyInstance,
+  upstreamBase: string,
+  authManager: AuthManager,
+  previewManager: PreviewManager,
+  logger: Logger,
+) {
   app.log.info({ upstreamBase }, "Proxying UI requests to development server")
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -892,6 +908,10 @@ function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: 
     }
 
     const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+
     if (!session && wantsHtml(request)) {
       reply.redirect("/login")
       return
@@ -899,6 +919,49 @@ function setupDevProxy(app: FastifyInstance, upstreamBase: string, authManager: 
 
     void proxyToDevServer(request, reply, upstreamBase)
   })
+}
+
+function proxyPreviewFallbackFromReferer(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  previewManager: PreviewManager,
+  logger: Logger,
+): boolean {
+  const rawUrl = request.raw.url ?? request.url ?? ""
+  const pathname = rawUrl.split("?")[0] ?? ""
+  if (!isPreviewFallbackPath(pathname)) {
+    return false
+  }
+
+  const refererHeader = request.headers.referer ?? request.headers.referrer
+  const referer = Array.isArray(refererHeader) ? refererHeader[0] : refererHeader
+  if (!referer) {
+    return false
+  }
+
+  const parsed = parsePreviewUpgradePath(referer)
+  if (!parsed) {
+    return false
+  }
+
+  void proxyPreviewAssetRequest({
+    request,
+    reply,
+    previewManager,
+    logger,
+    token: parsed.token,
+  })
+  return true
+}
+
+function isPreviewFallbackPath(pathname: string): boolean {
+  if (!pathname || pathname === "/") return false
+  if (pathname.startsWith("/api/") || pathname === "/api") return false
+  if (pathname.startsWith("/workspaces/")) return false
+  if (pathname.startsWith("/sidecars/")) return false
+  if (pathname.startsWith("/previews/")) return false
+  if (pathname.startsWith("/auth/") || pathname === "/login") return false
+  return true
 }
 
 async function proxyToDevServer(request: FastifyRequest, reply: FastifyReply, upstreamBase: string) {
@@ -943,6 +1006,81 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
+}
+
+function buildFetchProxyHeaders(headers: FastifyRequest["headers"], targetOrigin: string): Record<string, string> {
+  const sanitized = sanitizeSideCarProxyRequestHeaders(
+    headers as Record<string, string | string[] | undefined>,
+    targetOrigin,
+  )
+  const result: Record<string, string> = {}
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (!value) continue
+    result[key] = Array.isArray(value) ? value.join(",") : value
+  }
+  return result
+}
+
+function headersToRecord(headers: Headers): Record<string, string | string[] | undefined> {
+  const result: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    result[key.toLowerCase()] = value
+  })
+  return result
+}
+
+function getHeaderValue(headers: Record<string, string | string[] | undefined>, key: string): string | undefined {
+  const value = headers[key.toLowerCase()]
+  return Array.isArray(value) ? value[0] : value
+}
+
+function shouldForwardRequestBody(method: string): boolean {
+  const normalized = method.toUpperCase()
+  return normalized !== "GET" && normalized !== "HEAD"
+}
+
+function isHtmlContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase()
+  return normalized.includes("text/html") || normalized.includes("application/xhtml+xml")
+}
+
+function isCssContentType(contentType: string): boolean {
+  return contentType.toLowerCase().includes("text/css")
+}
+
+function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css"): string {
+  if (kind === "css") {
+    return rewriteCssPreviewUrls(body, publicBase)
+  }
+
+  return rewriteCssPreviewUrls(
+    body
+      .replace(/\b(src|href|action|poster|data)=(["'])\/(?!\/)([^"']*)\2/gi, (_match, attr: string, quote: string, pathValue: string) => {
+        return `${attr}=${quote}${publicBase}/${pathValue}${quote}`
+      })
+      .replace(/\bsrcset=(["'])([^"']*)\1/gi, (_match, quote: string, value: string) => {
+        return `srcset=${quote}${rewriteSrcsetPreviewUrls(value, publicBase)}${quote}`
+      }),
+    publicBase,
+  )
+}
+
+function rewriteCssPreviewUrls(body: string, publicBase: string): string {
+  return body.replace(/url\((\s*)(["']?)\/(?!\/)([^"')]+)\2(\s*)\)/gi, (_match, before: string, quote: string, pathValue: string, after: string) => {
+    return `url(${before}${quote}${publicBase}/${pathValue}${quote}${after})`
+  })
+}
+
+function rewriteSrcsetPreviewUrls(value: string, publicBase: string): string {
+  return value
+    .split(",")
+    .map((entry) => {
+      const trimmed = entry.trimStart()
+      if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return entry
+      const leading = entry.slice(0, entry.length - trimmed.length)
+      return `${leading}${publicBase}${trimmed}`
+    })
+    .join(",")
 }
 
 async function proxySideCarRequest(args: {
@@ -1006,15 +1144,98 @@ async function proxyPreviewRequest(args: {
   }
 
   args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
-  await proxyTargetRequest({
+  await proxyPreviewTargetRequest({
+    request: args.request,
     reply: args.reply,
     logger: args.logger,
     targetUrl: targetUrl.toString(),
     targetOrigin: targetUrl.origin,
+    publicBase: args.previewManager.buildProxyBasePath(token),
     logContext: { previewToken: token },
     errorMessage: "Preview proxy failed",
     rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin),
   })
+}
+
+async function proxyPreviewAssetRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  previewManager: PreviewManager
+  logger: Logger
+  token: string
+}) {
+  const rawUrl = args.request.raw.url ?? args.request.url ?? ""
+  const queryIndex = rawUrl.indexOf("?")
+  const search = queryIndex >= 0 ? rawUrl.slice(queryIndex) : ""
+  const pathname = rawUrl.split("?")[0] ?? "/"
+  const targetUrl = args.previewManager.buildTargetUrl(args.token, pathname, search)
+  if (!targetUrl) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  args.logger.debug({ previewToken: args.token, targetUrl: targetUrl.toString() }, "Proxying preview fallback asset")
+  await proxyPreviewTargetRequest({
+    request: args.request,
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl: targetUrl.toString(),
+    targetOrigin: targetUrl.origin,
+    publicBase: args.previewManager.buildProxyBasePath(args.token),
+    logContext: { previewToken: args.token, previewFallback: true },
+    errorMessage: "Preview proxy failed",
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
+  })
+}
+
+async function proxyPreviewTargetRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  logger: Logger
+  targetUrl: string
+  targetOrigin: string
+  publicBase: string
+  logContext: Record<string, unknown>
+  errorMessage: string
+  rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
+}) {
+  try {
+    const response = await fetch(args.targetUrl, {
+      method: args.request.method,
+      headers: buildFetchProxyHeaders(args.request.headers, args.targetOrigin),
+      body: shouldForwardRequestBody(args.request.method) ? (args.request.raw as any) : undefined,
+      duplex: shouldForwardRequestBody(args.request.method) ? "half" : undefined,
+      redirect: "manual",
+    } as any)
+
+    const headers = args.rewriteHeaders(headersToRecord(response.headers))
+    const contentType = getHeaderValue(headers, "content-type") ?? response.headers.get("content-type") ?? ""
+    delete headers["content-length"]
+    delete headers["content-encoding"]
+
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== undefined) args.reply.header(key, value)
+    }
+    args.reply.code(response.status)
+
+    if (!response.body || args.request.method === "HEAD") {
+      args.reply.send()
+      return
+    }
+
+    if (isHtmlContentType(contentType) || isCssContentType(contentType)) {
+      const text = await response.text()
+      args.reply.send(rewritePreviewBodyUrls(text, args.publicBase, isCssContentType(contentType) ? "css" : "html"))
+      return
+    }
+
+    args.reply.send(Buffer.from(await response.arrayBuffer()))
+  } catch (error) {
+    args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
+    if (!args.reply.sent) {
+      args.reply.code(502).send({ error: args.errorMessage })
+    }
+  }
 }
 
 async function proxyTargetRequest(args: {
