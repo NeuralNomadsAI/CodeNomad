@@ -112,6 +112,13 @@ export interface Agent {
   }
 }
 
+/**
+ * Matches OpenCode TUI's primary-agent visibility rule: visible iff not a subagent and not hidden.
+ */
+export function isSelectablePrimaryAgent(agent: Agent): boolean {
+  return !agent.hidden && agent.mode !== "subagent"
+}
+
 // Our client-specific Provider interface (simplified version of SDK Provider)
 export interface Provider {
   id: string

@@ -235,7 +235,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     try {
-      await loadMessages(props.instanceId, sessionId, true)
+      await loadMessages(props.instanceId, sessionId, { force: true })
     } catch (error) {
       log.error(`Failed to reload session ${sessionId}:`, error)
       showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
