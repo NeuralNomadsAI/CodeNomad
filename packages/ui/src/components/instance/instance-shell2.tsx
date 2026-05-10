@@ -36,7 +36,7 @@ import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueue, getPermissionQueueLength, getQuestionQueueLength, sendPermissionResponse } from "../../stores/instances"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -58,13 +58,7 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { getPermissionSessionId } from "../../types/permission"
-import {
-  canAutoRespondPermission,
-  finishAutoRespondPermission,
-  getPermissionAutoAcceptInFlightVersion,
-  isPermissionAutoAcceptEnabled,
-} from "../../stores/permission-auto-accept"
+import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
@@ -269,8 +263,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
-  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
-
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
@@ -283,25 +275,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       [sessionId]: api,
     }))
   }
-
-  createEffect(() => {
-    getPermissionAutoAcceptInFlightVersion()
-
-    for (const permission of permissionQueue()) {
-      const sessionId = getPermissionSessionId(permission)
-      if (!sessionId) continue
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
-
-      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
-        })
-    }
-  })
 
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
