@@ -4,8 +4,6 @@ import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
 
 const STORAGE_KEY = "codenomad:permission-auto-accept:v1"
-const RETRY_BASE_DELAY_MS = 1_000
-const RETRY_MAX_DELAY_MS = 10_000
 
 const log = getLogger("api")
 
@@ -46,8 +44,6 @@ function persist(next: Map<string, boolean>) {
 const [autoAcceptState, setAutoAcceptState] = createSignal(readInitialState())
 
 const inFlight = new Set<string>()
-const retryAttempts = new Map<string, number>()
-const retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export function isPermissionAutoAcceptEnabled(instanceId: string, sessionId: string) {
   return autoAcceptState().get(makeKey(instanceId, sessionId)) ?? false
@@ -78,19 +74,9 @@ function makeRequestKey(instanceId: string, sessionId: string, requestId: string
   return `${makeKey(instanceId, sessionId)}:${requestId}`
 }
 
-function clearRetry(requestKey: string) {
-  const timer = retryTimers.get(requestKey)
-  if (timer) {
-    clearTimeout(timer)
-    retryTimers.delete(requestKey)
-  }
-  retryAttempts.delete(requestKey)
-}
-
 export function clearAutoAcceptPermission(instanceId: string, sessionId: string, requestId: string) {
   const requestKey = makeRequestKey(instanceId, sessionId, requestId)
   inFlight.delete(requestKey)
-  clearRetry(requestKey)
 }
 
 export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
@@ -100,34 +86,6 @@ export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
       inFlight.delete(requestKey)
     }
   }
-  for (const requestKey of Array.from(retryTimers.keys())) {
-    if (requestKey.startsWith(prefix)) {
-      clearRetry(requestKey)
-    }
-  }
-  for (const requestKey of Array.from(retryAttempts.keys())) {
-    if (requestKey.startsWith(prefix)) {
-      retryAttempts.delete(requestKey)
-    }
-  }
-}
-
-function scheduleRetry(
-  instanceId: string,
-  permission: PermissionRequestLike,
-  responder: AutoAcceptResponder,
-  isPending: PendingPermissionChecker,
-  requestKey: string,
-) {
-  if (retryTimers.has(requestKey)) return
-  const attempt = (retryAttempts.get(requestKey) ?? 0) + 1
-  retryAttempts.set(requestKey, attempt)
-  const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS)
-  const timer = setTimeout(() => {
-    retryTimers.delete(requestKey)
-    drainAutoAcceptPermission(instanceId, permission, responder, isPending)
-  }, delay)
-  retryTimers.set(requestKey, timer)
 }
 
 export function drainAutoAcceptPermission(
@@ -142,19 +100,13 @@ export function drainAutoAcceptPermission(
   if (!isPending(instanceId, permission.id)) return
 
   const requestKey = makeRequestKey(instanceId, sessionId, permission.id)
-  if (inFlight.has(requestKey) || retryTimers.has(requestKey)) return
+  if (inFlight.has(requestKey)) return
 
   inFlight.add(requestKey)
 
   void responder(instanceId, sessionId, permission.id, "once")
-    .then(() => {
-      clearRetry(requestKey)
-    })
     .catch((error) => {
       log.error("Failed to auto-accept permission", error)
-      if (isPending(instanceId, permission.id) && isPermissionAutoAcceptEnabled(instanceId, sessionId)) {
-        scheduleRetry(instanceId, permission, responder, isPending, requestKey)
-      }
     })
     .finally(() => {
       inFlight.delete(requestKey)

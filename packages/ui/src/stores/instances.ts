@@ -830,8 +830,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
     return next
   })
 
-  const updatedQueue = getPermissionQueue(instanceId)
-
   recomputeActiveInterruption(instanceId)
 
   const removed = removedPermission
