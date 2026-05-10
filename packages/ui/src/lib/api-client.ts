@@ -11,6 +11,7 @@ import type {
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   SideCar,
+  PreviewSession,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -251,6 +252,15 @@ export const serverApi = {
   },
   deleteSidecar(id: string): Promise<void> {
     return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  createPreview(payload: { sessionId: string; url: string }): Promise<PreviewSession> {
+    return request<PreviewSession>("/api/previews", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deletePreview(token: string): Promise<void> {
+    return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
