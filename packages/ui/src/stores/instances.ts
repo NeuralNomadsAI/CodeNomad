@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { LspStatus } from "@opencode-ai/sdk/v2"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
-import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permission"
+import { getPermissionCreatedAt, getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
@@ -217,8 +217,8 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
 
     // Upsert all server-side pending permissions.
     for (const permission of pendingRemote) {
-      addPermissionToQueue(instanceId, permission)
-      upsertPermissionV2(instanceId, permission)
+      const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+      upsertPermissionV2(instanceId, queuedPermission)
     }
     drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
   } catch (error) {
@@ -777,46 +777,64 @@ function clearQuestionSessionPendingCounts(instanceId: string): void {
   questionSessionCounts.delete(instanceId)
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): void {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequestLike): PermissionRequestLike | undefined {
   let inserted = false
+  let updated = false
+  let previousPermission: PermissionRequestLike | undefined
+  let queuedPermission = permission
 
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
+    const existingIndex = queue.findIndex((p) => p.id === permission.id)
 
-    if (queue.some((p) => p.id === permission.id)) {
+    if (existingIndex !== -1) {
+      previousPermission = queue[existingIndex]
+      queuedPermission = mergePermissionRequest(previousPermission, permission)
+      const updatedQueue = queue.slice()
+      updatedQueue[existingIndex] = queuedPermission
+      next.set(instanceId, updatedQueue.sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b)))
+      updated = true
       return next
     }
 
-    const updatedQueue = [...queue, permission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
+    const updatedQueue = [...queue, queuedPermission].sort((a, b) => getPermissionCreatedAt(a) - getPermissionCreatedAt(b))
     next.set(instanceId, updatedQueue)
     inserted = true
     return next
   })
 
-  if (!inserted) {
-    return
+  if (!inserted && !updated) {
+    return undefined
   }
 
   recomputeActiveInterruption(instanceId)
 
-  const sessionId = getPermissionSessionId(permission)
+  const previousSessionId = previousPermission ? getPermissionSessionId(previousPermission) : undefined
+  const sessionId = getPermissionSessionId(queuedPermission)
+  if (previousSessionId && previousSessionId !== sessionId) {
+    const remaining = decrementSessionPendingCount(instanceId, previousSessionId)
+    setSessionPendingPermission(instanceId, previousSessionId, remaining > 0)
+  }
+
   if (sessionId) {
-    incrementSessionPendingCount(instanceId, sessionId)
+    if (inserted || previousSessionId !== sessionId) {
+      incrementSessionPendingCount(instanceId, sessionId)
+    }
     setSessionPendingPermission(instanceId, sessionId, true)
 
-    // Record the worktree slug at the time the permission is enqueued.
-    // This is used to respond in the same worktree context even from the global permission center.
+    // Refresh this when duplicate permission events carry better session/worktree hydration.
     const slug = getWorktreeSlugForSession(instanceId, sessionId)
     let byPermissionId = permissionWorktreeSlugByInstance.get(instanceId)
     if (!byPermissionId) {
       byPermissionId = new Map()
       permissionWorktreeSlugByInstance.set(instanceId, byPermissionId)
     }
-    byPermissionId.set(permission.id, slug)
+    byPermissionId.set(queuedPermission.id, slug)
   }
 
-  drainAutoAcceptPermissions(instanceId, [permission], sendPermissionResponse, hasPendingPermission)
+  drainAutoAcceptPermissions(instanceId, [queuedPermission], sendPermissionResponse, hasPendingPermission)
+  return queuedPermission
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
