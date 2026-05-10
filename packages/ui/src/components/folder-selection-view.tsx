@@ -916,19 +916,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     </Show>
                                   </div>
                                 </button>
-                                <Show when={existingInstance()}>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      props.onSelectFolder(folder.path, selectedBinary(), { forceNew: true })
-                                    }}
-                                    disabled={isLoading()}
-                                    class="p-2 transition-all hover:bg-surface-secondary opacity-70 hover:opacity-100 rounded"
-                                    title={t("folderSelection.recent.openAnotherInstance")}
-                                  >
-                                    <FolderPlus class="w-3.5 h-3.5 transition-colors icon-muted" />
-                                  </button>
-                                </Show>
                                 <button
                                   onClick={(e) => handleRemove(folder.path, e)}
                                   disabled={isLoading()}

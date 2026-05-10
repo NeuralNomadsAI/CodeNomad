@@ -16,6 +16,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.other": "{count} 个文件夹可用",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
+  "folderSelection.recent.alreadyOpenTitle": "项目已打开",
+  "folderSelection.recent.alreadyOpenMessage": "选择如何打开此文件夹。",
+  "folderSelection.recent.switchToOpenProject": "切换到已打开的项目",
   "folderSelection.recent.openAnotherInstance": "打开另一个实例",
 
   "folderSelection.browse.title": "浏览文件夹",
