@@ -88,7 +88,7 @@ export const sessionMessages = {
   "sessionPreview.chat.button": "חזרה לצ'אט",
   "sessionPreview.open.button": "פתח תצוגה מקדימה של אתר",
   "sessionPreview.open.title": "פתח תצוגה מקדימה של אתר",
-  "sessionPreview.open.prompt": "הזן כתובת URL מקומית או סביבת staging שאתה נותן בה אמון לתצוגה מקדימה בסשן הזה. דפי התצוגה המקדימה פועלים בהקשר התצוגה המקדימה של CodeNomad כדי לאפשר בדיקת DOM.",
+  "sessionPreview.open.prompt": "הזן כתובת URL מקומית או סביבת staging שאתה נותן בה אמון לתצוגה מקדימה בסשן הזה.",
   "sessionPreview.open.label": "כתובת URL לתצוגה מקדימה",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "פתח תצוגה מקדימה",

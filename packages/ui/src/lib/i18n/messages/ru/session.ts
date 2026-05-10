@@ -88,7 +88,7 @@ export const sessionMessages = {
   "sessionPreview.chat.button": "Вернуться в чат",
   "sessionPreview.open.button": "Открыть веб-предпросмотр",
   "sessionPreview.open.title": "Открыть веб-предпросмотр",
-  "sessionPreview.open.prompt": "Введите доверенный локальный или staging URL для предпросмотра в этой сессии. Страницы предпросмотра выполняются в контексте предпросмотра CodeNomad, чтобы работала инспекция DOM.",
+  "sessionPreview.open.prompt": "Введите доверенный локальный или staging URL для предпросмотра в этой сессии.",
   "sessionPreview.open.label": "URL предпросмотра",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Открыть предпросмотр",

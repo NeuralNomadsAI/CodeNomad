@@ -88,7 +88,7 @@ export const sessionMessages = {
   "sessionPreview.chat.button": "返回聊天",
   "sessionPreview.open.button": "打开网页预览",
   "sessionPreview.open.title": "打开网页预览",
-  "sessionPreview.open.prompt": "输入可信的本地或预发布 URL，以便在此会话中预览。为支持 DOM 检查，预览页面会在 CodeNomad 预览上下文中运行。",
+  "sessionPreview.open.prompt": "输入可信的本地或预发布 URL，以便在此会话中预览。",
   "sessionPreview.open.label": "预览 URL",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "打开预览",

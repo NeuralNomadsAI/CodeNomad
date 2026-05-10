@@ -88,7 +88,7 @@ export const sessionMessages = {
   "sessionPreview.chat.button": "チャットに戻る",
   "sessionPreview.open.button": "Web プレビューを開く",
   "sessionPreview.open.title": "Web プレビューを開く",
-  "sessionPreview.open.prompt": "このセッションでプレビューする信頼済みのローカルまたはステージング URL を入力してください。DOM 検査を有効にするため、プレビューされたページは CodeNomad のプレビューコンテキストで実行されます。",
+  "sessionPreview.open.prompt": "このセッションでプレビューする信頼済みのローカルまたはステージング URL を入力してください。",
   "sessionPreview.open.label": "プレビュー URL",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "プレビューを開く",
