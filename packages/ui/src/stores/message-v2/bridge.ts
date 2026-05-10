@@ -199,11 +199,13 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
     }
 
     const messageId = entry.messageId ?? extractPermissionMessageId(permission)
-    if (entry.partId && messageId && store.getPermissionState(messageId, entry.partId)) {
-      continue
-    }
     const callId = extractPermissionCallId(permission)
     const resolvedPartId = resolvePartIdFromCallId(store, messageId, callId)
+    if (entry.partId && messageId && store.getPermissionState(messageId, entry.partId)) {
+      if (!resolvedPartId || resolvedPartId === entry.partId) {
+        continue
+      }
+    }
     if (!resolvedPartId) continue
 
     store.upsertPermission({

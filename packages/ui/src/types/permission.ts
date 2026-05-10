@@ -42,6 +42,48 @@ export interface PermissionReplyEventPropertiesLike {
   reply?: PermissionReply
 }
 
+const ROUTING_KEYS = [
+  "sessionID",
+  "sessionId",
+  "messageID",
+  "messageId",
+  "callID",
+  "callId",
+  "partID",
+  "partId",
+  "toolCallID",
+  "toolCallId",
+] as const
+
+function mergeRecordPreservingKnown<T extends Record<string, unknown>>(previous: T | undefined, next: T | undefined): T | undefined {
+  if (!previous) return next
+  if (!next) return previous
+  const merged: Record<string, unknown> = { ...previous, ...next }
+  for (const key of Object.keys(previous)) {
+    if (next[key] == null && previous[key] != null) {
+      merged[key] = previous[key]
+    }
+  }
+  return merged as T
+}
+
+export function mergePermissionRequest(previous: PermissionRequestLike | undefined, next: PermissionRequestLike): PermissionRequestLike {
+  if (!previous) return next
+  const merged = {
+    ...previous,
+    ...next,
+    metadata: mergeRecordPreservingKnown(previous.metadata, next.metadata),
+    time: mergeRecordPreservingKnown(previous.time as Record<string, unknown> | undefined, next.time as Record<string, unknown> | undefined) as PermissionRequestLike["time"],
+    tool: mergeRecordPreservingKnown(previous.tool as Record<string, unknown> | undefined, next.tool as Record<string, unknown> | undefined) as PermissionRequestLike["tool"],
+  }
+  for (const key of ROUTING_KEYS) {
+    if ((next as any)[key] == null && (previous as any)[key] != null) {
+      ;(merged as any)[key] = (previous as any)[key]
+    }
+  }
+  return merged
+}
+
 export function getPermissionId(permission: PermissionRequestLike | null | undefined): string {
   return permission?.id ?? ""
 }

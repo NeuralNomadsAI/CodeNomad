@@ -4,6 +4,7 @@ import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import type { PermissionRequestLike } from "../../types/permission"
+import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
   InstanceMessageState,
@@ -905,37 +906,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return messageInfoCache.get(messageId)
   }
 
-  function mergePermissionPayload(previous: PermissionRequestLike, next: PermissionRequestLike): PermissionRequestLike {
-    const merged = {
-      ...previous,
-      ...next,
-      metadata: {
-        ...(previous.metadata ?? {}),
-        ...(next.metadata ?? {}),
-      },
-      time: {
-        ...(previous.time ?? {}),
-        ...(next.time ?? {}),
-      },
-      tool: previous.tool || next.tool ? {
-        ...(previous.tool ?? {}),
-        ...(next.tool ?? {}),
-      } : undefined,
-    }
-    for (const key of ["sessionID", "sessionId", "messageID", "messageId", "callID", "callId", "partID", "partId", "toolCallID", "toolCallId"] as const) {
-      if ((next as any)[key] === undefined && (previous as any)[key] !== undefined) {
-        ;(merged as any)[key] = (previous as any)[key]
-      }
-    }
-    return merged
-  }
-
   function mergePermissionEntry(entry: PermissionEntry): PermissionEntry {
     const existing = state.permissions.queue.find((item) => item.permission.id === entry.permission.id)
     if (!existing) return entry
     return {
       ...entry,
-      permission: mergePermissionPayload(existing.permission, entry.permission),
+      permission: mergePermissionRequest(existing.permission, entry.permission),
       messageId: entry.messageId ?? existing.messageId,
       partId: entry.partId ?? existing.partId,
       enqueuedAt: Math.min(existing.enqueuedAt, entry.enqueuedAt),

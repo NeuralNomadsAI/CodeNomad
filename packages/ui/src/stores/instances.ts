@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { LspStatus } from "@opencode-ai/sdk/v2"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
-import { getPermissionCreatedAt, getPermissionSessionId } from "../types/permission"
+import { getPermissionCreatedAt, getPermissionSessionId, mergePermissionRequest } from "../types/permission"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
@@ -79,31 +79,6 @@ function syncHasInstancesFlag() {
   setHasInstances(readyExists)
 }
 
-function mergePermissionRequest(previous: PermissionRequestLike | undefined, next: PermissionRequestLike): PermissionRequestLike {
-  if (!previous) return next
-  const merged = {
-    ...previous,
-    ...next,
-    metadata: {
-      ...(previous.metadata ?? {}),
-      ...(next.metadata ?? {}),
-    },
-    time: {
-      ...(previous.time ?? {}),
-      ...(next.time ?? {}),
-    },
-    tool: previous.tool || next.tool ? {
-      ...(previous.tool ?? {}),
-      ...(next.tool ?? {}),
-    } : undefined,
-  }
-  for (const key of ["sessionID", "sessionId", "messageID", "messageId", "callID", "callId", "partID", "partId", "toolCallID", "toolCallId"] as const) {
-    if ((next as any)[key] === undefined && (previous as any)[key] !== undefined) {
-      ;(merged as any)[key] = (previous as any)[key]
-    }
-  }
-  return merged
-}
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
