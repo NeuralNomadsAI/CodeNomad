@@ -42,58 +42,7 @@ const ZOOM_STEP: f64 = 0.1;
 const MIN_ZOOM_LEVEL: f64 = 0.2;
 const MAX_ZOOM_LEVEL: f64 = 5.0;
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
-fn build_remote_window_context_script(title: &str) -> String {
-    let title_json = serde_json::to_string(title).unwrap_or_else(|_| "\"CodeNomad\"".to_string());
-    format!(
-        r#"
-window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';
-(function () {{
-  var titlePrefix = '__CODENOMAD_WINDOW_TITLE__:';
-  var fallbackTitle = {title_json};
-  function readTitle() {{
-    return typeof window.name === 'string' && window.name.startsWith(titlePrefix)
-      ? window.name.slice(titlePrefix.length)
-      : fallbackTitle;
-  }}
-  window.__CODENOMAD_WINDOW_TITLE__ = readTitle();
-  window.name = titlePrefix + window.__CODENOMAD_WINDOW_TITLE__;
-  var descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
-  function applyTitle() {{
-    var title = window.__CODENOMAD_WINDOW_TITLE__;
-    if (descriptor && typeof descriptor.set === 'function') {{
-      descriptor.set.call(document, title);
-    }} else {{
-      var titleElement = document.querySelector('title');
-      if (!titleElement && document.head) {{
-        titleElement = document.createElement('title');
-        document.head.appendChild(titleElement);
-      }}
-      if (titleElement) {{
-        titleElement.textContent = title;
-      }}
-    }}
-  }}
-  Object.defineProperty(document, 'title', {{
-    configurable: true,
-    get: function () {{ return window.__CODENOMAD_WINDOW_TITLE__; }},
-    set: applyTitle,
-  }});
-  applyTitle();
-}})();
-"#
-    )
-}
-
-fn build_remote_window_title_update_script(title: &str) -> String {
-    let title_json = serde_json::to_string(title).unwrap_or_else(|_| "\"CodeNomad\"".to_string());
-    format!(
-        r#"
-window.__CODENOMAD_WINDOW_TITLE__ = {title_json};
-window.name = '__CODENOMAD_WINDOW_TITLE__:' + window.__CODENOMAD_WINDOW_TITLE__;
-document.title = window.__CODENOMAD_WINDOW_TITLE__;
-"#
-    )
-}
+const REMOTE_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 #[cfg(windows)]
 const WINDOWS_APP_USER_MODEL_ID: &str = "ai.neuralnomads.codenomad.client";
@@ -351,7 +300,6 @@ async fn open_remote_window_impl(
         linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
 
         let _ = existing.set_title(&title);
-        let _ = existing.eval(build_remote_window_title_update_script(&title));
         let _ = existing.navigate(window_url.clone());
         apply_remote_window_title(&app, &label);
         let _ = existing.show();
@@ -376,7 +324,7 @@ async fn open_remote_window_impl(
         label.clone(),
         WebviewUrl::External(initial_url.clone()),
     )
-    .initialization_script(build_remote_window_context_script(&title))
+    .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(800.0, 600.0)
@@ -624,7 +572,10 @@ fn main() {
             remote_titles: Mutex::new(HashMap::new()),
         })
         .on_page_load(|webview, payload| {
-            if matches!(payload.event(), PageLoadEvent::Started | PageLoadEvent::Finished) {
+            if matches!(
+                payload.event(),
+                PageLoadEvent::Started | PageLoadEvent::Finished
+            ) {
                 apply_remote_window_title(&webview.app_handle(), webview.label());
             }
         })
