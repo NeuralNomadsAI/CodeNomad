@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, on, onCleanup, type Component } from "solid-js"
+import { Show, createMemo, createEffect, on, type Component } from "solid-js"
 import type { Session } from "../../types/session"
 import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -8,8 +8,8 @@ import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markViewedSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
-import { IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus } from "../../stores/session-status"
+import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, markSessionIdleSeen, setActiveParentSession, setActiveSession, runShellCommand, abortSession } from "../../stores/sessions"
+import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -68,6 +68,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+  const pendingIdleSeenTimers = new Set<string>()
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
@@ -83,11 +84,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     })
   }
 
-  function getSeenIdleSignature(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): string {
-    const ids: string[] = []
+  function getSeenIdleEntries(currentSession: Session, keepUnseenSubagentIdleStatus: boolean): Array<{ id: string; idleSince: number }> {
+    const entries: Array<{ id: string; idleSince: number }> = []
 
     if (currentSession.status === "idle" && typeof currentSession.idleSince === "number") {
-      ids.push(`${currentSession.id}:${currentSession.idleSince}`)
+      entries.push({ id: currentSession.id, idleSince: currentSession.idleSince })
     }
 
     if (currentSession.parentId === null && !keepUnseenSubagentIdleStatus) {
@@ -95,11 +96,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         if (child.parentId !== currentSession.id) continue
         if (child.status !== "idle") continue
         if (typeof child.idleSince !== "number") continue
-        ids.push(`${child.id}:${child.idleSince}`)
+        entries.push({ id: child.id, idleSince: child.idleSince })
       }
     }
 
-    return ids.sort().join("|")
+    return entries
   }
 
   createEffect(
@@ -118,19 +119,22 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const currentSession = session()
     if (!props.isActive || !currentSession) return
 
-    const keepUnseenSubagentIdleStatus = preferences().keepUnseenSubagentIdleStatus
-    const seenIdleSignature = getSeenIdleSignature(currentSession, keepUnseenSubagentIdleStatus)
-    if (!seenIdleSignature) return
+    const seenIdleEntries = getSeenIdleEntries(currentSession, preferences().keepUnseenSubagentIdleStatus)
+    for (const entry of seenIdleEntries) {
+      const timerKey = `${props.instanceId}:${entry.id}:${entry.idleSince}`
+      if (pendingIdleSeenTimers.has(timerKey)) continue
+      pendingIdleSeenTimers.add(timerKey)
+      markSessionIdleFadeStarted(props.instanceId, entry.id)
 
-    const timeout = window.setTimeout(() => {
-      const latestSession = session()
-      if (!props.isActive || !latestSession) return
-      const latestKeepUnseenSubagentIdleStatus = preferences().keepUnseenSubagentIdleStatus
-      if (getSeenIdleSignature(latestSession, latestKeepUnseenSubagentIdleStatus) !== seenIdleSignature) return
-      markViewedSessionIdleSeen(props.instanceId, latestSession.id, latestKeepUnseenSubagentIdleStatus)
-    }, IDLE_STATUS_VISIBILITY_MS)
-
-    onCleanup(() => window.clearTimeout(timeout))
+      window.setTimeout(() => {
+        pendingIdleSeenTimers.delete(timerKey)
+        const latestEntry = props.activeSessions.get(entry.id)
+        if (latestEntry?.status === "idle" && latestEntry.idleSince === entry.idleSince) {
+          markSessionIdleSeen(props.instanceId, entry.id)
+        }
+        clearSessionIdleFade(props.instanceId, entry.id, entry.idleSince)
+      }, IDLE_STATUS_VISIBILITY_MS)
+    }
   })
 
   createEffect(

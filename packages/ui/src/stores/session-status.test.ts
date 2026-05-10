@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
-import { IDLE_STATUS_VISIBILITY_MS, shouldShowIdleStatus } from "./session-status.ts"
+import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatus } from "./session-status.ts"
+import { setSessions } from "./session-state.ts"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
 describe("shouldSessionHoldWakeLock", () => {
@@ -37,14 +38,15 @@ describe("idle status visibility", () => {
   it("keeps subagent idle visible until the parent or child session is seen", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 2_000, true), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 10_000, true), true)
   })
 
-  it("does not use the keep-unseen setting to age out visible idle markers", () => {
+  it("ages out subagent idle markers unless keep-unseen is enabled", () => {
     const idleSince = getIdleSinceForStatusTransition("working", "idle", null, 1_000)
 
-    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 2_000, false), true)
+    assert.equal(shouldShowIdleStatus({ status: "idle", idleSince, parentId: "parent" }, 7_000, false), false)
   })
 
   it("does not show idle for sessions that started idle", () => {
@@ -59,5 +61,71 @@ describe("idle status visibility", () => {
 
     assert.equal(idleSince, null)
     assert.equal(shouldShowIdleStatus({ status: "working", idleSince, parentId: null }), false)
+  })
+
+  it("clears idle fade state for a specific idle transition", () => {
+    const instanceId = "instance"
+    const sessionId = "session"
+    const idleSince = 1_000
+
+    setSessions(
+      new Map([
+        [
+          instanceId,
+          new Map([
+            [
+              sessionId,
+              {
+                id: sessionId,
+                status: "idle",
+                idleSince,
+                parentId: null,
+              } as any,
+            ],
+          ]),
+        ],
+      ]),
+    )
+
+    markSessionIdleFadeStarted(instanceId, sessionId)
+    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
+
+    clearSessionIdleFade(instanceId, sessionId, idleSince)
+    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
+
+    setSessions(new Map())
+  })
+
+  it("keeps a default-mode subagent visible while its parent-triggered fade runs", () => {
+    const instanceId = "instance"
+    const sessionId = "subsession"
+    const idleSince = 1_000
+
+    setSessions(
+      new Map([
+        [
+          instanceId,
+          new Map([
+            [
+              sessionId,
+              {
+                id: sessionId,
+                status: "idle",
+                idleSince,
+                parentId: "parent",
+              } as any,
+            ],
+          ]),
+        ],
+      ]),
+    )
+
+    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), false)
+
+    markSessionIdleFadeStarted(instanceId, sessionId)
+    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), true)
+
+    clearSessionIdleFade(instanceId, sessionId, idleSince)
+    setSessions(new Map())
   })
 })
