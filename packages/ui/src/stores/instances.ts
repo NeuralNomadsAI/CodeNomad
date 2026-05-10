@@ -32,6 +32,12 @@ import { setSessionPendingPermission, setSessionPendingQuestion } from "./sessio
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import {
+  clearRepliedPermissions,
+  hasRepliedPermission,
+  markPermissionReplied,
+  pruneRepliedPermissions,
+} from "./permission-replies"
 import { clearAutoAcceptPermission, drainAutoAcceptPermissions, isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -79,6 +85,7 @@ function syncHasInstancesFlag() {
   const readyExists = Array.from(instances().values()).some((instance) => instance.status === "ready")
   setHasInstances(readyExists)
 }
+
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
@@ -187,12 +194,17 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
   if (!instance?.client) return
 
   try {
+    const syncStartedAt = Date.now()
     const remote = await requestData<PermissionRequestLike[]>(
       instance.client.permission.list(),
       "permission.list",
     )
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    const remotePendingIds = new Set(remote.map((item) => item.id))
+    pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+
+    const pendingRemote = remote.filter((item) => !hasRepliedPermission(instanceId, item.id))
+    const remoteIds = new Set(pendingRemote.map((item) => item.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
@@ -204,7 +216,7 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending permissions.
-    for (const permission of remote) {
+    for (const permission of pendingRemote) {
       addPermissionToQueue(instanceId, permission)
       upsertPermissionV2(instanceId, permission)
     }
@@ -514,6 +526,7 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
+  clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)
 
@@ -1054,8 +1067,11 @@ async function sendPermissionResponse(
       "permission.reply",
     )
 
-    // Remove from queue after successful response
+    markPermissionReplied(instanceId, requestId)
+    // Remove from both local queues after successful response; the SSE replied event
+    // is still accepted, but the UI no longer depends on receiving it.
     removePermissionFromQueue(instanceId, requestId)
+    removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
     throw error
@@ -1150,6 +1166,8 @@ export {
   getPermissionQueueLength,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRepliedPermission,
   togglePermissionAutoAcceptForSession,
   clearPermissionQueue,
   sendPermissionResponse,
