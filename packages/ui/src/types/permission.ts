@@ -17,10 +17,15 @@ export interface PermissionRequestLike {
   pattern?: string
   title?: string
   sessionID?: string
+  sessionId?: string
   messageID?: string
   messageId?: string
   callID?: string
   callId?: string
+  partID?: string
+  partId?: string
+  toolCallID?: string
+  toolCallId?: string
   metadata?: Record<string, unknown>
   time?: { created?: number }
 
@@ -42,7 +47,9 @@ export interface PermissionReplyEventPropertiesLike {
   reply?: PermissionReply
 }
 
-const ROUTING_KEYS = [
+// Permission payloads can come from legacy/new SDK shapes. Preserve known
+// top-level routing aliases when an out-of-order duplicate omits them.
+const TOP_LEVEL_ROUTING_ALIAS_KEYS = [
   "sessionID",
   "sessionId",
   "messageID",
@@ -53,7 +60,7 @@ const ROUTING_KEYS = [
   "partId",
   "toolCallID",
   "toolCallId",
-] as const
+] as const satisfies ReadonlyArray<keyof PermissionRequestLike>
 
 function mergeRecordPreservingKnown<T extends Record<string, unknown>>(previous: T | undefined, next: T | undefined): T | undefined {
   if (!previous) return next
@@ -76,7 +83,7 @@ export function mergePermissionRequest(previous: PermissionRequestLike | undefin
     time: mergeRecordPreservingKnown(previous.time as Record<string, unknown> | undefined, next.time as Record<string, unknown> | undefined) as PermissionRequestLike["time"],
     tool: mergeRecordPreservingKnown(previous.tool as Record<string, unknown> | undefined, next.tool as Record<string, unknown> | undefined) as PermissionRequestLike["tool"],
   }
-  for (const key of ROUTING_KEYS) {
+  for (const key of TOP_LEVEL_ROUTING_ALIAS_KEYS) {
     if ((next as any)[key] == null && (previous as any)[key] != null) {
       ;(merged as any)[key] = (previous as any)[key]
     }
