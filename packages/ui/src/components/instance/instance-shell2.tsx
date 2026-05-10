@@ -42,9 +42,11 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Maximize2, Search, ShieldAlert } from "lucide-solid"
+import { Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import { useConfig } from "../../stores/preferences"
+import { showPromptDialog } from "../../stores/alerts"
+import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -271,12 +273,63 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return sessionPromptApis()[sessionId] ?? null
   })
 
+  const activeSessionPreview = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    return sessionId ? sessionPreviews().get(sessionId) ?? null : null
+  })
+
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
     setSessionPromptApis((current) => ({
       ...current,
       [sessionId]: api,
     }))
   }
+
+  async function handleOpenPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const url = await showPromptDialog(t("sessionPreview.open.prompt"), {
+      title: t("sessionPreview.open.title"),
+      inputLabel: t("sessionPreview.open.label"),
+      inputPlaceholder: t("sessionPreview.open.placeholder"),
+      confirmLabel: t("sessionPreview.open.confirm"),
+      cancelLabel: t("sessionPreview.open.cancel"),
+    })
+    const normalized = url?.trim()
+    if (!normalized) return
+    await openSessionPreview(sessionId, normalized)
+  }
+
+  function handleShowPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+    showSessionPreview(sessionId)
+  }
+
+  function handlePreviewButtonClick() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const preview = activeSessionPreview()
+    if (preview?.mode === "preview") {
+      showSessionChat(sessionId)
+      return
+    }
+
+    if (preview) {
+      showSessionPreview(sessionId)
+      return
+    }
+    void handleOpenPreview()
+  }
+
+  const previewToggleLabel = createMemo(() => {
+    const preview = activeSessionPreview()
+    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+  })
+
+  const PreviewToggleIcon = createMemo(() => activeSessionPreview()?.mode === "preview" ? MessageSquareText : Eye)
 
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
@@ -728,6 +781,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         >
                           <Search class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
+                        <IconButton
+                          color="inherit"
+                          onClick={handlePreviewButtonClick}
+                          aria-label={previewToggleLabel()}
+                          title={previewToggleLabel()}
+                          size="small"
+                        >
+                          {(() => {
+                            const Icon = PreviewToggleIcon()
+                            return <Icon class="w-5 h-5" aria-hidden="true" />
+                          })()}
+                        </IconButton>
                       </Show>
                       <button
                         type="button"
@@ -849,6 +914,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         size="small"
                       >
                         <Search class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        color="inherit"
+                        onClick={handlePreviewButtonClick}
+                        aria-label={previewToggleLabel()}
+                        title={previewToggleLabel()}
+                        size="small"
+                      >
+                        {(() => {
+                          const Icon = PreviewToggleIcon()
+                          return <Icon class="w-5 h-5" aria-hidden="true" />
+                        })()}
                       </IconButton>
                     </Show>
                     <Show when={connectionStatus() === "connected"}>

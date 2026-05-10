@@ -28,6 +28,7 @@ import { registerSpeechRoutes } from "./routes/speech"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
+import { registerPreviewRoutes } from "./routes/previews"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
@@ -39,6 +40,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import { PluginChannelManager } from "../plugins/channel"
 import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
+import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 
 interface HttpServerDeps {
@@ -56,6 +58,7 @@ interface HttpServerDeps {
   instanceStore: InstanceStore
   speechService: SpeechService
   sidecarManager: SideCarManager
+  previewManager: PreviewManager
   authManager: AuthManager
   clientConnectionManager: ClientConnectionManager
   pluginChannel: PluginChannelManager
@@ -214,7 +217,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     const session = deps.authManager.getSessionFromRequest(request)
 
-    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/")
+    const requiresAuthForApi = pathname.startsWith("/api/") || pathname.startsWith("/workspaces/") || pathname.startsWith("/sidecars/") || pathname.startsWith("/previews/")
     if (requiresAuthForApi && !session) {
       // Allow OpenCode plugin -> CodeNomad calls with per-instance basic auth.
       const pluginMatch = pathname.match(/^\/workspaces\/([^/]+)\/plugin(?:\/|$)/)
@@ -285,9 +288,16 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
+  registerPreviewRoutes(app, { previewManager: deps.previewManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
+  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
+    authManager: deps.authManager,
+    logger: proxyLogger,
+  })
+  setupPreviewWebSocketProxy(app, {
+    previewManager: deps.previewManager,
     authManager: deps.authManager,
     logger: proxyLogger,
   })
@@ -381,6 +391,15 @@ interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
   authManager: AuthManager
 }
 
+interface PreviewProxyDeps {
+  previewManager: PreviewManager
+  logger: Logger
+}
+
+interface PreviewWebSocketProxyDeps extends PreviewProxyDeps {
+  authManager: AuthManager
+}
+
 function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
   const proxyBaseHandler = async (
     request: FastifyRequest<{ Params: { id: string } }>,
@@ -412,6 +431,37 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
   app.all("/sidecars/:id/*", proxyWildcardHandler)
 }
 
+function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps) {
+  const proxyBaseHandler = async (
+    request: FastifyRequest<{ Params: { token: string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxyPreviewRequest({
+      request,
+      reply,
+      previewManager: deps.previewManager,
+      logger: deps.logger,
+      pathSuffix: "",
+    })
+  }
+
+  const proxyWildcardHandler = async (
+    request: FastifyRequest<{ Params: { token: string; "*": string } }>,
+    reply: FastifyReply,
+  ) => {
+    await proxyPreviewRequest({
+      request,
+      reply,
+      previewManager: deps.previewManager,
+      logger: deps.logger,
+      pathSuffix: request.params["*"] ?? "",
+    })
+  }
+
+  app.all("/previews/:token", proxyBaseHandler)
+  app.all("/previews/:token/*", proxyWildcardHandler)
+}
+
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
@@ -428,6 +478,28 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
       incomingPath: parsed.pathname,
       search: parsed.search,
       sidecarManager: deps.sidecarManager,
+      authManager: deps.authManager,
+      logger: deps.logger,
+    })
+  })
+}
+
+function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocketProxyDeps) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    const parsed = parsePreviewUpgradePath(rawUrl)
+    if (!parsed) {
+      return
+    }
+
+    void proxyPreviewWebSocketUpgrade({
+      request,
+      socket: socket as Socket,
+      head,
+      token: parsed.token,
+      incomingPath: parsed.pathname,
+      search: parsed.search,
+      previewManager: deps.previewManager,
       authManager: deps.authManager,
       logger: deps.logger,
     })
@@ -897,14 +969,71 @@ async function proxySideCarRequest(args: {
   const targetUrl = `${targetOrigin}${targetPath}`
   args.logger.debug({ sidecarId: sidecar.id, targetUrl, pathname, prefixMode: sidecar.prefixMode }, "Proxying request to SideCar")
 
-  await args.reply.from(targetUrl, {
-    rewriteRequestHeaders: (_originalRequest, headers) =>
-      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, targetOrigin),
+  await proxyTargetRequest({
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl,
+    targetOrigin,
+    logContext: { sidecarId: sidecar.id },
+    errorMessage: "SideCar proxy failed",
     rewriteHeaders: (headers) => rewriteSideCarResponseHeaders(headers, sidecarId, targetOrigin, sidecar.prefixMode),
+  })
+}
+
+async function proxyPreviewRequest(args: {
+  request: FastifyRequest
+  reply: FastifyReply
+  previewManager: PreviewManager
+  logger: Logger
+  pathSuffix?: string
+}) {
+  const token = (args.request.params as { token?: string }).token ?? ""
+  const preview = args.previewManager.get(token)
+  if (!preview) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  const rawUrl = args.request.raw.url ?? args.request.url ?? ""
+  const queryIndex = rawUrl.indexOf("?")
+  const search = queryIndex >= 0 ? rawUrl.slice(queryIndex) : ""
+  const pathSuffix = args.pathSuffix ?? ""
+  const requestPath = pathSuffix ? `${args.previewManager.buildProxyBasePath(token)}/${pathSuffix.replace(/^\/+/, "")}` : args.previewManager.buildProxyBasePath(token)
+  const targetUrl = args.previewManager.buildTargetUrl(token, requestPath, search)
+  if (!targetUrl) {
+    args.reply.code(404).send({ error: "Preview not found" })
+    return
+  }
+
+  args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
+  await proxyTargetRequest({
+    reply: args.reply,
+    logger: args.logger,
+    targetUrl: targetUrl.toString(),
+    targetOrigin: targetUrl.origin,
+    logContext: { previewToken: token },
+    errorMessage: "Preview proxy failed",
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin),
+  })
+}
+
+async function proxyTargetRequest(args: {
+  reply: FastifyReply
+  logger: Logger
+  targetUrl: string
+  targetOrigin: string
+  logContext: Record<string, unknown>
+  errorMessage: string
+  rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
+}) {
+  await args.reply.from(args.targetUrl, {
+    rewriteRequestHeaders: (_originalRequest, headers) =>
+      sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin),
+    rewriteHeaders: args.rewriteHeaders,
     onError: (reply, { error }) => {
-      args.logger.error({ sidecarId: sidecar.id, err: error, targetUrl }, "Failed to proxy SideCar request")
+      args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
       if (!reply.sent) {
-        reply.code(502).send({ error: "SideCar proxy failed" })
+        reply.code(502).send({ error: args.errorMessage })
       }
     },
   })
@@ -926,6 +1055,30 @@ function parseSideCarUpgradePath(rawUrl: string): { sidecarId: string; pathname:
   try {
     return {
       sidecarId: decodeURIComponent(match[1] ?? ""),
+      pathname: parsed.pathname,
+      search: parsed.search,
+    }
+  } catch {
+    return null
+  }
+}
+
+function parsePreviewUpgradePath(rawUrl: string): { token: string; pathname: string; search: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl, "http://localhost")
+  } catch {
+    return null
+  }
+
+  const match = parsed.pathname.match(/^\/previews\/([^/]+)(?:\/.*)?$/)
+  if (!match) {
+    return null
+  }
+
+  try {
+    return {
+      token: decodeURIComponent(match[1] ?? ""),
       pathname: parsed.pathname,
       search: parsed.search,
     }
@@ -969,6 +1122,69 @@ async function proxySideCarWebSocketUpgrade(args: {
   const targetUrl = new URL(`${targetOrigin}${targetPath}`)
   logger.debug({ sidecarId, targetUrl: targetUrl.toString(), prefixMode: sidecar.prefixMode }, "Proxying websocket to SideCar")
 
+  proxyTargetWebSocketUpgrade({
+    request,
+    socket,
+    head,
+    targetUrl,
+    logger,
+    logContext: { sidecarId },
+    proxyLabel: "SideCar",
+  })
+}
+
+async function proxyPreviewWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  token: string
+  incomingPath: string
+  search: string
+  previewManager: PreviewManager
+  authManager: AuthManager
+  logger: Logger
+}) {
+  const { request, socket, head, token, incomingPath, search, previewManager, authManager, logger } = args
+
+  if (!isWebSocketUpgradeRequest(request)) {
+    rejectUpgrade(socket, 400, "Bad Request")
+    return
+  }
+
+  const session = authManager.getSessionFromHeaders(request.headers)
+  if (!session) {
+    rejectUpgrade(socket, 401, "Unauthorized")
+    return
+  }
+
+  const targetUrl = previewManager.buildTargetUrl(token, incomingPath, search)
+  if (!targetUrl) {
+    rejectUpgrade(socket, 404, "Not Found")
+    return
+  }
+
+  logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying websocket to preview")
+  proxyTargetWebSocketUpgrade({
+    request,
+    socket,
+    head,
+    targetUrl,
+    logger,
+    logContext: { previewToken: token },
+    proxyLabel: "preview",
+  })
+}
+
+function proxyTargetWebSocketUpgrade(args: {
+  request: import("http").IncomingMessage
+  socket: Socket
+  head: Buffer
+  targetUrl: URL
+  logger: Logger
+  logContext: Record<string, unknown>
+  proxyLabel: string
+}) {
+  const { request, socket, head, targetUrl, logger, logContext, proxyLabel } = args
   const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
 
   const closeBoth = () => {
@@ -981,7 +1197,7 @@ async function proxySideCarWebSocketUpgrade(args: {
   }
 
   upstream.once("error", (error) => {
-    logger.error({ sidecarId, err: error, targetUrl: targetUrl.toString() }, "Failed to proxy SideCar websocket")
+    logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to proxy ${proxyLabel} websocket`)
     rejectUpgrade(socket, 502, "Bad Gateway")
     if (!upstream.destroyed) {
       upstream.destroy()
@@ -989,7 +1205,7 @@ async function proxySideCarWebSocketUpgrade(args: {
   })
 
   socket.once("error", (error) => {
-    logger.debug({ sidecarId, err: error }, "SideCar websocket client socket errored")
+    logger.debug({ ...logContext, err: error }, `${proxyLabel} websocket client socket errored`)
     if (!upstream.destroyed) {
       upstream.destroy()
     }
@@ -1004,7 +1220,7 @@ async function proxySideCarWebSocketUpgrade(args: {
       upstream.pipe(socket)
       socket.pipe(upstream)
     } catch (error) {
-      logger.error({ sidecarId, err: error, targetUrl: targetUrl.toString() }, "Failed to forward SideCar websocket upgrade")
+      logger.error({ ...logContext, err: error, targetUrl: targetUrl.toString() }, `Failed to forward ${proxyLabel} websocket upgrade`)
       closeBoth()
     }
   })
@@ -1116,6 +1332,40 @@ function rewriteSideCarResponseHeaders(
     }
   } catch {
     // Relative redirects should continue to resolve against the public sidecar path.
+  }
+
+  return next
+}
+
+function rewritePreviewResponseHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  token: string,
+  targetOrigin: string,
+) {
+  const next = { ...headers }
+  delete next["x-frame-options"]
+  delete next["content-security-policy"]
+  delete next["content-security-policy-report-only"]
+
+  const locationHeader = next.location
+  const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+  if (!location) {
+    return next
+  }
+
+  const publicBase = `/previews/${encodeURIComponent(token)}`
+  if (location.startsWith("/")) {
+    next.location = `${publicBase}${location}`
+    return next
+  }
+
+  try {
+    const parsed = new URL(location)
+    if (parsed.origin === targetOrigin) {
+      next.location = `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+    }
+  } catch {
+    // Relative redirects should continue to resolve against the current preview path.
   }
 
   return next
