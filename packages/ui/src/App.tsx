@@ -77,6 +77,8 @@ const App: Component = () => {
   const { t } = useI18n()
   const {
     preferences,
+    useTauriNativeEventTransport,
+    setUseTauriNativeEventTransport,
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
@@ -444,6 +446,8 @@ const App: Component = () => {
 
   const { commands: paletteCommands, executeCommand } = useCommands({
     preferences,
+    useTauriNativeEventTransport,
+    setUseTauriNativeEventTransport,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
     toggleKeyboardShortcutHints,

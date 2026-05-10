@@ -10,7 +10,6 @@ import { runtimeEnv } from "./runtime-env"
 import { connectTauriWorkspaceEvents } from "./native/desktop-events"
 
 const log = getLogger("sse")
-const FORCE_BROWSER_TRANSPORT_STORAGE_KEY = "perf242-force-browser-events"
 
 export interface WorkspaceEventTransportCallbacks {
   onBatch: (events: WorkspaceEventPayload[]) => void
@@ -37,26 +36,13 @@ async function connectBrowserWorkspaceEvents(
   }
 }
 
-function shouldForceBrowserTransport(): boolean {
-  if (typeof window === "undefined") return false
-  try {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get("forceBrowserEvents") === "1") {
-      return true
-    }
-    return window.localStorage?.getItem(FORCE_BROWSER_TRANSPORT_STORAGE_KEY) === "1"
-  } catch {
-    return false
-  }
-}
-
 export async function connectWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options?: DesktopEventTransportStartOptions,
 ): Promise<WorkspaceEventConnection> {
   const nativeDesktopTransportEnabled = readUseTauriNativeEventTransportPreference()
 
-  if (runtimeEnv.host === "tauri" && nativeDesktopTransportEnabled && !shouldForceBrowserTransport()) {
+  if (runtimeEnv.host === "tauri" && nativeDesktopTransportEnabled) {
     try {
       const conn = await connectTauriWorkspaceEvents(
         callbacks,
@@ -69,11 +55,7 @@ export async function connectWorkspaceEvents(
       log.warn("Failed to start native desktop event transport, falling back to browser EventSource", error)
     }
   } else if (runtimeEnv.host === "tauri") {
-    log.info(
-      nativeDesktopTransportEnabled
-        ? "Event transport: browser-eventsource forced by localStorage override"
-        : "Event transport: browser-eventsource forced by settings",
-    )
+    log.info("Event transport: browser-eventsource forced by settings")
   }
 
   ;(globalThis as any).__TRANSPORT_TYPE = "browser-eventsource"

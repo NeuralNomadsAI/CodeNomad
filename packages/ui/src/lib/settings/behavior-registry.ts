@@ -35,6 +35,8 @@ export type BehaviorSetting = BehaviorToggleSetting | BehaviorEnumSetting
 
 export type BehaviorRegistryActions = {
   preferences: Accessor<Preferences>
+  useTauriNativeEventTransport: Accessor<boolean>
+  setUseTauriNativeEventTransport: (next: boolean) => void
   updatePreferences?: (updates: Partial<Preferences>) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
@@ -287,11 +289,9 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
             id: "behavior.tauriNativeEventTransport",
             titleKey: "settings.behavior.tauriNativeEventTransport.title",
             subtitleKey: "settings.behavior.tauriNativeEventTransport.subtitle",
-            get: (p: Preferences) => Boolean(p.useTauriNativeEventTransport ?? true),
+            get: () => actions.useTauriNativeEventTransport(),
             set: (next: boolean) => {
-              if (updatePreferences) {
-                updatePreferences({ useTauriNativeEventTransport: next })
-              }
+              actions.setUseTauriNativeEventTransport(next)
             },
           },
         ]

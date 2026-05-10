@@ -1,6 +1,9 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import { writeUseTauriNativeEventTransportPreference } from "../lib/desktop-event-transport-preference"
+import {
+  readUseTauriNativeEventTransportPreference,
+  writeUseTauriNativeEventTransportPreference,
+} from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
@@ -68,7 +71,6 @@ export interface UiSettings {
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
-  useTauriNativeEventTransport: boolean
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -149,7 +151,6 @@ const defaultUiSettings: UiSettings = {
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
-  useTauriNativeEventTransport: true,
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -191,8 +192,6 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
-    useTauriNativeEventTransport:
-      sanitized.useTauriNativeEventTransport ?? defaultUiSettings.useTauriNativeEventTransport,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -393,6 +392,9 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
+const [useTauriNativeEventTransport, setUseTauriNativeEventTransportSignal] = createSignal(
+  readUseTauriNativeEventTransportPreference(),
+)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
@@ -418,7 +420,6 @@ async function ensureLoaded(): Promise<void> {
         setUiConfigBucket(uiCfg as any)
         setServerConfigBucket(srvCfg as any)
         setUiStateBucket(uiSt as any)
-        syncDesktopEventTransportPreference((uiCfg as UiConfigBucket | undefined)?.settings)
         setIsLoaded(true)
       })
       .catch((error) => {
@@ -442,16 +443,13 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
-function syncDesktopEventTransportPreference(settings?: Partial<UiSettings> | null) {
-  writeUseTauriNativeEventTransportPreference(
-    normalizeUiSettings(settings).useTauriNativeEventTransport,
-  )
-}
-
-function restartDesktopEventTransportPreferenceIfNeeded(previous: UiSettings, next: UiSettings) {
-  if (previous.useTauriNativeEventTransport === next.useTauriNativeEventTransport) {
+function setUseTauriNativeEventTransport(enabled: boolean): void {
+  if (useTauriNativeEventTransport() === enabled) {
     return
   }
+
+  setUseTauriNativeEventTransportSignal(enabled)
+  writeUseTauriNativeEventTransportPreference(enabled)
 
   void import("../lib/server-events")
     .then(({ serverEvents }) => {
@@ -470,10 +468,7 @@ async function patchStateOwner(owner: string, patch: unknown) {
 
 function updateUiSettings(updates: Partial<UiSettings>) {
   const current = uiConfigBucket()
-  const previousSettings = normalizeUiSettings(current.settings)
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
-  syncDesktopEventTransportPreference(nextSettings)
-  restartDesktopEventTransportPreferenceIfNeeded(previousSettings, nextSettings)
   const patch = { settings: nextSettings }
   void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
 }
@@ -743,6 +738,8 @@ void ensureLoaded().catch((error: unknown) => {
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
+  useTauriNativeEventTransport: typeof useTauriNativeEventTransport
+  setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
@@ -801,6 +798,8 @@ const ConfigContext = createContext<ConfigContextValue>()
 const configContextValue: ConfigContextValue = {
   isLoaded,
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   updatePreferences,
   themePreference,
   setThemePreference,
@@ -854,7 +853,6 @@ export const ConfigProvider: ParentComponent = (props) => {
 
     const unsubUi = storage.onConfigOwnerChanged("ui", (bucket) => {
       setUiConfigBucket(bucket as any)
-      syncDesktopEventTransportPreference((bucket as UiConfigBucket | undefined)?.settings)
       setIsLoaded(true)
     })
     const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
@@ -888,6 +886,8 @@ export function useConfig(): ConfigContextValue {
 
 export {
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   uiState,
   serverSettings,
   recentFolders,
