@@ -88,7 +88,7 @@ export const sessionMessages = {
   "sessionPreview.chat.button": "Back to chat",
   "sessionPreview.open.button": "Open web preview",
   "sessionPreview.open.title": "Open web preview",
-  "sessionPreview.open.prompt": "Enter a URL to preview in this session.",
+  "sessionPreview.open.prompt": "Enter a trusted local or staging URL to preview in this session. Previewed pages run in the CodeNomad preview context so DOM inspection can work.",
   "sessionPreview.open.label": "Preview URL",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Open preview",
