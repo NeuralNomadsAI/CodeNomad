@@ -134,6 +134,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "Показывать или скрывать разделы размышлений ИИ в сообщениях.",
   "settings.behavior.thinkingDefault.title": "Размышления по умолчанию",
   "settings.behavior.thinkingDefault.subtitle": "Выберите, начинать ли разделы размышлений развернутыми или свернутыми.",
+  "settings.behavior.messageTimeline.title": "Таймлайн сообщений",
+  "settings.behavior.messageTimeline.subtitle": "Показывать или скрывать боковую панель таймлайна сообщений.",
   "settings.behavior.timelineTools.title": "Вызовы инструментов в таймлайне",
   "settings.behavior.timelineTools.subtitle": "Показывать или скрывать записи вызовов инструментов в таймлайне сообщений.",
   "settings.behavior.diffView.title": "Вид диффа",

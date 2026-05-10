@@ -124,6 +124,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.messageTimeline",
+      titleKey: "settings.behavior.messageTimeline.title",
+      subtitleKey: "settings.behavior.messageTimeline.subtitle",
+      get: (p) => Boolean(p.showMessageTimeline ?? true),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ showMessageTimeline: next })
+        }
+      },
+    },
+    {
+      kind: "toggle",
       id: "behavior.timelineToolCalls",
       titleKey: "settings.behavior.timelineTools.title",
       subtitleKey: "settings.behavior.timelineTools.subtitle",

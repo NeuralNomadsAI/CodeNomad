@@ -135,6 +135,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "Show or hide AI thinking sections in messages.",
   "settings.behavior.thinkingDefault.title": "Thinking default",
   "settings.behavior.thinkingDefault.subtitle": "Choose whether thinking sections start expanded or collapsed.",
+  "settings.behavior.messageTimeline.title": "Message timeline",
+  "settings.behavior.messageTimeline.subtitle": "Show or hide the message timeline sidebar.",
   "settings.behavior.timelineTools.title": "Timeline tool calls",
   "settings.behavior.timelineTools.subtitle": "Show or hide tool call entries in the message timeline.",
   "settings.behavior.diffView.title": "Diff view",

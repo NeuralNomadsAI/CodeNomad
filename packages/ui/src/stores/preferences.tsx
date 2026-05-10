@@ -54,6 +54,7 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
+  showMessageTimeline: boolean
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
@@ -134,6 +135,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
+  showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
@@ -169,6 +171,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showKeyboardShortcutHints:
       sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
+    showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
