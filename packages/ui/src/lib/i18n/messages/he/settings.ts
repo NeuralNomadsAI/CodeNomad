@@ -133,6 +133,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "הצג או הסתר קטעי חשיבה של ה-AI בהודעות.",
   "settings.behavior.thinkingDefault.title": "ברירת מחדל לחשיבה",
   "settings.behavior.thinkingDefault.subtitle": "בחר האם קטעי חשיבה מתחילים פרוסים או מכווצים.",
+  "settings.behavior.messageTimeline.title": "ציר זמן הודעות",
+  "settings.behavior.messageTimeline.subtitle": "הצג או הסתר את סרגל הצד של ציר זמן ההודעות.",
   "settings.behavior.timelineTools.title": "קריאות כלי בציר הזמן",
   "settings.behavior.timelineTools.subtitle": "הצג או הסתר קריאות כלי בציר הודעות.",
   "settings.behavior.diffView.title": "תצוגת diff",

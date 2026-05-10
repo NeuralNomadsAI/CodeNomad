@@ -134,6 +134,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "Muestra u oculta las secciones de pensamiento de la IA en los mensajes.",
   "settings.behavior.thinkingDefault.title": "Pensamiento por defecto",
   "settings.behavior.thinkingDefault.subtitle": "Elige si las secciones de pensamiento comienzan expandidas o contraidas.",
+  "settings.behavior.messageTimeline.title": "Linea de tiempo de mensajes",
+  "settings.behavior.messageTimeline.subtitle": "Muestra u oculta la barra lateral de la linea de tiempo de mensajes.",
   "settings.behavior.timelineTools.title": "Llamadas de herramientas en la linea de tiempo",
   "settings.behavior.timelineTools.subtitle": "Muestra u oculta entradas de llamadas de herramientas en la linea de tiempo de mensajes.",
   "settings.behavior.diffView.title": "Vista de diferencias",

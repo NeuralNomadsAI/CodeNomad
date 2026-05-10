@@ -134,6 +134,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "在消息中显示或隐藏AI的思考区块。",
   "settings.behavior.thinkingDefault.title": "思考默认状态",
   "settings.behavior.thinkingDefault.subtitle": "选择思考区块默认是展开还是折叠。",
+  "settings.behavior.messageTimeline.title": "消息时间线",
+  "settings.behavior.messageTimeline.subtitle": "显示或隐藏消息时间线侧边栏。",
   "settings.behavior.timelineTools.title": "时间线工具调用",
   "settings.behavior.timelineTools.subtitle": "在消息时间线中显示或隐藏工具调用条目。",
   "settings.behavior.diffView.title": "差异视图",

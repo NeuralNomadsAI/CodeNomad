@@ -134,6 +134,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "Afficher ou masquer les sections de reflexion de l'IA dans les messages.",
   "settings.behavior.thinkingDefault.title": "Etat initial de la reflexion",
   "settings.behavior.thinkingDefault.subtitle": "Choisir si les sections de reflexion commencent developpees ou reduites.",
+  "settings.behavior.messageTimeline.title": "Chronologie des messages",
+  "settings.behavior.messageTimeline.subtitle": "Afficher ou masquer la barre laterale de chronologie des messages.",
   "settings.behavior.timelineTools.title": "Appels d'outils dans la chronologie",
   "settings.behavior.timelineTools.subtitle": "Afficher ou masquer les entrees d'appels d'outils dans la chronologie des messages.",
   "settings.behavior.diffView.title": "Vue du diff",
