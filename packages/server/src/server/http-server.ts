@@ -859,6 +859,14 @@ function setupStaticUi(
     return
   }
 
+  app.addHook("preHandler", (request, reply, done) => {
+    const session = authManager.getSessionFromRequest(request)
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+      return
+    }
+    done()
+  })
+
   app.register(fastifyStatic, {
     root: uiDir,
     prefix: "/",
@@ -1016,6 +1024,7 @@ function buildFetchProxyHeaders(headers: FastifyRequest["headers"], targetOrigin
   const result: Record<string, string> = {}
   for (const [key, value] of Object.entries(sanitized)) {
     if (!value) continue
+    if (key.toLowerCase() === "cookie") continue
     result[key] = Array.isArray(value) ? value.join(",") : value
   }
   return result
@@ -1393,6 +1402,7 @@ async function proxyPreviewWebSocketUpgrade(args: {
     logger,
     logContext: { previewToken: token },
     proxyLabel: "preview",
+    stripCookies: true,
   })
 }
 
@@ -1404,8 +1414,9 @@ function proxyTargetWebSocketUpgrade(args: {
   logger: Logger
   logContext: Record<string, unknown>
   proxyLabel: string
+  stripCookies?: boolean
 }) {
-  const { request, socket, head, targetUrl, logger, logContext, proxyLabel } = args
+  const { request, socket, head, targetUrl, logger, logContext, proxyLabel, stripCookies } = args
   const { socket: upstream, readyEvent } = createSideCarUpstreamSocket(targetUrl)
 
   const closeBoth = () => {
@@ -1434,7 +1445,7 @@ function proxyTargetWebSocketUpgrade(args: {
 
   upstream.once(readyEvent, () => {
     try {
-      upstream.write(buildSideCarWebSocketRequest(request, targetUrl))
+      upstream.write(buildSideCarWebSocketRequest(request, targetUrl, { stripCookies }))
       if (head.length > 0) {
         upstream.write(head)
       }
@@ -1477,7 +1488,11 @@ function createSideCarUpstreamSocket(targetUrl: URL): { socket: Socket | TLSSock
   }
 }
 
-function buildSideCarWebSocketRequest(request: import("http").IncomingMessage, targetUrl: URL): string {
+function buildSideCarWebSocketRequest(
+  request: import("http").IncomingMessage,
+  targetUrl: URL,
+  options?: { stripCookies?: boolean },
+): string {
   const pathWithQuery = `${targetUrl.pathname}${targetUrl.search}`
   const requestLine = `${request.method ?? "GET"} ${pathWithQuery} HTTP/${request.httpVersion}\r\n`
   const headerLines: string[] = []
@@ -1490,6 +1505,7 @@ function buildSideCarWebSocketRequest(request: import("http").IncomingMessage, t
     if (!key || value === undefined) continue
     const lower = key.toLowerCase()
     if (blockedHeaders.has(lower)) continue
+    if (options?.stripCookies && lower === "cookie") continue
     if (lower === "origin") {
       headerLines.push(`Origin: ${targetUrl.origin}\r\n`)
       continue
@@ -1567,6 +1583,8 @@ function rewritePreviewResponseHeaders(
   delete next["x-frame-options"]
   delete next["content-security-policy"]
   delete next["content-security-policy-report-only"]
+  delete next["set-cookie"]
+  delete next["set-cookie2"]
 
   const locationHeader = next.location
   const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
