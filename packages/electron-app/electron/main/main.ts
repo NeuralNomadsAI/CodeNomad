@@ -474,12 +474,7 @@ function finalizeCliSwap(url: string) {
 }
 
 function buildRemoteWindowTitle(name: string, baseUrl: string) {
-  try {
-    const parsed = new URL(baseUrl)
-    return `${name} - ${parsed.host}`
-  } catch {
-    return `${name} - ${baseUrl}`
-  }
+  return `${name} - ${baseUrl}`
 }
 
 function lockWindowTitle(window: BrowserWindow, title: string) {
