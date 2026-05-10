@@ -664,6 +664,10 @@ function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
 
+function toggleShowMessageTimeline(): void {
+  updateUiSettings({ showMessageTimeline: !(preferences().showMessageTimeline ?? true) })
+}
+
 function toggleUsageMetrics(): void {
   updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
 }
@@ -746,6 +750,7 @@ interface ConfigContextValue {
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
   toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
+  toggleShowMessageTimeline: typeof toggleShowMessageTimeline
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
@@ -797,6 +802,7 @@ const configContextValue: ConfigContextValue = {
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
   toggleKeyboardShortcutHints,
+  toggleShowMessageTimeline,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,

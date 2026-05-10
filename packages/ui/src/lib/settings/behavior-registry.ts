@@ -38,6 +38,7 @@ export type BehaviorRegistryActions = {
   updatePreferences?: (updates: Partial<Preferences>) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
+  toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
@@ -131,7 +132,13 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ showMessageTimeline: next })
+          return
         }
+        setBooleanByToggle(
+          () => Boolean(prefs().showMessageTimeline ?? true),
+          actions.toggleShowMessageTimeline,
+          next,
+        )
       },
     },
     {
