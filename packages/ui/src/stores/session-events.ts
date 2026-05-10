@@ -36,7 +36,7 @@ import {
   addPermissionToQueue,
   removePermissionFromQueue,
   markPermissionReplied,
-  hasRecentlyRepliedPermission,
+  hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
 } from "./instances"
@@ -692,7 +692,7 @@ function handlePermissionUpdated(instanceId: string, event: { type: string; prop
   const permission = event?.properties as PermissionRequestLike | undefined
   if (!permission) return
   const permissionId = getPermissionId(permission)
-  if (permissionId && hasRecentlyRepliedPermission(instanceId, permissionId)) {
+  if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
     return
   }

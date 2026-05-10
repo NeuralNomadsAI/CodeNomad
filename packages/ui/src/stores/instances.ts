@@ -32,6 +32,12 @@ import { setSessionPendingPermission, setSessionPendingQuestion } from "./sessio
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import {
+  clearRepliedPermissions,
+  hasRepliedPermission,
+  markPermissionReplied,
+  pruneRepliedPermissions,
+} from "./permission-replies"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -52,8 +58,6 @@ const [activePermissionId, setActivePermissionId] = createSignal<Map<string, str
 const permissionSessionCounts = new Map<string, Map<string, number>>()
 // Track which worktree a permission was enqueued under (by permission request id).
 const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
-const REPLIED_PERMISSION_TOMBSTONE_MS = 30_000
-const repliedPermissionIdsByInstance = new Map<string, Map<string, number>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
 // Track which worktree a question was enqueued under (by question request id).
@@ -81,42 +85,6 @@ function syncHasInstancesFlag() {
   setHasInstances(readyExists)
 }
 
-function pruneRepliedPermissions(instanceId: string, replied = repliedPermissionIdsByInstance.get(instanceId)): void {
-  if (!replied) return
-  const now = Date.now()
-  for (const [permissionId, repliedAt] of replied) {
-    if (now - repliedAt > REPLIED_PERMISSION_TOMBSTONE_MS) {
-      replied.delete(permissionId)
-    }
-  }
-  if (replied.size === 0) {
-    repliedPermissionIdsByInstance.delete(instanceId)
-  }
-}
-
-function markPermissionReplied(instanceId: string, permissionId: string): void {
-  if (!permissionId) return
-  let replied = repliedPermissionIdsByInstance.get(instanceId)
-  if (!replied) {
-    replied = new Map()
-    repliedPermissionIdsByInstance.set(instanceId, replied)
-  }
-  pruneRepliedPermissions(instanceId, replied)
-  replied.set(permissionId, Date.now())
-}
-
-function hasRecentlyRepliedPermission(instanceId: string, permissionId: string): boolean {
-  const replied = repliedPermissionIdsByInstance.get(instanceId)
-  if (!replied) return false
-  pruneRepliedPermissions(instanceId, replied)
-  const repliedAt = replied.get(permissionId)
-  if (!repliedAt) return false
-  return Date.now() - repliedAt <= REPLIED_PERMISSION_TOMBSTONE_MS
-}
-
-function clearRepliedPermissions(instanceId: string): void {
-  repliedPermissionIdsByInstance.delete(instanceId)
-}
 interface DisconnectedInstanceInfo {
   id: string
   folder: string
@@ -225,12 +193,16 @@ async function syncPendingPermissions(instanceId: string): Promise<void> {
   if (!instance?.client) return
 
   try {
+    const syncStartedAt = Date.now()
     const remote = await requestData<PermissionRequestLike[]>(
       instance.client.permission.list(),
       "permission.list",
     )
 
-    const pendingRemote = remote.filter((item) => !hasRecentlyRepliedPermission(instanceId, item.id))
+    const remotePendingIds = new Set(remote.map((item) => item.id))
+    pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+
+    const pendingRemote = remote.filter((item) => !hasRepliedPermission(instanceId, item.id))
     const remoteIds = new Set(pendingRemote.map((item) => item.id))
     const local = getPermissionQueue(instanceId)
 
@@ -1175,7 +1147,7 @@ export {
   addPermissionToQueue,
   removePermissionFromQueue,
   markPermissionReplied,
-  hasRecentlyRepliedPermission,
+  hasRepliedPermission,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
