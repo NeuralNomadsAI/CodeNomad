@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js"
+import { stageContextPruneSelection } from "../stores/context-prune-selection"
 import {
   MessageUpdateEvent,
   MessageRemovedEvent,
@@ -61,6 +62,14 @@ interface ServerInstanceDisposedEvent {
   }
 }
 
+interface ContextPruneSelectEvent {
+  type: "context.prune.select"
+  properties: {
+    sessionID: string
+    indices: number[]
+  }
+}
+
 type SSEEvent =
   | MessageUpdateEvent
   | MessageRemovedEvent
@@ -82,6 +91,7 @@ type SSEEvent =
   | BackgroundProcessUpdatedEvent
   | BackgroundProcessRemovedEvent
   | ServerInstanceDisposedEvent
+  | ContextPruneSelectEvent
   | { type: string; properties?: Record<string, unknown> }
 
 type ConnectionStatus = InstanceStreamStatus
@@ -184,6 +194,14 @@ class SSEManager {
       case "server.instance.disposed":
         this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
+      case "context.prune.select": {
+        const payload = event as ContextPruneSelectEvent
+        stageContextPruneSelection({
+          sessionId: payload.properties.sessionID,
+          indices: payload.properties.indices,
+        })
+        break
+      }
       default:
         log.warn("Unknown SSE event type", { type: event.type })
     }
