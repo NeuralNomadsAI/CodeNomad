@@ -50,6 +50,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -1226,6 +1227,8 @@ export default function MessageSection(props: MessageSectionProps) {
     clearQuoteSelection()
   })
 
+  const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+
   return (
     <div
       class="message-stream-container"
@@ -1234,7 +1237,7 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <div
-        class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
+        class={`message-layout${showTimeline() ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
@@ -1616,7 +1619,7 @@ export default function MessageSection(props: MessageSectionProps) {
           </div>
         </Show>
 
-        <Show when={hasTimelineSegments()}>
+        <Show when={showTimeline()}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}

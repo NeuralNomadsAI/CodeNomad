@@ -134,6 +134,8 @@ export const settingsMessages = {
   "settings.behavior.thinking.subtitle": "メッセージ内のAIの思考セクションを表示/非表示にします。",
   "settings.behavior.thinkingDefault.title": "思考の既定",
   "settings.behavior.thinkingDefault.subtitle": "思考セクションを最初に展開/折りたたみのどちらで表示するかを選びます。",
+  "settings.behavior.messageTimeline.title": "メッセージタイムライン",
+  "settings.behavior.messageTimeline.subtitle": "メッセージタイムラインのサイドバーを表示/非表示にします。",
   "settings.behavior.timelineTools.title": "タイムラインのツール呼び出し",
   "settings.behavior.timelineTools.subtitle": "メッセージタイムラインでツール呼び出しを表示/非表示にします。",
   "settings.behavior.diffView.title": "差分表示",
