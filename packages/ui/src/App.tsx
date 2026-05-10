@@ -34,6 +34,7 @@ import {
 import { useConfig } from "./stores/preferences"
 import {
   createInstance,
+  getExistingInstanceForFolder,
   instances,
   stopInstance,
   disconnectedInstance,
@@ -95,6 +96,11 @@ const App: Component = () => {
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
   const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
+  const [alreadyOpenFolderChoice, setAlreadyOpenFolderChoice] = createSignal<{
+    folderPath: string
+    binaryPath: string
+    instanceId: string
+  } | null>(null)
 
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
@@ -258,15 +264,24 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string) {
+  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
     if (!folderPath) {
       return
     }
-    setIsSelectingFolder(true)
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
+    recordWorkspaceLaunch(folderPath, selectedBinary)
+    clearLaunchError()
+
+    if (!options?.forceNew) {
+      const existingInstance = getExistingInstanceForFolder(folderPath)
+      if (existingInstance) {
+        setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
+        return
+      }
+    }
+
+    setIsSelectingFolder(true)
     try {
-      recordWorkspaceLaunch(folderPath, selectedBinary)
-      clearLaunchError()
       const instanceId = await createInstance(folderPath, selectedBinary)
       selectInstanceTab(instanceId)
       setShowFolderSelection(false)
@@ -283,6 +298,26 @@ const App: Component = () => {
     } finally {
       setIsSelectingFolder(false)
     }
+  }
+
+  function dismissAlreadyOpenFolderChoice() {
+    setAlreadyOpenFolderChoice(null)
+  }
+
+  function switchToAlreadyOpenFolder() {
+    const choice = alreadyOpenFolderChoice()
+    if (!choice) return
+    setAlreadyOpenFolderChoice(null)
+    selectInstanceTab(choice.instanceId)
+    setShowFolderSelection(false)
+    log.info("Selected existing instance", { instanceId: choice.instanceId, folderPath: choice.folderPath })
+  }
+
+  function openAnotherFolderInstance() {
+    const choice = alreadyOpenFolderChoice()
+    if (!choice) return
+    setAlreadyOpenFolderChoice(null)
+    void handleSelectFolder(choice.folderPath, choice.binaryPath, { forceNew: true })
   }
 
   function handleLaunchErrorClose() {
@@ -609,6 +644,7 @@ const App: Component = () => {
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
+                activeProjectLabel={activeInstance()?.folder ?? null}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
@@ -620,6 +656,30 @@ const App: Component = () => {
  
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
+        <Show when={alreadyOpenFolderChoice()}>
+          <Dialog open modal onOpenChange={(open) => !open && dismissAlreadyOpenFolderChoice()}>
+            <Dialog.Portal>
+              <Dialog.Overlay class="modal-overlay z-[60]" />
+              <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
+                <Dialog.Title class="text-lg font-semibold text-primary">
+                  {t("folderSelection.recent.alreadyOpenTitle")}
+                </Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-1">
+                  {t("folderSelection.recent.alreadyOpenMessage")}
+                </Dialog.Description>
+
+                <div class="mt-6 flex justify-end gap-3">
+                  <button type="button" class="button-secondary" onClick={openAnotherFolderInstance}>
+                    {t("folderSelection.recent.openAnotherInstance")}
+                  </button>
+                  <button type="button" class="button-primary" onClick={switchToAlreadyOpenFolder}>
+                    {t("folderSelection.recent.switchToOpenProject")}
+                  </button>
+                </div>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog>
+        </Show>
  
         <AlertDialog />
 
