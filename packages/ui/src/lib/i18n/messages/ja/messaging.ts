@@ -161,6 +161,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "ファイルを添付",
   "promptInput.attachFiles.title": "ファイルを添付",
   "promptInput.attachFiles.dialogTitle": "ファイルを添付",
+  "promptInput.attachFiles.errorTitle": "添付に失敗しました",
   "promptInput.attachFiles.skipped.title": "一部のファイルを添付できませんでした",
   "promptInput.attachFiles.skipped.one": "この環境でファイルパスまたは対応するプレビューデータを取得できなかったため、選択した1件のファイルを添付できませんでした。",
   "promptInput.attachFiles.skipped.other": "この環境でファイルパスまたは対応するプレビューデータを取得できなかったため、選択した{count}件のファイルを添付できませんでした。",

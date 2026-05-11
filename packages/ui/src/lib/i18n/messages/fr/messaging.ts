@@ -161,6 +161,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "Joindre des fichiers",
   "promptInput.attachFiles.title": "Joindre des fichiers",
   "promptInput.attachFiles.dialogTitle": "Joindre des fichiers",
+  "promptInput.attachFiles.errorTitle": "Echec de la piece jointe",
   "promptInput.attachFiles.skipped.title": "Certains fichiers n'ont pas ete joints",
   "promptInput.attachFiles.skipped.one": "1 fichier selectionne n'a pas pu etre joint car cet environnement n'a fourni ni chemin de fichier ni donnees de previsualisation compatibles.",
   "promptInput.attachFiles.skipped.other": "{count} fichiers selectionnes n'ont pas pu etre joints car cet environnement n'a fourni ni chemins de fichier ni donnees de previsualisation compatibles.",

@@ -4,6 +4,7 @@ import path from "path"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
+  FileSystemFileContentResponse,
   FileSystemListResponse,
   FileSystemListingMetadata,
   WINDOWS_DRIVES_ROOT,
@@ -96,6 +97,21 @@ export class FileSystemBrowser {
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
     return fs.readFileSync(resolved, "utf-8")
+  }
+
+  readFileBase64(relativePath: string): string {
+    if (this.unrestricted) {
+      throw new Error("readFileBase64 is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    return fs.readFileSync(resolved).toString("base64")
+  }
+
+  readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): FileSystemFileContentResponse {
+    const encoding = options?.encoding ?? "utf-8"
+    const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
+    const contents = encoding === "base64" ? fs.readFileSync(resolved).toString("base64") : fs.readFileSync(resolved, "utf-8")
+    return { path: targetPath, contents, encoding }
   }
 
   private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {

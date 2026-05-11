@@ -161,6 +161,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "Adjuntar archivos",
   "promptInput.attachFiles.title": "Adjuntar archivos",
   "promptInput.attachFiles.dialogTitle": "Adjuntar archivos",
+  "promptInput.attachFiles.errorTitle": "No se pudo adjuntar",
   "promptInput.attachFiles.skipped.title": "Algunos archivos no se adjuntaron",
   "promptInput.attachFiles.skipped.one": "No se pudo adjuntar 1 archivo seleccionado porque este entorno no expuso una ruta de archivo ni datos de vista previa compatibles.",
   "promptInput.attachFiles.skipped.other": "No se pudieron adjuntar {count} archivos seleccionados porque este entorno no expuso rutas de archivo ni datos de vista previa compatibles.",

@@ -159,6 +159,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "Attach files",
   "promptInput.attachFiles.title": "Attach files",
   "promptInput.attachFiles.dialogTitle": "Attach files",
+  "promptInput.attachFiles.errorTitle": "Attach failed",
   "promptInput.attachFiles.skipped.title": "Some files were not attached",
   "promptInput.attachFiles.skipped.one": "1 selected file could not be attached because this environment did not expose a file path or supported preview data.",
   "promptInput.attachFiles.skipped.other": "{count} selected files could not be attached because this environment did not expose file paths or supported preview data.",

@@ -11,10 +11,13 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { openNativeFileDialogs, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
+import { serverApi } from "../lib/api-client"
+import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
+import type { FileSystemEntry } from "../../../server/src/api-types"
+import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
@@ -62,6 +65,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
+  const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
@@ -101,7 +105,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragLeave,
     handleDrop,
     handleFileSelection,
-    handleNativeFilePathSelection,
+    handleFilePathAttachment,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -397,12 +401,30 @@ export default function PromptInput(props: PromptInputProps) {
 
   async function handleAttachFiles() {
     if (props.disabled) return
-    if (supportsNativeDialogsInCurrentWindow()) {
-      const paths = await openNativeFileDialogs({ title: t("promptInput.attachFiles.dialogTitle") })
-      handleNativeFilePathSelection(paths)
+    if (isDesktopHost() && isLocalWindow()) {
+      fileInputRef?.click()
       return
     }
-    fileInputRef?.click()
+    setIsFileBrowserOpen(true)
+  }
+
+  async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
+    if (props.disabled) return
+    try {
+      const filePath = entry?.path ?? path
+      const displayPath = entry?.absolutePath ?? path
+      const response = await serverApi.readFileSystemFile(filePath, { encoding: "base64" })
+      handleFilePathAttachment(displayPath, response.contents, { encoding: response.encoding })
+      setIsFileBrowserOpen(false)
+    } catch (error) {
+      log.error("Failed to attach selected file:", error)
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("promptInput.attachFiles.errorTitle"),
+        variant: "error",
+      })
+    } finally {
+      textareaRef?.focus()
+    }
   }
 
   function handleFileInputChange(event: Event) {
@@ -835,6 +857,18 @@ export default function PromptInput(props: PromptInputProps) {
           </button>
         </div>
       </div>
+
+      <DirectoryBrowserDialog
+        open={isFileBrowserOpen()}
+        mode="files"
+        title={t("promptInput.attachFiles.dialogTitle")}
+        onClose={() => {
+          setIsFileBrowserOpen(false)
+          textareaRef?.focus()
+        }}
+        onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
+        initialPath={props.instanceFolder}
+      />
     </div>
   )
 }

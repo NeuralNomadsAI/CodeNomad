@@ -161,6 +161,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "附加文件",
   "promptInput.attachFiles.title": "附加文件",
   "promptInput.attachFiles.dialogTitle": "附加文件",
+  "promptInput.attachFiles.errorTitle": "附加失败",
   "promptInput.attachFiles.skipped.title": "部分文件未附加",
   "promptInput.attachFiles.skipped.one": "由于当前环境未提供文件路径或支持的预览数据，1 个选中的文件无法附加。",
   "promptInput.attachFiles.skipped.other": "由于当前环境未提供文件路径或支持的预览数据，{count} 个选中的文件无法附加。",

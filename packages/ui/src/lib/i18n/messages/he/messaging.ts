@@ -159,6 +159,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "צרף קבצים",
   "promptInput.attachFiles.title": "צרף קבצים",
   "promptInput.attachFiles.dialogTitle": "צרף קבצים",
+  "promptInput.attachFiles.errorTitle": "צירוף נכשל",
   "promptInput.attachFiles.skipped.title": "חלק מהקבצים לא צורפו",
   "promptInput.attachFiles.skipped.one": "לא ניתן היה לצרף קובץ נבחר אחד כי הסביבה לא סיפקה נתיב קובץ או נתוני תצוגה מקדימה נתמכים.",
   "promptInput.attachFiles.skipped.other": "לא ניתן היה לצרף {count} קבצים נבחרים כי הסביבה לא סיפקה נתיבי קבצים או נתוני תצוגה מקדימה נתמכים.",

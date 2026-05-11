@@ -2,7 +2,7 @@ import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup
 import { FolderOpen, Trash2, Check, AlertCircle, Loader2, Plus } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
-import FileSystemBrowserDialog from "./filesystem-browser-dialog"
+import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -341,7 +341,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
         </div>
       </div>
 
-      <FileSystemBrowserDialog
+      <DirectoryBrowserDialog
         open={isBinaryBrowserOpen()}
         mode="files"
         title={t("opencodeBinarySelector.dialog.title")}

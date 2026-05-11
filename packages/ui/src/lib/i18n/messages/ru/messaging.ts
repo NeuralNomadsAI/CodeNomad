@@ -161,6 +161,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.ariaLabel": "Прикрепить файлы",
   "promptInput.attachFiles.title": "Прикрепить файлы",
   "promptInput.attachFiles.dialogTitle": "Прикрепить файлы",
+  "promptInput.attachFiles.errorTitle": "Не удалось прикрепить файл",
   "promptInput.attachFiles.skipped.title": "Некоторые файлы не были прикреплены",
   "promptInput.attachFiles.skipped.one": "1 выбранный файл не удалось прикрепить, потому что среда не предоставила путь к файлу или поддерживаемые данные предпросмотра.",
   "promptInput.attachFiles.skipped.other": "Не удалось прикрепить {count} выбранных файлов, потому что среда не предоставила пути к файлам или поддерживаемые данные предпросмотра.",

@@ -28,6 +28,7 @@ const WorkspaceFilesQuerySchema = z.object({
 
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
+  encoding: z.enum(["utf-8", "base64"]).optional(),
 })
 
 const WorkspaceFileContentBodySchema = z.object({
@@ -135,7 +136,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
-      return deps.workspaceManager.readFile(request.params.id, query.path)
+      return deps.workspaceManager.readFile(request.params.id, query.path, { encoding: query.encoding })
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }

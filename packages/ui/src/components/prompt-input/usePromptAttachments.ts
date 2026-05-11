@@ -36,7 +36,7 @@ type PromptAttachments = {
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
   handleFileSelection: (files: FileList | File[] | null) => void
-  handleNativeFilePathSelection: (paths: string[]) => void
+  handleFilePathAttachment: (path: string, contents: string, options?: { encoding?: "utf-8" | "base64" }) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
   handleExpandTextAttachment: (attachment: Attachment) => void
@@ -47,7 +47,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [isDragging, setIsDragging] = createSignal(false)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
-  const MAX_INLINE_PICKED_FILE_BYTES = 5 * 1024 * 1024
+  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
 
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
@@ -376,14 +376,39 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     })
   }
 
-  function handleNativeFilePathSelection(paths: string[]) {
-    if (options.disabled?.()) return
-    for (const path of paths) {
-      if (!path || path.trim().length === 0) continue
-      const filename = getFilenameFromPath(path)
-      const attachment = createFileAttachment(path, filename, inferMimeTypeFromPath(path), undefined, options.instanceFolder())
-      addAttachment(options.instanceId(), options.sessionId(), attachment)
+  function encodeBytesAsBase64(bytes: Uint8Array) {
+    let binary = ""
+    const chunkSize = 0x8000
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length))
+      binary += String.fromCharCode(...chunk)
     }
+    return btoa(binary)
+  }
+
+  function decodeBase64ToBytes(value: string) {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  }
+
+  function attachFileData(path: string, filename: string, mime: string, data: Uint8Array, previewUrl?: string) {
+    const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
+    attachment.url = previewUrl ?? `data:${mime};base64,${encodeBytesAsBase64(data)}`
+    addAttachment(options.instanceId(), options.sessionId(), attachment)
+  }
+
+  function handleFilePathAttachment(path: string, contents: string, attachmentOptions?: { encoding?: "utf-8" | "base64" }) {
+    if (options.disabled?.()) return
+    if (!path || path.trim().length === 0) return
+
+    const filename = getFilenameFromPath(path)
+    const mime = inferMimeTypeFromPath(path)
+    const data = attachmentOptions?.encoding === "base64" ? decodeBase64ToBytes(contents) : new TextEncoder().encode(contents)
+    attachFileData(path, filename, mime, data)
     options.getTextarea()?.focus()
   }
 
@@ -404,35 +429,36 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const nativePath = getFilePath(file)
       const filename = file.name
       const mime = file.type || "application/octet-stream"
-      const canInlinePreview = (mime.startsWith("image/") || mime.startsWith("text/")) && file.size <= MAX_INLINE_PICKED_FILE_BYTES
+      const canReadFileData = file.size <= MAX_READABLE_PICKED_FILE_BYTES
 
-      if (!nativePath && !canInlinePreview) {
+      if (!nativePath && !canReadFileData) {
         skippedCount += 1
         continue
       }
 
       const path = nativePath || filename
 
-      const createAndStoreAttachment = (previewUrl?: string) => {
-        const attachment = createFileAttachment(path, filename, mime, undefined, options.instanceFolder())
+      const createAndStoreAttachment = (previewUrl?: string, data?: Uint8Array) => {
+        const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
         if (previewUrl) {
           attachment.url = previewUrl
         }
         addAttachment(options.instanceId(), options.sessionId(), attachment)
       }
 
-      if (canInlinePreview && typeof FileReader !== "undefined") {
+      if (canReadFileData && typeof FileReader !== "undefined") {
         const reader = new FileReader()
         reader.onload = () => {
-          const result = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(result)
+          const result = reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : undefined
+          const previewUrl = result ? `data:${mime};base64,${encodeBytesAsBase64(result)}` : undefined
+          createAndStoreAttachment(previewUrl, result)
         }
         reader.onerror = () => {
           if (nativePath) {
             createAndStoreAttachment()
           }
         }
-        reader.readAsDataURL(file)
+        reader.readAsArrayBuffer(file)
       } else {
         createAndStoreAttachment()
       }
@@ -464,7 +490,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     handleDragLeave,
     handleDrop,
     handleFileSelection,
-    handleNativeFilePathSelection,
+    handleFilePathAttachment,
     handleRemoveAttachment,
     handleExpandTextAttachment,
   }
