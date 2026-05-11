@@ -5,13 +5,12 @@
   "license": "MIT",
   "type": "module",
   "main": "dist/codenomad.js",
-  "types": "dist/codenomad.d.ts",
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.3.7"

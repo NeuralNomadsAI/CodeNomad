@@ -4,7 +4,11 @@ import { createBackgroundProcessTools } from "./lib/background-process.js"
 
 let voiceModeEnabled = false
 
-export async function CodeNomadPlugin(input: PluginInput) {
+export async function CodeNomadPlugin(input: PluginInput): Promise<{
+  tool: ReturnType<typeof createBackgroundProcessTools>
+  "chat.message": CodeNomadChatMessageHook
+  event: CodeNomadEventHook
+}> {
   const config = getCodeNomadConfig()
   const client = createCodeNomadClient(config)
   const backgroundProcessTools = createBackgroundProcessTools(config, { baseDir: input.directory })
@@ -44,6 +48,13 @@ export async function CodeNomadPlugin(input: PluginInput) {
     },
   }
 }
+
+type CodeNomadChatMessageHook = (
+  _input: { sessionID: string },
+  output: { message: { system?: string } },
+) => Promise<void>
+
+type CodeNomadEventHook = (input: { event: any }) => Promise<void>
 
 function buildVoiceModePrompt(): string {
   return [
