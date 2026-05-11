@@ -15,6 +15,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "{count} carpeta disponible",
   "folderSelection.recent.subtitle.other": "{count} carpetas disponibles",
   "folderSelection.recent.remove": "Eliminar de recientes",
+  "folderSelection.recent.openBadge": "Abierta",
+  "folderSelection.recent.alreadyOpenTitle": "Proyecto ya abierto",
+  "folderSelection.recent.alreadyOpenMessage": "Elige cómo abrir esta carpeta.",
+  "folderSelection.recent.switchToOpenProject": "Cambiar al proyecto abierto",
+  "folderSelection.recent.openAnotherInstance": "Abrir otra instancia",
 
   "folderSelection.browse.title": "Buscar carpeta",
   "folderSelection.browse.subtitle": "Selecciona cualquier carpeta en tu ordenador",
@@ -38,6 +43,8 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "Abrir carpeta o conectar servidor",
   "folderSelection.actions.subtitle": "Abre una carpeta local o conéctate a un servidor de CodeNomad",
   "folderSelection.actions.connectButton": "Conectar servidor CodeNomad",
+  "folderSelection.actions.returnToProject": "Volver al proyecto activo",
+  "folderSelection.actions.returnToProjectSubtitle": "Volver a {name}",
 
   "folderSelection.advancedSettings": "Configuración avanzada",
   "folderSelection.opencode": "OpenCode",

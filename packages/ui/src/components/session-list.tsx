@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, createEffect, JSX, onCleanup } from "solid-js"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getRetrySeconds, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
+import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -24,6 +24,7 @@ import {
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
+import { useConfig } from "../stores/preferences"
 const log = getLogger("session")
 
 
@@ -47,6 +48,7 @@ function formatSessionStatus(status: SessionStatus): string {
 
 const SessionList: Component<SessionListProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const [renameTarget, setRenameTarget] = createSignal<{ id: string; title: string; label: string } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
 
@@ -235,7 +237,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     try {
-      await loadMessages(props.instanceId, sessionId, true)
+      await loadMessages(props.instanceId, sessionId, { force: true })
     } catch (error) {
       log.error(`Failed to reload session ${sessionId}:`, error)
       showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
@@ -426,8 +428,20 @@ const SessionList: Component<SessionListProps> = (props) => {
     const needsPermission = () => Boolean(session()?.pendingPermission)
     const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
-    const statusClassName = () => (needsInput() ? "session-permission" : `session-${retry() ? "retrying" : status()}`)
-    const showStatus = () => needsInput() || shouldShowSessionStatus(props.instanceId, rowProps.sessionId)
+    const statusClassName = () => {
+      if (needsInput()) return "session-permission"
+      const base = `session-${retry() ? "retrying" : status()}`
+      const fadeClass = getSessionIdleFadeClass(props.instanceId, rowProps.sessionId)
+      return fadeClass ? `${base} ${fadeClass}` : base
+    }
+    const showStatus = () =>
+      needsInput() ||
+      shouldShowSessionStatus(
+        props.instanceId,
+        rowProps.sessionId,
+        now(),
+        preferences().keepUnseenSubagentIdleStatus,
+      )
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")

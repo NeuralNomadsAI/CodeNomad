@@ -36,14 +36,17 @@ import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueue, getPermissionQueueLength, getQuestionQueueLength, sendPermissionResponse } from "../../stores/instances"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
-import { getRetrySeconds, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Maximize2, Search, ShieldAlert } from "lucide-solid"
+import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
+import { Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
+import { useConfig } from "../../stores/preferences"
+import { showPromptDialog } from "../../stores/alerts"
+import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -58,13 +61,7 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { getPermissionSessionId } from "../../types/permission"
-import {
-  canAutoRespondPermission,
-  finishAutoRespondPermission,
-  getPermissionAutoAcceptInFlightVersion,
-  isPermissionAutoAcceptEnabled,
-} from "../../stores/permission-auto-accept"
+import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
@@ -91,6 +88,7 @@ interface InstanceShellProps {
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const { t, locale } = useI18n()
+  const { preferences } = useConfig()
   const isRTL = () => locale() === "he"
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
@@ -269,12 +267,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
-  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
-
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
     return sessionPromptApis()[sessionId] ?? null
+  })
+
+  const activeSessionPreview = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    return sessionId ? sessionPreviews().get(sessionId) ?? null : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -284,24 +285,51 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }))
   }
 
-  createEffect(() => {
-    getPermissionAutoAcceptInFlightVersion()
+  async function handleOpenPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
 
-    for (const permission of permissionQueue()) {
-      const sessionId = getPermissionSessionId(permission)
-      if (!sessionId) continue
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
+    const url = await showPromptDialog(t("sessionPreview.open.prompt"), {
+      title: t("sessionPreview.open.title"),
+      inputLabel: t("sessionPreview.open.label"),
+      inputPlaceholder: t("sessionPreview.open.placeholder"),
+      confirmLabel: t("sessionPreview.open.confirm"),
+      cancelLabel: t("sessionPreview.open.cancel"),
+    })
+    const normalized = url?.trim()
+    if (!normalized) return
+    await openSessionPreview(sessionId, normalized)
+  }
 
-      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
-        })
+  function handleShowPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+    showSessionPreview(sessionId)
+  }
+
+  function handlePreviewButtonClick() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const preview = activeSessionPreview()
+    if (preview?.mode === "preview") {
+      showSessionChat(sessionId)
+      return
     }
+
+    if (preview) {
+      showSessionPreview(sessionId)
+      return
+    }
+    void handleOpenPreview()
+  }
+
+  const previewToggleLabel = createMemo(() => {
+    const preview = activeSessionPreview()
+    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
+
+  const PreviewToggleIcon = createMemo(() => activeSessionPreview()?.mode === "preview" ? MessageSquareText : Eye)
 
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
@@ -330,7 +358,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
     const retry = getSessionRetry(props.instance.id, activeSessionId)
-    const showStatus = shouldShowSessionStatus(props.instance.id, activeSessionId)
+    const showStatus = shouldShowSessionStatus(
+      props.instance.id,
+      activeSessionId,
+      now(),
+      preferences().keepUnseenSubagentIdleStatus,
+    )
     if (!showStatus) {
       return null
     }
@@ -345,8 +378,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           ? t("sessionList.status.compacting")
           : t("sessionList.status.idle")
 
+    const baseClassName = `session-${retry ? "retrying" : status}`
+    const fadeClassName = getSessionIdleFadeClass(props.instance.id, activeSessionId)
+
     return {
-      className: `session-${retry ? "retrying" : status}`,
+      className: fadeClassName ? `${baseClassName} ${fadeClassName}` : baseClassName,
       text,
       showAlertIcon: false,
       title: retry
@@ -745,6 +781,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         >
                           <Search class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
+                        <IconButton
+                          color="inherit"
+                          onClick={handlePreviewButtonClick}
+                          aria-label={previewToggleLabel()}
+                          title={previewToggleLabel()}
+                          size="small"
+                        >
+                          {(() => {
+                            const Icon = PreviewToggleIcon()
+                            return <Icon class="w-5 h-5" aria-hidden="true" />
+                          })()}
+                        </IconButton>
                       </Show>
                       <button
                         type="button"
@@ -866,6 +914,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         size="small"
                       >
                         <Search class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        color="inherit"
+                        onClick={handlePreviewButtonClick}
+                        aria-label={previewToggleLabel()}
+                        title={previewToggleLabel()}
+                        size="small"
+                      >
+                        {(() => {
+                          const Icon = PreviewToggleIcon()
+                          return <Icon class="w-5 h-5" aria-hidden="true" />
+                        })()}
                       </IconButton>
                     </Show>
                     <Show when={connectionStatus() === "connected"}>

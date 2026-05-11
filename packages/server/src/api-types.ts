@@ -263,6 +263,14 @@ export interface SideCar {
   updatedAt: string
 }
 
+export interface PreviewSession {
+  token: string
+  sessionId: string
+  targetUrl: string
+  proxyUrl: string
+  createdAt: string
+}
+
 export interface BinaryRecord {
   id: string
   path: string

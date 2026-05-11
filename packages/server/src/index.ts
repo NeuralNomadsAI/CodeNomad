@@ -26,6 +26,7 @@ import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/networ
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
+import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
@@ -340,6 +341,7 @@ async function main() {
     eventBus,
     logger: logger.child({ component: "sidecars" }),
   })
+  const previewManager = new PreviewManager()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -435,6 +437,7 @@ async function main() {
         instanceStore,
         speechService,
         sidecarManager,
+        previewManager,
         authManager,
         clientConnectionManager,
         pluginChannel,
@@ -461,6 +464,7 @@ async function main() {
         instanceStore,
         speechService,
         sidecarManager,
+        previewManager,
         authManager,
         clientConnectionManager,
         pluginChannel,
