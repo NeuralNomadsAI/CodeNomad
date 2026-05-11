@@ -121,6 +121,7 @@
 
 .prompt-expand-button,
 .prompt-history-button,
+.prompt-attach-button,
 .prompt-clear-button {
   @apply w-7 h-7 flex items-center justify-center rounded-md;
   color: var(--text-muted);
@@ -132,6 +133,7 @@
 
 .prompt-expand-button:hover:not(:disabled),
 .prompt-history-button:hover:not(:disabled),
+.prompt-attach-button:hover:not(:disabled),
 .prompt-clear-button:hover:not(:disabled) {
   background-color: var(--surface-secondary);
   color: var(--text-primary);
@@ -145,6 +147,7 @@
 
 .prompt-expand-button:disabled,
 .prompt-history-button:disabled,
+.prompt-attach-button:disabled,
 .prompt-clear-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;

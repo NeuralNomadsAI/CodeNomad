@@ -10,4 +10,5 @@ export interface NativeDialogOptions {
   title?: string
   defaultPath?: string
   filters?: NativeDialogFilter[]
+  multiple?: boolean
 }
