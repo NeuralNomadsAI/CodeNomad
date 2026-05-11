@@ -13,6 +13,7 @@ declare global {
     title?: string
     defaultPath?: string
     filters?: ElectronDialogFilter[]
+    multiple?: boolean
   }
 
   interface ElectronDialogResult {

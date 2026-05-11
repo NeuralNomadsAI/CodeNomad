@@ -76,14 +76,16 @@ export class WorkspaceManager {
     return searchWorkspaceFiles(workspace.path, query, options)
   }
 
-  readFile(workspaceId: string, relativePath: string): WorkspaceFileResponse {
+  readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): WorkspaceFileResponse {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
-    const contents = browser.readFile(relativePath)
+    const encoding = options?.encoding ?? "utf-8"
+    const contents = encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath)
     return {
       workspaceId,
       relativePath,
       contents,
+      encoding,
     }
   }
 

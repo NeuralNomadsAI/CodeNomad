@@ -18,6 +18,8 @@ import { useI18n } from "../../lib/i18n"
 import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
+import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
+import { SessionPreviewView } from "../session-preview-view"
 
 const log = getLogger("session")
 
@@ -59,12 +61,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   })
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
+  const preview = createMemo(() => getSessionPreview(props.sessionId))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
+  let pendingCommentText: string | null = null
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
@@ -207,6 +211,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       pendingSelectionInsert = null
     }
 
+    if (pendingCommentText) {
+      api.insertComment(pendingCommentText)
+      pendingCommentText = null
+    }
+
     return () => {
       if (promptInputApi === api) {
         promptInputApi = null
@@ -220,6 +229,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       promptInputApi.insertSelection(text, mode)
     } else {
       pendingSelectionInsert = { text, mode }
+    }
+  }
+
+  function handleInsertPreviewComment(markdown: string) {
+    if (promptInputApi) {
+      promptInputApi.insertComment(markdown)
+    } else {
+      pendingCommentText = `${pendingCommentText ?? ""}${markdown}`
     }
   }
  
@@ -380,56 +397,65 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         if (!activeSession) return null
         return (
           <div ref={rootRef} class="session-view">
-            <MessageSection
-               instanceId={props.instanceId}
-               sessionId={activeSession.id}
-                loading={messagesLoading()}
-                onRevert={handleRevert}
-                onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
-                 onFork={handleFork}
-                 isActive={props.isActive}
-                 registerScrollToBottom={(fn) => {
-                   scrollToBottomHandle = fn
-                 }}
-
-
-
-
-               showSidebarToggle={props.showSidebarToggle}
-               onSidebarToggle={props.onSidebarToggle}
-               forceCompactStatusLayout={props.forceCompactStatusLayout}
-               onQuoteSelection={handleQuoteSelection}
-             />
-
-
-                <Show when={attachments().length > 0}>
-                  <PromptAttachmentsBar
-                    attachments={attachments()}
-                    onRemoveAttachment={(attachmentId) => {
-                      if (promptInputApi) {
-                        promptInputApi.removeAttachment(attachmentId)
-                        return
-                      }
-                      removeAttachment(props.instanceId, props.sessionId, attachmentId)
-                    }}
-                    onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
-                  />
-                </Show>
-
-              <PromptInput
-                instanceId={props.instanceId}
-                instanceFolder={props.instanceFolder}
-                sessionId={activeSession.id}
-                isActive={props.isActive}
-                compactLayout={props.compactPromptLayout}
-                onSend={handleSendMessage}
-                onRunShell={handleRunShell}
-                escapeInDebounce={props.escapeInDebounce}
-                isSessionBusy={sessionBusy()}
-                disabled={sessionNeedsInput()}
-                onAbortSession={handleAbortSession}
-                registerPromptInputApi={registerPromptInputApi}
+            <Show
+              when={preview()?.mode === "preview" && preview()}
+              fallback={
+                <MessageSection
+                  instanceId={props.instanceId}
+                  sessionId={activeSession.id}
+                  loading={messagesLoading()}
+                  onRevert={handleRevert}
+                  onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
+                  onFork={handleFork}
+                  isActive={props.isActive}
+                  registerScrollToBottom={(fn) => {
+                    scrollToBottomHandle = fn
+                  }}
+                  showSidebarToggle={props.showSidebarToggle}
+                  onSidebarToggle={props.onSidebarToggle}
+                  forceCompactStatusLayout={props.forceCompactStatusLayout}
+                  onQuoteSelection={handleQuoteSelection}
                 />
+              }
+            >
+              {(activePreview) => (
+                <SessionPreviewView
+                  preview={activePreview()}
+                  onBackToChat={() => showSessionChat(props.sessionId)}
+                  onClose={() => void closeSessionPreview(props.sessionId)}
+                  onInsertComment={handleInsertPreviewComment}
+                />
+              )}
+            </Show>
+
+            <Show when={attachments().length > 0}>
+              <PromptAttachmentsBar
+                attachments={attachments()}
+                onRemoveAttachment={(attachmentId) => {
+                  if (promptInputApi) {
+                    promptInputApi.removeAttachment(attachmentId)
+                    return
+                  }
+                  removeAttachment(props.instanceId, props.sessionId, attachmentId)
+                }}
+                onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
+              />
+            </Show>
+
+            <PromptInput
+              instanceId={props.instanceId}
+              instanceFolder={props.instanceFolder}
+              sessionId={activeSession.id}
+              isActive={props.isActive}
+              compactLayout={props.compactPromptLayout}
+              onSend={handleSendMessage}
+              onRunShell={handleRunShell}
+              escapeInDebounce={props.escapeInDebounce}
+              isSessionBusy={sessionBusy()}
+              disabled={sessionNeedsInput()}
+              onAbortSession={handleAbortSession}
+              registerPromptInputApi={registerPromptInputApi}
+            />
             </div>
           )
         }}

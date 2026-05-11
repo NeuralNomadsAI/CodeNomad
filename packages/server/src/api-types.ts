@@ -214,6 +214,12 @@ export interface FileSystemCreateFolderResponse {
   absolutePath: string
 }
 
+export interface FileSystemFileContentResponse {
+  path: string
+  contents: string
+  encoding: "utf-8" | "base64"
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
@@ -221,6 +227,7 @@ export interface WorkspaceFileResponse {
   relativePath: string
   /** UTF-8 file contents; binary files should be base64 encoded by the caller. */
   contents: string
+  encoding?: "utf-8" | "base64"
 }
 
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
@@ -254,6 +261,14 @@ export interface SideCar {
   status: SideCarStatus
   createdAt: string
   updatedAt: string
+}
+
+export interface PreviewSession {
+  token: string
+  sessionId: string
+  targetUrl: string
+  proxyUrl: string
+  createdAt: string
 }
 
 export interface BinaryRecord {

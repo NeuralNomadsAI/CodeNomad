@@ -5,12 +5,14 @@ import type {
   BinaryValidationResult,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
+  FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   SideCar,
+  PreviewSession,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -252,6 +254,15 @@ export const serverApi = {
   deleteSidecar(id: string): Promise<void> {
     return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
+  createPreview(payload: { sessionId: string; url: string }): Promise<PreviewSession> {
+    return request<PreviewSession>("/api/previews", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deletePreview(token: string): Promise<void> {
+    return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
+  },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
   },
@@ -312,8 +323,11 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
     )
   },
-  readWorkspaceFile(id: string, relativePath: string): Promise<WorkspaceFileResponse> {
+  readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.encoding) {
+      params.set("encoding", options.encoding)
+    }
     return request<WorkspaceFileResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
@@ -443,6 +457,13 @@ export const serverApi = {
       method: "POST",
       body: JSON.stringify({ parentPath, name }),
     })
+  },
+  readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
+    const params = new URLSearchParams({ path })
+    if (options?.encoding) {
+      params.set("encoding", options.encoding)
+    }
+    return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
   },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
