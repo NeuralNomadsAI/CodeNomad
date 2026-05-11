@@ -163,6 +163,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "Some files were not attached",
   "promptInput.attachFiles.skipped.one": "1 selected file could not be attached because this environment did not expose a file path or supported preview data.",
   "promptInput.attachFiles.skipped.other": "{count} selected files could not be attached because this environment did not expose file paths or supported preview data.",
+  "promptInput.attachFiles.tooLarge.one": "1 selected file could not be attached because it is larger than the 5 MB attachment limit.",
   "promptInput.clear.ariaLabel": "Clear prompt text",
   "promptInput.clear.title": "Clear prompt text",
   "promptInput.send.ariaLabel": "Send message",

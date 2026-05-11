@@ -165,6 +165,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "一部のファイルを添付できませんでした",
   "promptInput.attachFiles.skipped.one": "この環境でファイルパスまたは対応するプレビューデータを取得できなかったため、選択した1件のファイルを添付できませんでした。",
   "promptInput.attachFiles.skipped.other": "この環境でファイルパスまたは対応するプレビューデータを取得できなかったため、選択した{count}件のファイルを添付できませんでした。",
+  "promptInput.attachFiles.tooLarge.one": "選択した1件のファイルは5 MBの添付サイズ上限を超えているため添付できませんでした。",
   "promptInput.clear.ariaLabel": "プロンプトのテキストをクリア",
   "promptInput.clear.title": "プロンプトのテキストをクリア",
   "promptInput.send.ariaLabel": "メッセージを送信",

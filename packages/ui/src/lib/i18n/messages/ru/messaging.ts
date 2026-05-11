@@ -165,6 +165,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "Некоторые файлы не были прикреплены",
   "promptInput.attachFiles.skipped.one": "1 выбранный файл не удалось прикрепить, потому что среда не предоставила путь к файлу или поддерживаемые данные предпросмотра.",
   "promptInput.attachFiles.skipped.other": "Не удалось прикрепить {count} выбранных файлов, потому что среда не предоставила пути к файлам или поддерживаемые данные предпросмотра.",
+  "promptInput.attachFiles.tooLarge.one": "1 выбранный файл не удалось прикрепить, потому что он превышает ограничение вложения в 5 МБ.",
   "promptInput.clear.ariaLabel": "Очистить текст prompt",
   "promptInput.clear.title": "Очистить текст prompt",
   "promptInput.send.ariaLabel": "Отправить сообщение",

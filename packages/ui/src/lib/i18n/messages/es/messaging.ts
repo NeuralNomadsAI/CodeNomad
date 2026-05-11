@@ -165,6 +165,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "Algunos archivos no se adjuntaron",
   "promptInput.attachFiles.skipped.one": "No se pudo adjuntar 1 archivo seleccionado porque este entorno no expuso una ruta de archivo ni datos de vista previa compatibles.",
   "promptInput.attachFiles.skipped.other": "No se pudieron adjuntar {count} archivos seleccionados porque este entorno no expuso rutas de archivo ni datos de vista previa compatibles.",
+  "promptInput.attachFiles.tooLarge.one": "No se pudo adjuntar 1 archivo seleccionado porque supera el limite de adjuntos de 5 MB.",
   "promptInput.clear.ariaLabel": "Borrar el texto del prompt",
   "promptInput.clear.title": "Borrar el texto del prompt",
   "promptInput.send.ariaLabel": "Enviar mensaje",

@@ -412,7 +412,7 @@ export default function PromptInput(props: PromptInputProps) {
   async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
     if (props.disabled) return
     if (typeof entry?.size === "number" && entry.size > MAX_READABLE_PICKED_FILE_BYTES) {
-      showAlertDialog(t("promptInput.attachFiles.skipped.one"), {
+      showAlertDialog(t("promptInput.attachFiles.tooLarge.one"), {
         title: t("promptInput.attachFiles.skipped.title"),
         variant: "warning",
       })

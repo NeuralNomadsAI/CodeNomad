@@ -165,6 +165,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "部分文件未附加",
   "promptInput.attachFiles.skipped.one": "由于当前环境未提供文件路径或支持的预览数据，1 个选中的文件无法附加。",
   "promptInput.attachFiles.skipped.other": "由于当前环境未提供文件路径或支持的预览数据，{count} 个选中的文件无法附加。",
+  "promptInput.attachFiles.tooLarge.one": "由于超过 5 MB 附件大小限制，1 个选中的文件无法附加。",
   "promptInput.clear.ariaLabel": "清除输入框文本",
   "promptInput.clear.title": "清除输入框文本",
   "promptInput.send.ariaLabel": "发送消息",

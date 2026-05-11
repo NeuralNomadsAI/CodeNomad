@@ -165,6 +165,7 @@ export const messagingMessages = {
   "promptInput.attachFiles.skipped.title": "Certains fichiers n'ont pas ete joints",
   "promptInput.attachFiles.skipped.one": "1 fichier selectionne n'a pas pu etre joint car cet environnement n'a fourni ni chemin de fichier ni donnees de previsualisation compatibles.",
   "promptInput.attachFiles.skipped.other": "{count} fichiers selectionnes n'ont pas pu etre joints car cet environnement n'a fourni ni chemins de fichier ni donnees de previsualisation compatibles.",
+  "promptInput.attachFiles.tooLarge.one": "1 fichier selectionne n'a pas pu etre joint car il depasse la limite de 5 Mo.",
   "promptInput.clear.ariaLabel": "Effacer le texte du prompt",
   "promptInput.clear.title": "Effacer le texte du prompt",
   "promptInput.send.ariaLabel": "Envoyer le message",
