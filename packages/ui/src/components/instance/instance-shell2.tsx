@@ -28,6 +28,7 @@ import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
+import MessageSection from "../message-section"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -35,6 +36,7 @@ import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
+import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
 import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -44,9 +46,11 @@ import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
-import { useConfig } from "../../stores/preferences"
+import type { Attachment } from "../../types/attachment"
+import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showPromptDialog } from "../../stores/alerts"
 import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
+import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession } from "../../stores/sessions"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -65,6 +69,7 @@ import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-acce
 
 const log = getLogger("session")
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
 interface InstanceShellProps {
   instance: Instance
@@ -106,6 +111,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
+  const [draftAgent, setDraftAgent] = createSignal("")
+  const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
+  const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -535,6 +543,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             threads={sessionThreads}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            draftAgent={draftAgent}
+            draftModel={draftModel}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
             keyboardShortcuts={keyboardShortcuts}
@@ -545,6 +555,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onNewSession={props.onNewSession}
             onSidebarAgentChange={props.handleSidebarAgentChange}
             onSidebarModelChange={props.handleSidebarModelChange}
+            onDraftAgentChange={handleDraftAgentChange}
+            onDraftModelChange={handleDraftModelChange}
             onPinLeftDrawer={pinLeftDrawer}
             onUnpinLeftDrawer={unpinLeftDrawer}
             onCloseLeftDrawer={closeLeftDrawer}
@@ -597,6 +609,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           threads={sessionThreads}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          draftAgent={draftAgent}
+          draftModel={draftModel}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
           keyboardShortcuts={keyboardShortcuts}
@@ -607,6 +621,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onNewSession={props.onNewSession}
           onSidebarAgentChange={props.handleSidebarAgentChange}
           onSidebarModelChange={props.handleSidebarModelChange}
+          onDraftAgentChange={handleDraftAgentChange}
+          onDraftModelChange={handleDraftModelChange}
           onPinLeftDrawer={pinLeftDrawer}
           onUnpinLeftDrawer={unpinLeftDrawer}
           onCloseLeftDrawer={closeLeftDrawer}
@@ -730,9 +746,47 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const hasSessions = createMemo(() => activeSessions().size > 0)
-
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+
+  const isLaunching = createMemo(() => props.instance.status === "starting")
+
+  createEffect(() => {
+    const agent = draftAgent()
+    providers().get(props.instance.id)
+    if (!agent || draftModelManuallySelected()) return
+
+    let cancelled = false
+    void getDefaultModel(props.instance.id, agent).then((model) => {
+      if (!cancelled) setDraftModel(model)
+    }).catch((error) => log.warn("Failed to resolve draft model", error))
+
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
+  async function handleDraftAgentChange(agent: string) {
+    setDraftAgent(agent)
+    setDraftModelManuallySelected(false)
+    const model = await getDefaultModel(props.instance.id, agent)
+    setDraftModel(model)
+  }
+
+  async function handleDraftModelChange(model: { providerId: string; modelId: string }) {
+    setDraftModel(model)
+    setDraftModelManuallySelected(true)
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    const agent = draftAgent()
+    const model = draftModel()
+    if (agent && model.providerId && model.modelId) {
+      await setAgentModelPreference(props.instance.id, agent, model)
+    }
+    const session = await createSession(props.instance.id, agent || undefined)
+    setActiveParentSession(props.instance.id, session.id)
+    await sendMessage(props.instance.id, session.id, prompt, attachments)
+  }
 
   const sessionLayout = (
     <div
@@ -977,11 +1031,27 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
-                  <div class="flex items-center justify-center h-full">
-                    <div class="text-center text-gray-500 dark:text-gray-400">
-                      <p class="mb-2">{t("instanceShell.empty.title")}</p>
-                      <p class="text-sm">{t("instanceShell.empty.description")}</p>
-                    </div>
+                  <div class="session-view">
+                    <MessageSection
+                      instanceId={props.instance.id}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      loading={false}
+                      emptyStateVariant="no-session"
+                      isActive={props.isActiveInstance}
+                      showSidebarToggle={showEmbeddedSidebarToggle()}
+                      onSidebarToggle={() => setLeftOpen(true)}
+                      forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                    />
+
+                    <PromptInput
+                      instanceId={props.instance.id}
+                      instanceFolder={props.instance.folder}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      isActive={props.isActiveInstance}
+                      compactLayout={compactPromptLayout()}
+                      onSend={handleFirstPromptSend}
+                      escapeInDebounce={props.escapeInDebounce}
+                    />
                   </div>
                 }
               >
@@ -1035,7 +1105,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         class="instance-shell2 flex flex-col flex-1 min-h-0"
         data-instance-id={props.instance.id}
       >
-        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+        <Show when={!isLaunching()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>
       </div>
