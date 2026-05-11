@@ -50,7 +50,7 @@ import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showPromptDialog } from "../../stores/alerts"
 import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
-import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession } from "../../stores/sessions"
+import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -784,6 +784,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       await setAgentModelPreference(props.instance.id, agent, model)
     }
     const session = await createSession(props.instance.id, agent || undefined)
+    if (model.providerId && model.modelId) {
+      await updateSessionModel(props.instance.id, session.id, model)
+    }
     setActiveParentSession(props.instance.id, session.id)
     await sendMessage(props.instance.id, session.id, prompt, attachments)
   }
