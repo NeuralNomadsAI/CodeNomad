@@ -1,6 +1,6 @@
-import { createCodeNomadRequester, type CodeNomadConfig, type PluginEvent } from "./request"
+import { createCodeNomadRequester, type CodeNomadConfig, type PluginEvent } from "./request.js"
 
-export { getCodeNomadConfig, type CodeNomadConfig, type PluginEvent } from "./request"
+export { getCodeNomadConfig, type CodeNomadConfig, type PluginEvent } from "./request.js"
 
 export function createCodeNomadClient(config: CodeNomadConfig) {
   const requester = createCodeNomadRequester(config)

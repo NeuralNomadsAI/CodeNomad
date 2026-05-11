@@ -1,6 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
-import { createCodeNomadClient, getCodeNomadConfig } from "./lib/client"
-import { createBackgroundProcessTools } from "./lib/background-process"
+import { createCodeNomadClient, getCodeNomadConfig } from "./lib/client.js"
+import { createBackgroundProcessTools } from "./lib/background-process.js"
 
 let voiceModeEnabled = false
 

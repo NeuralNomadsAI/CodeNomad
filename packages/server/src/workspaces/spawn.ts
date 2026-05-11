@@ -6,7 +6,7 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WSL_PATH_ENV_KEYS = new Set(["OPENCODE_CONFIG_DIR", "NODE_EXTRA_CA_CERTS"])
+const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS"])
 
 export interface SpawnSpec {
   command: string
