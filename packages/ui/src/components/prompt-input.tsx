@@ -67,6 +67,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
+  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
 
@@ -410,6 +411,14 @@ export default function PromptInput(props: PromptInputProps) {
 
   async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
     if (props.disabled) return
+    if (typeof entry?.size === "number" && entry.size > MAX_READABLE_PICKED_FILE_BYTES) {
+      showAlertDialog(t("promptInput.attachFiles.skipped.one"), {
+        title: t("promptInput.attachFiles.skipped.title"),
+        variant: "warning",
+      })
+      textareaRef?.focus()
+      return
+    }
     try {
       const filePath = entry?.path ?? path
       const displayPath = entry?.absolutePath ?? path
