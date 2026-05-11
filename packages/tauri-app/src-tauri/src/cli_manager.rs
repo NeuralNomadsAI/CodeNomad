@@ -1,4 +1,5 @@
 use crate::managed_node::resolve_bundled_node_binary;
+use crate::desktop_event_transport::DesktopEventStreamConfig;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -185,12 +186,13 @@ fn kill_process_tree_windows(pid: u32, force: bool) -> bool {
 }
 fn navigate_main(app: &AppHandle, url: &str) {
     if let Some(win) = app.webview_windows().get("main") {
-        let mut display = url.to_string();
+        let final_url = augment_launch_url(url);
+        let mut display = final_url.clone();
         if let Some(hash_index) = display.find('#') {
             display.replace_range(hash_index + 1.., "[REDACTED]");
         }
         log_line(&format!("navigating main to {display}"));
-        if let Ok(parsed) = Url::parse(url) {
+        if let Ok(parsed) = Url::parse(&final_url) {
             let _ = win.navigate(parsed);
         } else {
             log_line("failed to parse URL for navigation");
@@ -198,6 +200,23 @@ fn navigate_main(app: &AppHandle, url: &str) {
     } else {
         log_line("main window not found for navigation");
     }
+}
+
+fn augment_launch_url(base_url: &str) -> String {
+    let launch_query = std::env::var("CODENOMAD_UI_LAUNCH_QUERY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let Some(launch_query) = launch_query else {
+        return base_url.to_string();
+    };
+
+    if base_url.contains('?') {
+        return format!("{}&{}", base_url, launch_query.trim_start_matches('?'));
+    }
+
+    format!("{}?{}", base_url, launch_query.trim_start_matches('?'))
 }
 
 fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
@@ -456,6 +475,8 @@ pub struct CliProcessManager {
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     ready: Arc<AtomicBool>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
+    session_cookie: Arc<Mutex<Option<String>>>,
+    auth_cookie_name: Arc<Mutex<Option<String>>>,
 }
 
 impl CliProcessManager {
@@ -467,6 +488,8 @@ impl CliProcessManager {
             job: Arc::new(Mutex::new(None)),
             ready: Arc::new(AtomicBool::new(false)),
             bootstrap_token: Arc::new(Mutex::new(None)),
+            session_cookie: Arc::new(Mutex::new(None)),
+            auth_cookie_name: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -475,6 +498,8 @@ impl CliProcessManager {
         self.stop()?;
         self.ready.store(false, Ordering::SeqCst);
         *self.bootstrap_token.lock() = None;
+        *self.session_cookie.lock() = None;
+        *self.auth_cookie_name.lock() = None;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -491,6 +516,8 @@ impl CliProcessManager {
         let job_arc = self.job.clone();
         let ready_flag = self.ready.clone();
         let token_arc = self.bootstrap_token.clone();
+        let session_cookie_arc = self.session_cookie.clone();
+        let auth_cookie_name_arc = self.auth_cookie_name.clone();
         thread::spawn(move || {
             if let Err(err) = Self::spawn_cli(
                 app.clone(),
@@ -500,6 +527,8 @@ impl CliProcessManager {
                 job_arc,
                 ready_flag,
                 token_arc,
+                session_cookie_arc,
+                auth_cookie_name_arc,
                 dev,
             ) {
                 log_line(&format!("cli spawn failed: {err}"));
@@ -594,12 +623,32 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
+        *self.session_cookie.lock() = None;
 
         Ok(())
     }
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
+    }
+
+    pub fn desktop_event_stream_config(&self) -> Option<DesktopEventStreamConfig> {
+        let base_url = self.status.lock().url.clone()?;
+        let events_url = format!("{}/api/events", base_url.trim_end_matches('/'));
+        let client_id = format!("tauri-{}", std::process::id());
+        let cookie_name = self
+            .auth_cookie_name
+            .lock()
+            .clone()
+            .unwrap_or_else(|| SESSION_COOKIE_NAME_PREFIX.to_string());
+
+        Some(DesktopEventStreamConfig {
+            base_url,
+            events_url,
+            client_id,
+            cookie_name,
+            session_cookie: self.session_cookie.lock().clone(),
+        })
     }
 
     fn spawn_cli(
@@ -609,6 +658,8 @@ impl CliProcessManager {
         #[cfg(windows)] job_holder: Arc<Mutex<Option<WindowsJobObject>>>,
         ready: Arc<AtomicBool>,
         bootstrap_token: Arc<Mutex<Option<String>>>,
+        session_cookie: Arc<Mutex<Option<String>>>,
+        auth_cookie_name_holder: Arc<Mutex<Option<String>>>,
         dev: bool,
     ) -> anyhow::Result<()> {
         log_line("resolving CLI entry");
@@ -619,6 +670,7 @@ impl CliProcessManager {
             resolution.runner, resolution.entry, host
         ));
         let auth_cookie_name = Arc::new(generate_auth_cookie_name());
+        *auth_cookie_name_holder.lock() = Some(auth_cookie_name.as_str().to_string());
         let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
@@ -723,6 +775,7 @@ impl CliProcessManager {
         let app_clone = app.clone();
         let ready_clone = ready.clone();
         let token_clone = bootstrap_token.clone();
+        let session_cookie_clone = session_cookie.clone();
         let auth_cookie_name_clone = auth_cookie_name.clone();
 
         thread::spawn(move || {
@@ -742,6 +795,7 @@ impl CliProcessManager {
                 let status = status_clone.clone();
                 let ready = ready_clone.clone();
                 let token = token_clone.clone();
+                let session_cookie = session_cookie_clone.clone();
                 let auth_cookie_name = auth_cookie_name_clone.clone();
                 thread::spawn(move || {
                     Self::process_stream(
@@ -751,6 +805,7 @@ impl CliProcessManager {
                         &status,
                         &ready,
                         &token,
+                        &session_cookie,
                         auth_cookie_name.as_str(),
                     );
                 });
@@ -761,6 +816,7 @@ impl CliProcessManager {
                 let status = status_clone.clone();
                 let ready = ready_clone.clone();
                 let token = token_clone.clone();
+                let session_cookie = session_cookie_clone.clone();
                 let auth_cookie_name = auth_cookie_name_clone.clone();
                 thread::spawn(move || {
                     Self::process_stream(
@@ -770,6 +826,7 @@ impl CliProcessManager {
                         &status,
                         &ready,
                         &token,
+                        &session_cookie,
                         auth_cookie_name.as_str(),
                     );
                 });
@@ -894,6 +951,7 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        session_cookie: &Arc<Mutex<Option<String>>>,
         auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
@@ -946,6 +1004,7 @@ impl CliProcessManager {
                                 status,
                                 ready,
                                 bootstrap_token,
+                                session_cookie,
                                 auth_cookie_name,
                                 url,
                             );
@@ -963,6 +1022,7 @@ impl CliProcessManager {
         status: &Arc<Mutex<CliStatus>>,
         ready: &Arc<AtomicBool>,
         bootstrap_token: &Arc<Mutex<Option<String>>>,
+        session_cookie: &Arc<Mutex<Option<String>>>,
         auth_cookie_name: &str,
         base_url: String,
     ) {
@@ -995,6 +1055,7 @@ impl CliProcessManager {
                             log_line(&format!("failed to set session cookie: {err}"));
                             navigate_main(app, &format!("{base_url}/login"));
                         } else {
+                            *session_cookie.lock() = Some(session_id.clone());
                             navigate_main(app, &base_url);
                         }
                     }

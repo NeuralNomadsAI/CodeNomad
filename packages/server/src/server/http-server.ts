@@ -87,6 +87,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
+  const perfLogger = deps.logger.child({ component: "perf242" })
 
   const sseClients = new Set<() => void>()
   const registerSseClient = (cleanup: () => void) => {
@@ -199,7 +200,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     const rawUrl = request.raw.url ?? request.url
     const pathname = (rawUrl.split("?")[0] ?? "").trim()
 
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout"])
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", "/api/perf-log"])
     const publicPagePaths = new Set(["/login"])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
@@ -266,6 +267,13 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     reply.code(404).send({ message: "UI bundle missing" })
+  })
+
+  app.post("/api/perf-log", async (request, reply) => {
+    console.log("[perf242-route]", JSON.stringify(request.body ?? {}))
+    perfLogger.info(request.body ?? {}, "frontend perf log")
+    reply.code(204)
+    return null
   })
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
