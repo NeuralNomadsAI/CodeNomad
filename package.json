@@ -26,7 +26,6 @@
     "bumpVersion": "node ./scripts/bump-version.js"
   },
   "dependencies": {
-    "@tauri-apps/cli-darwin-arm64": "^2.11.1",
     "7zip-bin": "^5.2.0",
     "google-auth-library": "^10.5.0"
   },

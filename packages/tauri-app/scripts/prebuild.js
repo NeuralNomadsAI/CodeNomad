@@ -20,6 +20,8 @@ const serverInstallCommand =
   "npm install --omit=dev --ignore-scripts --workspaces=false --package-lock=false --install-strategy=shallow --fund=false --audit=false"
 const serverDevInstallCommand =
   "npm install --workspace @neuralnomads/codenomad --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
+const pluginDevInstallCommand =
+  "npm install --workspace @codenomad/codenomad-opencode-plugin --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
@@ -43,6 +45,12 @@ const serverBuildDependencyPaths = [
   path.join(serverRoot, "node_modules", "typescript", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
+]
+
+const pluginRoot = path.resolve(root, "..", "opencode-plugin")
+const pluginBuildDependencyPaths = [
+  path.join(pluginRoot, "node_modules", "typescript", "package.json"),
+  path.join(pluginRoot, "node_modules", "@types", "node", "package.json"),
 ]
 
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
@@ -112,6 +120,19 @@ function ensureServerDevDependencies() {
 
   console.log("[prebuild] ensuring server build dependencies (with dev)...")
   execSync(serverDevInstallCommand, {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+    env: envWithRootBin,
+  })
+}
+
+function ensurePluginDevDependencies() {
+  if (pluginBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
+    return
+  }
+
+  console.log("[prebuild] ensuring OpenCode plugin build dependencies...")
+  execSync(pluginDevInstallCommand, {
     cwd: workspaceRoot,
     stdio: "inherit",
     env: envWithRootBin,
@@ -302,6 +323,7 @@ function copyUiLoadingAssets() {
 
 ;(async () => {
   ensureServerDevDependencies()
+  ensurePluginDevDependencies()
   ensureUiDevDependencies()
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
