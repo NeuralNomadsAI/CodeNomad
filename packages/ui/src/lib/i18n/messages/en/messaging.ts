@@ -89,6 +89,7 @@ export const messagingMessages = {
   "messageItem.actions.copy": "Copy",
   "messageItem.actions.copyTitle": "Copy message",
   "messageItem.actions.copied": "Copied!",
+  "messageItem.actions.more": "More actions",
   "messageItem.actions.speak": "Speak message",
   "messageItem.actions.generatingSpeech": "Generating speech",
   "messageItem.actions.stopSpeech": "Stop playback",

@@ -89,6 +89,7 @@ export const messagingMessages = {
   "messageItem.actions.copy": "העתק",
   "messageItem.actions.copyTitle": "העתק הודעה",
   "messageItem.actions.copied": "הועתק!",
+  "messageItem.actions.more": "פעולות נוספות",
   "messageItem.actions.speak": "השמע הודעה",
   "messageItem.actions.generatingSpeech": "יוצר אודיו",
   "messageItem.actions.stopSpeech": "עצור ניגון",
