@@ -652,6 +652,16 @@ export default function PromptInput(props: PromptInputProps) {
                 autoCapitalize="off"
                 autocomplete="off"
               />
+              <button
+                type="button"
+                class="prompt-clear-button prompt-clear-button-inline"
+                onClick={handleClearPrompt}
+                disabled={!canClearPrompt()}
+                aria-label={t("promptInput.clear.ariaLabel")}
+                title={t("promptInput.clear.title")}
+              >
+                <X class="h-4 w-4" aria-hidden="true" />
+              </button>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
@@ -781,16 +791,6 @@ export default function PromptInput(props: PromptInputProps) {
                 title={t("promptInput.attachFiles.title")}
               >
                 <Paperclip class="h-4 w-4" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="prompt-clear-button"
-                onClick={handleClearPrompt}
-                disabled={!canClearPrompt()}
-                aria-label={t("promptInput.clear.ariaLabel")}
-                title={t("promptInput.clear.title")}
-              >
-                <X class="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
             <div class="prompt-nav-column prompt-nav-column-right">
