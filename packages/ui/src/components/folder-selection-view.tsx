@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch, ArrowLeft } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
@@ -32,7 +32,6 @@ interface FolderSelectionViewProps {
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
-  activeProjectLabel?: string | null
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
@@ -87,11 +86,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
   const canUseRemoteServerWindows = () => canOpenRemoteWindows()
-  const activeProjectName = createMemo(() => {
-    const label = props.activeProjectLabel?.trim()
-    if (!label) return null
-    return splitFolderPath(label).baseName
-  })
 
   function getActiveListLength() {
     return activeTab() === "local" ? folders().length : serverList().length
@@ -960,23 +954,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                     <Kbd shortcut="cmd+n" class="ml-2 kbd-hint" />
                   </button>
-
-                  <Show when={props.onClose}>
-                    <button
-                      type="button"
-                      onClick={() => props.onClose?.()}
-                      class="button-primary w-full flex items-center justify-center text-sm"
-                    >
-                      <div class="flex items-center gap-2">
-                        <ArrowLeft class="w-4 h-4" />
-                        <span>{t("folderSelection.actions.returnToProject")}</span>
-                      </div>
-                    </button>
-                  </Show>
-
-                  <Show when={activeProjectName()}>
-                    {(name) => <p class="text-xs text-muted text-center">{t("folderSelection.actions.returnToProjectSubtitle", { name: name() })}</p>}
-                  </Show>
 
                   <button
                     type="button"

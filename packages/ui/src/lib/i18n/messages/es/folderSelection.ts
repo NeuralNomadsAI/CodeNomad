@@ -43,8 +43,6 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "Abrir carpeta o conectar servidor",
   "folderSelection.actions.subtitle": "Abre una carpeta local o conéctate a un servidor de CodeNomad",
   "folderSelection.actions.connectButton": "Conectar servidor CodeNomad",
-  "folderSelection.actions.returnToProject": "Volver al proyecto activo",
-  "folderSelection.actions.returnToProjectSubtitle": "Volver a {name}",
 
   "folderSelection.advancedSettings": "Configuración avanzada",
   "folderSelection.opencode": "OpenCode",

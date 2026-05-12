@@ -43,8 +43,6 @@ export const folderSelectionMessages = {
   "folderSelection.actions.title": "フォルダを開くかサーバーに接続",
   "folderSelection.actions.subtitle": "ローカルフォルダを開くか CodeNomad サーバーに接続します",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
-  "folderSelection.actions.returnToProject": "アクティブなプロジェクトに戻る",
-  "folderSelection.actions.returnToProjectSubtitle": "{name} に戻る",
 
   "folderSelection.advancedSettings": "詳細設定",
   "folderSelection.opencode": "OpenCode",

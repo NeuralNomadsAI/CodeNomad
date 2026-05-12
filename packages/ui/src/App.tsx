@@ -644,7 +644,6 @@ const App: Component = () => {
                 onSelectFolder={handleSelectFolder}
                 isLoading={isSelectingFolder()}
                 onOpenSidecar={handleOpenSidecarPicker}
-                activeProjectLabel={activeInstance()?.folder ?? null}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
