@@ -630,7 +630,7 @@ export default function PromptInput(props: PromptInputProps) {
           </Suspense>
         </Show>
 
-        <div class="flex flex-1 flex-col">
+        <div class="prompt-input-main flex flex-1 flex-col">
           <div class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}>
 
             <div class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}>
@@ -662,6 +662,12 @@ export default function PromptInput(props: PromptInputProps) {
               >
                 <X class="h-4 w-4" aria-hidden="true" />
               </button>
+              <div class="prompt-expand-button-inline">
+                <ExpandButton
+                  expandState={expandState}
+                  onToggleExpand={handleExpandToggle}
+                />
+              </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
@@ -794,10 +800,6 @@ export default function PromptInput(props: PromptInputProps) {
               </button>
             </div>
             <div class="prompt-nav-column prompt-nav-column-right">
-              <ExpandButton
-                expandState={expandState}
-                onToggleExpand={handleExpandToggle}
-              />
               <Show when={hasHistory()}>
                 <button
                   type="button"

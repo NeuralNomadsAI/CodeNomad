@@ -70,6 +70,13 @@ import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-acce
 const log = getLogger("session")
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
+type SessionCenterWidthStep = "narrow" | "medium" | "wide"
+
+function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
+  if (width < 768) return "narrow"
+  if (width < 1280) return "medium"
+  return "wide"
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -105,6 +112,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [rightDrawerContentEl, setRightDrawerContentEl] = createSignal<HTMLElement | null>(null)
   const [leftToggleButtonEl, setLeftToggleButtonEl] = createSignal<HTMLElement | null>(null)
   const [rightToggleButtonEl, setRightToggleButtonEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
 
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
@@ -251,6 +260,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (typeof window === "undefined") return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     onCleanup(() => window.clearInterval(timer))
+  })
+
+  createEffect(() => {
+    const element = sessionCenterEl()
+    if (!element || typeof ResizeObserver === "undefined") return
+
+    const updateWidthStep = (width: number) => {
+      setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+    }
+
+    updateWidthStep(element.getBoundingClientRect().width)
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? element.getBoundingClientRect().width
+      updateWidthStep(width)
+    })
+    observer.observe(element)
+
+    onCleanup(() => observer.disconnect())
   })
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
@@ -801,7 +829,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     >
       {renderLeftPanel()}
 
-      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
+      <Box
+        class="session-center-column"
+        ref={setSessionCenterEl}
+        data-session-center-width={sessionCenterWidthStep()}
+        sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
+      >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
             <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
