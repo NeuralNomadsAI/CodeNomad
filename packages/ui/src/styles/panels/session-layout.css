@@ -6,6 +6,21 @@
   overflow: hidden;
 }
 
+.session-center-column {
+  container-name: session-center;
+  container-type: inline-size;
+  --session-center-width-step: wide;
+}
+
+/* Canonical session-center width steps: narrow < 768px, medium < 1280px, wide >= 1280px. */
+.session-center-column[data-session-center-width="narrow"] {
+  --session-center-width-step: narrow;
+}
+
+.session-center-column[data-session-center-width="medium"] {
+  --session-center-width-step: medium;
+}
+
 .session-list-container {
   @apply flex flex-col flex-1 min-h-0 relative;
   background-color: var(--surface-secondary);
