@@ -10,7 +10,11 @@ import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
-import { getOpencodeConfigDir } from "../opencode-config.js"
+import {
+  buildOpencodeConfigContent,
+  getCodeNomadPluginUrl,
+  resolveExistingOpencodeConfigContent,
+} from "../opencode-plugin.js"
 import {
   OPENCODE_SERVER_BASE_URL_ENV,
   buildOpencodeBasicAuthHeader,
@@ -37,12 +41,12 @@ interface WorkspaceRecord extends WorkspaceDescriptor {}
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
   private readonly runtime: WorkspaceRuntime
-  private readonly opencodeConfigDir: string
+  private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
-    this.opencodeConfigDir = getOpencodeConfigDir()
+    this.codeNomadPluginUrl = getCodeNomadPluginUrl()
   }
 
   list(): WorkspaceDescriptor[] {
@@ -125,6 +129,10 @@ export class WorkspaceManager {
     const serverConfig = this.options.settings.getOwner("config", "server")
     const envVars = (serverConfig as any)?.environmentVariables
     const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+    const opencodeConfigContent = buildOpencodeConfigContent(
+      resolveExistingOpencodeConfigContent(userEnvironment),
+      this.codeNomadPluginUrl,
+    )
     const serverBaseUrl = this.options.getServerBaseUrl()
     const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
 
@@ -140,7 +148,7 @@ export class WorkspaceManager {
 
     const environment = {
       ...userEnvironment,
-      OPENCODE_CONFIG_DIR: this.opencodeConfigDir,
+      OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
       CODENOMAD_INSTANCE_ID: id,
       CODENOMAD_BASE_URL: serverBaseUrl,
       ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),

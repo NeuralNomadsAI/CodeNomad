@@ -1,9 +1,0 @@
-{
-  "name": "@codenomad/opencode-config",
-  "version": "0.15.0",
-  "private": true,
-  "license": "MIT",
-  "dependencies": {
-    "@opencode-ai/plugin": "1.3.7"
-  }
-}
