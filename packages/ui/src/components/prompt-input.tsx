@@ -687,7 +687,7 @@ export default function PromptInput(props: PromptInputProps) {
                               <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
                             </>
                           </Show>
-                          {" "}• <Kbd>@</Kbd> {t("promptInput.overlay.filesAgents")} • <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
+                          {" "}• <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
                         </span>
                         <Show when={attachments().length > 0}>
                           <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
