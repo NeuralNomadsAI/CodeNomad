@@ -1,5 +1,5 @@
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
-import { For, Show, type JSXElement } from "solid-js"
+import { For, Show, createSignal, onCleanup, type JSXElement } from "solid-js"
 import { MoreHorizontal } from "lucide-solid"
 
 export interface ActionOverflowMenuItem {
@@ -21,12 +21,21 @@ interface ActionOverflowMenuProps {
 }
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
+  const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
   const enabledItems = () => props.items.filter((item) => !item.disabled)
   const hasItems = () => props.items.length >= (props.minItems ?? 1)
+  const clearHoveredItem = () => {
+    const item = hoveredItem()
+    if (!item) return
+    item.onMouseLeave?.()
+    setHoveredItem(null)
+  }
+
+  onCleanup(clearHoveredItem)
 
   return (
     <Show when={hasItems()}>
-      <DropdownMenu placement="bottom-end" gutter={4}>
+      <DropdownMenu placement="bottom-end" gutter={4} onOpenChange={(open) => { if (!open) clearHoveredItem() }}>
         <DropdownMenu.Trigger
           class={`action-overflow-trigger ${props.triggerClass ?? ""}`.trim()}
           aria-label={props.label}
@@ -44,10 +53,18 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   class="action-overflow-item"
                   data-destructive={item.destructive ? "true" : undefined}
                   disabled={item.disabled}
-                  onPointerEnter={() => item.onMouseEnter?.()}
-                  onPointerLeave={() => item.onMouseLeave?.()}
-                  onSelect={() => {
+                  onPointerEnter={() => {
+                    const previous = hoveredItem()
+                    if (previous !== item) previous?.onMouseLeave?.()
+                    setHoveredItem(item)
+                    item.onMouseEnter?.()
+                  }}
+                  onPointerLeave={() => {
+                    if (hoveredItem() === item) setHoveredItem(null)
                     item.onMouseLeave?.()
+                  }}
+                  onSelect={() => {
+                    clearHoveredItem()
                     void item.onSelect()
                   }}
                 >

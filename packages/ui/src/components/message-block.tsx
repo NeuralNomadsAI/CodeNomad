@@ -514,9 +514,7 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
-  const handleDeleteUpTo = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const deleteUpTo = async () => {
     if (!props.showDeleteMessage) return
     if (!props.onDeleteMessagesUpTo) return
     if (deletingUpTo()) return
@@ -527,6 +525,12 @@ function ToolCallItem(props: ToolCallItemProps) {
     } finally {
       setDeletingUpTo(false)
     }
+  }
+
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    await deleteUpTo()
   }
 
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
@@ -552,7 +556,7 @@ function ToolCallItem(props: ToolCallItemProps) {
           destructive: true,
           onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
           onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: () => props.onDeleteMessagesUpTo ? void props.onDeleteMessagesUpTo(props.messageId) : undefined,
+          onSelect: deleteUpTo,
         },
         {
           key: "delete-message",
@@ -1650,6 +1654,19 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
+  const deleteUpTo = async () => {
+    if (!props.showDeleteMessage) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
+    }
+  }
+
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
@@ -1672,7 +1689,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           destructive: true,
           onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
           onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: () => props.onDeleteMessagesUpTo ? void props.onDeleteMessagesUpTo(props.messageId) : undefined,
+          onSelect: deleteUpTo,
         },
         {
           key: "delete-message",
@@ -1726,16 +1743,7 @@ function ReasoningCard(props: ReasoningCardProps) {
   const handleDeleteUpTo = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (!props.showDeleteMessage) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
+    await deleteUpTo()
   }
 
   return (
