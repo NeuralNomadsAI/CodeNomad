@@ -54,12 +54,14 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   data-destructive={item.destructive ? "true" : undefined}
                   disabled={item.disabled}
                   onPointerEnter={() => {
+                    if (item.disabled) return
                     const previous = hoveredItem()
                     if (previous !== item) previous?.onMouseLeave?.()
                     setHoveredItem(item)
                     item.onMouseEnter?.()
                   }}
                   onPointerLeave={() => {
+                    if (item.disabled) return
                     if (hoveredItem() === item) setHoveredItem(null)
                     item.onMouseLeave?.()
                   }}
