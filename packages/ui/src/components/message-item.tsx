@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, ListStart, Split, Trash, Undo } from "lucide-solid"
+import { Copy, ListStart, Split, Trash, Undo, Volume2 } from "lucide-solid"
 import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
@@ -13,6 +13,7 @@ import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 
 function DeleteUpToIcon() {
   return (
@@ -388,6 +389,71 @@ export default function MessageItem(props: MessageItemProps) {
     return segments.join(" • ")
   }
 
+  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+    const items: ActionOverflowMenuItem[] = [
+      {
+        key: "copy",
+        label: copyLabel(),
+        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: handleCopy,
+      },
+    ]
+
+    if (canSpeakMessage()) {
+      items.push({
+        key: "speak",
+        label: speech.buttonTitle(),
+        icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: () => void speech.toggle(),
+      })
+    }
+
+    if (isUser() && props.onFork) {
+      items.push({
+        key: "fork",
+        label: t("messageItem.actions.fork"),
+        icon: <Split class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: () => props.onFork?.(props.record.id),
+      })
+    }
+
+    if (isUser() && props.onRevert) {
+      items.push({
+        key: "revert",
+        label: t("messageItem.actions.revertTitle"),
+        icon: <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: handleRevert,
+      })
+    }
+
+    if (props.showDeleteMessage) {
+      items.push(
+        {
+          key: "delete-up-to",
+          label: t("messageItem.actions.deleteMessagesUpTo"),
+          icon: <DeleteUpToIcon />,
+          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: () => void handleDeleteUpTo(),
+        },
+        {
+          key: "delete-message",
+          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
+          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
+          disabled: deletingMessage(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: handleDeleteMessage,
+        },
+      )
+    }
+
+    return items
+  }
+
 
   return (
     <div
@@ -440,7 +506,11 @@ export default function MessageItem(props: MessageItemProps) {
             </Show>
           </div>
 
-          <div class="message-item-actions" ref={(el) => (actionsEl = el)}>
+          <div
+            class="message-item-actions"
+            data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}
+            ref={(el) => (actionsEl = el)}
+          >
             <Show when={isUser()}>
               <div class="message-action-group">
                 <button
@@ -510,6 +580,12 @@ export default function MessageItem(props: MessageItemProps) {
                   </button>
                 </Show>
               </div>
+              <ActionOverflowMenu
+                items={actionMenuItems()}
+                label={t("messageItem.actions.more")}
+                triggerClass="message-action-button"
+                minItems={2}
+              />
             </Show>
             <Show when={!isUser()}>
               <div class="message-action-group">
@@ -558,6 +634,12 @@ export default function MessageItem(props: MessageItemProps) {
                   </button>
                 </Show>
               </div>
+              <ActionOverflowMenu
+                items={actionMenuItems()}
+                label={t("messageItem.actions.more")}
+                triggerClass="message-action-button"
+                minItems={2}
+              />
             </Show>
             <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
           </div>

@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageItem.actions.copy": "Копировать",
   "messageItem.actions.copyTitle": "Копировать сообщение",
   "messageItem.actions.copied": "Скопировано!",
+  "messageItem.actions.more": "Больше действий",
   "messageItem.actions.speak": "Озвучить сообщение",
   "messageItem.actions.generatingSpeech": "Генерация аудио",
   "messageItem.actions.stopSpeech": "Остановить воспроизведение",

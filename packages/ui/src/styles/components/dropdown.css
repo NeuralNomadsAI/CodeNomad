@@ -70,3 +70,62 @@
 .dropdown-icon-accent {
   color: var(--accent-primary);
 }
+
+.action-overflow-trigger {
+  display: none;
+}
+
+.action-overflow-content {
+  min-width: 12rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0.5rem;
+  background-color: var(--surface-base);
+  box-shadow: var(--popover-shadow);
+  color: var(--text-primary);
+  z-index: 1000;
+}
+
+.action-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.action-overflow-item:hover,
+.action-overflow-item[data-highlighted] {
+  background-color: var(--surface-hover);
+}
+
+.action-overflow-item[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-overflow-item[data-destructive="true"] {
+  color: var(--status-error);
+}
+
+.action-overflow-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.action-overflow-item-label {
+  min-width: 0;
+  flex: 1 1 auto;
+}

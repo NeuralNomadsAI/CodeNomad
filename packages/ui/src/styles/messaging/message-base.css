@@ -113,6 +113,18 @@
   transform: scale(0.95);
 }
 
+.message-item-actions > .action-overflow-trigger {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] .message-action-group {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger {
+  display: inline-flex;
+}
+
 .message-timestamp {
   @apply text-[11px] text-[var(--text-muted)];
 }
@@ -435,6 +447,18 @@
   align-items: center;
   gap: 0;
   padding: 0.25rem 0.6rem 0.25rem 0;
+}
+
+.message-reasoning-actions > .action-overflow-trigger {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .message-action-button:not(.message-reasoning-primary-action):not(.action-overflow-trigger) {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger {
+  display: inline-flex;
 }
 
 .message-reasoning-toggle:hover {
