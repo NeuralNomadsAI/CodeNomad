@@ -79,7 +79,7 @@
   min-width: 12rem;
   padding: 0.25rem;
   border: 1px solid var(--border-base);
-  border-radius: 0.5rem;
+  border-radius: 0;
   background-color: var(--surface-base);
   box-shadow: var(--popover-shadow);
   color: var(--text-primary);
@@ -93,7 +93,7 @@
   width: 100%;
   min-height: 2rem;
   padding: 0.4rem 0.5rem;
-  border-radius: 0.375rem;
+  border-radius: 0;
   font-size: 0.8125rem;
   line-height: 1.2;
   color: var(--text-primary);
