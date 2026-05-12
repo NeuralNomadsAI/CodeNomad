@@ -137,6 +137,7 @@ async function build(platform) {
       console.log(`\n📦 Preparing resources for ${job.nodeTarget}...\n`)
       await run(process.execPath, [join(appDir, "scripts", "prepare-resources.js")], {
         cwd: workspaceRoot,
+        shell: false,
         env: { NODE_PATH: workspaceNodeModulesPath, CODENOMAD_NODE_TARGET: job.nodeTarget },
       })
 
