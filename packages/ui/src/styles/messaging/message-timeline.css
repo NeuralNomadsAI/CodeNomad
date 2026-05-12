@@ -26,14 +26,12 @@
   pointer-events: none;
 }
 
-@media (max-width: 720px) {
-  .message-layout--with-timeline {
-    grid-template-columns: minmax(0, 1fr) 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
 
-  .message-layout--with-timeline::after {
-    inset-inline-end: 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline::after {
+  inset-inline-end: 40px;
 }
 
 .message-stream-shell {
@@ -59,10 +57,8 @@
  }
 
 
-@media (max-width: 720px) {
-  .message-timeline-sidebar {
-    width: 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-timeline-sidebar {
+  width: 40px;
 }
 
 .message-timeline {
