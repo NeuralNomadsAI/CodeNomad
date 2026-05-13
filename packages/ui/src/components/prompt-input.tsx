@@ -120,6 +120,10 @@ export default function PromptInput(props: PromptInputProps) {
    * Used to apply visual feedback during resize operations.
    */
   const [isResizing, setIsResizing] = createSignal(false);
+  let activeResizeHandle: HTMLElement | undefined;
+  let activeResizePointerId: number | null = null;
+  let activePointerMoveHandler: ((event: PointerEvent) => void) | undefined;
+  let activePointerUpHandler: ((event: PointerEvent) => void) | undefined;
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -350,7 +354,11 @@ export default function PromptInput(props: PromptInputProps) {
    * Falls back to DEFAULT_EXPANDED_HEIGHT if elements are not found.
    */
   function computeMaxHeight(): number {
-    if (!containerRef) return DEFAULT_EXPANDED_HEIGHT;
+    if (typeof window === "undefined") return DEFAULT_EXPANDED_HEIGHT;
+
+    if (!containerRef) {
+      return Math.max(DEFAULT_INPUT_HEIGHT, window.innerHeight - 100);
+    }
 
     const containerRect = containerRef.getBoundingClientRect();
     const containerBottom = containerRect.bottom;
@@ -372,7 +380,36 @@ export default function PromptInput(props: PromptInputProps) {
     // Fallback: use viewport-based calculation
     const viewportHeight = window.innerHeight;
     const maxFromViewport = viewportHeight - 100;
-    return Math.max(DEFAULT_EXPANDED_HEIGHT, maxFromViewport);
+    return Math.max(DEFAULT_INPUT_HEIGHT, maxFromViewport);
+  }
+
+  /**
+   * Removes any active global resize listeners and releases pointer capture.
+   * This is used both when a drag ends normally and when the component unmounts mid-drag.
+   */
+  function cleanupResizeTracking(): void {
+    if (activePointerMoveHandler) {
+      document.removeEventListener("pointermove", activePointerMoveHandler);
+      activePointerMoveHandler = undefined;
+    }
+
+    if (activePointerUpHandler) {
+      document.removeEventListener("pointerup", activePointerUpHandler);
+      document.removeEventListener("pointercancel", activePointerUpHandler);
+      activePointerUpHandler = undefined;
+    }
+
+    if (activeResizeHandle && activeResizePointerId !== null) {
+      try {
+        activeResizeHandle.releasePointerCapture(activeResizePointerId);
+      } catch {
+        // Pointer capture may already be released.
+      }
+    }
+
+    activeResizeHandle = undefined;
+    activeResizePointerId = null;
+    setIsResizing(false);
   }
 
   /**
@@ -381,10 +418,13 @@ export default function PromptInput(props: PromptInputProps) {
    */
   function handleResizeStart(event: PointerEvent) {
     event.preventDefault();
+    cleanupResizeTracking();
     setIsResizing(true);
 
     // Capture the pointer to ensure we receive events even if cursor leaves the handle
     const target = event.currentTarget as HTMLElement;
+    activeResizeHandle = target;
+    activeResizePointerId = event.pointerId;
     try {
       target.setPointerCapture(event.pointerId);
     } catch {
@@ -417,23 +457,21 @@ export default function PromptInput(props: PromptInputProps) {
      */
     function handlePointerUp(upEvent: PointerEvent) {
       upEvent.preventDefault();
-      setIsResizing(false);
-      try {
-        target.releasePointerCapture(upEvent.pointerId);
-      } catch {
-        // Pointer capture not supported, continue without it
-      }
-      document.removeEventListener("pointermove", handlePointerMove);
-      document.removeEventListener("pointerup", handlePointerUp);
-      document.removeEventListener("pointercancel", handlePointerUp);
+      cleanupResizeTracking();
       // Restore focus to textarea after resize
       textareaRef?.focus();
     }
 
+    activePointerMoveHandler = handlePointerMove;
+    activePointerUpHandler = handlePointerUp;
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", handlePointerUp);
   }
+
+  onCleanup(() => {
+    cleanupResizeTracking();
+  });
 
   async function handleSend() {
     const text = prompt().trim();
