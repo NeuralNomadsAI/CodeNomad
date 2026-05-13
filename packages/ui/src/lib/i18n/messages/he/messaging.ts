@@ -182,4 +182,6 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "הגישה למיקרופון נדחתה על ידי macOS.",
   "promptInput.voiceInput.error.unsupported": "קלט קולי אינו נתמך בדפדפן זה.",
   "promptInput.voiceInput.error.transcribe": "לא ניתן היה לתמלל את האודיו שהוקלט.",
+  "promptInput.resizeHandle.ariaLabel": "שנה גובה",
+  "promptInput.resizeHandle.title": "גרור לשינוי גובה",
 } as const

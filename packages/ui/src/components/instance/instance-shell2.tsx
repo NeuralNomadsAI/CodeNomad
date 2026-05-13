@@ -837,7 +837,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-            <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
+            <Toolbar variant="dense" data-session-toolbar="true" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
               <Show
                 when={!compactHeaderLayout()}
                 fallback={
@@ -1084,7 +1084,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       instanceFolder={props.instance.folder}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
                       isActive={props.isActiveInstance}
-                      compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
                       escapeInDebounce={props.escapeInDebounce}
                     />

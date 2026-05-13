@@ -184,4 +184,6 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS запретила доступ к микрофону.",
   "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",
   "promptInput.voiceInput.error.transcribe": "Не удалось расшифровать записанное аудио.",
+  "promptInput.resizeHandle.ariaLabel": "Изменить высоту",
+  "promptInput.resizeHandle.title": "Перетащите для изменения высоты",
 } as const

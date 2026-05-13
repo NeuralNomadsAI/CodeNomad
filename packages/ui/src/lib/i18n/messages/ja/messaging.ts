@@ -184,4 +184,6 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "macOS によりマイクへのアクセスが拒否されました。",
   "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
   "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
+  "promptInput.resizeHandle.ariaLabel": "入力の高さを変更",
+  "promptInput.resizeHandle.title": "ドラッグして高さを変更",
 } as const
