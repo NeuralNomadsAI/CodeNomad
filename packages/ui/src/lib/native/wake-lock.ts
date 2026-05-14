@@ -9,9 +9,63 @@ let inFlight: Promise<boolean> | null = null
 
 let applied = false
 
-function hasAnyWakeLockSupport(): boolean {
+/**
+ * Detect if we're running on Wayland.
+ * Electron on Wayland has a critical bug where screen lock causes system hang (Issue #441).
+ */
+async function isWaylandSession(): Promise<boolean> {
   if (typeof window === "undefined") return false
+  
+  // Electron exposes platform info through getPlatformInfo
+  const api = (window as any).electronAPI
+  if (api?.getPlatformInfo) {
+    try {
+      const platformInfo = await api.getPlatformInfo()
+      // Check XDG_SESSION_TYPE environment variable
+      if (platformInfo?.sessionType === "wayland") {
+        return true
+      }
+    } catch (error) {
+      log.log("[wake-lock] Failed to get platform info", error)
+    }
+  }
+  
+  // Fallback: check user agent for Wayland hints
+  if (typeof navigator !== "undefined") {
+    const ua = navigator.userAgent.toLowerCase()
+    // Electron on Wayland often includes "wayland" in user agent
+    if (ua.includes("wayland")) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+// Cache Wayland detection result to avoid repeated async calls
+let waylandDetectionCache: Promise<boolean> | null = null
+function getWaylandDetection(): Promise<boolean> {
+  if (waylandDetectionCache === null) {
+    waylandDetectionCache = isWaylandSession()
+  }
+  return waylandDetectionCache
+}
+
+async function hasAnyWakeLockSupport(): Promise<boolean> {
+  if (typeof window === "undefined") return false
+  
+  // CRITICAL: Disable wake-lock on Electron + Wayland due to screen lock crash (Issue #441)
+  // When user locks screen while wake-lock is active, system hangs and requires hard reboot
   if (isElectronHost()) {
+    const isWayland = await getWaylandDetection()
+    if (isWayland) {
+      log.log(
+        "[wake-lock] Disabled on Wayland due to critical screen lock crash (Issue #441). " +
+        "Use X11 session for wake-lock support, or use Tauri build instead."
+      )
+      return false
+    }
+    
     const api = (window as any).electronAPI
     if (api?.setWakeLock) return true
   }
@@ -39,7 +93,8 @@ async function setElectronWakeLock(enabled: boolean): Promise<boolean> {
 
 async function setTauriWakeLock(enabled: boolean): Promise<boolean> {
   try {
-    if (!hasAnyWakeLockSupport()) {
+    const hasSupport = await hasAnyWakeLockSupport()
+    if (!hasSupport) {
       return false
     }
 
@@ -95,8 +150,11 @@ export function setWakeLockDesired(nextDesired: boolean): Promise<boolean> {
       }
 
       // If we tried to enable but there is no support, avoid re-trying forever.
-      if (desired && !hasAnyWakeLockSupport()) {
-        applied = false
+      if (desired) {
+        const hasSupport = await hasAnyWakeLockSupport()
+        if (!hasSupport) {
+          applied = false
+        }
       }
     }
   })()

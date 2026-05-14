@@ -89,6 +89,14 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
     return directories
   })
 
+  ipcMain.handle("platform:getInfo", async (): Promise<{ sessionType?: string; platform: string }> => {
+    // Expose session type for Wayland detection (Issue #441)
+    return {
+      sessionType: process.env.XDG_SESSION_TYPE,
+      platform: process.platform,
+    }
+  })
+
   ipcMain.handle("power:setWakeLock", async (_event, enabled: boolean): Promise<{ enabled: boolean }> => {
     const next = Boolean(enabled)
     if (next) {
