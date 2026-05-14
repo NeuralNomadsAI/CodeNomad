@@ -1,18 +1,21 @@
-# 📱 TODO: Resolver Bug de Móvil
+# 🔴 TODO: Resolver Bug de Session Stuck (Todas las Plataformas)
 
 **Creado:** Mayo 14, 2026  
-**Prioridad:** ALTA  
-**Tiempo estimado:** 2-3 horas total
+**Actualizado:** Mayo 14, 2026 (bug confirmado en desktop también)  
+**Prioridad:** CRÍTICA  
+**Tiempo estimado:** 2-4 horas total  
+**Setup:** PM2 (`pm2 list` para ver estado)
 
 ---
 
 ## ✅ Tu Parte (10 minutos)
 
-**Próxima vez que uses CodeNomad en móvil:**
+**Próxima vez que uses CodeNomad (desktop o móvil):**
 
 ### Paso 1: Preparación
-- [ ] Abre CodeNomad en el móvil
-- [ ] Ten lista la cámara para screenshots
+- [ ] Abre CodeNomad (desktop preferible para DevTools)
+- [ ] Ten lista la cámara/screenshot tool
+- [ ] Abre terminal con: `pm2 logs codenomad --lines 0`
 
 ### Paso 2: Cuando se TRABE
 - [ ] **Screenshot** de la pantalla
@@ -29,10 +32,19 @@
 - [ ] Confirma que continúa
 - [ ] **Screenshot** (opcional)
 
-### Paso 6: Mándame
+### Paso 6: Captura Logs
+```bash
+# Guarda los logs del momento
+pm2 logs codenomad --lines 100 > /tmp/stuck-$(date +%s).log
+tail -100 ~/.config/codenomad/logs/opencode-*.log >> /tmp/stuck-$(date +%s).log
+```
+
+### Paso 7: Mándame
 - [ ] Screenshots (2-4 imágenes)
+- [ ] Archivo de logs: `/tmp/stuck-*.log`
 - [ ] Hora exacta
-- [ ] Browser que usas (Chrome/Firefox/etc)
+- [ ] Browser (Chrome/Firefox/etc)
+- [ ] Desktop o móvil?
 
 ---
 
@@ -51,9 +63,17 @@ Cuando me mandes la info:
 - [ ] Commit el cambio
 
 ### Paso 3: Deploy (15 min)
-- [ ] Rebuild CodeNomad
-- [ ] Restart el servidor
-- [ ] Verificar que corre bien
+```bash
+# Si fix es en fork local
+cd /home/dark/Project/codenomad
+npm run build
+pm2 restart codenomad
+
+# O si fix es upstream
+pm2 restart codenomad  # Auto-update de NPM
+```
+- [ ] Rebuild/restart CodeNomad
+- [ ] Verificar con: `pm2 logs codenomad`
 
 ### Paso 4: Testing (30 min)
 - [ ] Pedirte que testees desde móvil
