@@ -29,6 +29,7 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
+import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -50,7 +51,8 @@ import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showPromptDialog } from "../../stores/alerts"
 import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
-import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -123,6 +125,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [draftAgent, setDraftAgent] = createSignal("")
   const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
   const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
+  const [draftPromptInputApi, setDraftPromptInputApi] = createSignal<PromptInputApi | null>(null)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -805,7 +808,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     setDraftModelManuallySelected(true)
   }
 
-  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+  const draftAttachments = createMemo(() => getAttachments(props.instance.id, NO_SESSION_DRAFT_SESSION_ID))
+
+  function registerDraftPromptInputApi(api: PromptInputApi) {
+    setDraftPromptInputApi(api)
+    return () => {
+      setDraftPromptInputApi((current) => (current === api ? null : current))
+    }
+  }
+
+  async function createAndActivateDraftSession() {
     const agent = draftAgent()
     const model = draftModel()
     if (agent && model.providerId && model.modelId) {
@@ -816,7 +828,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       await updateSessionModel(props.instance.id, session.id, model)
     }
     setActiveParentSession(props.instance.id, session.id)
+    return session
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    const session = await createAndActivateDraftSession()
     await sendMessage(props.instance.id, session.id, prompt, attachments)
+  }
+
+  async function handleFirstPromptCommand(commandName: string, args: string) {
+    const session = await createAndActivateDraftSession()
+    await executeCustomCommand(props.instance.id, session.id, commandName, args)
+  }
+
+  async function handleFirstPromptShell(command: string) {
+    const session = await createAndActivateDraftSession()
+    await runShellCommand(props.instance.id, session.id, command)
   }
 
   const sessionLayout = (
@@ -1079,6 +1106,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
 
+                    <Show when={draftAttachments().length > 0}>
+                      <PromptAttachmentsBar
+                        attachments={draftAttachments()}
+                        onRemoveAttachment={(attachmentId) => {
+                          const api = draftPromptInputApi()
+                          if (api) {
+                            api.removeAttachment(attachmentId)
+                            return
+                          }
+                          removeAttachment(props.instance.id, NO_SESSION_DRAFT_SESSION_ID, attachmentId)
+                        }}
+                        onExpandTextAttachment={(attachmentId) => draftPromptInputApi()?.expandTextAttachment(attachmentId)}
+                      />
+                    </Show>
+
                     <PromptInput
                       instanceId={props.instance.id}
                       instanceFolder={props.instance.folder}
@@ -1086,7 +1128,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       isActive={props.isActiveInstance}
                       compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
+                      onCommand={handleFirstPromptCommand}
+                      onRunShell={handleFirstPromptShell}
                       escapeInDebounce={props.escapeInDebounce}
+                      registerPromptInputApi={registerDraftPromptInputApi}
                     />
                   </div>
                 }
