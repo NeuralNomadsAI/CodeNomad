@@ -1,42 +1,13 @@
-import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, type Component } from "solid-js"
-import { ChevronDown, Info } from "lucide-solid"
+import { Info } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { instances, getInstanceLogs } from "../../stores/instances"
 import type { ServerMeta } from "../../../../server/src/api-types"
-
-type LogScope = "summary" | "summary_logs"
-
-interface LogScopeOption {
-  value: LogScope
-  label: string
-}
 
 interface UserAgentData {
   platform?: string
   getHighEntropyValues?: (hints: string[]) => Promise<Record<string, string>>
-}
-
-const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, "sk-***"],
-  [/gh[pousr]_[A-Za-z0-9]{20,}/g, "***"],
-  [/Bearer\s+[A-Za-z0-9._=-]{20,}/g, "Bearer ***"],
-  [/xox[bprs]-\d+-[A-Za-z0-9]+/g, "xox*-***"],
-  [/[?&](token|key|secret|password|passwd|auth)=[^&\s]+/g, "$1=***"],
-  [/[?&](api_?key|apikey)=[^&\s]+/g, "$1=***"],
-  [/^([A-Z][A-Z0-9_]*_?(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*.+/gim, "$1=***"],
-  [/(\b(?:api_?key|apikey|authToken|accessToken|refreshToken|secret)\b)\s*[:=]\s*["'][^"']{8,}["']/gi, "$1=***"],
-  [/(\b(?:api_?key|apikey|authToken|accessToken|refreshToken|secret)\b)\s*[:=]\s*\S{8,}/gi, "$1=***"],
-]
-
-function redactSecrets(text: string): string {
-  let result = text
-  for (const [pattern, replacement] of SECRET_PATTERNS) {
-    result = result.replace(pattern, replacement)
-  }
-  return result
 }
 
 function getUserAgentData(): UserAgentData | undefined {
@@ -91,13 +62,8 @@ async function resolveArchitecture(): Promise<string | null> {
   }
 }
 
-function formatTimestamp(ts: number): string {
-  return new Date(ts).toISOString()
-}
-
 function buildDiagnosticReport(
   meta: ServerMeta | null,
-  scope: LogScope,
   osDisplay: string,
 ): string {
   const lines: string[] = []
@@ -113,35 +79,6 @@ function buildDiagnosticReport(
   lines.push(`Server URL: ${meta?.localUrl ?? "unknown"}`)
   lines.push(`Workspace root: ${meta?.workspaceRoot ?? "unknown"}`)
   lines.push(`UI source: ${meta?.ui?.source ?? "unknown"}`)
-
-  if (scope === "summary_logs") {
-    lines.push("")
-    lines.push("NOTE: Common secret patterns have been redacted from log entries below.")
-    lines.push("      Review the output before sharing to ensure no sensitive data remains.")
-    lines.push("============================")
-    const instanceEntries = instances()
-    if (instanceEntries.size === 0) {
-      lines.push("")
-      lines.push("--- No active instances ---")
-    }
-
-    for (const [instanceId, instance] of instanceEntries) {
-      const logs = getInstanceLogs(instanceId)
-      const label = instance.metadata?.project?.name ?? instance.folder ?? instanceId
-      lines.push("")
-      lines.push(`--- Workspace: ${label} (last 500 entries) ---`)
-      const recent = logs.slice(-500)
-      if (recent.length === 0) {
-        lines.push("  (no log entries)")
-      } else {
-        for (const entry of recent) {
-          const ts = formatTimestamp(entry.timestamp)
-          lines.push(`  [${ts}] [${entry.level}] ${redactSecrets(entry.message)}`)
-        }
-      }
-    }
-  }
-
   lines.push("")
   return lines.join("\n")
 }
@@ -162,11 +99,6 @@ function downloadTextFile(filename: string, text: string) {
   anchor.href = url
   anchor.download = filename
   document.body.appendChild(anchor)
-  // Note: anchor.click() may display a native download dialog.
-  // If the dialog blocks (user cancel or confirm), removeChild
-  // below won't execute until the dialog closes. The anchor element
-  // temporarily remains in document.body. This is harmless at the
-  // scale of an infrequent settings action.
   anchor.click()
   document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
@@ -191,31 +123,13 @@ function versionNewer(current: string, latest: string): boolean | null {
 export const InfoSettingsSection: Component = () => {
   const { t } = useI18n()
   const [meta, { mutate }] = createResource(() => getServerMeta())
-  const [logScope, setLogScope] = createSignal<LogScope>("summary")
   const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
   const [osArch, setOsArch] = createSignal<string | null>(null)
-  const [logExportConfirmed, setLogExportConfirmed] = createSignal(false)
 
   createEffect(() => {
     resolveArchitecture().then((arch) => {
       if (arch) setOsArch(arch)
     })
-  })
-
-  const scopeOptions = createMemo<LogScopeOption[]>(() => [
-    { value: "summary", label: t("settings.info.diagnostics.scope.summary") },
-    { value: "summary_logs", label: t("settings.info.diagnostics.scope.withLogs") },
-  ])
-
-  const selectedScope = createMemo(() =>
-    scopeOptions().find((opt) => opt.value === logScope()),
-  )
-
-  createEffect(() => {
-    const current = logScope()
-    if (current !== "summary_logs") {
-      setLogExportConfirmed(false)
-    }
   })
 
   const updateInfo = createMemo(() => {
@@ -267,20 +181,15 @@ export const InfoSettingsSection: Component = () => {
     return arch ? `${base} (${arch})` : base
   })
 
-  const canExport = createMemo(() => {
-    if (logScope() === "summary_logs") return logExportConfirmed()
-    return true
-  })
-
   const handleCopy = async () => {
-    const report = buildDiagnosticReport(meta() ?? null, logScope(), osDisplay())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay())
     const ok = await copyToClipboard(report)
     if (ok) setCopyFeedback("success")
     else setCopyFeedback("error")
   }
 
   const handleDownload = () => {
-    const report = buildDiagnosticReport(meta() ?? null, logScope(), osDisplay())
+    const report = buildDiagnosticReport(meta() ?? null, osDisplay())
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
     downloadTextFile(`codenomad-diagnostics-${ts}.txt`, report)
   }
@@ -391,67 +300,11 @@ export const InfoSettingsSection: Component = () => {
           </div>
         </div>
 
-        <div class="settings-info-select-row">
-          <span class="settings-info-select-label">{t("settings.info.diagnostics.scope.label")}</span>
-          <Select<LogScopeOption>
-            value={selectedScope()}
-            onChange={(opt) => {
-              if (opt) setLogScope(opt.value)
-            }}
-            options={scopeOptions()}
-            optionValue="value"
-            optionTextValue="label"
-            itemComponent={(itemProps) => (
-              <Select.Item item={itemProps.item} class="selector-option">
-                <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
-              </Select.Item>
-            )}
-          >
-            <Select.Trigger class="selector-trigger" aria-label={t("settings.info.diagnostics.scope.label")}>
-              <div class="flex-1 min-w-0">
-                <Select.Value<LogScopeOption>>
-                  {(state) => (
-                    <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                      {state.selectedOption()?.label}
-                    </span>
-                  )}
-                </Select.Value>
-              </div>
-              <Select.Icon class="selector-trigger-icon">
-                <ChevronDown class="w-3 h-3" />
-              </Select.Icon>
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content class="selector-popover">
-                <Select.Listbox class="selector-listbox" />
-              </Select.Content>
-            </Select.Portal>
-          </Select>
-        </div>
-
-        {logScope() === "summary_logs" && (
-          <>
-            <div class="settings-card-message" role="alert">
-              {t("settings.info.diagnostics.warning")}
-            </div>
-            <div class="settings-checkbox-toggle">
-              <input
-                type="checkbox"
-                id="log-export-confirm"
-                checked={logExportConfirmed()}
-                onChange={(e) => setLogExportConfirmed(e.currentTarget.checked)}
-              />
-              <label for="log-export-confirm">{t("settings.info.diagnostics.confirm")}</label>
-            </div>
-          </>
-        )}
-
         <div class="settings-info-actions">
           <button
             type="button"
             class="settings-pill-button"
             onClick={handleCopy}
-            disabled={!canExport()}
           >
             {t("settings.info.diagnostics.copy")}
           </button>
@@ -459,7 +312,6 @@ export const InfoSettingsSection: Component = () => {
             type="button"
             class="settings-pill-button"
             onClick={handleDownload}
-            disabled={!canExport()}
           >
             {t("settings.info.diagnostics.download")}
           </button>
