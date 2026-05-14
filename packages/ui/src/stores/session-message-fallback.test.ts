@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { OpencodeApiError } from "../lib/opencode-api.js"
-import { isLegacyMissingAgentValidationError } from "./session-message-fallback.js"
+import { getExportedSessionMessages, isLegacyMissingAgentValidationError } from "./session-message-fallback.js"
 
 describe("isLegacyMissingAgentValidationError", () => {
   it("matches the legacy missing-agent validation error", () => {
@@ -31,5 +31,9 @@ describe("isLegacyMissingAgentValidationError", () => {
     })
 
     assert.equal(isLegacyMissingAgentValidationError(error), false)
+  })
+
+  it("throws when the export response does not contain a messages array", () => {
+    assert.throws(() => getExportedSessionMessages({ info: {}, messages: null as any }), /messages array/)
   })
 })

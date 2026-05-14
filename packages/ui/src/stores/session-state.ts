@@ -694,7 +694,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   try {
     const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
     const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
-    messages = await fetchSessionMessages(instanceId, session.id, client)
+    messages = await fetchSessionMessages(instanceId, session.id, worktreeSlug, client)
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession

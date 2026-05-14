@@ -104,8 +104,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.get<{
-    Params: { id: string; sessionId: string }
-  }>("/api/workspaces/:id/sessions/:sessionId/export", async (request, reply) => {
+    Params: { id: string; slug: string; sessionId: string }
+  }>("/api/workspaces/:id/worktrees/:slug/sessions/:sessionId/export", async (request, reply) => {
     const controller = new AbortController()
     const handleAbort = () => controller.abort()
     request.raw.on("close", handleAbort)
@@ -132,8 +132,28 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     reply.raw.on("finish", handleReplyDone)
 
     try {
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) {
+        await cleanup()
+        reply.code(404)
+        return { error: "Workspace not found" }
+      }
+
+      const directory = await resolveWorktreeDirectory({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        worktreeSlug: request.params.slug,
+        logger: request.log,
+      })
+      if (!directory) {
+        await cleanup()
+        reply.code(404)
+        return { error: "Worktree not found" }
+      }
+
       exportFile = await deps.workspaceManager.exportSessionDataToFile(request.params.id, request.params.sessionId, {
         signal: controller.signal,
+        directory,
       })
       const stream = createReadStream(exportFile.filePath)
       stream.on("error", () => {

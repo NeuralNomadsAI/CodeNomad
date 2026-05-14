@@ -761,7 +761,7 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages = await fetchSessionMessages(instanceId, sessionId, client)
+    const apiMessages = await fetchSessionMessages(instanceId, sessionId, worktreeSlug, client)
 
     if (!Array.isArray(apiMessages)) {
       return

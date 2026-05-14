@@ -108,7 +108,7 @@ export class WorkspaceManager {
   async exportSessionDataToFile(
     workspaceId: string,
     sessionId: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; directory?: string },
   ): Promise<SessionExportFile> {
     const workspace = this.requireWorkspace(workspaceId)
     const normalizedSessionId = sessionId.trim()
@@ -131,7 +131,7 @@ export class WorkspaceManager {
     }
 
     const spec = buildSpawnSpec(workspace.binaryId, ["export", normalizedSessionId], {
-      cwd: workspace.path,
+      cwd: options?.directory ?? workspace.path,
       env: environment,
       propagateEnvKeys: Object.keys(userEnvironment),
     })

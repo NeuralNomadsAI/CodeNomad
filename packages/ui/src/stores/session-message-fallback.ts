@@ -1,4 +1,5 @@
 import { OpencodeApiError } from "../lib/opencode-api"
+import type { WorkspaceSessionExportResponse } from "../../../server/src/api-types"
 
 export function isLegacyMissingAgentValidationError(error: unknown): boolean {
   if (!(error instanceof OpencodeApiError)) {
@@ -10,4 +11,12 @@ export function isLegacyMissingAgentValidationError(error: unknown): boolean {
   const causeData = cause && typeof cause === "object" ? (cause as any).data : undefined
   const message = typeof causeData?.message === "string" ? causeData.message : ""
   return causeName === "BadRequest" && causeData?.kind === "Body" && /\["info"\]\["agent"\]/.test(message)
+}
+
+export function getExportedSessionMessages(exported: WorkspaceSessionExportResponse): unknown[] {
+  if (!exported || !Array.isArray(exported.messages)) {
+    throw new Error("Legacy session export did not return a messages array")
+  }
+
+  return exported.messages
 }
