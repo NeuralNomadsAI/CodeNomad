@@ -1,8 +1,8 @@
 import { Select } from "@kobalte/core/select"
-import { For, Show, createEffect, createMemo } from "solid-js"
+import { Show, createEffect, createMemo } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
-import type { Agent } from "../types/session"
+import { isSelectablePrimaryAgent, type Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 const log = getLogger("session")
@@ -34,14 +34,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
       return allAgents.filter((agent) => !agent.hidden)
     }
 
-    const filtered = allAgents.filter((agent) => !agent.hidden && agent.mode !== "subagent")
-
-    const currentAgent = allAgents.find((a) => a.name === props.currentAgent)
-    if (currentAgent && !filtered.find((a) => a.name === props.currentAgent)) {
-      return [currentAgent, ...filtered]
-    }
-
-    return filtered
+    return allAgents.filter(isSelectablePrimaryAgent)
   })
 
   createEffect(() => {
@@ -57,7 +50,6 @@ export default function AgentSelector(props: AgentSelectorProps) {
       fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
     }
   })
-
 
   const handleChange = async (value: Agent | null) => {
     if (value && value.name !== props.currentAgent) {

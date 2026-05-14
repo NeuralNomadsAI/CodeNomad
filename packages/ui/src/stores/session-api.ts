@@ -1,4 +1,11 @@
-import { mapSdkSessionRetry, mapSdkSessionStatus, type Session, type SessionStatus } from "../types/session"
+import {
+  getIdleSinceForStatusTransition,
+  isSelectablePrimaryAgent,
+  mapSdkSessionRetry,
+  mapSdkSessionStatus,
+  type Session,
+  type SessionStatus,
+} from "../types/session"
 import type { Message } from "../types/message"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 
@@ -25,6 +32,7 @@ import {
   setLoading,
   cleanupBlankSessions,
   syncInstanceSessionIndicator,
+  updateThreadTotalsForParent,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
@@ -45,6 +53,7 @@ import {
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
+const pendingSessionChildrenFetches = new Map<string, Promise<Session[]>>()
 
 async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
   if (!instanceId || !sessionId) return
@@ -125,7 +134,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
   try {
     const projectResponse = await rootClient.project.current()
     const projectId = projectResponse.data?.id
-    const sessionListOptions = projectId === "global" ? { directory: instance.folder } : undefined
+    const sessionListOptions = instance.folder ? { directory: instance.folder } : undefined
 
     log.info("session.list", { instanceId, projectId, directory: sessionListOptions?.directory })
     const response = sessionListOptions
@@ -175,6 +184,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         model: existingSession?.model ?? { providerId: "", modelId: "" },
         status,
         retry,
+        idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
         version: apiSession.version,
         time: {
           ...apiSession.time,
@@ -217,6 +227,12 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
 
     pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
+
+    const parentIds = Array.from(sessionMap.values())
+      .filter((session) => session.parentId === null)
+      .map((session) => session.id)
+
+    await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
     throw error
@@ -227,6 +243,96 @@ async function fetchSessions(instanceId: string): Promise<void> {
       return next
     })
   }
+}
+
+function toClientSession(instanceId: string, apiSession: any, existingSession?: Session): Session {
+  return {
+    id: apiSession.id,
+    instanceId,
+    title: apiSession.title || existingSession?.title || "Untitled",
+    parentId: apiSession.parentID || null,
+    agent: existingSession?.agent ?? "",
+    model: existingSession?.model ?? { providerId: "", modelId: "" },
+    status: existingSession?.status ?? "idle",
+    retry: existingSession?.retry ?? null,
+    idleSince: existingSession?.idleSince ?? null,
+    version: apiSession.version,
+    time: {
+      ...apiSession.time,
+    },
+    revert: apiSession.revert
+      ? {
+          messageID: apiSession.revert.messageID,
+          partID: apiSession.revert.partID,
+          snapshot: apiSession.revert.snapshot,
+          diff: apiSession.revert.diff,
+        }
+      : existingSession?.revert,
+    diff: existingSession?.diff,
+    pendingPermission: existingSession?.pendingPermission,
+    pendingQuestion: existingSession?.pendingQuestion,
+  }
+}
+
+async function fetchSessionChildren(instanceId: string, parentSessionId: string): Promise<Session[]> {
+  if (!instanceId || !parentSessionId) return []
+
+  const key = `${instanceId}:${parentSessionId}`
+  const pending = pendingSessionChildrenFetches.get(key)
+  if (pending) return pending
+
+  const promise = (async () => {
+    const instance = instances().get(instanceId)
+    if (!instance || !instance.client) {
+      throw new Error("Instance not ready")
+    }
+
+    const worktreeSlug = getWorktreeSlugForSession(instanceId, parentSessionId)
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+
+    log.info(`[HTTP] GET /session/{sessionID}/children for instance ${instanceId}`, { sessionId: parentSessionId })
+    const apiChildren = await requestData<any[]>(
+      client.session.children({ sessionID: parentSessionId }),
+      "session.children",
+    )
+
+    if (!Array.isArray(apiChildren)) return []
+
+    const currentSessions = sessions().get(instanceId)
+    const children = apiChildren.map((apiSession) => toClientSession(instanceId, apiSession, currentSessions?.get(apiSession.id)))
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = new Map(next.get(instanceId))
+      for (const child of children) {
+        instanceSessions.set(child.id, child)
+      }
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    syncInstanceSessionIndicator(instanceId)
+    updateThreadTotalsForParent(instanceId, parentSessionId)
+
+    if (messagesLoaded().get(instanceId)?.has(parentSessionId)) {
+      for (const child of children) {
+        void loadMessages(instanceId, child.id, { skipDiff: true, skipChildren: true }).catch((error) =>
+          log.error("Failed to load child session messages", {
+            instanceId,
+            sessionId: child.id,
+            parentSessionId,
+            error,
+          }),
+        )
+      }
+    }
+
+    return children
+  })()
+
+  pendingSessionChildrenFetches.set(key, promise)
+  void promise.finally(() => pendingSessionChildrenFetches.delete(key))
+  return promise
 }
 
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
@@ -242,8 +348,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
   const instanceAgents = agents().get(instanceId) || []
-  const nonSubagents = instanceAgents.filter((a) => a.mode !== "subagent")
-  const selectedAgent = agent || (nonSubagents.length > 0 ? nonSubagents[0].name : "")
+  const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
+  const selectedAgent = agent || (primaryAgents.length > 0 ? primaryAgents[0].name : "")
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
 
@@ -273,6 +379,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       agent: selectedAgent,
       model: defaultModel,
       status: "idle",
+      idleSince: null,
       version: response.data.version,
       time: {
         ...response.data.time,
@@ -378,12 +485,13 @@ async function forkSession(
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
-    model: {
-      providerId: info.model?.providerID || "",
-      modelId: info.model?.modelID || "",
-    },
-    status: "idle",
-    version: "0",
+     model: {
+       providerId: info.model?.providerID || "",
+       modelId: info.model?.modelID || "",
+     },
+     status: "idle",
+     idleSince: null,
+     version: "0",
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {
@@ -592,7 +700,15 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 }
 
-async function loadMessages(instanceId: string, sessionId: string, force = false): Promise<void> {
+async function loadMessages(
+  instanceId: string,
+  sessionId: string,
+  options?: { force?: boolean; skipDiff?: boolean; skipChildren?: boolean },
+): Promise<void> {
+  const force = options?.force ?? false
+  const skipDiff = options?.skipDiff ?? false
+  const skipChildren = options?.skipChildren ?? false
+
   if (force) {
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -628,10 +744,11 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
     throw new Error("Session not found")
   }
 
-  // Fetch session-level diffs in the background once the session is opened.
-  void loadSessionDiff(instanceId, sessionId).catch((error) => {
-    log.warn("Failed to load session diff", { instanceId, sessionId, error })
-  })
+  if (!skipDiff) {
+    void loadSessionDiff(instanceId, sessionId).catch((error) => {
+      log.warn("Failed to load session diff", { instanceId, sessionId, error })
+    })
+  }
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -772,6 +889,19 @@ async function loadMessages(instanceId: string, sessionId: string, force = false
   }
 
   updateSessionInfo(instanceId, sessionId)
+
+  if (!skipChildren && session.parentId === null) {
+    for (const child of getChildSessions(instanceId, sessionId)) {
+      void loadMessages(instanceId, child.id, { skipDiff: true, skipChildren: true }).catch((error) =>
+        log.error("Failed to load child session messages", {
+          instanceId,
+          sessionId: child.id,
+          parentSessionId: sessionId,
+          error,
+        }),
+      )
+    }
+  }
 }
 
 export {
@@ -781,6 +911,7 @@ export {
   fetchProviders,
 
   fetchSessions,
+  fetchSessionChildren,
   forkSession,
   loadMessages,
 }

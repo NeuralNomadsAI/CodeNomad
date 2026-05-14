@@ -28,6 +28,7 @@ import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
+import MessageSection from "../message-section"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -35,15 +36,21 @@ import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
+import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueue, getPermissionQueueLength, getQuestionQueueLength, sendPermissionResponse } from "../../stores/instances"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
-import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../../stores/session-status"
-import { Maximize2, ShieldAlert } from "lucide-solid"
+import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
+import { Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
+import type { Attachment } from "../../types/attachment"
+import { setAgentModelPreference, useConfig } from "../../stores/preferences"
+import { showPromptDialog } from "../../stores/alerts"
+import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
+import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -58,15 +65,18 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { getPermissionSessionId } from "../../types/permission"
-import {
-  canAutoRespondPermission,
-  finishAutoRespondPermission,
-  getPermissionAutoAcceptInFlightVersion,
-  isPermissionAutoAcceptEnabled,
-} from "../../stores/permission-auto-accept"
+import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
+const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
+type SessionCenterWidthStep = "narrow" | "medium" | "wide"
+
+function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
+  if (width < 768) return "narrow"
+  if (width < 1280) return "medium"
+  return "wide"
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -90,6 +100,7 @@ interface InstanceShellProps {
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const { t, locale } = useI18n()
+  const { preferences } = useConfig()
   const isRTL = () => locale() === "he"
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
@@ -101,12 +112,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [rightDrawerContentEl, setRightDrawerContentEl] = createSignal<HTMLElement | null>(null)
   const [leftToggleButtonEl, setLeftToggleButtonEl] = createSignal<HTMLElement | null>(null)
   const [rightToggleButtonEl, setRightToggleButtonEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
 
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
+  const [draftAgent, setDraftAgent] = createSignal("")
+  const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
+  const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -246,6 +262,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => window.clearInterval(timer))
   })
 
+  createEffect(() => {
+    const element = sessionCenterEl()
+    if (!element || typeof ResizeObserver === "undefined") return
+
+    const updateWidthStep = (width: number) => {
+      setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+    }
+
+    updateWidthStep(element.getBoundingClientRect().width)
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? element.getBoundingClientRect().width
+      updateWidthStep(width)
+    })
+    observer.observe(element)
+
+    onCleanup(() => observer.disconnect())
+  })
+
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
     const status = connectionStatus()
@@ -268,12 +303,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
-  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
-
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
     return sessionPromptApis()[sessionId] ?? null
+  })
+
+  const activeSessionPreview = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    return sessionId ? sessionPreviews().get(sessionId) ?? null : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -283,24 +321,51 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }))
   }
 
-  createEffect(() => {
-    getPermissionAutoAcceptInFlightVersion()
+  async function handleOpenPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
 
-    for (const permission of permissionQueue()) {
-      const sessionId = getPermissionSessionId(permission)
-      if (!sessionId) continue
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
+    const url = await showPromptDialog(t("sessionPreview.open.prompt"), {
+      title: t("sessionPreview.open.title"),
+      inputLabel: t("sessionPreview.open.label"),
+      inputPlaceholder: t("sessionPreview.open.placeholder"),
+      confirmLabel: t("sessionPreview.open.confirm"),
+      cancelLabel: t("sessionPreview.open.cancel"),
+    })
+    const normalized = url?.trim()
+    if (!normalized) return
+    await openSessionPreview(sessionId, normalized)
+  }
 
-      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
-        })
+  function handleShowPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+    showSessionPreview(sessionId)
+  }
+
+  function handlePreviewButtonClick() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const preview = activeSessionPreview()
+    if (preview?.mode === "preview") {
+      showSessionChat(sessionId)
+      return
     }
+
+    if (preview) {
+      showSessionPreview(sessionId)
+      return
+    }
+    void handleOpenPreview()
+  }
+
+  const previewToggleLabel = createMemo(() => {
+    const preview = activeSessionPreview()
+    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
+
+  const PreviewToggleIcon = createMemo(() => activeSessionPreview()?.mode === "preview" ? MessageSquareText : Eye)
 
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
@@ -329,6 +394,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
     const retry = getSessionRetry(props.instance.id, activeSessionId)
+    const showStatus = shouldShowSessionStatus(
+      props.instance.id,
+      activeSessionId,
+      now(),
+      preferences().keepUnseenSubagentIdleStatus,
+    )
+    if (!showStatus) {
+      return null
+    }
     const text = retry
       ? (() => {
           const seconds = getRetrySeconds(retry.next, now())
@@ -340,8 +414,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           ? t("sessionList.status.compacting")
           : t("sessionList.status.idle")
 
+    const baseClassName = `session-${retry ? "retrying" : status}`
+    const fadeClassName = getSessionIdleFadeClass(props.instance.id, activeSessionId)
+
     return {
-      className: `session-${retry ? "retrying" : status}`,
+      className: fadeClassName ? `${baseClassName} ${fadeClassName}` : baseClassName,
       text,
       showAlertIcon: false,
       title: retry
@@ -396,6 +473,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
+  }
+
+  const handleChatSearchClick = () => {
+    if (typeof window === "undefined") return
+    window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
   }
 
   const openBackgroundOutput = (process: BackgroundProcess) => {
@@ -489,6 +571,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             threads={sessionThreads}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            draftAgent={draftAgent}
+            draftModel={draftModel}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
             keyboardShortcuts={keyboardShortcuts}
@@ -499,6 +583,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onNewSession={props.onNewSession}
             onSidebarAgentChange={props.handleSidebarAgentChange}
             onSidebarModelChange={props.handleSidebarModelChange}
+            onDraftAgentChange={handleDraftAgentChange}
+            onDraftModelChange={handleDraftModelChange}
             onPinLeftDrawer={pinLeftDrawer}
             onUnpinLeftDrawer={unpinLeftDrawer}
             onCloseLeftDrawer={closeLeftDrawer}
@@ -551,6 +637,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           threads={sessionThreads}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          draftAgent={draftAgent}
+          draftModel={draftModel}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
           keyboardShortcuts={keyboardShortcuts}
@@ -561,6 +649,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onNewSession={props.onNewSession}
           onSidebarAgentChange={props.handleSidebarAgentChange}
           onSidebarModelChange={props.handleSidebarModelChange}
+          onDraftAgentChange={handleDraftAgentChange}
+          onDraftModelChange={handleDraftModelChange}
           onPinLeftDrawer={pinLeftDrawer}
           onUnpinLeftDrawer={unpinLeftDrawer}
           onCloseLeftDrawer={closeLeftDrawer}
@@ -684,9 +774,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const hasSessions = createMemo(() => activeSessions().size > 0)
-
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+
+  const isLaunching = createMemo(() => props.instance.status === "starting")
+
+  createEffect(() => {
+    const agent = draftAgent()
+    providers().get(props.instance.id)
+    if (!agent || draftModelManuallySelected()) return
+
+    let cancelled = false
+    void getDefaultModel(props.instance.id, agent).then((model) => {
+      if (!cancelled) setDraftModel(model)
+    }).catch((error) => log.warn("Failed to resolve draft model", error))
+
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
+  async function handleDraftAgentChange(agent: string) {
+    setDraftAgent(agent)
+    setDraftModelManuallySelected(false)
+    const model = await getDefaultModel(props.instance.id, agent)
+    setDraftModel(model)
+  }
+
+  async function handleDraftModelChange(model: { providerId: string; modelId: string }) {
+    setDraftModel(model)
+    setDraftModelManuallySelected(true)
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    const agent = draftAgent()
+    const model = draftModel()
+    if (agent && model.providerId && model.modelId) {
+      await setAgentModelPreference(props.instance.id, agent, model)
+    }
+    const session = await createSession(props.instance.id, agent || undefined)
+    if (model.providerId && model.modelId) {
+      await updateSessionModel(props.instance.id, session.id, model)
+    }
+    setActiveParentSession(props.instance.id, session.id)
+    await sendMessage(props.instance.id, session.id, prompt, attachments)
+  }
 
   const sessionLayout = (
     <div
@@ -698,7 +829,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     >
       {renderLeftPanel()}
 
-      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
+      <Box
+        class="session-center-column"
+        ref={setSessionCenterEl}
+        data-session-center-width={sessionCenterWidthStep()}
+        sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
+      >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
             <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
@@ -725,6 +861,29 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-1">
+                      <Show when={!showingInfoView()}>
+                        <IconButton
+                          color="inherit"
+                          onClick={handleChatSearchClick}
+                          aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                          title={t("instanceShell.chatSearch.openAriaLabel")}
+                          size="small"
+                        >
+                          <Search class="w-5 h-5" aria-hidden="true" />
+                        </IconButton>
+                        <IconButton
+                          color="inherit"
+                          onClick={handlePreviewButtonClick}
+                          aria-label={previewToggleLabel()}
+                          title={previewToggleLabel()}
+                          size="small"
+                        >
+                          {(() => {
+                            const Icon = PreviewToggleIcon()
+                            return <Icon class="w-5 h-5" aria-hidden="true" />
+                          })()}
+                        </IconButton>
+                      </Show>
                       <button
                         type="button"
                         class="connection-status-button command-palette-button"
@@ -835,7 +994,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </span>
 
                 <div class="ms-auto flex items-center gap-3">
-                  <div class="connection-status-meta flex items-center gap-3">
+                <div class="connection-status-meta flex items-center gap-3">
+                    <Show when={!showingInfoView()}>
+                      <IconButton
+                        color="inherit"
+                        onClick={handleChatSearchClick}
+                        aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                        title={t("instanceShell.chatSearch.openAriaLabel")}
+                        size="small"
+                      >
+                        <Search class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        color="inherit"
+                        onClick={handlePreviewButtonClick}
+                        aria-label={previewToggleLabel()}
+                        title={previewToggleLabel()}
+                        size="small"
+                      >
+                        {(() => {
+                          const Icon = PreviewToggleIcon()
+                          return <Icon class="w-5 h-5" aria-hidden="true" />
+                        })()}
+                      </IconButton>
+                    </Show>
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">
                         <span class="status-dot" />
@@ -885,11 +1067,27 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
-                  <div class="flex items-center justify-center h-full">
-                    <div class="text-center text-gray-500 dark:text-gray-400">
-                      <p class="mb-2">{t("instanceShell.empty.title")}</p>
-                      <p class="text-sm">{t("instanceShell.empty.description")}</p>
-                    </div>
+                  <div class="session-view">
+                    <MessageSection
+                      instanceId={props.instance.id}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      loading={false}
+                      emptyStateVariant="no-session"
+                      isActive={props.isActiveInstance}
+                      showSidebarToggle={showEmbeddedSidebarToggle()}
+                      onSidebarToggle={() => setLeftOpen(true)}
+                      forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                    />
+
+                    <PromptInput
+                      instanceId={props.instance.id}
+                      instanceFolder={props.instance.folder}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      isActive={props.isActiveInstance}
+                      compactLayout={compactPromptLayout()}
+                      onSend={handleFirstPromptSend}
+                      escapeInDebounce={props.escapeInDebounce}
+                    />
                   </div>
                 }
               >
@@ -943,7 +1141,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         class="instance-shell2 flex flex-col flex-1 min-h-0"
         data-instance-id={props.instance.id}
       >
-        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+        <Show when={!isLaunching()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>
       </div>

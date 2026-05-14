@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "打开命令面板",
   "instanceShell.commandPalette.button": "命令面板",
+  "instanceShell.chatSearch.openAriaLabel": "搜索聊天历史",
 
   "instanceShell.connection.ariaLabel": "连接 {status}",
   "instanceShell.connection.connected": "已连接",
@@ -56,8 +57,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "新建会话",
   "instanceWelcome.empty.title": "没有历史会话",
   "instanceWelcome.empty.description": "在下方创建新会话以开始使用",
-  "instanceWelcome.loading.title": "正在加载会话",
-  "instanceWelcome.loading.description": "正在获取你的历史会话...",
+  "instanceWelcome.loading.title": "正在启动工作区",
+  "instanceWelcome.loading.description": "正在为此工作区启动 OpenCode...",
   "instanceWelcome.resume.title": "继续会话",
   "instanceWelcome.resume.subtitle.one": "{count} 个会话可用",
   "instanceWelcome.resume.subtitle.other": "{count} 个会话可用",
@@ -85,7 +86,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "关闭实例",
 
   "instanceShell.empty.title": "未选择会话",
-  "instanceShell.empty.description": "选择会话以查看消息",
+  "instanceShell.empty.description": "在下方发送消息以创建新会话，或选择现有会话继续。",
 
   "instanceShell.rightPanel.title": "状态面板",
   "instanceShell.rightPanel.tabs.changes": "更改",

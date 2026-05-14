@@ -13,18 +13,15 @@ interface ElectronAPI {
   openDialog?: (options: NativeDialogOptions) => Promise<ElectronDialogResult>
 }
 
-function coerceFirstPath(result?: ElectronDialogResult | null): string | null {
+function coercePaths(result?: ElectronDialogResult | null): string[] {
   if (!result || result.canceled) {
-    return null
+    return []
   }
   const paths = Array.isArray(result.paths) ? result.paths : result.path ? [result.path] : []
-  if (paths.length === 0) {
-    return null
-  }
-  return paths[0] ?? null
+  return paths.filter((path): path is string => typeof path === "string" && path.trim().length > 0)
 }
 
-export async function openElectronNativeDialog(options: NativeDialogOptions): Promise<string | null> {
+export async function openElectronNativeDialog(options: NativeDialogOptions): Promise<string | string[] | null> {
   if (typeof window === "undefined") {
     return null
   }
@@ -34,7 +31,8 @@ export async function openElectronNativeDialog(options: NativeDialogOptions): Pr
   }
   try {
     const result = await api.openDialog(options)
-    return coerceFirstPath(result)
+    const paths = coercePaths(result)
+    return options.multiple ? paths : paths[0] ?? null
   } catch (error) {
     log.error("[native] electron dialog failed", error)
     return null

@@ -6,6 +6,7 @@ import { resolveTitleForTool } from "../tool-title"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { loadMessages } from "../../../stores/session-api"
 import { loading, messagesLoaded } from "../../../stores/session-state"
+import { getTaskToolSearchText } from "../search-text"
 
 interface TaskSummaryItem {
   id: string
@@ -138,6 +139,7 @@ function describeToolTitle(item: TaskSummaryItem): string {
 
 export const taskRenderer: ToolRenderer = {
   tools: ["task"],
+  getSearchText: getTaskToolSearchText,
   getAction: ({ t }) => t("toolCall.task.action.delegating"),
   getTitle({ toolState }) {
     const state = toolState()

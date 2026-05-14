@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "Ouvrir la palette de commandes",
   "instanceShell.commandPalette.button": "Palette de commandes",
+  "instanceShell.chatSearch.openAriaLabel": "Rechercher dans l'historique du chat",
 
   "instanceShell.connection.ariaLabel": "Connexion {status}",
   "instanceShell.connection.connected": "Connecté",
@@ -56,8 +57,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "Nouvelle session",
   "instanceWelcome.empty.title": "Aucune session précédente",
   "instanceWelcome.empty.description": "Créez une nouvelle session ci-dessous pour commencer",
-  "instanceWelcome.loading.title": "Chargement des sessions",
-  "instanceWelcome.loading.description": "Récupération de vos sessions précédentes...",
+  "instanceWelcome.loading.title": "Lancement de l'espace de travail",
+  "instanceWelcome.loading.description": "Démarrage d'OpenCode pour cet espace de travail...",
   "instanceWelcome.resume.title": "Reprendre une session",
   "instanceWelcome.resume.subtitle.one": "{count} session disponible",
   "instanceWelcome.resume.subtitle.other": "{count} sessions disponibles",
@@ -85,7 +86,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "Fermer l'instance",
 
   "instanceShell.empty.title": "Aucune session sélectionnée",
-  "instanceShell.empty.description": "Sélectionnez une session pour voir les messages",
+  "instanceShell.empty.description": "Envoyez un message ci-dessous pour créer une nouvelle session, ou sélectionnez une session existante pour continuer.",
 
   "instanceShell.rightPanel.title": "Panneau d'état",
   "instanceShell.rightPanel.tabs.changes": "Modifications",

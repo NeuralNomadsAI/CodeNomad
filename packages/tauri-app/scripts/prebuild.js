@@ -11,6 +11,8 @@ const uiRoot = path.resolve(root, "..", "ui")
 const uiDist = path.resolve(uiRoot, "src", "renderer", "dist")
 const serverDest = path.resolve(root, "src-tauri", "resources", "server")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
+const resourcesRoot = path.resolve(root, "src-tauri", "resources")
+const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 
 const sources = ["dist", "public", "node_modules", "package.json"]
 
@@ -18,6 +20,8 @@ const serverInstallCommand =
   "npm install --omit=dev --ignore-scripts --workspaces=false --package-lock=false --install-strategy=shallow --fund=false --audit=false"
 const serverDevInstallCommand =
   "npm install --workspace @neuralnomads/codenomad --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
+const pluginDevInstallCommand =
+  "npm install --workspace @codenomad/codenomad-opencode-plugin --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
@@ -41,6 +45,12 @@ const serverBuildDependencyPaths = [
   path.join(serverRoot, "node_modules", "typescript", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
+]
+
+const pluginRoot = path.resolve(root, "..", "opencode-plugin")
+const pluginBuildDependencyPaths = [
+  path.join(pluginRoot, "node_modules", "typescript", "package.json"),
+  path.join(pluginRoot, "node_modules", "@types", "node", "package.json"),
 ]
 
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
@@ -110,6 +120,19 @@ function ensureServerDevDependencies() {
 
   console.log("[prebuild] ensuring server build dependencies (with dev)...")
   execSync(serverDevInstallCommand, {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+    env: envWithRootBin,
+  })
+}
+
+function ensurePluginDevDependencies() {
+  if (pluginBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
+    return
+  }
+
+  console.log("[prebuild] ensuring OpenCode plugin build dependencies...")
+  execSync(pluginDevInstallCommand, {
     cwd: workspaceRoot,
     stdio: "inherit",
     env: envWithRootBin,
@@ -300,6 +323,7 @@ function copyUiLoadingAssets() {
 
 ;(async () => {
   ensureServerDevDependencies()
+  ensurePluginDevDependencies()
   ensureUiDevDependencies()
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
@@ -311,6 +335,7 @@ function copyUiLoadingAssets() {
   copyServerArtifacts()
   stripNodeModuleBins()
   copyUiLoadingAssets()
+  await prepareBundledNodeRuntime({ resourcesRoot })
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)

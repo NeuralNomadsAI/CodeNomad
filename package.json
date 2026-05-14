@@ -1,6 +1,6 @@
 {
   "name": "codenomad-workspace",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "private": true,
   "description": "CodeNomad monorepo workspace",
   "license": "MIT",
@@ -10,7 +10,7 @@
       "packages/ui",
       "packages/electron-app",
       "packages/tauri-app",
-      "packages/opencode-config"
+      "packages/opencode-plugin"
     ]
   },
   "scripts": {

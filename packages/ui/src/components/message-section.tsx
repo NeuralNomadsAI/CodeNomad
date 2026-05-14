@@ -1,6 +1,7 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { MoreHorizontal, Pause, Trash, X } from "lucide-solid"
+import { ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
+import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -19,17 +20,22 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
+import { buildSessionSearchMatches } from "../lib/session-search"
+import type { SessionSearchMatch } from "../lib/session-search"
 
 const SCROLL_SENTINEL_MARGIN_PX = 8
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+const SEARCH_DEBOUNCE_MS = 250
+const SEARCH_MIN_CHARS = 3
+const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 
 export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
@@ -45,8 +51,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
+  const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
@@ -144,8 +152,16 @@ export default function MessageSection(props: MessageSectionProps) {
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = createSignal<"all" | "tools">("all")
   const [isDeleteMenuOpen, setIsDeleteMenuOpen] = createSignal(false)
+  const [isSearchOpen, setIsSearchOpen] = createSignal(false)
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
+  const [searchedQuery, setSearchedQuery] = createSignal("")
+  const [isSearchPending, setIsSearchPending] = createSignal(false)
+  const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
+  const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
   let deleteMenuRef: HTMLDivElement | undefined
   let deleteMenuButtonRef: HTMLButtonElement | undefined
+  let searchInputRef: HTMLInputElement | undefined
 
   // Deletion is only allowed for messages/tool parts that occur AFTER the most
   // recent compaction. Compaction effectively resets the stored context; deleting
@@ -160,6 +176,21 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
+
+  const activeSearchMatch = createMemo(() => {
+    const matches = searchMatches()
+    if (matches.length === 0) return null
+    const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
+    return matches[index] ?? null
+  })
+
+  const searchResultMessageIds = createMemo(() => new Set(searchMatches().map((match) => match.messageId)))
+
+  const trimmedSearchQuery = createMemo(() => searchQuery().trim())
+  const isSearchSettled = createMemo(() => {
+    const query = trimmedSearchQuery()
+    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && searchedQuery().trim() === query
+  })
 
   const lastCompactionIndex = createMemo(() => {
     // Depend on a single session revision signal (not every message/part read)
@@ -354,6 +385,33 @@ export default function MessageSection(props: MessageSectionProps) {
  
   const [timelineSegments, setTimelineSegments] = createSignal<TimelineSegment[]>([])
   const hasTimelineSegments = () => timelineSegments().length > 0
+
+  function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
+    if (segment.messageId !== match.messageId) return false
+    if (!match.partId) return true
+    if (segment.partId === match.partId) return true
+    if (segment.partIds?.includes(match.partId)) return true
+    if (segment.toolPartIds?.includes(match.partId)) return true
+    return false
+  }
+
+  const searchMatchedTimelineSegmentIds = createMemo(() => {
+    const matches = searchMatches()
+    if (matches.length === 0) return new Set<string>()
+    const result = new Set<string>()
+    for (const segment of timelineSegments()) {
+      if (matches.some((match) => segmentMatchesSearch(segment, match))) {
+        result.add(segment.id)
+      }
+    }
+    return result
+  })
+
+  const activeSearchTimelineSegmentId = createMemo(() => {
+    const match = activeSearchMatch()
+    if (!match) return null
+    return timelineSegments().find((segment) => segmentMatchesSearch(segment, match))?.id ?? null
+  })
 
   const seenTimelineMessageIds = new Set<string>()
   const seenTimelineSegmentKeys = new Set<string>()
@@ -705,6 +763,27 @@ export default function MessageSection(props: MessageSectionProps) {
     setQuoteSelection(null)
   }
 
+  function openSearch() {
+    setIsSearchOpen(true)
+    requestAnimationFrame(() => searchInputRef?.focus())
+  }
+
+  function closeSearch() {
+    setIsSearchOpen(false)
+    setSearchQuery("")
+    setDebouncedSearchQuery("")
+    setSearchedQuery("")
+    setIsSearchPending(false)
+    setSearchMatches([])
+    setActiveSearchIndex(0)
+  }
+
+  function moveSearchMatch(direction: 1 | -1) {
+    const count = searchMatches().length
+    if (count === 0) return
+    setActiveSearchIndex((index) => (index + direction + count) % count)
+  }
+
   function isSelectionWithinStream(range: Range | null) {
     const container = streamElement()
     if (!range || !container) return false
@@ -1007,6 +1086,67 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   })
 
+  createEffect(() => {
+    const query = searchQuery()
+    if (query.trim().length < SEARCH_MIN_CHARS) {
+      setDebouncedSearchQuery("")
+      setActiveSearchIndex(0)
+      setSearchedQuery("")
+      setIsSearchPending(false)
+      setSearchMatches([])
+      return
+    }
+    setIsSearchPending(true)
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearchQuery(query)
+    }, SEARCH_DEBOUNCE_MS)
+    onCleanup(() => window.clearTimeout(timeout))
+  })
+
+  createEffect(() => {
+    sessionRevision()
+    const query = debouncedSearchQuery()
+    const includeThinking = Boolean(preferences().showThinkingBlocks)
+    if (query.trim().length < SEARCH_MIN_CHARS) {
+      return
+    }
+
+    setIsSearchPending(true)
+    const frame = requestAnimationFrame(() => {
+      const matches = buildSessionSearchMatches({
+        store: store(),
+        sessionId: props.sessionId,
+        query,
+        includeThinking,
+      })
+      setSearchMatches(matches)
+      setSearchedQuery(query)
+      setActiveSearchIndex(0)
+      setIsSearchPending(false)
+    })
+    onCleanup(() => cancelAnimationFrame(frame))
+  })
+
+  createEffect(() => {
+    const count = searchMatches().length
+    if (count === 0) {
+      if (activeSearchIndex() !== 0) setActiveSearchIndex(0)
+      return
+    }
+    if (activeSearchIndex() >= count) {
+      setActiveSearchIndex(count - 1)
+    }
+  })
+
+  let lastScrolledSearchMatchId: string | null = null
+  createEffect(() => {
+    const match = activeSearchMatch()
+    if (!match || !isSearchOpen()) return
+    if (match.id === lastScrolledSearchMatchId) return
+    lastScrolledSearchMatchId = match.id
+    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start", setAutoScroll: false })
+  })
+
 
   createEffect(() => {
     if (typeof document === "undefined") return
@@ -1035,12 +1175,41 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase()
+      const isModSearch = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "f"
+      if (isModSearch && isActive()) {
+        const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
+        if (!modalOpen) {
+          event.preventDefault()
+          event.stopPropagation()
+          openSearch()
+          return
+        }
+      }
+
+      if (event.key === "Escape" && isSearchOpen()) {
+        event.preventDefault()
+        event.stopPropagation()
+        closeSearch()
+        return
+      }
+
       if (event.key === "Escape" && (selectedTimelineIds().size > 0 || selectedForDeletion().size > 0)) {
         clearDeleteMode()
       }
     }
     document.addEventListener("keydown", handleKeyDown)
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
+  })
+
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const handleOpenSearch = () => {
+      if (!isActive()) return
+      openSearch()
+    }
+    window.addEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch)
+    onCleanup(() => window.removeEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch))
   })
 
   createEffect(() => {
@@ -1060,6 +1229,8 @@ export default function MessageSection(props: MessageSectionProps) {
     clearQuoteSelection()
   })
 
+  const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+
   return (
     <div
       class="message-stream-container"
@@ -1068,7 +1239,7 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <div
-        class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
+        class={`message-layout${showTimeline() ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
@@ -1171,14 +1342,30 @@ export default function MessageSection(props: MessageSectionProps) {
           renderBeforeItems={() => (
             <>
               <Show when={!props.loading && visibleMessageIds().length === 0}>
-                <div class="empty-state">
-                  <div class="empty-state-content">
-                    <div class="flex flex-col items-center gap-3 mb-6">
-                      <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="h-48 w-auto" loading="lazy" />
-                      <h1 class="text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
-                    </div>
-                    <h3>{t("messageSection.empty.title")}</h3>
-                    <p>{t("messageSection.empty.description")}</p>
+                <Show
+                  when={emptyStateVariant() === "no-session"}
+                  fallback={
+                    <BrandedEmptyState
+                      title={t("messageSection.empty.title")}
+                      description={t("messageSection.empty.description")}
+                    >
+                      <ul>
+                        <li>
+                          <span>{t("messageSection.empty.tips.commandPalette")}</span>
+                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
+                        </li>
+                        <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
+                        <li>
+                          {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
+                        </li>
+                      </ul>
+                    </BrandedEmptyState>
+                  }
+                >
+                  <BrandedEmptyState
+                    title={t("messageSection.empty.title")}
+                    description={t("instanceShell.empty.description")}
+                  >
                     <ul>
                       <li>
                         <span>{t("messageSection.empty.tips.commandPalette")}</span>
@@ -1189,8 +1376,8 @@ export default function MessageSection(props: MessageSectionProps) {
                         {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
                       </li>
                     </ul>
-                  </div>
-                </div>
+                  </BrandedEmptyState>
+                </Show>
               </Show>
 
               <Show when={props.loading}>
@@ -1221,26 +1408,113 @@ export default function MessageSection(props: MessageSectionProps) {
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
               onContentRendered={handleContentRendered}
+              searchQuery={debouncedSearchQuery}
+              searchResultMessageIds={searchResultMessageIds}
+              activeSearchMatch={activeSearchMatch}
             />
           )}
           renderOverlay={() => (
-            <Show when={quoteSelection()}>
-              {(selection) => (
-                <div class="message-quote-popover" style={{ top: `${selection().top}px`, left: `${selection().left}px` }}>
-                  <div class="message-quote-button-group">
-                    <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
-                      {t("messageSection.quote.addAsQuote")}
-                    </button>
-                    <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("code")}>
-                      {t("messageSection.quote.addAsCode")}
-                    </button>
-                    <button type="button" class="message-quote-button" onClick={() => void handleCopySelectionRequest()}>
-                      {t("messageSection.quote.copy")}
-                    </button>
+            <>
+              <Show when={isSearchOpen()}>
+                <div class="message-search-popover modal-surface" role="search" aria-label={t("messageSection.search.ariaLabel")}>
+                  <div class="modal-search-container message-search-container">
+                    <div class="message-search-input-row">
+                      <Search class="w-4 h-4 modal-search-icon" aria-hidden="true" />
+                      <input
+                        ref={(el) => {
+                          searchInputRef = el
+                        }}
+                        class="modal-search-input message-search-input"
+                        type="search"
+                        value={searchQuery()}
+                        placeholder={t("messageSection.search.placeholder")}
+                        onInput={(event) => {
+                          setSearchQuery(event.currentTarget.value)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault()
+                            moveSearchMatch(event.shiftKey ? -1 : 1)
+                            return
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault()
+                            closeSearch()
+                          }
+                        }}
+                      />
+                      <span class="message-search-count" aria-live="polite">
+                        {searchQuery().trim().length === 0
+                          ? t("messageSection.search.count.empty")
+                          : trimmedSearchQuery().length < SEARCH_MIN_CHARS
+                            ? t("messageSection.search.count.minChars", { count: String(SEARCH_MIN_CHARS) })
+                          : isSearchPending()
+                            ? t("messageSection.search.count.searching")
+                          : searchMatches().length === 0
+                            ? t("messageSection.search.count.none")
+                            : t("messageSection.search.count.matches", {
+                                current: String(activeSearchIndex() + 1),
+                                total: String(searchMatches().length),
+                              })}
+                      </span>
+                      <button
+                        type="button"
+                        class="message-search-button"
+                        onClick={() => moveSearchMatch(-1)}
+                        disabled={searchMatches().length === 0}
+                        aria-label={t("messageSection.search.previousAriaLabel")}
+                        title={t("messageSection.search.previousAriaLabel")}
+                      >
+                        <ChevronUp class="w-4 h-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        class="message-search-button"
+                        onClick={() => moveSearchMatch(1)}
+                        disabled={searchMatches().length === 0}
+                        aria-label={t("messageSection.search.nextAriaLabel")}
+                        title={t("messageSection.search.nextAriaLabel")}
+                      >
+                        <ChevronDown class="w-4 h-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        class="message-search-button"
+                        onClick={closeSearch}
+                        aria-label={t("messageSection.search.closeAriaLabel")}
+                        title={t("messageSection.search.closeAriaLabel")}
+                      >
+                        <X class="w-4 h-4" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
+                  <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
+                    <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
+                  </Show>
+                  <Show when={isSearchSettled() && searchMatches().length === 0}>
+                    <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
+                  </Show>
                 </div>
-              )}
-            </Show>
+              </Show>
+
+              <Show when={quoteSelection()}>
+                {(selection) => (
+                  <div class="message-quote-popover" style={{ top: `${selection().top}px`, left: `${selection().left}px` }}>
+                    <div class="message-quote-button-group">
+                      <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
+                        {t("messageSection.quote.addAsQuote")}
+                      </button>
+                      <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("code")}>
+                        {t("messageSection.quote.addAsCode")}
+                      </button>
+                      <button type="button" class="message-quote-button" onClick={() => void handleCopySelectionRequest()}>
+                        {t("messageSection.quote.copy")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Show>
+            </>
           )}
         />
 
@@ -1363,7 +1637,7 @@ export default function MessageSection(props: MessageSectionProps) {
           </div>
         </Show>
 
-        <Show when={hasTimelineSegments()}>
+        <Show when={showTimeline()}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}
@@ -1384,6 +1658,8 @@ export default function MessageSection(props: MessageSectionProps) {
               onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               selectedMessageIds={selectedForDeletion}
               onToggleSelectedMessage={setMessageSelectedForDeletion}
+              searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
+              activeSearchSegmentId={activeSearchTimelineSegmentId}
             />
           </div>
         </Show>

@@ -3,9 +3,11 @@
 import fs from "fs"
 import path, { join } from "path"
 import { spawnSync } from "child_process"
+import { createRequire } from "module"
 import { fileURLToPath } from "url"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
+const require = createRequire(import.meta.url)
 const appDir = join(__dirname, "..")
 const workspaceRoot = join(appDir, "..", "..")
 const serverRoot = join(appDir, "..", "server")
@@ -13,6 +15,7 @@ const resourcesRoot = join(appDir, "electron", "resources")
 const serverDest = join(resourcesRoot, "server")
 const npmExecPath = process.env.npm_execpath
 const npmNodeExecPath = process.env.npm_node_execpath
+const { prepareBundledNodeRuntime } = require(join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 
 const serverSources = ["dist", "public", "node_modules", "package.json"]
 const serverDepsMarker = join(serverRoot, "node_modules", "fastify", "package.json")
@@ -124,6 +127,7 @@ async function main() {
   ensureServerDependencies()
   copyServerArtifacts()
   stripNodeModuleBins()
+  await prepareBundledNodeRuntime({ resourcesRoot })
 }
 
 main().catch((error) => {

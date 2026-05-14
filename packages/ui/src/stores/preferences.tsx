@@ -54,6 +54,7 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
+  showMessageTimeline: boolean
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
@@ -65,6 +66,7 @@ export interface UiSettings {
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
+  keepUnseenSubagentIdleStatus: boolean
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -133,6 +135,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
+  showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
@@ -143,6 +146,7 @@ const defaultUiSettings: UiSettings = {
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
+  keepUnseenSubagentIdleStatus: false,
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -167,6 +171,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showKeyboardShortcutHints:
       sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
+    showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
@@ -181,6 +186,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
         : defaultUiSettings.toolInputsVisibility,
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
+    keepUnseenSubagentIdleStatus:
+      sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -657,6 +664,10 @@ function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
 
+function toggleShowMessageTimeline(): void {
+  updateUiSettings({ showMessageTimeline: !(preferences().showMessageTimeline ?? true) })
+}
+
 function toggleUsageMetrics(): void {
   updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
 }
@@ -739,6 +750,7 @@ interface ConfigContextValue {
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
   toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
+  toggleShowMessageTimeline: typeof toggleShowMessageTimeline
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
@@ -790,6 +802,7 @@ const configContextValue: ConfigContextValue = {
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
   toggleKeyboardShortcutHints,
+  toggleShowMessageTimeline,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,

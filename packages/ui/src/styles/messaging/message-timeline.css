@@ -26,14 +26,12 @@
   pointer-events: none;
 }
 
-@media (max-width: 720px) {
-  .message-layout--with-timeline {
-    grid-template-columns: minmax(0, 1fr) 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
 
-  .message-layout--with-timeline::after {
-    inset-inline-end: 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline::after {
+  inset-inline-end: 40px;
 }
 
 .message-stream-shell {
@@ -59,10 +57,8 @@
  }
 
 
-@media (max-width: 720px) {
-  .message-timeline-sidebar {
-    width: 40px;
-  }
+.session-center-column[data-session-center-width="narrow"] .message-timeline-sidebar {
+  width: 40px;
 }
 
 .message-timeline {
@@ -442,4 +438,21 @@
   border-radius: 2px;
   background: var(--status-error);
   box-shadow: 0 0 6px 2px var(--status-error);
+}
+
+.message-timeline-segment-search-match {
+  border-color: #eab308 !important;
+  background-color: color-mix(in oklab, #fde047 62%, var(--surface-secondary)) !important;
+  color: #111827 !important;
+  box-shadow: 0 0 0 1px color-mix(in oklab, #eab308 72%, transparent) !important;
+}
+
+.message-timeline-segment-search-active,
+.message-timeline-segment-search-active:hover,
+.message-timeline-segment-search-active:focus-visible {
+  border-color: #ca8a04 !important;
+  background-color: #facc15 !important;
+  color: #111827 !important;
+  box-shadow: 0 0 0 2px #ca8a04, 0 0 0 4px color-mix(in oklab, #facc15 34%, transparent) !important;
+  transform: none !important;
 }

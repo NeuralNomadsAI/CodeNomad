@@ -46,6 +46,7 @@ export const instanceMessages = {
 
   "instanceShell.commandPalette.openAriaLabel": "פתח לוח פקודות",
   "instanceShell.commandPalette.button": "לוח פקודות",
+  "instanceShell.chatSearch.openAriaLabel": "חפש בהיסטוריית הצ'אט",
 
   "instanceShell.connection.ariaLabel": "חיבור {status}",
   "instanceShell.connection.connected": "מחובר",
@@ -56,8 +57,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "סשן חדש",
   "instanceWelcome.empty.title": "אין סשנים קודמים",
   "instanceWelcome.empty.description": "צור סשן חדש למטה כדי להתחיל",
-  "instanceWelcome.loading.title": "טוען סשנים",
-  "instanceWelcome.loading.description": "מאחזר את הסשנים הקודמים שלך...",
+  "instanceWelcome.loading.title": "מפעיל סביבת עבודה",
+  "instanceWelcome.loading.description": "מפעיל את OpenCode עבור סביבת העבודה הזו...",
   "instanceWelcome.resume.title": "המשך סשן",
   "instanceWelcome.resume.subtitle.one": "סשן אחד זמין",
   "instanceWelcome.resume.subtitle.other": "{count} סשנים זמינים",
@@ -85,7 +86,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "סגור מופע",
 
   "instanceShell.empty.title": "לא נבחר סשן",
-  "instanceShell.empty.description": "בחר סשן לצפייה בהודעות",
+  "instanceShell.empty.description": "שלח הודעה למטה כדי ליצור סשן חדש, או בחר סשן קיים כדי להמשיך.",
 
   "instanceShell.rightPanel.title": "לוח סטטוס",
   "instanceShell.rightPanel.tabs.changes": "שינויי סשן",

@@ -38,6 +38,7 @@ export type BehaviorRegistryActions = {
   updatePreferences?: (updates: Partial<Preferences>) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
+  toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
@@ -121,6 +122,24 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         { value: "expanded", labelKey: "commands.common.expanded" },
         { value: "collapsed", labelKey: "commands.common.collapsed" },
       ],
+    },
+    {
+      kind: "toggle",
+      id: "behavior.messageTimeline",
+      titleKey: "settings.behavior.messageTimeline.title",
+      subtitleKey: "settings.behavior.messageTimeline.subtitle",
+      get: (p) => Boolean(p.showMessageTimeline ?? true),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ showMessageTimeline: next })
+          return
+        }
+        setBooleanByToggle(
+          () => Boolean(prefs().showMessageTimeline ?? true),
+          actions.toggleShowMessageTimeline,
+          next,
+        )
+      },
     },
     {
       kind: "toggle",
@@ -247,6 +266,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           actions.toggleAutoCleanupBlankSessions,
           next,
         )
+      },
+    },
+    {
+      kind: "toggle",
+      id: "behavior.keepUnseenSubagentIdleStatus",
+      titleKey: "settings.behavior.keepUnseenSubagentIdle.title",
+      subtitleKey: "settings.behavior.keepUnseenSubagentIdle.subtitle",
+      get: (p) => Boolean(p.keepUnseenSubagentIdleStatus),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ keepUnseenSubagentIdleStatus: next })
+        }
       },
     },
     {

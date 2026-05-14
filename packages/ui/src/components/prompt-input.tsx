@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Volume2, X } from "lucide-solid"
+import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
 import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
@@ -11,9 +11,13 @@ import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { serverApi } from "../lib/api-client"
+import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
 import type { ExpandState, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
+import type { FileSystemEntry } from "../../../server/src/api-types"
+import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
@@ -61,8 +65,11 @@ export default function PromptInput(props: PromptInputProps) {
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
+  const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
+  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
+  let fileInputRef: HTMLInputElement | undefined
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -98,6 +105,8 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handleFileSelection,
+    handleFilePathAttachment,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -108,6 +117,7 @@ export default function PromptInput(props: PromptInputProps) {
     prompt,
     setPrompt,
     getTextarea: () => textareaRef ?? null,
+    disabled: () => Boolean(props.disabled),
   })
 
   createEffect(() => {
@@ -390,6 +400,52 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
+  async function handleAttachFiles() {
+    if (props.disabled) return
+    if (isDesktopHost() && isLocalWindow()) {
+      fileInputRef?.click()
+      return
+    }
+    setIsFileBrowserOpen(true)
+  }
+
+  async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
+    if (props.disabled) return
+    if (typeof entry?.size === "number" && entry.size > MAX_READABLE_PICKED_FILE_BYTES) {
+      showAlertDialog(t("promptInput.attachFiles.tooLarge.one"), {
+        title: t("promptInput.attachFiles.skipped.title"),
+        variant: "warning",
+      })
+      textareaRef?.focus()
+      return
+    }
+    try {
+      const filePath = entry?.path ?? path
+      const displayPath = entry?.absolutePath ?? path
+      const response = await serverApi.readFileSystemFile(filePath, { encoding: "base64" })
+      handleFilePathAttachment(displayPath, response.contents, { encoding: response.encoding })
+      setIsFileBrowserOpen(false)
+    } catch (error) {
+      log.error("Failed to attach selected file:", error)
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("promptInput.attachFiles.errorTitle"),
+        variant: "error",
+      })
+    } finally {
+      textareaRef?.focus()
+    }
+  }
+
+  function handleFileInputChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    if (props.disabled) {
+      input.value = ""
+      return
+    }
+    handleFileSelection(input.files)
+    input.value = ""
+  }
+
   function insertBlockContent(block: string) {
     const textarea = textareaRef
     const current = prompt()
@@ -574,7 +630,7 @@ export default function PromptInput(props: PromptInputProps) {
           </Suspense>
         </Show>
 
-        <div class="flex flex-1 flex-col">
+        <div class="prompt-input-main flex flex-1 flex-col">
           <div class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}>
 
             <div class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}>
@@ -596,6 +652,22 @@ export default function PromptInput(props: PromptInputProps) {
                 autoCapitalize="off"
                 autocomplete="off"
               />
+              <button
+                type="button"
+                class="prompt-clear-button prompt-clear-button-inline"
+                onClick={handleClearPrompt}
+                disabled={!canClearPrompt()}
+                aria-label={t("promptInput.clear.ariaLabel")}
+                title={t("promptInput.clear.title")}
+              >
+                <X class="h-4 w-4" aria-hidden="true" />
+              </button>
+              <div class="prompt-expand-button-inline">
+                <ExpandButton
+                  expandState={expandState}
+                  onToggleExpand={handleExpandToggle}
+                />
+              </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
@@ -615,7 +687,7 @@ export default function PromptInput(props: PromptInputProps) {
                               <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
                             </>
                           </Show>
-                          {" "}• <Kbd>@</Kbd> {t("promptInput.overlay.filesAgents")} • <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
+                          {" "}• <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
                         </span>
                         <Show when={attachments().length > 0}>
                           <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
@@ -707,22 +779,27 @@ export default function PromptInput(props: PromptInputProps) {
                   <Volume2 class="h-4 w-4" aria-hidden="true" />
                 </button>
               </Show>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                class="sr-only"
+                tabindex="-1"
+                disabled={props.disabled}
+                onChange={handleFileInputChange}
+              />
               <button
                 type="button"
-                class="prompt-clear-button"
-                onClick={handleClearPrompt}
-                disabled={!canClearPrompt()}
-                aria-label={t("promptInput.clear.ariaLabel")}
-                title={t("promptInput.clear.title")}
+                class="prompt-attach-button"
+                onClick={handleAttachFiles}
+                disabled={props.disabled}
+                aria-label={t("promptInput.attachFiles.ariaLabel")}
+                title={t("promptInput.attachFiles.title")}
               >
-                <X class="h-4 w-4" aria-hidden="true" />
+                <Paperclip class="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
             <div class="prompt-nav-column prompt-nav-column-right">
-              <ExpandButton
-                expandState={expandState}
-                onToggleExpand={handleExpandToggle}
-              />
               <Show when={hasHistory()}>
                 <button
                   type="button"
@@ -791,6 +868,18 @@ export default function PromptInput(props: PromptInputProps) {
           </button>
         </div>
       </div>
+
+      <DirectoryBrowserDialog
+        open={isFileBrowserOpen()}
+        mode="files"
+        title={t("promptInput.attachFiles.dialogTitle")}
+        onClose={() => {
+          setIsFileBrowserOpen(false)
+          textareaRef?.focus()
+        }}
+        onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
+        initialPath={props.instanceFolder}
+      />
     </div>
   )
 }

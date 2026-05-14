@@ -1,4 +1,4 @@
-use crate::managed_node::ensure_managed_node_binary;
+use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -1079,7 +1079,7 @@ impl CliEntry {
                 entry,
                 runner: Runner::Node,
                 runner_path: None,
-                node_binary: ensure_managed_node_binary(app)?,
+                node_binary: resolve_bundled_node_binary()?,
                 node_args: vec!["--experimental-specifier-resolution=node".to_string()],
             });
         }
@@ -1215,10 +1215,7 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
 }
 
 fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
-    let base = workspace_root();
-    let mut candidates = vec![base
-        .as_ref()
-        .map(|p| p.join("packages/server/dist/bin.js"))];
+    let mut candidates = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -1235,6 +1232,12 @@ fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
             }
         }
     }
+
+    let base = workspace_root();
+    candidates.push(
+        base.as_ref()
+            .map(|p| p.join("packages/server/dist/bin.js")),
+    );
 
     first_existing(candidates)
 }

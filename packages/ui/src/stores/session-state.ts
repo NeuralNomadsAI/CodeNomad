@@ -1,6 +1,6 @@
 import { batch, createSignal } from "solid-js"
 
-import type { Session, SessionStatus, Agent, Provider } from "../types/session"
+import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
@@ -10,6 +10,7 @@ import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { tGlobal } from "../lib/i18n"
+import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 
 const log = getLogger("session")
 
@@ -47,6 +48,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
+const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
 const [expandedSessionParents, setExpandedSessionParents] = createSignal<Map<string, Set<string>>>(new Map())
 
@@ -314,6 +316,52 @@ function setSessionPendingQuestion(instanceId: string, sessionId: string, pendin
   })
 }
 
+function markSessionIdleSeen(instanceId: string, sessionId: string): void {
+  withSession(instanceId, sessionId, (session) => {
+    if (session.status !== "idle") return false
+    if (typeof session.idleSince !== "number") return false
+    session.idleSince = null
+  })
+}
+
+function markViewedSessionIdleSeen(
+  instanceId: string,
+  sessionId: string,
+  keepUnseenSubagentIdleStatus: boolean,
+): void {
+  setSessions((prev) => {
+    const instanceSessions = prev.get(instanceId)
+    if (!instanceSessions) return prev
+
+    const viewedSession = instanceSessions.get(sessionId)
+    if (!viewedSession) return prev
+
+    const idsToClear = new Set<string>([sessionId])
+    if (viewedSession.parentId === null && !keepUnseenSubagentIdleStatus) {
+      for (const session of instanceSessions.values()) {
+        if (session.parentId === sessionId) idsToClear.add(session.id)
+      }
+    }
+
+    let changed = false
+    const updatedSessions = new Map(instanceSessions)
+    for (const id of idsToClear) {
+      const session = updatedSessions.get(id)
+      if (!session) continue
+      if (session.status !== "idle") continue
+      if (typeof session.idleSince !== "number") continue
+      updatedSessions.set(id, { ...session, idleSince: null })
+      changed = true
+    }
+
+    if (!changed) return prev
+
+    const next = new Map(prev)
+    next.set(instanceId, updatedSessions)
+    return next
+  })
+}
+
 function setActiveSession(instanceId: string, sessionId: string): void {
   setActiveSessionId((prev) => {
     const next = new Map(prev)
@@ -353,6 +401,7 @@ function setSessionStatus(instanceId: string, sessionId: string, status: Session
     if (session.status === status) return false
     const previous = session.status
     session.status = status
+    session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     if (status !== "working") {
       session.retry = null
     }
@@ -601,6 +650,29 @@ function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | un
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
 
+function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTotals | undefined {
+  return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
+}
+
+function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
+  const family = getSessionFamily(instanceId, parentSessionId)
+  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
+
+  setThreadTotalsByInstance((prev) => {
+    const next = new Map(prev)
+    const instanceTotals = new Map(next.get(instanceId))
+    instanceTotals.set(parentSessionId, totals)
+    next.set(instanceId, instanceTotals)
+    return next
+  })
+}
+
+function updateThreadTotalsForSession(instanceId: string, sessionId: string): void {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return
+  updateThreadTotalsForParent(instanceId, session.parentId ?? session.id)
+}
+
 async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
   const created = session.time?.created || 0
   const updated = session.time?.updated || 0
@@ -727,6 +799,10 @@ export {
   setMessagesLoaded,
   sessionInfoByInstance,
   setSessionInfoByInstance,
+  threadTotalsByInstance,
+  getThreadTotals,
+  updateThreadTotalsForParent,
+  updateThreadTotalsForSession,
   getSessionDraftPrompt,
   setSessionDraftPrompt,
   clearSessionDraftPrompt,
@@ -735,6 +811,8 @@ export {
   withSession,
   setSessionPendingPermission,
   setSessionPendingQuestion,
+  markSessionIdleSeen,
+  markViewedSessionIdleSeen,
   setSessionStatus,
   setActiveSession,
  

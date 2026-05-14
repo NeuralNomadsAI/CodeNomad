@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash } from "lucide-solid"
+import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash, Volume2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
@@ -17,6 +17,8 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
+import type { SessionSearchMatch } from "../lib/session-search"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 
 function DeleteUpToIcon() {
   return (
@@ -188,6 +190,83 @@ function clearInstanceCaches(instanceId: string) {
 }
 
 messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
+
+function removeSearchMarks(root: HTMLElement) {
+  const marks = Array.from(root.querySelectorAll("mark.session-search-match"))
+  for (const mark of marks) {
+    const parent = mark.parentNode
+    if (!parent) continue
+    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark)
+    parent.normalize()
+  }
+}
+
+function getPartIdForSearchContainer(container: HTMLElement): string | undefined {
+  const target = container.closest<HTMLElement>("[data-part-id]") ?? container
+  const id = target.dataset.partId
+  return id && id.length > 0 ? id : undefined
+}
+
+function applySearchMarks(root: HTMLElement, query: string, activeMatch?: SessionSearchMatch | null, scrollActive = false) {
+  removeSearchMarks(root)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (!normalizedQuery) return
+
+  const containers = Array.from(root.querySelectorAll<HTMLElement>(".message-text, .tool-call, .message-reasoning-text"))
+  let occurrenceInActivePart = 0
+  let activeMark: HTMLElement | null = null
+
+  for (const container of containers) {
+    const containerPartId = getPartIdForSearchContainer(container)
+    const canContainActiveMatch = Boolean(activeMatch) && (!activeMatch?.partId || activeMatch.partId === containerPartId)
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement
+        if (!parent) return NodeFilter.FILTER_REJECT
+        if (parent.closest("button, input, textarea, select, mark.session-search-match")) return NodeFilter.FILTER_REJECT
+        if (!node.nodeValue || !node.nodeValue.toLocaleLowerCase().includes(normalizedQuery)) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
+      },
+    })
+
+    const textNodes: Text[] = []
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode as Text)
+    }
+
+    for (const textNode of textNodes) {
+      const original = textNode.nodeValue ?? ""
+      const lower = original.toLocaleLowerCase()
+      const fragment = document.createDocumentFragment()
+      let cursor = 0
+      while (cursor < original.length) {
+        const index = lower.indexOf(normalizedQuery, cursor)
+        if (index === -1) break
+        if (index > cursor) {
+          fragment.appendChild(document.createTextNode(original.slice(cursor, index)))
+        }
+        const mark = document.createElement("mark")
+        const isActive = Boolean(canContainActiveMatch && activeMatch && occurrenceInActivePart === activeMatch.occurrence)
+        mark.className = isActive ? "session-search-match session-search-match-active" : "session-search-match"
+        mark.textContent = original.slice(index, index + normalizedQuery.length)
+        fragment.appendChild(mark)
+        if (canContainActiveMatch) {
+          if (isActive) activeMark = mark
+          occurrenceInActivePart += 1
+        }
+        cursor = index + normalizedQuery.length
+      }
+      if (cursor < original.length) {
+        fragment.appendChild(document.createTextNode(original.slice(cursor)))
+      }
+      textNode.parentNode?.replaceChild(fragment, textNode)
+    }
+  }
+
+  if (activeMark && scrollActive) {
+    requestAnimationFrame(() => activeMark?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }))
+  }
+}
 
 interface ContentDisplayItem {
   type: "content"
@@ -408,6 +487,12 @@ function ToolCallItem(props: ToolCallItemProps) {
     navigateToTaskSession(location)
   }
 
+  const goToTaskSession = () => {
+    const location = taskLocation()
+    if (!location) return
+    navigateToTaskSession(location)
+  }
+
   const handleDeleteMessage = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -429,9 +514,7 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
-  const handleDeleteUpTo = async (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const deleteUpTo = async () => {
     if (!props.showDeleteMessage) return
     if (!props.onDeleteMessagesUpTo) return
     if (deletingUpTo()) return
@@ -444,11 +527,72 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
+  const handleDeleteUpTo = async (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    await deleteUpTo()
+  }
+
+  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+    const items: ActionOverflowMenuItem[] = []
+
+    if (taskSessionId()) {
+      items.push({
+        key: "go-to-session",
+        label: t("messageBlock.tool.goToSession.label"),
+        icon: <ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />,
+        disabled: !taskLocation(),
+        onSelect: goToTaskSession,
+      })
+    }
+
+    if (props.showDeleteMessage) {
+      items.push(
+        {
+          key: "delete-up-to",
+          label: t("messageItem.actions.deleteMessagesUpTo"),
+          icon: <DeleteUpToIcon />,
+          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: deleteUpTo,
+        },
+        {
+          key: "delete-message",
+          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
+          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
+          disabled: deletingMessage(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: async () => {
+            if (deletingMessage()) return
+            setDeletingMessage(true)
+            try {
+              await deleteMessage(props.instanceId, props.sessionId, props.messageId)
+            } catch (error) {
+              showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+                title: t("messageItem.actions.deleteMessageFailedTitle"),
+                detail: error instanceof Error ? error.message : String(error),
+                variant: "error",
+              })
+            } finally {
+              setDeletingMessage(false)
+            }
+          },
+        },
+      )
+    }
+
+    return items
+  }
+
   return (
     <Show when={toolPart()}>
       {(resolvedToolPart) => (
         <div class="delete-hover-scope" data-delete-part-hover={isDeleteOverlayActive() ? "true" : undefined}>
-          <div class="tool-call-header-label">
+          <div class="tool-call-header-label" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
             <div class="tool-call-header-meta">
               <Show when={props.showDeleteMessage}>
                 <input
@@ -473,7 +617,7 @@ function ToolCallItem(props: ToolCallItemProps) {
               <span class="tool-name">{toolName() || t("messageBlock.tool.unknown")}</span>
             </div>
 
-            <div class="flex items-center gap-0">
+            <div class="tool-call-header-actions flex items-center gap-0">
               <Show when={taskSessionId()}>
                 <button
                   class="tool-call-header-button"
@@ -515,6 +659,12 @@ function ToolCallItem(props: ToolCallItemProps) {
                 </button>
               </Show>
             </div>
+            <ActionOverflowMenu
+              items={actionMenuItems()}
+              label={t("messageItem.actions.more")}
+              triggerClass="tool-call-header-button"
+              minItems={2}
+            />
           </div>
 
           <Suspense fallback={<ToolCallFallback />}>
@@ -590,6 +740,9 @@ interface MessageBlockProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   onContentRendered?: () => void
+  searchQuery?: Accessor<string>
+  searchResultMessageIds?: Accessor<Set<string>>
+  activeSearchMatch?: Accessor<SessionSearchMatch | null>
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -597,6 +750,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const record = createMemo(() => props.store().getMessage(props.messageId))
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
+  let blockRef: HTMLDivElement | undefined
   const isDeleteMessageHovered = () => {
     const hover = props.deleteHover?.() ?? ({ kind: "none" } as DeleteHoverState)
 
@@ -620,6 +774,31 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     return false
   }
+
+  const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
+  const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
+  const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
+  let lastInlineScrolledSearchMatchId: string | null = null
+
+  createEffect(() => {
+    const query = props.searchQuery?.() ?? ""
+    const active = activeSearchMatch()
+    const relevantActiveMatch = active?.messageId === props.messageId ? active : null
+    const shouldScrollActive = Boolean(relevantActiveMatch && relevantActiveMatch.id !== lastInlineScrolledSearchMatchId)
+    if (shouldScrollActive && relevantActiveMatch) {
+      lastInlineScrolledSearchMatchId = relevantActiveMatch.id
+    }
+    const current = record()
+    if (current) void current.revision
+    const element = blockRef
+    if (!element) return
+
+    const frame = requestAnimationFrame(() => applySearchMarks(element, query, relevantActiveMatch, shouldScrollActive))
+    onCleanup(() => {
+      cancelAnimationFrame(frame)
+      removeSearchMarks(element)
+    })
+  })
 
   const block = createMemo<MessageDisplayBlock | null>(() => {
     const current = record()
@@ -811,9 +990,14 @@ export default function MessageBlock(props: MessageBlockProps) {
     <Show when={block()}>
       {(resolvedBlock) => (
         <div
+          ref={(el) => {
+            blockRef = el
+          }}
           class="message-stream-block"
           data-message-id={resolvedBlock().record.id}
           data-delete-message-hover={isDeleteMessageHovered() ? "true" : undefined}
+          data-search-result={isSearchResult() ? "true" : undefined}
+          data-search-active={isActiveSearchResult() ? "true" : undefined}
         >
           <Index each={resolvedBlock().items}>
             {(item, index) => (
@@ -841,7 +1025,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                   {(() => {
                     const toolItem = item() as ToolDisplayItem
                     return (
-                      <div class="tool-call-message" data-key={toolItem.key}>
+                      <div class="tool-call-message" data-key={toolItem.key} data-part-id={toolItem.partId}>
                           <ToolCallItem
                             instanceId={props.instanceId}
                             sessionId={props.sessionId}
@@ -924,6 +1108,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
                     onContentRendered={props.onContentRendered}
+                    forceExpanded={activeSearchMatch()?.partId === (item() as ReasoningDisplayItem).partId}
                   />
                 </Match>
               </Switch>
@@ -1309,6 +1494,7 @@ interface ReasoningCardProps {
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   onContentRendered?: () => void
+  forceExpanded?: boolean
 }
 
 function ReasoningStreamOutput(props: {
@@ -1390,6 +1576,12 @@ function ReasoningCard(props: ReasoningCardProps) {
     setExpanded(Boolean(props.defaultExpanded))
   })
 
+  createEffect(() => {
+    if (props.forceExpanded) {
+      setExpanded(true)
+    }
+  })
+
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
@@ -1462,6 +1654,73 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const canDeleteMessage = () => Boolean(props.showDeleteMessage) && !deletingMessage()
 
+  const deleteUpTo = async () => {
+    if (!props.showDeleteMessage) return
+    if (!props.onDeleteMessagesUpTo) return
+    if (deletingUpTo()) return
+
+    setDeletingUpTo(true)
+    try {
+      await props.onDeleteMessagesUpTo(props.messageId)
+    } finally {
+      setDeletingUpTo(false)
+    }
+  }
+
+  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+    const items: ActionOverflowMenuItem[] = []
+
+    if (canSpeakReasoning()) {
+      items.push({
+        key: "speak",
+        label: speech.buttonTitle(),
+        icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: () => void speech.toggle(),
+      })
+    }
+
+    if (props.showDeleteMessage) {
+      items.push(
+        {
+          key: "delete-up-to",
+          label: t("messageItem.actions.deleteMessagesUpTo"),
+          icon: <DeleteUpToIcon />,
+          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.messageId }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: deleteUpTo,
+        },
+        {
+          key: "delete-message",
+          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
+          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
+          disabled: !canDeleteMessage(),
+          destructive: true,
+          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.messageId }),
+          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
+          onSelect: async () => {
+            if (!canDeleteMessage()) return
+            setDeletingMessage(true)
+            try {
+              await deleteMessage(props.instanceId, props.sessionId, props.messageId)
+            } catch (error) {
+              showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
+                title: t("messageItem.actions.deleteMessageFailedTitle"),
+                detail: error instanceof Error ? error.message : String(error),
+                variant: "error",
+              })
+            } finally {
+              setDeletingMessage(false)
+            }
+          },
+        },
+      )
+    }
+
+    return items
+  }
+
   const handleDeleteMessage = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -1484,20 +1743,14 @@ function ReasoningCard(props: ReasoningCardProps) {
   const handleDeleteUpTo = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (!props.showDeleteMessage) return
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.messageId)
-    } finally {
-      setDeletingUpTo(false)
-    }
+    await deleteUpTo()
   }
 
   return (
-    <div class="delete-hover-scope message-reasoning-card">
+    <div
+      class="delete-hover-scope message-reasoning-card"
+      data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+    >
       <div class="message-reasoning-header">
         <button
           type="button"
@@ -1531,7 +1784,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           </span>
         </button>
 
-        <div class="message-reasoning-actions">
+        <div class="message-reasoning-actions" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
           <Show when={canSpeakReasoning()}>
             <SpeechActionButton
               class="message-action-button"
@@ -1548,7 +1801,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
           <button
             type="button"
-            class="message-action-button"
+            class="message-action-button message-reasoning-primary-action"
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -1589,6 +1842,13 @@ function ReasoningCard(props: ReasoningCardProps) {
               <Trash class="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </Show>
+
+          <ActionOverflowMenu
+            items={actionMenuItems()}
+            label={t("messageItem.actions.more")}
+            triggerClass="message-action-button"
+            minItems={2}
+          />
 
           <span class="message-reasoning-time">{timestamp()}</span>
         </div>

@@ -6,7 +6,13 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const WSL_PATH_ENV_KEYS = new Set(["OPENCODE_CONFIG_DIR", "NODE_EXTRA_CA_CERTS"])
+const CODENOMAD_PLUGIN_PACKAGE_NAME = "@codenomad/codenomad-opencode-plugin"
+const WSL_PLUGIN_PATH_ENV = "CODENOMAD_OPENCODE_PLUGIN_WSL_PATH"
+const WSL_PLUGIN_PATH_PLACEHOLDER = "__CODENOMAD_OPENCODE_PLUGIN_WSL_PATH__"
+const CODENOMAD_PLUGIN_FILE_SPEC_REGEX = new RegExp(
+  `(${escapeRegex(CODENOMAD_PLUGIN_PACKAGE_NAME)}@file:)([A-Za-z]:[^"\\r\\n]+?\\.tgz)`,
+)
+const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", WSL_PLUGIN_PATH_ENV])
 
 export interface SpawnSpec {
   command: string
@@ -187,6 +193,8 @@ export function probeBinaryVersion(binaryPath: string): {
 
 function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawnSpecOptions): SpawnSpec {
   const workingDirectory = options.cwd ? resolveWslWorkingDirectory(options.cwd, wslPath.distro) : undefined
+  const env = buildWslEnvironment(options.env, options.propagateEnvKeys)
+  const shouldTranslatePluginPath = Boolean(env?.[WSL_PLUGIN_PATH_ENV])
   if (options.cwd && !workingDirectory) {
     throw new Error(
       `Unable to translate workspace folder for WSL binary in distro "${wslPath.distro}": ${options.cwd}`,
@@ -194,14 +202,14 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   }
 
   const wslArgs = ["--distribution", wslPath.distro]
-  const shouldWrapWithShell = Boolean(options.wslPidMarker) || workingDirectory?.kind === "windows"
+  const shouldWrapWithShell = Boolean(options.wslPidMarker) || workingDirectory?.kind === "windows" || shouldTranslatePluginPath
 
   if (!shouldWrapWithShell && workingDirectory?.kind === "linux") {
     wslArgs.push("--cd", workingDirectory.path)
   }
 
   if (shouldWrapWithShell) {
-    const launchScript = buildWslLaunchScript(workingDirectory ?? undefined, options.wslPidMarker)
+    const launchScript = buildWslLaunchScript(workingDirectory ?? undefined, options.wslPidMarker, shouldTranslatePluginPath)
     wslArgs.push(
       "--exec",
       "sh",
@@ -224,12 +232,16 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
     command: "wsl.exe",
     args: wslArgs,
     options: {},
-    env: buildWslEnvironment(options.env, options.propagateEnvKeys),
+    env,
     wsl: { distro: wslPath.distro, pidMarker: options.wslPidMarker },
   }
 }
 
-function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined, pidMarker: string | undefined): string {
+function buildWslLaunchScript(
+  workingDirectory: WslWorkingDirectory | undefined,
+  pidMarker: string | undefined,
+  translatePluginPath: boolean,
+): string {
   const steps: string[] = []
 
   if (pidMarker) {
@@ -242,6 +254,12 @@ function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined,
   } else if (workingDirectory?.kind === "windows") {
     steps.push('cd "$(wslpath -au "$1")"')
     steps.push("shift")
+  }
+
+  if (translatePluginPath) {
+    steps.push(
+      `if [ -n "$${WSL_PLUGIN_PATH_ENV}" ] && [ -n "$OPENCODE_CONFIG_CONTENT" ]; then escaped_plugin_path=$(printf '%s' "$${WSL_PLUGIN_PATH_ENV}" | sed 's/[\\&|]/\\\\&/g'); OPENCODE_CONFIG_CONTENT=$(printf '%s' "$OPENCODE_CONFIG_CONTENT" | sed "s|${WSL_PLUGIN_PATH_PLACEHOLDER}|$escaped_plugin_path|g"); export OPENCODE_CONFIG_CONTENT; unset ${WSL_PLUGIN_PATH_ENV}; fi`,
+    )
   }
 
   steps.push('exec "$@"')
@@ -266,17 +284,19 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
     return env
   }
 
+  const next = { ...env }
+  rewriteOpencodePluginPathForWsl(next)
+
   const keysToPropagate = Array.from(
     new Set([
-      ...(propagateEnvKeys ?? []).filter((key) => env[key] !== undefined),
-      ...Array.from(WSL_PATH_ENV_KEYS).filter((key) => env[key] !== undefined),
+      ...(propagateEnvKeys ?? []).filter((key) => next[key] !== undefined),
+      ...Array.from(WSL_PATH_ENV_KEYS).filter((key) => next[key] !== undefined),
     ]),
   )
   if (keysToPropagate.length === 0) {
-    return env
+    return next
   }
 
-  const next = { ...env }
   const entries = (next.WSLENV ?? "").split(":").filter((entry) => entry.length > 0)
   const byName = new Map(entries.map((entry) => [entry.split("/")[0] ?? entry, entry]))
 
@@ -293,6 +313,22 @@ function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKey
   return next
 }
 
+function rewriteOpencodePluginPathForWsl(env: NodeJS.ProcessEnv) {
+  const content = env.OPENCODE_CONFIG_CONTENT
+  if (!content) {
+    return
+  }
+
+  const match = content.match(CODENOMAD_PLUGIN_FILE_SPEC_REGEX)
+  const hostPath = match?.[2]
+  if (!hostPath) {
+    return
+  }
+
+  env.OPENCODE_CONFIG_CONTENT = content.replace(hostPath, WSL_PLUGIN_PATH_PLACEHOLDER)
+  env[WSL_PLUGIN_PATH_ENV] = path.win32.normalize(hostPath)
+}
+
 function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): string {
   if (!requiresPathTranslation) {
     return entry
@@ -304,4 +340,8 @@ function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): str
   }
 
   return rawFlags.length > 0 ? `${name}/${rawFlags}p` : `${name}/p`
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
