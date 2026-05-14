@@ -316,10 +316,13 @@ export default function PromptInput(props: PromptInputProps) {
     }
 
     const wrapperRect = wrapperRef.getBoundingClientRect()
+    const localToolbar =
+      wrapperRef.closest('.session-view')?.querySelector('.session-toolbar') ||
+      wrapperRef.closest('[data-session-center-width]')?.querySelector('.session-toolbar')
     const toolbar =
+      localToolbar ||
       document.querySelector('[data-session-toolbar="true"]') ||
-      document.querySelector('.session-toolbar') ||
-      wrapperRef.closest('.session-view')?.querySelector('.session-toolbar')
+      document.querySelector('.session-toolbar')
 
     if (toolbar) {
       const toolbarRect = toolbar.getBoundingClientRect()
@@ -707,6 +710,8 @@ export default function PromptInput(props: PromptInputProps) {
       <div
         class={`prompt-resize-handle ${isResizing() ? 'is-resizing' : ''}`}
         onPointerDown={handleResizeStart}
+        aria-hidden="true"
+        role="presentation"
         title={t("promptInput.resizeHandle.title")}
       />
       <div
