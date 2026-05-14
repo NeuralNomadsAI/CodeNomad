@@ -447,6 +447,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               instanceFolder={props.instanceFolder}
               sessionId={activeSession.id}
               isActive={props.isActive}
+              compactLayout={props.compactPromptLayout}
               onSend={handleSendMessage}
               onRunShell={handleRunShell}
               escapeInDebounce={props.escapeInDebounce}
