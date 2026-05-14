@@ -357,7 +357,11 @@ export default function PromptInput(props: PromptInputProps) {
           await props.onSend(resolvedPrompt, [])
         }
       } else if (isKnownSlashCommand) {
-        await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
+        if (props.onCommand) {
+          await props.onCommand(commandName, resolvedCommandArgs)
+        } else {
+          await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
+        }
       } else {
         await props.onSend(resolvedPrompt, currentAttachments)
       }
