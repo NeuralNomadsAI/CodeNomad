@@ -1,6 +1,7 @@
 import type { Attachment } from "../../types/attachment"
 
 export type PromptMode = "normal" | "shell"
+export type ExpandState = "normal" | "expanded"
 export type PickerMode = "mention" | "command"
 export type PromptInsertMode = "quote" | "code"
 
@@ -20,6 +21,9 @@ export interface PromptInputProps {
 
   // Used to scope global "type-to-focus" behavior.
   isActive?: boolean
+
+  // Phone/tablet layouts should keep the expanded prompt more compact.
+  compactLayout?: boolean
 
   onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
