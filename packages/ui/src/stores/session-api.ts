@@ -49,6 +49,11 @@ import {
   removeParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
+import {
+  clearOverrides,
+  setAgentOverride,
+  setModelOverride,
+} from "./session-overrides"
 
 const log = getLogger("api")
 
@@ -442,6 +447,16 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug).catch((error) => {
       log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
     })
+
+    // Record the initial agent/model as explicit user overrides so the first
+    // prompt sends them.  After a prompt/command consumes them or messages are
+    // reloaded from the server, the overrides are cleared automatically.
+    if (selectedAgent) {
+      setAgentOverride(instanceId, session.id, selectedAgent)
+    }
+    if (isModelValid(instanceId, defaultModel)) {
+      setModelOverride(instanceId, session.id, defaultModel)
+    }
 
     return session
   } catch (error) {
@@ -850,6 +865,12 @@ async function loadMessages(
       next.set(instanceId, nextInstanceSessions)
       return next
     })
+
+    // Server provided authoritative agent/model — clear pending user overrides
+    // so we don't resend stale selections on the next prompt.
+    if (agentName || (providerID && modelID)) {
+      clearOverrides(instanceId, sessionId)
+    }
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)

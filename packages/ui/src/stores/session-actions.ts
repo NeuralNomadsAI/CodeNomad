@@ -11,6 +11,15 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import {
+  getOverride,
+  setAgentOverride,
+  setModelOverride,
+  clearOverrides,
+  clearAgentOverride,
+  clearModelOverride,
+  getModelOverrideValue,
+} from "./session-overrides"
 
 const log = getLogger("actions")
 
@@ -183,20 +192,25 @@ async function sendMessage(
     /* trigger reactivity for legacy session data */
   })
 
+  // Only send agent/model when the user explicitly selected them (override state).
+  // session.agent/session.model are display state (what the server has), NOT user intent.
+  const userOverride = getOverride(instanceId, sessionId)
+  const overrideModel = userOverride?.model
+    ? getModelOverrideValue(instanceId, sessionId)
+    : undefined
+
   const requestBody = {
     parts: requestParts,
-    ...(session.agent && { agent: session.agent }),
-    ...(session.model.providerId &&
-      session.model.modelId && {
-        model: {
-          providerID: session.model.providerId,
-          modelID: session.model.modelId,
-        },
-      }),
-    ...(session.model.providerId &&
-      session.model.modelId &&
+    ...(userOverride?.agent && { agent: userOverride.agent }),
+    ...(overrideModel && {
+      model: {
+        providerID: overrideModel.providerId,
+        modelID: overrideModel.modelId,
+      },
+    }),
+    ...(overrideModel &&
       (() => {
-        const variant = getThinkingVariantToSend(instanceId, session.model)
+        const variant = getThinkingVariantToSend(instanceId, overrideModel)
         return variant ? { variant } : {}
       })()),
   }
@@ -216,6 +230,7 @@ async function sendMessage(
       }),
       "session.promptAsync",
     )
+    clearOverrides(instanceId, sessionId)
   } catch (error) {
     log.error("Failed to send prompt", error)
     throw error
@@ -254,14 +269,20 @@ async function executeCustomCommand(
     messageID: createId("msg"),
   }
 
-  if (session.agent) {
-    body.agent = session.agent
+  // Only send agent/model when the user explicitly selected them (override state).
+  const userOverride = getOverride(instanceId, sessionId)
+
+  if (userOverride?.agent) {
+    body.agent = userOverride.agent
   }
 
-  if (session.model.providerId && session.model.modelId) {
-    body.model = `${session.model.providerId}/${session.model.modelId}`
-    const variant = getThinkingVariantToSend(instanceId, session.model)
-    if (variant) body.variant = variant
+  if (userOverride?.model) {
+    const overrideModel = getModelOverrideValue(instanceId, sessionId)
+    if (overrideModel) {
+      body.model = `${overrideModel.providerId}/${overrideModel.modelId}`
+      const variant = getThinkingVariantToSend(instanceId, overrideModel)
+      if (variant) body.variant = variant
+    }
   }
 
   await requestData(
@@ -271,6 +292,7 @@ async function executeCustomCommand(
     }),
     "session.command",
   )
+  clearOverrides(instanceId, sessionId)
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
@@ -287,7 +309,9 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     throw new Error("Session not found")
   }
 
-  const agent = session.agent || "build"
+  // Only use override agent — fall back to "build" (OpenCode default) if user hasn't explicitly set one.
+  const userOverride = getOverride(instanceId, sessionId)
+  const agent = userOverride?.agent || "build"
 
   await requestData(
     client.session.shell({
@@ -297,6 +321,9 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     }),
     "session.shell",
   )
+  if (userOverride?.agent) {
+    clearAgentOverride(instanceId, sessionId)
+  }
 }
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {
@@ -335,12 +362,22 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   const nextModel = await getDefaultModel(instanceId, agent)
   const shouldApplyModel = isModelValid(instanceId, nextModel)
 
+  // Update local display state
   withSession(instanceId, sessionId, (current) => {
     current.agent = agent
     if (shouldApplyModel) {
       current.model = nextModel
     }
   })
+
+  // Record explicit user override so the next prompt sends these values.
+  setAgentOverride(instanceId, sessionId, agent)
+  if (shouldApplyModel) {
+    setModelOverride(instanceId, sessionId, nextModel)
+  } else {
+    // Agent changed but no valid model found — clear any stale model override
+    clearModelOverride(instanceId, sessionId)
+  }
 
   if (agent && shouldApplyModel) {
     await setAgentModelPreference(instanceId, agent, nextModel)
@@ -367,9 +404,13 @@ async function updateSessionModel(
     return
   }
 
+  // Update local display state
   withSession(instanceId, sessionId, (current) => {
     current.model = model
   })
+
+  // Record explicit user override so the next prompt sends this model.
+  setModelOverride(instanceId, sessionId, model)
 
   if (session.agent) {
     await setAgentModelPreference(instanceId, session.agent, model)
