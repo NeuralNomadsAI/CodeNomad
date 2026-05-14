@@ -149,6 +149,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "コマンド",
   "promptInput.history.previousAriaLabel": "前のプロンプト",
   "promptInput.history.nextAriaLabel": "次のプロンプト",
+  "promptInput.resizeHandle.title": "ドラッグして入力欄の高さを変更",
   "promptInput.overlay.newLine": "改行",
   "promptInput.overlay.send": "送信",
   "promptInput.overlay.filesAgents": "ファイル/エージェント",
@@ -185,5 +186,4 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
   "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
   "promptInput.resizeHandle.ariaLabel": "入力の高さを変更",
-  "promptInput.resizeHandle.title": "ドラッグして高さを変更",
 } as const

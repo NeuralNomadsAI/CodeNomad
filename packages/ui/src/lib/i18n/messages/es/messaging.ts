@@ -149,6 +149,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "Comandos",
   "promptInput.history.previousAriaLabel": "Prompt anterior",
   "promptInput.history.nextAriaLabel": "Siguiente prompt",
+  "promptInput.resizeHandle.title": "Arrastra para cambiar la altura del campo de entrada",
   "promptInput.overlay.newLine": "Nueva línea",
   "promptInput.overlay.send": "Enviar",
   "promptInput.overlay.filesAgents": "Archivos/agentes",
@@ -185,5 +186,4 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.unsupported": "La entrada de voz no es compatible con este navegador.",
   "promptInput.voiceInput.error.transcribe": "No se pudo transcribir el audio grabado.",
   "promptInput.resizeHandle.ariaLabel": "Redimensionar altura de entrada",
-  "promptInput.resizeHandle.title": "Arrastra para redimensionar la altura",
 } as const
