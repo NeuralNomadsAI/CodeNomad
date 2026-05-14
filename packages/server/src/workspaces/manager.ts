@@ -1,13 +1,16 @@
+import { createWriteStream, promises as fsp } from "fs"
+import os from "os"
 import path from "path"
 import { spawn, spawnSync } from "child_process"
 import { connect } from "net"
+import { finished } from "stream/promises"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
 import type { BinaryResolver } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
-import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry, WorkspaceSessionExportResponse } from "../api-types"
+import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import {
@@ -25,6 +28,12 @@ import {
 import { buildSpawnSpec } from "./spawn"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
+const SESSION_EXPORT_TIMEOUT_MS = 5 * 60_000
+
+interface SessionExportFile {
+  filePath: string
+  cleanup: () => Promise<void>
+}
 
 interface WorkspaceManagerOptions {
   rootDir: string
@@ -96,7 +105,11 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
-  async exportSessionData(workspaceId: string, sessionId: string): Promise<WorkspaceSessionExportResponse> {
+  async exportSessionDataToFile(
+    workspaceId: string,
+    sessionId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SessionExportFile> {
     const workspace = this.requireWorkspace(workspaceId)
     const normalizedSessionId = sessionId.trim()
     if (!normalizedSessionId) {
@@ -123,44 +136,91 @@ export class WorkspaceManager {
       propagateEnvKeys: Object.keys(userEnvironment),
     })
 
-    return await new Promise<WorkspaceSessionExportResponse>((resolve, reject) => {
-      const child = spawn(spec.command, spec.args, {
-        cwd: spec.cwd,
-        env: spec.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        ...spec.options,
-      })
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "codenomad-session-export-"))
+    const filePath = path.join(tempDir, `${normalizedSessionId}.json`)
 
-      const stdoutChunks: Buffer[] = []
-      const stderrChunks: Buffer[] = []
+    const cleanup = async () => {
+      await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+    }
 
-      child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk))
-      child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk))
-      child.on("error", (error) => reject(error))
-      child.on("exit", (code) => {
-        if (code !== 0) {
-          const stderr = Buffer.concat(stderrChunks).toString("utf8").trim()
-          const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim()
-          reject(new Error(stderr || stdout || `opencode export exited with code ${code}`))
-          return
-        }
+    try {
+      return await new Promise<SessionExportFile>((resolve, reject) => {
+        let settled = false
+        let timedOut = false
+        const controller = new AbortController()
+        const output = createWriteStream(filePath, { encoding: "utf8" })
+        const timeout = setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, SESSION_EXPORT_TIMEOUT_MS)
 
-        try {
-          const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim()
-          if (!stdout) {
-            throw new Error("opencode export returned empty output")
+        const finish = async (result: { file?: SessionExportFile; error?: Error }) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          options?.signal?.removeEventListener("abort", handleAbort)
+
+          if (result.error) {
+            output.destroy()
+            await cleanup()
+            reject(result.error)
+            return
           }
 
-          const parsed = JSON.parse(stdout) as { info?: Record<string, unknown>; messages?: unknown[] }
-          resolve({
-            info: parsed.info && typeof parsed.info === "object" ? parsed.info : {},
-            messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-          })
-        } catch (error) {
-          reject(error)
+          resolve(result.file!)
         }
+
+        const handleAbort = () => {
+          controller.abort()
+        }
+
+        options?.signal?.addEventListener("abort", handleAbort)
+
+        const child = spawn(spec.command, spec.args, {
+          cwd: spec.cwd,
+          env: spec.env,
+          stdio: ["ignore", "pipe", "pipe"],
+          signal: controller.signal,
+          ...spec.options,
+        })
+
+        const stderrChunks: Buffer[] = []
+
+        child.stdout?.pipe(output)
+        output.on("error", (error) => {
+          void finish({ error: error instanceof Error ? error : new Error(String(error)) })
+        })
+        child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk))
+        child.on("error", async (error) => {
+          const abortReason = options?.signal?.aborted
+            ? new Error("Session export aborted")
+            : timedOut
+              ? new Error(`Session export timed out after ${SESSION_EXPORT_TIMEOUT_MS}ms`)
+              : error
+          await finish({ error: abortReason })
+        })
+        child.on("exit", (code) => {
+          void (async () => {
+            if (code !== 0) {
+              const stderr = Buffer.concat(stderrChunks).toString("utf8").trim()
+              const errorMessage = stderr || `opencode export exited with code ${code}`
+              await finish({ error: new Error(errorMessage) })
+              return
+            }
+
+            try {
+              await finished(output)
+              await finish({ file: { filePath, cleanup } })
+            } catch (error) {
+              await finish({ error: error instanceof Error ? error : new Error(String(error)) })
+            }
+          })()
+        })
       })
-    })
+    } catch (error) {
+      await cleanup()
+      throw error
+    }
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {

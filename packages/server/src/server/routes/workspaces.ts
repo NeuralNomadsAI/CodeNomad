@@ -1,3 +1,4 @@
+import { createReadStream } from "fs"
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
@@ -105,9 +106,50 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{
     Params: { id: string; sessionId: string }
   }>("/api/workspaces/:id/sessions/:sessionId/export", async (request, reply) => {
+    const controller = new AbortController()
+    const handleAbort = () => controller.abort()
+    request.raw.on("close", handleAbort)
+    request.raw.on("error", handleAbort)
+
+    let exportFile: Awaited<ReturnType<WorkspaceManager["exportSessionDataToFile"]>> | null = null
+    let cleanedUp = false
+
+    const cleanup = async () => {
+      if (cleanedUp) return
+      cleanedUp = true
+      request.raw.off("close", handleAbort)
+      request.raw.off("error", handleAbort)
+      reply.raw.off("close", handleReplyDone)
+      reply.raw.off("finish", handleReplyDone)
+      await exportFile?.cleanup().catch(() => undefined)
+    }
+
+    const handleReplyDone = () => {
+      void cleanup()
+    }
+
+    reply.raw.on("close", handleReplyDone)
+    reply.raw.on("finish", handleReplyDone)
+
     try {
-      return await deps.workspaceManager.exportSessionData(request.params.id, request.params.sessionId)
+      exportFile = await deps.workspaceManager.exportSessionDataToFile(request.params.id, request.params.sessionId, {
+        signal: controller.signal,
+      })
+      const stream = createReadStream(exportFile.filePath)
+      stream.on("error", () => {
+        void cleanup()
+      })
+      reply.type("application/json; charset=utf-8")
+      return reply.send(stream)
     } catch (error) {
+      await cleanup()
+      if (request.raw.destroyed || controller.signal.aborted) {
+        return
+      }
+      if (error instanceof Error && error.message.includes("Session export timed out")) {
+        reply.code(504)
+        return { error: error.message }
+      }
       return handleWorkspaceError(error, reply)
     }
   })
