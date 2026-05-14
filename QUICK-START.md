@@ -12,6 +12,13 @@
 pm2 list
 # → codenomad (ID: 0) online, uptime: 53m+
 
+# IMPORTANTE: Estás corriendo el OFFICIAL NPM package
+# → npx @neuralnomads/codenomad-dev
+# NO tu fork local (/home/dark/Project/codenomad)
+
+# Para aplicar fixes, necesitás switch a tu fork
+# Ver: RUN-FORK-WITH-PM2.md
+
 # Ver logs en tiempo real
 pm2 logs codenomad
 
@@ -20,6 +27,9 @@ pm2 logs codenomad
 
 # OpenCode
 # → http://localhost:4096
+
+# Tu fork (código local)
+# → /home/dark/Project/codenomad
 ```
 
 ---
@@ -139,32 +149,63 @@ Si no se traba en los próximos días:
 
 **Mientras esperamos el bug:**
 
-1. **Implementar timeout preventivo YA** (sin esperar logs):
+1. **Switch a fork local** (ver `RUN-FORK-WITH-PM2.md`):
+   ```bash
+   pm2 delete codenomad
+   cd /home/dark/Project/codenomad
+   npm run build
+   pm2 start npm --name codenomad-fork -- run start -- \
+     --host 0.0.0.0 --https-port 9898 --password 3467 --launch
+   pm2 save
+   ```
+
+2. **Implementar timeout preventivo**:
    ```typescript
    // packages/server/src/workspaces/opencode-workspace.ts
    // Agregar timeout de 2 min a executeRequest()
    // Ver MOBILE-FIX-PLAN.md líneas 234-289
    ```
 
-2. **Testing básico**:
-   - Deploy via PM2
+3. **Testing básico**:
+   - Deploy via PM2: `npm run build && pm2 restart codenomad-fork`
    - Verificar que no rompe nada
    - Timeout funciona correctamente
 
-3. **Cuando bug ocurra:**
+4. **Cuando bug ocurra:**
    - Ya tenemos timeout implementado
    - Ver si lo previene o necesita ajustes
    - Logs nos dirán si timeout se activó
 
-4. **Beneficio doble:**
-   - Fix preventivo deployed
+5. **Beneficio doble:**
+   - Fix preventivo deployed en tu fork
    - Datos del bug para optimizar
+   - PR upstream cuando esté probado
 
-**Recomendación:** Esta es la mejor opción. Implementamos timeout ahora, luego refinamos con datos reales.
+**Recomendación:** Esta es la mejor opción. Implementamos timeout ahora en fork, luego refinamos con datos reales.
 
 ---
 
 ## 🛠️ Implementación Rápida (Si eliges Opción C)
+
+### Paso 0: Switch a Fork (5 min) - **NUEVO**
+
+```bash
+# Detener official package
+pm2 delete codenomad
+
+# Iniciar tu fork
+cd /home/dark/Project/codenomad
+npm install  # si no lo hiciste
+npm run build
+pm2 start npm --name codenomad-fork -- run start -- \
+  --host 0.0.0.0 --https-port 9898 --password 3467 --launch
+pm2 save
+
+# Verificar
+pm2 logs codenomad-fork --lines 20
+```
+
+Ver detalles en: `RUN-FORK-WITH-PM2.md`
 
 ### Paso 1: Implementar Timeout (30 min)
 
@@ -181,8 +222,8 @@ watchdog timer. Testea con timeout simulado.
 ```bash
 cd /home/dark/Project/codenomad
 npm run build
-pm2 restart codenomad
-pm2 logs codenomad --lines 20
+pm2 restart codenomad-fork
+pm2 logs codenomad-fork --lines 20
 ```
 
 ### Paso 3: Testing Manual (15 min)
@@ -191,16 +232,27 @@ pm2 logs codenomad --lines 20
 2. Haz request grande (ej: "explica todo el codebase")
 3. Si tarda >2 min, debería timeout
 4. Si se traba, presiona STOP
-5. Verifica logs: `pm2 logs codenomad`
+5. Verifica logs: `pm2 logs codenomad-fork`
 
 ### Paso 4: Monitoring (ongoing)
 
 ```bash
 # Logs en tiempo real
-pm2 logs codenomad --lines 0
+pm2 logs codenomad-fork --lines 0
 
 # Uso normal de CodeNomad
 # Observar si mejora o necesita ajustes
+```
+
+### Paso 5: PR Upstream (cuando esté probado)
+
+```bash
+cd /home/dark/Project/codenomad
+git checkout -b fix/session-timeout
+git add .
+git commit -m "fix: add timeout to OpenCode requests"
+git push origin fix/session-timeout
+gh pr create --base dev --title "fix: add timeout to OpenCode requests"
 ```
 
 ---
