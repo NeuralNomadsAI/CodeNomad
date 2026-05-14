@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageItem.actions.copy": "复制",
   "messageItem.actions.copyTitle": "复制消息",
   "messageItem.actions.copied": "已复制！",
+  "messageItem.actions.more": "更多操作",
   "messageItem.actions.speak": "朗读消息",
   "messageItem.actions.generatingSpeech": "正在生成语音",
   "messageItem.actions.stopSpeech": "停止播放",

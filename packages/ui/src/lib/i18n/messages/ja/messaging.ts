@@ -91,6 +91,7 @@ export const messagingMessages = {
   "messageItem.actions.copy": "コピー",
   "messageItem.actions.copyTitle": "メッセージをコピー",
   "messageItem.actions.copied": "コピーしました!",
+  "messageItem.actions.more": "その他の操作",
   "messageItem.actions.speak": "メッセージを読み上げ",
   "messageItem.actions.generatingSpeech": "音声を生成中",
   "messageItem.actions.stopSpeech": "再生を停止",
