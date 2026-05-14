@@ -1,5 +1,5 @@
 import path from "path"
-import { spawnSync } from "child_process"
+import { spawn, spawnSync } from "child_process"
 import { connect } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
@@ -7,7 +7,7 @@ import type { BinaryResolver } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
-import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
+import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry, WorkspaceSessionExportResponse } from "../api-types"
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import {
@@ -22,6 +22,7 @@ import {
   OPENCODE_SERVER_USERNAME_ENV,
   resolveOpencodeServerAuth,
 } from "./opencode-auth"
+import { buildSpawnSpec } from "./spawn"
 
 const STARTUP_STABILITY_DELAY_MS = 1500
 
@@ -93,6 +94,73 @@ export class WorkspaceManager {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
     browser.writeFile(relativePath, contents)
+  }
+
+  async exportSessionData(workspaceId: string, sessionId: string): Promise<WorkspaceSessionExportResponse> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const normalizedSessionId = sessionId.trim()
+    if (!normalizedSessionId) {
+      throw new Error("Session ID is required")
+    }
+
+    const serverConfig = this.options.settings.getOwner("config", "server")
+    const envVars = (serverConfig as any)?.environmentVariables
+    const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+    const opencodeConfigContent = buildOpencodeConfigContent(
+      resolveExistingOpencodeConfigContent(userEnvironment),
+      this.codeNomadPluginUrl,
+    )
+
+    const environment = {
+      ...process.env,
+      ...userEnvironment,
+      OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
+    }
+
+    const spec = buildSpawnSpec(workspace.binaryId, ["export", normalizedSessionId], {
+      cwd: workspace.path,
+      env: environment,
+      propagateEnvKeys: Object.keys(userEnvironment),
+    })
+
+    return await new Promise<WorkspaceSessionExportResponse>((resolve, reject) => {
+      const child = spawn(spec.command, spec.args, {
+        cwd: spec.cwd,
+        env: spec.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        ...spec.options,
+      })
+
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
+
+      child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk))
+      child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk))
+      child.on("error", (error) => reject(error))
+      child.on("exit", (code) => {
+        if (code !== 0) {
+          const stderr = Buffer.concat(stderrChunks).toString("utf8").trim()
+          const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim()
+          reject(new Error(stderr || stdout || `opencode export exited with code ${code}`))
+          return
+        }
+
+        try {
+          const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim()
+          if (!stdout) {
+            throw new Error("opencode export returned empty output")
+          }
+
+          const parsed = JSON.parse(stdout) as { info?: Record<string, unknown>; messages?: unknown[] }
+          resolve({
+            info: parsed.info && typeof parsed.info === "object" ? parsed.info : {},
+            messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+          })
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
   }
 
   async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {

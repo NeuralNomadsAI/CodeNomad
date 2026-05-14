@@ -8,6 +8,7 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  WorkspaceSessionExportResponse,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
@@ -213,6 +214,10 @@ export const serverApi = {
 
   readWorktreeMap(id: string): Promise<WorktreeMap> {
     return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`)
+  },
+
+  exportSessionData(id: string, sessionId: string): Promise<WorkspaceSessionExportResponse> {
+    return request<WorkspaceSessionExportResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/export`)
   },
 
   writeWorktreeMap(id: string, map: WorktreeMap): Promise<void> {

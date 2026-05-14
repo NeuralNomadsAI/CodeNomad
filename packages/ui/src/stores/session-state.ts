@@ -7,10 +7,10 @@ import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { fetchSessionMessages } from "./session-message-source"
 
 const log = getLogger("session")
 
@@ -691,14 +691,11 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     return isFreshSession
   }
   let messages: any[] = []
-    try {
-      const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
-      const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
-      messages = await requestData<any[]>(
-        client.session.messages({ sessionID: session.id }),
-        "session.messages",
-      )
-    } catch (error) {
+  try {
+    const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
+    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    messages = await fetchSessionMessages(instanceId, session.id, client)
+  } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
   }

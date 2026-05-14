@@ -49,6 +49,7 @@ import {
   removeParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
+import { fetchSessionMessages } from "./session-message-source"
 
 const log = getLogger("api")
 
@@ -760,10 +761,7 @@ async function loadMessages(
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId }),
-      "session.messages",
-    )
+    const apiMessages = await fetchSessionMessages(instanceId, sessionId, client)
 
     if (!Array.isArray(apiMessages)) {
       return

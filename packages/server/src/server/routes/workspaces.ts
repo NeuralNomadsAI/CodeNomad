@@ -103,6 +103,16 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.get<{
+    Params: { id: string; sessionId: string }
+  }>("/api/workspaces/:id/sessions/:sessionId/export", async (request, reply) => {
+    try {
+      return await deps.workspaceManager.exportSessionData(request.params.id, request.params.sessionId)
+    } catch (error) {
+      return handleWorkspaceError(error, reply)
+    }
+  })
+
+  app.get<{
     Params: { id: string }
     Querystring: { path?: string }
   }>("/api/workspaces/:id/files", async (request, reply) => {

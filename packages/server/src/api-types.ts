@@ -59,6 +59,11 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export interface WorkspaceSessionExportResponse {
+  info: Record<string, unknown>
+  messages: unknown[]
+}
+
 export type WorktreeKind = "root" | "worktree"
 
 export interface WorktreeDescriptor {
