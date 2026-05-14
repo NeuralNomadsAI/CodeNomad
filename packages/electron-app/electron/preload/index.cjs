@@ -33,6 +33,7 @@ const localElectronAPI = {
       return null
     }
   },
+  getPlatformInfo: () => ipcRenderer.invoke("platform:getInfo"),
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
