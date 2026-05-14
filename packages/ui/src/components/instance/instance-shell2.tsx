@@ -1084,6 +1084,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       instanceFolder={props.instance.folder}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
                       isActive={props.isActiveInstance}
+                      compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
                       escapeInDebounce={props.escapeInDebounce}
                     />
