@@ -31,6 +31,15 @@ import {
 } from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
+const DEFAULT_PROMPT_FIELD_HEIGHT = 104
+const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
+
+type ResizeDragState = {
+  pointerId: number
+  startY: number
+  startHeight: number
+  maxHeight: number
+}
 
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
@@ -65,11 +74,16 @@ export default function PromptInput(props: PromptInputProps) {
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const [expandState, setExpandState] = createSignal<ExpandState>("normal")
+  const [inputHeight, setInputHeight] = createSignal<number | null>(null)
+  const [isResizing, setIsResizing] = createSignal(false)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
+  let wrapperRef: HTMLDivElement | undefined
+  let fieldContainerRef: HTMLDivElement | undefined
+  let resizeDragState: ResizeDragState | undefined
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -216,6 +230,7 @@ export default function PromptInput(props: PromptInputProps) {
       draftLoadedNonce,
       () => {
         // Session switch resets (picker/counters/ignored positions) stay in the component.
+        setInputHeight(null)
         setIgnoredAtPositions(new Set<number>())
         setShowPicker(false)
         setPickerMode("mention")
@@ -294,6 +309,61 @@ export default function PromptInput(props: PromptInputProps) {
     })
   })
 
+  function computeMaxFieldHeight(): number {
+    if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
+
+    const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
+    const availableHeight = sessionCenter?.getBoundingClientRect().height ?? window.innerHeight
+    const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
+    return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
+  }
+
+  function handleResizeStart(event: PointerEvent) {
+    event.preventDefault()
+    const target = event.currentTarget as HTMLElement
+
+    resizeDragState = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT,
+      maxHeight: computeMaxFieldHeight(),
+    }
+
+    setIsResizing(true)
+
+    try {
+      target.setPointerCapture(event.pointerId)
+    } catch {
+      resizeDragState = undefined
+      setIsResizing(false)
+    }
+  }
+
+  function handleResizeMove(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
+
+    event.preventDefault()
+    const deltaY = resizeDragState.startY - event.clientY
+    const nextHeight = Math.max(
+      DEFAULT_PROMPT_FIELD_HEIGHT,
+      Math.min(resizeDragState.maxHeight, resizeDragState.startHeight + deltaY),
+    )
+    setInputHeight(nextHeight)
+  }
+
+  function handleResizeEnd(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
+
+    event.preventDefault()
+    resizeDragState = undefined
+    setIsResizing(false)
+    textareaRef?.focus()
+  }
+
+  onCleanup(() => {
+    resizeDragState = undefined
+  })
+
   async function handleSend() {
     const text = prompt().trim()
     const currentAttachments = attachments()
@@ -324,6 +394,7 @@ export default function PromptInput(props: PromptInputProps) {
     const refreshHistory = () => recordHistoryEntry(historyEntry)
 
     setExpandState("normal")
+    setInputHeight(null)
     clearPrompt()
     clearHistoryDraft()
     setMode("normal")
@@ -386,6 +457,7 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleExpandToggle(nextState: "normal" | "expanded") {
+    setInputHeight(null)
     setExpandState(nextState)
     // Keep focus on textarea
     textareaRef?.focus()
@@ -603,6 +675,7 @@ export default function PromptInput(props: PromptInputProps) {
   return (
     <div class="prompt-input-container">
       <div
+        ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
         style={
           isDragging()
@@ -635,9 +708,26 @@ export default function PromptInput(props: PromptInputProps) {
         </Show>
 
         <div class="prompt-input-main flex flex-1 flex-col">
-          <div class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}>
+          <div
+            ref={fieldContainerRef}
+            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${inputHeight() !== null ? "is-resized" : ""}`}
+            style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+          >
+            <div
+              class={`prompt-resize-handle ${isResizing() ? "is-resizing" : ""}`}
+              onPointerDown={handleResizeStart}
+              onPointerMove={handleResizeMove}
+              onPointerUp={handleResizeEnd}
+              onPointerCancel={handleResizeEnd}
+              aria-hidden="true"
+              role="presentation"
+              title={t("promptInput.resizeHandle.title")}
+            />
 
-            <div class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}>
+            <div
+              class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}
+              style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
+            >
               <textarea
                 ref={textareaRef}
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""} ${expandState() === "expanded" ? "is-expanded" : ""}`}
@@ -655,6 +745,7 @@ export default function PromptInput(props: PromptInputProps) {
                 autocorrect="off"
                 autoCapitalize="off"
                 autocomplete="off"
+                style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px`, "overflow-y": "auto" } : undefined}
               />
               <button
                 type="button"

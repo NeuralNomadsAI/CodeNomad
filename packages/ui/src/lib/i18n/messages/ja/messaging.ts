@@ -149,6 +149,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "コマンド",
   "promptInput.history.previousAriaLabel": "前のプロンプト",
   "promptInput.history.nextAriaLabel": "次のプロンプト",
+  "promptInput.resizeHandle.title": "ドラッグして入力欄の高さを変更",
   "promptInput.overlay.newLine": "改行",
   "promptInput.overlay.send": "送信",
   "promptInput.overlay.filesAgents": "ファイル/エージェント",
