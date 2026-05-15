@@ -66,6 +66,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [serverDialogError, setServerDialogError] = createSignal<string | null>(null)
   const [isSavingServer, setIsSavingServer] = createSignal(false)
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
+  let homeRootRef: HTMLDivElement | undefined
+  let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
 
   type LanguageOption = { value: Locale; label: string }
@@ -239,6 +241,28 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     window.addEventListener("keydown", handleKeyDown)
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
+    })
+  })
+
+  onMount(() => {
+    const syncActionsHeight = () => {
+      if (!homeRootRef || !actionsColumnRef) return
+      const height = actionsColumnRef.getBoundingClientRect().height
+      homeRootRef.style.setProperty("--folder-home-actions-height", `${Math.ceil(height)}px`)
+    }
+
+    syncActionsHeight()
+    window.addEventListener("resize", syncActionsHeight)
+
+    let observer: ResizeObserver | undefined
+    if (typeof ResizeObserver !== "undefined" && actionsColumnRef) {
+      observer = new ResizeObserver(syncActionsHeight)
+      observer.observe(actionsColumnRef)
+    }
+
+    onCleanup(() => {
+      window.removeEventListener("resize", syncActionsHeight)
+      observer?.disconnect()
     })
   })
 
@@ -552,15 +576,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   return (
     <>
       <div
-        class="flex h-screen w-full items-start justify-center overflow-hidden py-6 px-4 sm:px-6 relative"
-        style="background-color: var(--surface-secondary)"
+        class="folder-home-root flex w-full items-start justify-center py-6 px-4 sm:px-6 relative"
+        ref={(el) => (homeRootRef = el)}
         onDragEnter={folderDrop.bind.onDragEnter}
         onDragOver={folderDrop.bind.onDragOver}
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
       >
         <div
-          class="w-full max-w-5xl h-full px-4 sm:px-8 pb-2 flex flex-col overflow-hidden"
+          class="folder-home-shell w-full max-w-5xl px-4 sm:px-8 pb-2 flex flex-col"
           aria-busy={isLoading() ? "true" : "false"}
         >
           <div class="absolute top-4" style="inset-inline-start: 1.5rem;">
@@ -640,9 +664,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </button>
             </Show>
           </div>
-          <div class="mb-6 text-center shrink-0">
+          <div class="folder-home-hero mb-6 text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="h-32 w-auto sm:h-48" loading="lazy" />
+              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo h-32 w-auto sm:h-48" loading="lazy" />
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
@@ -694,11 +718,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             </div>
           </div>
 
-          <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
-            <div class="flex-1 min-h-0 overflow-hidden flex flex-col lg:flex-row gap-4">
+          <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
+            <div class="folder-home-main flex-1 min-h-0 flex flex-col lg:flex-row gap-4">
               {/* Right column: recent folders */}
-              <div class="order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
-                <div class="panel flex flex-col flex-1 min-h-0">
+              <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
+                <div class="folder-home-list-panel panel flex flex-col flex-1 min-h-0">
                   <div class="panel-header !gap-0 !p-0">
                     <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
                       <button
@@ -930,7 +954,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </div>
 
               {/* Left column: version + browse + advanced settings */}
-              <div class="order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0">
+              <div
+                class="folder-home-actions-column order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0"
+                ref={(el) => (actionsColumnRef = el)}
+              >
               <div class="panel shrink-0">
                 <div class="panel-header hidden sm:block">
                   <h2 class="panel-title">{t("folderSelection.actions.title")}</h2>
