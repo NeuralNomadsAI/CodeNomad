@@ -34,6 +34,13 @@ const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
 const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
 
+type ResizeDragState = {
+  pointerId: number
+  startY: number
+  startHeight: number
+  maxHeight: number
+}
+
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
 
@@ -76,10 +83,7 @@ export default function PromptInput(props: PromptInputProps) {
   let fileInputRef: HTMLInputElement | undefined
   let wrapperRef: HTMLDivElement | undefined
   let fieldContainerRef: HTMLDivElement | undefined
-  let activeResizeHandle: HTMLElement | undefined
-  let activeResizePointerId: number | null = null
-  let activePointerMoveHandler: ((event: PointerEvent) => void) | undefined
-  let activePointerUpHandler: ((event: PointerEvent) => void) | undefined
+  let resizeDragState: ResizeDragState | undefined
 
   const getPlaceholder = () => {
     if (mode() === "shell") {
@@ -314,72 +318,50 @@ export default function PromptInput(props: PromptInputProps) {
     return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
   }
 
-  function cleanupResizeTracking(): void {
-    if (activePointerMoveHandler) {
-      document.removeEventListener("pointermove", activePointerMoveHandler)
-      activePointerMoveHandler = undefined
-    }
-
-    if (activePointerUpHandler) {
-      document.removeEventListener("pointerup", activePointerUpHandler)
-      document.removeEventListener("pointercancel", activePointerUpHandler)
-      activePointerUpHandler = undefined
-    }
-
-    if (activeResizeHandle && activeResizePointerId !== null) {
-      try {
-        activeResizeHandle.releasePointerCapture(activeResizePointerId)
-      } catch {
-        // Pointer capture may already be released.
-      }
-    }
-
-    activeResizeHandle = undefined
-    activeResizePointerId = null
-    setIsResizing(false)
-  }
-
   function handleResizeStart(event: PointerEvent) {
     event.preventDefault()
-    cleanupResizeTracking()
-    setIsResizing(true)
-
     const target = event.currentTarget as HTMLElement
-    activeResizeHandle = target
-    activeResizePointerId = event.pointerId
+
+    resizeDragState = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT,
+      maxHeight: computeMaxFieldHeight(),
+    }
+
+    setIsResizing(true)
 
     try {
       target.setPointerCapture(event.pointerId)
     } catch {
-      // Pointer capture not supported, continue without it.
+      resizeDragState = undefined
+      setIsResizing(false)
     }
+  }
 
-    const startY = event.clientY
-    const startHeight = fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT
-    const computedMax = computeMaxFieldHeight()
+  function handleResizeMove(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
 
-    function handlePointerMove(moveEvent: PointerEvent) {
-      moveEvent.preventDefault()
-      const deltaY = startY - moveEvent.clientY
-      const nextHeight = Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, Math.min(computedMax, startHeight + deltaY))
-      setInputHeight(nextHeight)
-    }
+    event.preventDefault()
+    const deltaY = resizeDragState.startY - event.clientY
+    const nextHeight = Math.max(
+      DEFAULT_PROMPT_FIELD_HEIGHT,
+      Math.min(resizeDragState.maxHeight, resizeDragState.startHeight + deltaY),
+    )
+    setInputHeight(nextHeight)
+  }
 
-    function handlePointerUp(upEvent: PointerEvent) {
-      upEvent.preventDefault()
-      cleanupResizeTracking()
-      textareaRef?.focus()
-    }
+  function handleResizeEnd(event: PointerEvent) {
+    if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
 
-    activePointerMoveHandler = handlePointerMove
-    activePointerUpHandler = handlePointerUp
-    document.addEventListener("pointermove", handlePointerMove)
-    document.addEventListener("pointerup", handlePointerUp)
-    document.addEventListener("pointercancel", handlePointerUp)
+    event.preventDefault()
+    resizeDragState = undefined
+    setIsResizing(false)
+    textareaRef?.focus()
   }
 
   onCleanup(() => {
-    cleanupResizeTracking()
+    resizeDragState = undefined
   })
 
   async function handleSend() {
@@ -724,12 +706,15 @@ export default function PromptInput(props: PromptInputProps) {
         <div class="prompt-input-main flex flex-1 flex-col">
           <div
             ref={fieldContainerRef}
-            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}
+            class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""} ${inputHeight() !== null ? "is-resized" : ""}`}
             style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
           >
             <div
               class={`prompt-resize-handle ${isResizing() ? "is-resizing" : ""}`}
               onPointerDown={handleResizeStart}
+              onPointerMove={handleResizeMove}
+              onPointerUp={handleResizeEnd}
+              onPointerCancel={handleResizeEnd}
               aria-hidden="true"
               role="presentation"
               title={t("promptInput.resizeHandle.title")}
