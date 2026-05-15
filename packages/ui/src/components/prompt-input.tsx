@@ -31,6 +31,8 @@ import {
 } from "../stores/conversation-speech"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
+const DEFAULT_PROMPT_FIELD_HEIGHT = 104
+const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
 
 function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachment[]): string[] {
   if (!text || attachments.length === 0) return []
@@ -304,44 +306,23 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   function computeMaxFieldHeight(): number {
-    if (typeof window === "undefined") return 280
+    if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
 
-    const currentFieldHeight = fieldContainerRef?.getBoundingClientRect().height ?? 104
-    const wrapperHeight = wrapperRef?.getBoundingClientRect().height ?? currentFieldHeight
-    const nonFieldHeight = Math.max(0, wrapperHeight - currentFieldHeight)
-    const padding = 16
-
-    if (!wrapperRef) {
-      return Math.max(104, window.innerHeight - 100 - nonFieldHeight)
-    }
-
-    const wrapperRect = wrapperRef.getBoundingClientRect()
-    const localToolbar =
-      wrapperRef.closest('.session-view')?.querySelector('.session-toolbar') ||
-      wrapperRef.closest('[data-session-center-width]')?.querySelector('.session-toolbar')
-    const toolbar =
-      localToolbar ||
-      document.querySelector('[data-session-toolbar="true"]') ||
-      document.querySelector('.session-toolbar')
-
-    if (toolbar) {
-      const toolbarRect = toolbar.getBoundingClientRect()
-      const availableTotalHeight = wrapperRect.bottom - toolbarRect.bottom - padding
-      return Math.max(104, availableTotalHeight - nonFieldHeight)
-    }
-
-    return Math.max(104, window.innerHeight - 100 - nonFieldHeight)
+    const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
+    const availableHeight = sessionCenter?.getBoundingClientRect().height ?? window.innerHeight
+    const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
+    return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
   }
 
   function cleanupResizeTracking(): void {
     if (activePointerMoveHandler) {
-      document.removeEventListener('pointermove', activePointerMoveHandler)
+      document.removeEventListener("pointermove", activePointerMoveHandler)
       activePointerMoveHandler = undefined
     }
 
     if (activePointerUpHandler) {
-      document.removeEventListener('pointerup', activePointerUpHandler)
-      document.removeEventListener('pointercancel', activePointerUpHandler)
+      document.removeEventListener("pointerup", activePointerUpHandler)
+      document.removeEventListener("pointercancel", activePointerUpHandler)
       activePointerUpHandler = undefined
     }
 
@@ -374,13 +355,13 @@ export default function PromptInput(props: PromptInputProps) {
     }
 
     const startY = event.clientY
-    const startHeight = fieldContainerRef?.getBoundingClientRect().height ?? 104
+    const startHeight = fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT
     const computedMax = computeMaxFieldHeight()
 
     function handlePointerMove(moveEvent: PointerEvent) {
       moveEvent.preventDefault()
       const deltaY = startY - moveEvent.clientY
-      const nextHeight = Math.max(104, Math.min(computedMax, startHeight + deltaY))
+      const nextHeight = Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, Math.min(computedMax, startHeight + deltaY))
       setInputHeight(nextHeight)
     }
 
@@ -392,9 +373,9 @@ export default function PromptInput(props: PromptInputProps) {
 
     activePointerMoveHandler = handlePointerMove
     activePointerUpHandler = handlePointerUp
-    document.addEventListener('pointermove', handlePointerMove)
-    document.addEventListener('pointerup', handlePointerUp)
-    document.addEventListener('pointercancel', handlePointerUp)
+    document.addEventListener("pointermove", handlePointerMove)
+    document.addEventListener("pointerup", handlePointerUp)
+    document.addEventListener("pointercancel", handlePointerUp)
   }
 
   onCleanup(() => {
@@ -708,13 +689,6 @@ export default function PromptInput(props: PromptInputProps) {
   return (
     <div class="prompt-input-container">
       <div
-        class={`prompt-resize-handle ${isResizing() ? 'is-resizing' : ''}`}
-        onPointerDown={handleResizeStart}
-        aria-hidden="true"
-        role="presentation"
-        title={t("promptInput.resizeHandle.title")}
-      />
-      <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
         style={
@@ -751,12 +725,19 @@ export default function PromptInput(props: PromptInputProps) {
           <div
             ref={fieldContainerRef}
             class={`prompt-input-field-container ${expandState() === "expanded" ? "is-expanded" : ""}`}
-            style={inputHeight() !== null ? { height: `${inputHeight()}px`, 'min-height': `${inputHeight()}px` } : undefined}
+            style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
           >
+            <div
+              class={`prompt-resize-handle ${isResizing() ? "is-resizing" : ""}`}
+              onPointerDown={handleResizeStart}
+              aria-hidden="true"
+              role="presentation"
+              title={t("promptInput.resizeHandle.title")}
+            />
 
             <div
               class={`prompt-input-field ${expandState() === "expanded" ? "is-expanded" : ""}`}
-              style={inputHeight() !== null ? { height: `${inputHeight()}px`, 'min-height': `${inputHeight()}px` } : undefined}
+              style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px` } : undefined}
             >
               <textarea
                 ref={textareaRef}
@@ -775,7 +756,7 @@ export default function PromptInput(props: PromptInputProps) {
                 autocorrect="off"
                 autoCapitalize="off"
                 autocomplete="off"
-                style={inputHeight() !== null ? { height: `${inputHeight()}px`, 'min-height': `${inputHeight()}px`, 'overflow-y': 'auto' } : undefined}
+                style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px`, "overflow-y": "auto" } : undefined}
               />
               <button
                 type="button"

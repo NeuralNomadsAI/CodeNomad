@@ -2,15 +2,15 @@
   @apply flex flex-col border-t;
   border-color: var(--border-base);
   background-color: var(--surface-base);
-  position: relative;
 }
 
 .prompt-resize-handle {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
-  height: 6px;
+  left: 50%;
+  width: 72px;
+  height: 10px;
+  transform: translateX(-50%);
   cursor: ns-resize;
   touch-action: none;
   z-index: 10;
