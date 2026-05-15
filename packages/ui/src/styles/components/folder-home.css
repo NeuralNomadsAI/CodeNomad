@@ -1,0 +1,73 @@
+.folder-home-root {
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: var(--surface-secondary);
+}
+
+.folder-home-shell {
+  min-height: 100%;
+}
+
+.folder-home-hero {
+  margin-bottom: 1.5rem;
+}
+
+.folder-home-logo {
+  height: 8rem;
+}
+
+.folder-home-content,
+.folder-home-main,
+.folder-home-list-column,
+.folder-home-actions-column {
+  overflow: visible;
+}
+
+.folder-home-main {
+  display: flex;
+  flex-direction: column;
+  min-height: max-content;
+}
+
+.folder-home-actions-column {
+  min-height: max-content;
+}
+
+.folder-home-list-panel {
+  min-height: 16rem;
+}
+
+@media (min-width: 1024px) {
+  .folder-home-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .folder-home-list-column,
+  .folder-home-actions-column {
+    min-width: 0;
+  }
+
+  .folder-home-list-panel {
+    height: var(--folder-home-actions-height, auto);
+    max-height: var(--folder-home-actions-height, none);
+  }
+}
+
+@media (min-width: 640px) and (min-height: 721px) {
+  .folder-home-logo {
+    height: 12rem;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 1024px) {
+  .folder-home-hero {
+    margin-bottom: var(--space-md);
+  }
+
+  .folder-home-logo {
+    height: 8rem;
+  }
+}
