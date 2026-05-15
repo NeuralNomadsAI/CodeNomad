@@ -9,6 +9,14 @@
   min-height: 100%;
 }
 
+.folder-home-hero {
+  margin-bottom: 1.5rem;
+}
+
+.folder-home-logo {
+  height: 8rem;
+}
+
 .folder-home-content,
 .folder-home-main,
 .folder-home-list-column,
@@ -17,6 +25,8 @@
 }
 
 .folder-home-main {
+  display: flex;
+  flex-direction: column;
   min-height: max-content;
 }
 
@@ -43,6 +53,12 @@
   .folder-home-list-panel {
     height: var(--folder-home-actions-height, auto);
     max-height: var(--folder-home-actions-height, none);
+  }
+}
+
+@media (min-width: 640px) and (min-height: 721px) {
+  .folder-home-logo {
+    height: 12rem;
   }
 }
 

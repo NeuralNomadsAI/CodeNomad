@@ -664,9 +664,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               </button>
             </Show>
           </div>
-          <div class="folder-home-hero mb-6 text-center shrink-0">
+          <div class="folder-home-hero text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo h-32 w-auto sm:h-48" loading="lazy" />
+              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
@@ -719,10 +719,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
 
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
-            <div class="folder-home-main flex-1 min-h-0 flex flex-col lg:flex-row gap-4">
+            <div class="folder-home-main flex-1 gap-4">
               {/* Right column: recent folders */}
               <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
-                <div class="folder-home-list-panel panel flex flex-col flex-1 min-h-0">
+                <div class="folder-home-list-panel panel flex flex-col flex-1">
                   <div class="panel-header !gap-0 !p-0">
                     <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
                       <button
@@ -955,7 +955,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
               {/* Left column: version + browse + advanced settings */}
               <div
-                class="folder-home-actions-column order-2 lg:order-1 flex flex-col gap-4 flex-1 min-h-0"
+                class="folder-home-actions-column order-2 lg:order-1 flex flex-col gap-4 flex-1"
                 ref={(el) => (actionsColumnRef = el)}
               >
               <div class="panel shrink-0">
