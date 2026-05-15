@@ -284,6 +284,13 @@ function copyUiLoadingAssets() {
   })
   copyUiLoadingAssets()
   await prepareBundledNodeRuntime({ resourcesRoot })
+  execSync(
+    `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"))} --resources ${JSON.stringify(resourcesRoot)} --loading ${JSON.stringify(uiLoadingDest)}`,
+    {
+      cwd: workspaceRoot,
+      stdio: "inherit",
+    },
+  )
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)

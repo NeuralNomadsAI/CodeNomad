@@ -22,6 +22,7 @@ function parseArgs(argv) {
     const arg = argv[index]
     if (arg === "--resources") options.resources = argv[++index]
     else if (arg === "--loading") options.loading = argv[++index]
+    else if (arg === "--target") options.target = argv[++index]
     else throw new Error(`Unknown argument: ${arg}`)
   }
   if (!options.resources) throw new Error("Missing --resources <path>")
@@ -34,9 +35,21 @@ function platformDirName() {
   return `${platform}-${arch}`
 }
 
-function nodeBinary(resourcesRoot) {
-  const executable = process.platform === "win32" ? "node.exe" : path.join("bin", "node")
-  return path.join(resourcesRoot, "node", platformDirName(), executable)
+function targetParts(target) {
+  const [platform, ...archParts] = target.split("-")
+  const arch = archParts.join("-")
+  if (!platform || !arch) throw new Error(`Invalid target: ${target}`)
+  return { platform, arch }
+}
+
+function nodeBinary(resourcesRoot, target) {
+  const { platform } = targetParts(target)
+  const executable = platform === "win32" ? "node.exe" : path.join("bin", "node")
+  return path.join(resourcesRoot, "node", target, executable)
+}
+
+function canExecuteTarget(target) {
+  return target === platformDirName()
 }
 
 function run(command, args, options = {}) {
@@ -47,13 +60,25 @@ function run(command, args, options = {}) {
   }
 }
 
-function smokeServer(resourcesRoot) {
+function smokeServer(resourcesRoot, target) {
   const serverRoot = path.join(resourcesRoot, "server")
   const entrypoint = path.join(serverRoot, "dist", "bin.js")
-  const node = nodeBinary(resourcesRoot)
+  const node = nodeBinary(resourcesRoot, target)
 
   for (const requiredPath of [node, entrypoint, path.join(serverRoot, "node_modules")]) {
     if (!fs.existsSync(requiredPath)) throw new Error(`Missing packaged runtime path: ${requiredPath}`)
+  }
+
+  for (const packageName of requiredPackages) {
+    const packageRoot = path.join(serverRoot, "node_modules", ...packageName.split("/"))
+    if (!fs.existsSync(packageRoot)) throw new Error(`Missing packaged dependency: ${packageName}`)
+  }
+
+  console.log(`packaged server static checks ok for ${target}`)
+
+  if (!canExecuteTarget(target)) {
+    console.log(`skipping executable smoke for ${target} on host ${platformDirName()}`)
+    return
   }
 
   run(node, [entrypoint, "--version"])
@@ -93,7 +118,8 @@ function smokeLoadingAssets(loadingRoot) {
 try {
   const options = parseArgs(process.argv.slice(2))
   const resourcesRoot = path.resolve(options.resources)
-  smokeServer(resourcesRoot)
+  const target = options.target ?? platformDirName()
+  smokeServer(resourcesRoot, target)
   smokeLoadingAssets(options.loading ? path.resolve(options.loading) : null)
 } catch (error) {
   console.error("[smoke-packaged-resources] failed:", error)
