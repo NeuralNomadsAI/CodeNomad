@@ -251,7 +251,7 @@ export const settingsMessages = {
   "settings.info.updates.refresh": "Refresh",
   "settings.info.diagnostics.copyFailed": "Clipboard access denied. Use the download button instead.",
   "settings.info.diagnostics.title": "Diagnostics",
-  "settings.info.diagnostics.subtitle": "Collect logs and system info for bug reports.",
+  "settings.info.diagnostics.subtitle": "Collectez les informations système et de version pour les rapports de bug.",
   "settings.info.diagnostics.copy": "Copy to clipboard",
   "settings.info.diagnostics.download": "Download .txt",
   "settings.info.diagnostics.copied": "Diagnostic info copied to clipboard.",
