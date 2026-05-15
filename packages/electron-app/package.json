@@ -40,8 +40,6 @@
     "package:linux": "node scripts/build.js linux"
   },
   "dependencies": {
-    "@neuralnomads/codenomad": "file:../server",
-    "@codenomad/ui": "file:../ui",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
@@ -66,7 +64,11 @@
       "buildResources": "electron/resources"
     },
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/renderer/loading.html",
+      "dist/renderer/assets/loading-*",
+      "dist/renderer/assets/index-*",
       "package.json"
     ],
     "extraResources": [
@@ -75,7 +77,8 @@
         "to": "",
         "filter": [
           "!icon.icns",
-          "!icon.ico"
+          "!icon.ico",
+          "!icon.png"
         ]
       },
       {

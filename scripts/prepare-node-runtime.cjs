@@ -127,15 +127,13 @@ function extractArchive(archivePath, destination) {
   run("tar", ["-xzf", archivePath, "-C", destination])
 }
 
-function pruneForRuntime(sourceRoot, destinationRoot) {
-  fs.cpSync(sourceRoot, destinationRoot, { recursive: true, dereference: true })
-  for (const name of ["CHANGELOG.md", "LICENSE", "README.md", "corepack", "npm", "npx"]) {
-    fs.rmSync(path.join(destinationRoot, "bin", name), { recursive: true, force: true })
-  }
-  fs.rmSync(path.join(destinationRoot, "lib", "node_modules", "npm"), { recursive: true, force: true })
-  fs.rmSync(path.join(destinationRoot, "lib", "node_modules", "corepack"), { recursive: true, force: true })
-  fs.rmSync(path.join(destinationRoot, "node_modules", "npm"), { recursive: true, force: true })
-  fs.rmSync(path.join(destinationRoot, "node_modules", "corepack"), { recursive: true, force: true })
+function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath) {
+  const sourceBinary = path.join(sourceRoot, binaryRelativePath)
+  const destinationBinary = path.join(destinationRoot, binaryRelativePath)
+
+  fs.rmSync(destinationRoot, { recursive: true, force: true })
+  fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
+  fs.copyFileSync(sourceBinary, destinationBinary)
 }
 
 async function prepareBundledNodeRuntime(options) {
@@ -175,7 +173,7 @@ async function prepareBundledNodeRuntime(options) {
       throw new Error(`Node binary missing after extraction: ${path.join(extractedRoot, spec.binary)}`)
     }
 
-    pruneForRuntime(extractedRoot, runtimeRoot)
+    pruneForRuntime(extractedRoot, runtimeRoot, spec.binary)
     if (!target.startsWith("win32-")) {
       fs.chmodSync(runtimeBinary, 0o755)
     }
