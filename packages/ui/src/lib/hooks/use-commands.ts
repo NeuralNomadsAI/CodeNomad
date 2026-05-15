@@ -11,6 +11,7 @@ import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
+import { openOpenCodeSessionRepairDialog } from "../../stores/opencode-session-repair"
 import { getLogger } from "../logger"
 import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
@@ -442,6 +443,17 @@ export function useCommands(options: UseCommandsOptions) {
       keywords: () => ["/help", ...splitKeywords("commands.showHelp.keywords")],
       action: () => {
         log.info("Show help modal (not implemented)")
+      },
+    })
+
+    commandRegistry.register({
+      id: "repair-opencode-sessions",
+      label: () => tGlobal("commands.repairOpenCodeSessions.label"),
+      description: () => tGlobal("commands.repairOpenCodeSessions.description"),
+      category: "Session",
+      keywords: () => splitKeywords("commands.repairOpenCodeSessions.keywords"),
+      action: async () => {
+        await openOpenCodeSessionRepairDialog()
       },
     })
   }

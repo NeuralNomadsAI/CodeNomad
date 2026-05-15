@@ -8,6 +8,9 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  OpenCodeSessionRepairAnalysis,
+  OpenCodeSessionRepairRequest,
+  OpenCodeSessionRepairResult,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
@@ -265,6 +268,15 @@ export const serverApi = {
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  analyzeOpenCodeSessionRepair(): Promise<OpenCodeSessionRepairAnalysis> {
+    return request<OpenCodeSessionRepairAnalysis>("/api/opencode/session-repair/analyze")
+  },
+  executeOpenCodeSessionRepair(payload: OpenCodeSessionRepairRequest): Promise<OpenCodeSessionRepairResult> {
+    return request<OpenCodeSessionRepairResult>("/api/opencode/session-repair/execute", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
     return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {

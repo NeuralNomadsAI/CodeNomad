@@ -31,6 +31,7 @@ import { ClientConnectionManager } from "./clients/connection-manager"
 import { PluginChannelManager } from "./plugins/channel"
 import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
+import { OpenCodeSessionRepairService } from "./opencode/session-repair"
 
 const require = createRequire(import.meta.url)
 
@@ -341,6 +342,12 @@ async function main() {
     eventBus,
     logger: logger.child({ component: "sidecars" }),
   })
+  const openCodeSessionRepairService = new OpenCodeSessionRepairService({
+    settings,
+    binaryResolver,
+    workspaceManager,
+    logger: logger.child({ component: "opencode-session-repair" }),
+  })
   const previewManager = new PreviewManager()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
@@ -443,6 +450,7 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        openCodeSessionRepairService,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -470,6 +478,7 @@ async function main() {
         pluginChannel,
         voiceModeManager,
         remoteProxySessionManager,
+        openCodeSessionRepairService,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,

@@ -59,6 +59,62 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export interface OpenCodeSessionRepairIssueSession {
+  id: string
+  title: string
+  projectId: string
+  directory: string
+  version: string
+  likelyBroken: boolean
+  likelyHidden: boolean
+  metadataIncompleteOnly: boolean
+  repairableSafeMetadata: boolean
+  missingAssistantAgentMessages: number
+  missingSessionAgent: boolean
+  missingSessionModel: boolean
+  missingSessionPath: boolean
+  recommendedDirectory?: string
+}
+
+export interface OpenCodeSessionRepairAnalysis {
+  analyzedAt: string
+  dbPath: string
+  sessionCount: number
+  assistantMessageCount: number
+  issues: {
+    sessionsLikelyBroken: number
+    sessionsLikelyHidden: number
+    sessionsWithIncompleteMetadataOnly: number
+    sessionsWithRepairableSafeMetadata: number
+    sessionsWithRemainingIncompleteMetadata: number
+    sessionsWithMissingAssistantAgentMessages: number
+    sessionsMissingSessionAgent: number
+    sessionsMissingSessionModel: number
+    sessionsMissingSessionPath: number
+    sessionsWithRecommendedDirectoryRepair: number
+  }
+  affectedSessions: OpenCodeSessionRepairIssueSession[]
+}
+
+export type OpenCodeSessionRepairMode = "important" | "normalize"
+
+export interface OpenCodeSessionRepairRequest {
+  mode: OpenCodeSessionRepairMode
+}
+
+export interface OpenCodeSessionRepairResult {
+  executedAt: string
+  backupPath: string
+  mode: OpenCodeSessionRepairMode
+  repaired: {
+    assistantMessages: number
+    sessionAgents: number
+    sessionModels: number
+    sessionPaths: number
+    sessionDirectories: number
+  }
+  analysis: OpenCodeSessionRepairAnalysis
+}
 export type WorktreeKind = "root" | "worktree"
 
 export interface WorktreeDescriptor {

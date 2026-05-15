@@ -32,6 +32,7 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
+import type { OpenCodeSessionRepairService } from "../opencode/session-repair"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
@@ -42,6 +43,7 @@ import { VoiceModeManager } from "../plugins/voice-mode"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteProxySessionManager } from "./remote-proxy"
+import { registerOpenCodeSessionRepairRoutes } from "./routes/opencode-session-repair"
 
 interface HttpServerDeps {
   bindHost: string
@@ -64,6 +66,7 @@ interface HttpServerDeps {
   pluginChannel: PluginChannelManager
   voiceModeManager: VoiceModeManager
   remoteProxySessionManager: RemoteProxySessionManager
+  openCodeSessionRepairService: OpenCodeSessionRepairService
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -310,6 +313,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerBackgroundProcessRoutes(app, { backgroundProcessManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
+  registerOpenCodeSessionRepairRoutes(app, { repairService: deps.openCodeSessionRepairService })
 
 
   if (deps.uiDevServerUrl) {

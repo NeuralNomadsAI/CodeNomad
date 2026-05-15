@@ -9,6 +9,7 @@ import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
+import OpencodeSessionRepairDialog from "./components/opencode-session-repair-dialog"
 import { SettingsScreen } from "./components/settings-screen"
 import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
@@ -654,6 +655,7 @@ const App: Component = () => {
         </Show>
  
         <SettingsScreen />
+        <OpencodeSessionRepairDialog />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <Show when={alreadyOpenFolderChoice()}>
           <Dialog open modal onOpenChange={(open) => !open && dismissAlreadyOpenFolderChoice()}>
