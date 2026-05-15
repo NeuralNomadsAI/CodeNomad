@@ -1,6 +1,6 @@
 /* Folder loading overlay */
 .folder-loading-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background-color: var(--folder-overlay-bg);
   display: flex;
