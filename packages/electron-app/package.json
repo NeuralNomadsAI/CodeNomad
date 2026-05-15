@@ -37,7 +37,8 @@
     "build:all": "node scripts/build.js all",
     "package:mac": "node scripts/build.js mac",
     "package:win": "node scripts/build.js win",
-    "package:linux": "node scripts/build.js linux"
+    "package:linux": "node scripts/build.js linux",
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources electron/resources --loading dist/renderer"
   },
   "dependencies": {
     "yaml": "^2.4.2"
@@ -67,8 +68,7 @@
       "dist/main/**/*",
       "dist/preload/**/*",
       "dist/renderer/loading.html",
-      "dist/renderer/assets/loading-*",
-      "dist/renderer/assets/index-*",
+      "dist/renderer/assets/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -77,8 +77,7 @@
         "to": "",
         "filter": [
           "!icon.icns",
-          "!icon.ico",
-          "!icon.png"
+          "!icon.ico"
         ]
       },
       {
