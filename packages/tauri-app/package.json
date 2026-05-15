@@ -11,7 +11,8 @@
     "sync:version": "node ./scripts/sync-tauri-version.js",
     "prebuild": "node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
-    "build": "tauri build"
+    "build": "tauri build",
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources src-tauri/resources --loading src-tauri/resources/ui-loading"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"

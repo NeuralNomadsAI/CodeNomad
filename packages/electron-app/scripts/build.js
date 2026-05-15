@@ -141,6 +141,20 @@ async function build(platform) {
         env: { NODE_PATH: workspaceNodeModulesPath, CODENOMAD_NODE_TARGET: job.nodeTarget },
       })
 
+      console.log(`\n🔎 Validating resources for ${job.nodeTarget}...\n`)
+      await run(process.execPath, [
+        join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"),
+        "--resources",
+        join(appDir, "electron", "resources"),
+        "--loading",
+        join(appDir, "dist", "renderer"),
+        "--target",
+        job.nodeTarget,
+      ], {
+        cwd: workspaceRoot,
+        shell: false,
+      })
+
       console.log(`\n📦 Packaging ${job.nodeTarget}...\n`)
       await run(npxCmd, ["electron-builder", "--publish=never", ...job.args], {
         env: { CODENOMAD_NODE_TARGET: job.nodeTarget },
