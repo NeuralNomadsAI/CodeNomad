@@ -75,6 +75,10 @@ export interface InstanceQuestionState {
 
 export interface ScrollSnapshot {
   scrollTop: number
+  scrollRatio?: number
+  maxScrollTop?: number
+  anchorKey?: string
+  anchorOffset?: number
   atBottom: boolean
   updatedAt: number
 }
