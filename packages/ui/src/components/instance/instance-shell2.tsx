@@ -230,7 +230,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()
-      if (leftContent?.contains(target) || rightContent?.contains(target)) return
+      const leftPaper = leftContent?.closest(".MuiDrawer-paper")
+      const rightPaper = rightContent?.closest(".MuiDrawer-paper")
+      if (leftPaper?.contains(target) || rightPaper?.contains(target)) return
 
       if (!leftPinned() && leftOpen()) setLeftOpen(false)
       if (!rightPinned() && rightOpen()) setRightOpen(false)
