@@ -59,8 +59,9 @@ jobs:
 
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+            const maxAttempts = 90;
             let matchedRun = null;
-            for (let attempt = 1; attempt <= 30; attempt += 1) {
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
               const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                 owner,
                 repo,
@@ -78,8 +79,8 @@ jobs:
                 break;
               }
 
-              core.info(`Waiting for PR Build Validation run for ${headSha} (attempt ${attempt}/30)`);
-              await sleep(10000);
+              core.info(`Waiting for PR Build Validation run for ${headSha} (attempt ${attempt}/${maxAttempts})`);
+              await sleep(20000);
             }
 
             if (!matchedRun) {
