@@ -194,6 +194,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     unpinRight: unpinRightDrawer,
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
+    closeFloatingDrawersIfAny,
     leftAppBarButtonLabel,
     rightAppBarButtonLabel,
     leftAppBarButtonIcon,
@@ -201,6 +202,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  // When the user switches away from this instance (e.g., taps a different
+  // instance/project tab while a floating drawer is open on phone), close any
+  // open floating drawers so the previous instance's drawer doesn't remain
+  // visually or interactively open when its tab regains focus later.
+  let wasActiveInstance = Boolean(props.isActiveInstance)
+  createEffect(() => {
+    const isActive = Boolean(props.isActiveInstance)
+    if (wasActiveInstance && !isActive) {
+      closeFloatingDrawersIfAny()
+    }
+    wasActiveInstance = isActive
+  })
+
+  onMount(() => {
+    if (typeof document === "undefined") return
+
+    const handleFloatingDrawerPointerDown = (event: PointerEvent) => {
+      if (!props.isActiveInstance) return
+
+      const hasFloatingDrawerOpen = (!leftPinned() && leftOpen()) || (!rightPinned() && rightOpen())
+      if (!hasFloatingDrawerOpen) return
+
+      const target = event.target
+      if (!(target instanceof Node)) return
+
+      const leftContent = leftDrawerContentEl()
+      const rightContent = rightDrawerContentEl()
+      const leftPaper = leftContent?.closest(".MuiDrawer-paper")
+      const rightPaper = rightContent?.closest(".MuiDrawer-paper")
+      if (leftPaper?.contains(target) || rightPaper?.contains(target)) return
+
+      if (!leftPinned() && leftOpen()) setLeftOpen(false)
+      if (!rightPinned() && rightOpen()) setRightOpen(false)
+    }
+
+    document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
+  })
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -607,7 +647,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // The tab bar sits outside the floating drawer. Let its controls
+          // receive the gesture; click-away handling above still closes the
+          // drawer when the target is not inside the drawer content.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
             borderInlineEnd: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -620,8 +665,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
 
+          // Keep backdrop dismissal for the area below the tab bar without
+          // covering the tab bar itself.
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -723,7 +773,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // See the matching override on the left drawer for rationale.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
             borderInlineStart: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -736,7 +789,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
