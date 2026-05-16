@@ -470,7 +470,12 @@ export default function PromptInput(props: PromptInputProps) {
     textarea.focus()
     textarea.setSelectionRange(0, textarea.value.length)
 
-    const cleared = typeof document !== "undefined" && document.execCommand("delete")
+    let cleared = false
+    try {
+      cleared = typeof document !== "undefined" && typeof document.execCommand === "function" && document.execCommand("delete")
+    } catch {
+      cleared = false
+    }
     if (!cleared || textarea.value.length > 0) {
       textarea.value = ""
     }
