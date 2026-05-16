@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "Envoyer",
   "toolCall.question.shortcuts.dismiss": "Ignorer",
   "toolCall.question.queuedText": "En attente des réponses précédentes.",
+  "toolCall.question.queuedLabel": "En file d'attente",
+  "toolCall.question.queuedHint": "Cette question est en file d'attente derrière une autre interruption. Répondez à l'invite active pour pouvoir répondre à celle-ci.",
   "toolCall.question.validation.answerAll": "Veuillez répondre à toutes les questions avant d'envoyer.",
   "toolCall.question.errors.unableToReply": "Impossible de répondre",
   "toolCall.question.errors.unableToDismiss": "Impossible d'ignorer",

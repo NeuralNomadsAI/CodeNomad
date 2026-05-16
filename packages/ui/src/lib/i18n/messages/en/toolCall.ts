@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "Submit",
   "toolCall.question.shortcuts.dismiss": "Dismiss",
   "toolCall.question.queuedText": "Waiting for earlier responses.",
+  "toolCall.question.queuedLabel": "Queued",
+  "toolCall.question.queuedHint": "This question is queued behind another interruption. Resolve the active prompt to answer this one.",
   "toolCall.question.validation.answerAll": "Please answer all questions before submitting.",
   "toolCall.question.errors.unableToReply": "Unable to reply",
   "toolCall.question.errors.unableToDismiss": "Unable to dismiss",

@@ -13,6 +13,7 @@ import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { QuestionToolBlock } from "./tool-call/question-block"
+import { isInlineQuestionActive } from "./tool-call/question-active"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
@@ -651,11 +652,21 @@ export default function ToolCall(props: ToolCallProps) {
     return active?.kind === "permission" && active.id === pending.permission.id
   })
 
+  // Task 059: the inline question block must derive its "active" state from the
+  // v2 message store only. The legacy `activeInterruption` signal is kept for
+  // cross-cutting consumers (permission modal, banner) but no longer gates the
+  // inline prompt — that split was the root cause of the "options render but
+  // are unclickable" bug. The rule mirrors the order used by the permission
+  // approval modal: a question is interactive iff it is the head of the v2
+  // question queue AND no permission interruption is ahead in the v2 store.
   const isQuestionActive = createMemo(() => {
     const pending = pendingQuestion()
     if (!pending?.request) return false
-    const active = activeRequest()
-    return active?.kind === "question" && active.id === pending.request.id
+    return isInlineQuestionActive({
+      requestId: pending.request.id,
+      questionsActiveRequestId: store().state.questions.active?.request.id ?? null,
+      permissionsActiveId: store().state.permissions.active?.permission.id ?? null,
+    })
   })
 
   const expanded = () => {

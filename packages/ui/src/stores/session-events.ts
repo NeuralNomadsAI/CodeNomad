@@ -39,6 +39,7 @@ import {
   hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
+  getQuestionQueue,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -728,11 +729,23 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
 
-  log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
+  // Task 059 diagnostic: surface duplicate `question.asked` events so we can
+  // tell whether F-6 (duplicate ask in task 058) is contributing to a
+  // stuck-prompt report. Ids and booleans only — no question content is
+  // logged.
+  const questionId = getQuestionId(request)
+  const sessionId = getQuestionSessionId(request) ?? null
+  const duplicate = getQuestionQueue(instanceId).some((q) => q.id === questionId)
+
+  log.info(`[SSE] Question asked: ${questionId}`)
+  log.info("question.asked", {
+    instanceId,
+    sessionId,
+    questionId,
+    duplicate,
+  })
   addQuestionToQueue(instanceId, request)
   upsertQuestionV2(instanceId, request)
-
-  const sessionId = getQuestionSessionId(request)
 
   if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
@@ -750,7 +763,25 @@ function handleQuestionAnswered(
   const requestId = getRequestIdFromQuestionReply(properties)
   if (!requestId) return
 
+  // Task 059 diagnostic: log whether the local queue still tracked the
+  // question id when the confirming SSE event arrived. After the optimistic
+  // clear in `sendQuestionReply`/`sendQuestionReject` this is normally `false`
+  // for replies from this client; remaining `true` would point to drift in
+  // the queue mutation path. Ids and booleans only.
+  const localQueueHadEntry = getQuestionQueue(instanceId).some((q) => q.id === requestId)
+  const sessionIdFromEvent =
+    (properties as any)?.sessionID ??
+    (properties as any)?.sessionId ??
+    (properties as any)?.session?.id ??
+    null
+
   log.info(`[SSE] Question answered: ${requestId}`)
+  log.info("question.answered", {
+    instanceId,
+    sessionId: sessionIdFromEvent,
+    questionId: requestId,
+    localStoreHadEntry: localQueueHadEntry,
+  })
   removeQuestionFromQueue(instanceId, requestId)
   removeQuestionV2(instanceId, requestId)
 }

@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "送信",
   "toolCall.question.shortcuts.dismiss": "閉じる",
   "toolCall.question.queuedText": "先行する回答を待機中です。",
+  "toolCall.question.queuedLabel": "順番待ち",
+  "toolCall.question.queuedHint": "この質問は別の割り込みの後ろで順番待ちになっています。先にアクティブなプロンプトへ回答してください。",
   "toolCall.question.validation.answerAll": "送信する前にすべての質問に回答してください。",
   "toolCall.question.errors.unableToReply": "回答できません",
   "toolCall.question.errors.unableToDismiss": "閉じられません",

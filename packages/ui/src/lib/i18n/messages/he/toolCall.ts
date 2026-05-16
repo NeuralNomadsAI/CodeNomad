@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "שלח",
   "toolCall.question.shortcuts.dismiss": "סגור",
   "toolCall.question.queuedText": "ממתין לתגובות קודמות.",
+  "toolCall.question.queuedLabel": "בתור",
+  "toolCall.question.queuedHint": "שאלה זו נמצאת בתור אחרי הפרעה אחרת. השב להודעה הפעילה כדי לענות על שאלה זו.",
   "toolCall.question.validation.answerAll": "אנא ענה על כל השאלות לפני השליחה.",
   "toolCall.question.errors.unableToReply": "לא ניתן לשלוח תשובה",
   "toolCall.question.errors.unableToDismiss": "לא ניתן לסגור",

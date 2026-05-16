@@ -696,6 +696,23 @@ function computeActiveInterruption(instanceId: string): ActiveInterruption {
 }
 
 function setActiveInterruptionForInstance(instanceId: string, nextActive: ActiveInterruption): void {
+  // Task 059 diagnostic: log every change to the per-instance active
+  // interruption so production telemetry can confirm when a question is
+  // preempted by a permission (the root cause path documented in task 058).
+  // Ids and booleans only — no question/answer content is logged.
+  const prevActive = activeInterruption().get(instanceId) ?? null
+  const prevKey = prevActive ? `${prevActive.kind}:${prevActive.id}` : null
+  const nextKey = nextActive ? `${nextActive.kind}:${nextActive.id}` : null
+  if (prevKey !== nextKey) {
+    log.info("interruption.active.changed", {
+      instanceId,
+      previous: prevKey,
+      next: nextKey,
+      previousKind: prevActive?.kind ?? null,
+      nextKind: nextActive?.kind ?? null,
+    })
+  }
+
   setActiveInterruption((prev) => {
     const next = new Map(prev)
     if (!nextActive) {
@@ -1026,6 +1043,59 @@ function setActiveQuestionIdForInstance(instanceId: string, requestId: string): 
   setActiveInterruptionForInstance(instanceId, { kind: "question", id: requestId })
 }
 
+// Task 059: snapshot a v2 question entry across all `byMessage` slots so we
+// can restore it on a network failure during an optimistic clear. The store's
+// `removeQuestion` wipes every entry that references the request id, so the
+// snapshot must cover all of them; restoring is a sequence of `upsertQuestion`
+// calls in the original order.
+function snapshotV2QuestionEntries(instanceId: string, requestId: string) {
+  const store = messageStoreBus.getInstance(instanceId)
+  if (!store) return [] as Array<{
+    messageId: string | undefined
+    partId: string | undefined
+    request: QuestionRequest
+    enqueuedAt: number
+  }>
+  const snapshots: Array<{
+    messageId: string | undefined
+    partId: string | undefined
+    request: QuestionRequest
+    enqueuedAt: number
+  }> = []
+  const byMessage = store.state.questions.byMessage
+  for (const messageKey of Object.keys(byMessage)) {
+    const partEntries = byMessage[messageKey]
+    if (!partEntries) continue
+    for (const partKey of Object.keys(partEntries)) {
+      const entry = partEntries[partKey]
+      if (!entry || entry.request?.id !== requestId) continue
+      snapshots.push({
+        messageId: entry.messageId,
+        partId: entry.partId,
+        request: entry.request,
+        enqueuedAt: entry.enqueuedAt ?? Date.now(),
+      })
+    }
+  }
+  return snapshots
+}
+
+function restoreV2QuestionEntries(
+  instanceId: string,
+  snapshots: ReturnType<typeof snapshotV2QuestionEntries>,
+): void {
+  if (snapshots.length === 0) return
+  const store = messageStoreBus.getOrCreate(instanceId)
+  for (const snap of snapshots) {
+    store.upsertQuestion({
+      request: snap.request,
+      messageId: snap.messageId,
+      partId: snap.partId,
+      enqueuedAt: snap.enqueuedAt,
+    })
+  }
+}
+
 async function sendQuestionReply(
   instanceId: string,
   sessionId: string,
@@ -1036,6 +1106,23 @@ async function sendQuestionReply(
   if (!instance?.client) {
     throw new Error("Instance not ready")
   }
+
+  // Task 059 diagnostic: log entry to the reply flow. Ids only — never log
+  // `answers` (may contain user-supplied text or sensitive content).
+  log.info("question.reply.start", { instanceId, sessionId, requestId })
+
+  // Task 059 optimistic clear: remove the v2 entry immediately so the inline
+  // prompt cannot keep rendering during the post-reply transient window even
+  // if the server's `question.replied` SSE event is delayed. If the network
+  // call fails we restore the snapshot and surface the error.
+  const snapshot = snapshotV2QuestionEntries(instanceId, requestId)
+  removeQuestionV2(instanceId, requestId)
+  log.info("question.reply.optimisticClear", {
+    instanceId,
+    requestId,
+    restored: false,
+    snapshotCount: snapshot.length,
+  })
 
   try {
     const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
@@ -1054,6 +1141,13 @@ async function sendQuestionReply(
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reply", error)
+    restoreV2QuestionEntries(instanceId, snapshot)
+    log.info("question.reply.optimisticClear.rollback", {
+      instanceId,
+      requestId,
+      restored: true,
+      snapshotCount: snapshot.length,
+    })
     throw error
   }
 }
@@ -1063,6 +1157,18 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
   if (!instance?.client) {
     throw new Error("Instance not ready")
   }
+
+  // Task 059 diagnostic: log entry to the reject flow (ids only).
+  log.info("question.reject.start", { instanceId, sessionId, requestId })
+
+  const snapshot = snapshotV2QuestionEntries(instanceId, requestId)
+  removeQuestionV2(instanceId, requestId)
+  log.info("question.reject.optimisticClear", {
+    instanceId,
+    requestId,
+    restored: false,
+    snapshotCount: snapshot.length,
+  })
 
   try {
     const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
@@ -1080,6 +1186,13 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send question reject", error)
+    restoreV2QuestionEntries(instanceId, snapshot)
+    log.info("question.reject.optimisticClear.rollback", {
+      instanceId,
+      requestId,
+      restored: true,
+      snapshotCount: snapshot.length,
+    })
     throw error
   }
 }
