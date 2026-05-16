@@ -101,7 +101,6 @@ const App: Component = () => {
     binaryPath: string
     instanceId: string
   } | null>(null)
-
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 

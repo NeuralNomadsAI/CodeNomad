@@ -778,6 +778,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+  const activeSessionTitle = createMemo(() => {
+    if (showingInfoView()) return null
+    const title = activeSessionForInstance()?.title?.trim()
+    return title || t("sessionList.session.untitled")
+  })
+  const showHeaderLeftSlot = createMemo(() => !leftPinned())
+  const showHeaderSessionTitle = createMemo(() => showHeaderLeftSlot() && Boolean(activeSessionTitle()))
+  const headerToolbarHorizontalInset = createMemo(() => (isPhoneLayout() ? 16 : 24))
+  const headerLeftSlotWidth = createMemo(() => Math.max(0, sessionSidebarWidth() - headerToolbarHorizontalInset()))
+  const headerLeftSlotStyle = createMemo(() =>
+    leftDrawerState() === "floating-open" || showHeaderSessionTitle() ? { width: `${headerLeftSlotWidth()}px` } : undefined,
+  )
+
+  const renderActiveSessionHeaderTitle = () => (
+    <Show when={showHeaderSessionTitle()}>
+      <div
+        class="session-header-active-title"
+        dir="auto"
+        title={activeSessionTitle() ?? undefined}
+      >
+        <span class="session-header-active-title-text">{activeSessionTitle()}</span>
+      </div>
+    </Show>
+  )
+
+  const renderHeaderLeftSlot = () => (
+    <Show when={showHeaderLeftSlot()}>
+      <div class="session-header-left-slot" style={headerLeftSlotStyle()}>
+        <Show when={leftDrawerState() === "floating-closed"}>
+          <IconButton
+            ref={setLeftToggleButtonEl}
+            color="inherit"
+            onClick={handleLeftAppBarButtonClick}
+            aria-label={leftAppBarButtonLabel()}
+            size="small"
+            aria-expanded={leftDrawerState() !== "floating-closed"}
+          >
+            {leftAppBarButtonIcon()}
+          </IconButton>
+        </Show>
+        {renderActiveSessionHeaderTitle()}
+      </div>
+    </Show>
+  )
 
   const isLaunching = createMemo(() => props.instance.status === "starting")
 
@@ -870,33 +914,56 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 fallback={
                   <div class="flex flex-col w-full gap-1.5">
                     <div class="flex flex-wrap items-center justify-between gap-2 w-full">
-                    <Show when={leftDrawerState() === "floating-closed"}>
-                      <IconButton
-                        ref={setLeftToggleButtonEl}
-                        color="inherit"
-                        onClick={handleLeftAppBarButtonClick}
-                        aria-label={leftAppBarButtonLabel()}
-                        size="small"
-                        aria-expanded={leftDrawerState() !== "floating-closed"}
-                      >
-                       {leftAppBarButtonIcon()}
-                      </IconButton>
-                    </Show>
+                      {renderHeaderLeftSlot()}
 
-                    <div class="flex-1 flex items-center justify-center min-w-0">
-                      {renderSessionHeaderIndicators()}
-                    </div>
+                      <div class="flex-1 flex items-center justify-center min-w-0">
+                        {renderSessionHeaderIndicators()}
+                      </div>
 
-                    <div class="flex flex-wrap items-center justify-center gap-1">
-                      <Show when={!showingInfoView()}>
+                      <div class="flex flex-wrap items-center justify-center gap-1">
+                        <Show when={!showingInfoView()}>
+                          <IconButton
+                            color="inherit"
+                            onClick={handleChatSearchClick}
+                            aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                            title={t("instanceShell.chatSearch.openAriaLabel")}
+                            size="small"
+                          >
+                            <Search class="w-5 h-5" aria-hidden="true" />
+                          </IconButton>
+                        </Show>
+                        <button
+                          type="button"
+                          class="connection-status-button command-palette-button"
+                          onClick={handleCommandPaletteClick}
+                          aria-label={t("instanceShell.commandPalette.openAriaLabel")}
+                          style={{ flex: "0 0 auto", width: "auto" }}
+                        >
+                          {t("instanceShell.commandPalette.button")}
+                        </button>
+                        <span class="connection-status-shortcut-hint kbd-hint">
+                          <Kbd shortcut="cmd+shift+p" />
+                        </span>
+                      </div>
+
+                      <div class="flex-1 flex items-center justify-center min-w-0">
+                        <span
+                          class={`status-indicator ${connectionStatusClass()}`}
+                          aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
+                        >
+                          <span class="status-dot" />
+                        </span>
+                      </div>
+
+                      <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
                         <IconButton
                           color="inherit"
-                          onClick={handleChatSearchClick}
-                          aria-label={t("instanceShell.chatSearch.openAriaLabel")}
-                          title={t("instanceShell.chatSearch.openAriaLabel")}
+                          onClick={props.onEnterMobileFullscreen}
+                          aria-label={t("instanceShell.fullscreen.enter")}
+                          title={t("instanceShell.fullscreen.enter")}
                           size="small"
                         >
-                          <Search class="w-5 h-5" aria-hidden="true" />
+                          <Maximize2 class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
                         <IconButton
                           color="inherit"
@@ -911,53 +978,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           })()}
                         </IconButton>
                       </Show>
-                      <button
-                        type="button"
-                        class="connection-status-button command-palette-button"
-                        onClick={handleCommandPaletteClick}
-                        aria-label={t("instanceShell.commandPalette.openAriaLabel")}
-                        style={{ flex: "0 0 auto", width: "auto" }}
-                      >
-                        {t("instanceShell.commandPalette.button")}
-                      </button>
-                      <span class="connection-status-shortcut-hint kbd-hint">
-                        <Kbd shortcut="cmd+shift+p" />
-                     </span>
-                     </div>
 
-                    <div class="flex-1 flex items-center justify-center min-w-0">
-                      <span
-                        class={`status-indicator ${connectionStatusClass()}`}
-                        aria-label={t("instanceShell.connection.ariaLabel", { status: connectionStatusLabel() })}
-                      >
-                        <span class="status-dot" />
-                      </span>
-                    </div>
-
-                    <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
-                      <IconButton
-                        color="inherit"
-                        onClick={props.onEnterMobileFullscreen}
-                        aria-label={t("instanceShell.fullscreen.enter")}
-                        title={t("instanceShell.fullscreen.enter")}
-                        size="small"
-                      >
-                        <Maximize2 class="w-5 h-5" aria-hidden="true" />
-                      </IconButton>
-                    </Show>
-
-                    <Show when={rightDrawerState() === "floating-closed"}>
-                      <IconButton
-                        ref={setRightToggleButtonEl}
-                        color="inherit"
-                        onClick={handleRightAppBarButtonClick}
-                        aria-label={rightAppBarButtonLabel()}
-                        size="small"
-                        aria-expanded={rightDrawerState() !== "floating-closed"}
-                      >
-                        {rightAppBarButtonIcon()}
-                      </IconButton>
-                    </Show>
+                      <Show when={rightDrawerState() === "floating-closed"}>
+                        <IconButton
+                          ref={setRightToggleButtonEl}
+                          color="inherit"
+                          onClick={handleRightAppBarButtonClick}
+                          aria-label={rightAppBarButtonLabel()}
+                          size="small"
+                          aria-expanded={rightDrawerState() !== "floating-closed"}
+                        >
+                          {rightAppBarButtonIcon()}
+                        </IconButton>
+                      </Show>
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-2 pb-1">
@@ -975,18 +1008,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               }
             >
               <div class="session-toolbar-left flex-1 flex items-center gap-3 min-w-0">
-                <Show when={leftDrawerState() === "floating-closed"}>
-                  <IconButton
-                    ref={setLeftToggleButtonEl}
-                    color="inherit"
-                    onClick={handleLeftAppBarButtonClick}
-                    aria-label={leftAppBarButtonLabel()}
-                    size="small"
-                    aria-expanded={leftDrawerState() !== "floating-closed"}
-                  >
-                    {leftAppBarButtonIcon()}
-                  </IconButton>
-                </Show>
+                {renderHeaderLeftSlot()}
 
                 <Show when={!showingInfoView()}>
                   <ContextMeter
