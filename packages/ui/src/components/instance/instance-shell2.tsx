@@ -194,6 +194,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     unpinRight: unpinRightDrawer,
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
+    closeFloatingDrawersIfAny,
     leftAppBarButtonLabel,
     rightAppBarButtonLabel,
     leftAppBarButtonIcon,
@@ -201,6 +202,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  // When the user switches away from this instance (e.g., taps a different
+  // instance/project tab while a floating drawer is open on phone), close any
+  // open floating drawers so the previous instance's drawer doesn't remain
+  // visually or interactively open when its tab regains focus later.
+  let wasActiveInstance = Boolean(props.isActiveInstance)
+  createEffect(() => {
+    const isActive = Boolean(props.isActiveInstance)
+    if (wasActiveInstance && !isActive) {
+      closeFloatingDrawersIfAny()
+    }
+    wasActiveInstance = isActive
+  })
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -607,7 +621,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // The outer modal layer is transparent to pointer events; only the
+          // paper and the (constrained) backdrop intercept. This lets taps on
+          // the still-visible instance tab bar above the drawer reach the tab
+          // buttons in a single gesture on phone layout.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
             borderInlineEnd: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -620,8 +640,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
 
+          // Constrain the backdrop so it does not overlap the instance tab bar
+          // above the drawer; backdrop dismissal still works in the remaining
+          // area below the tab bar.
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -723,7 +749,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // See the matching override on the left drawer for rationale.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
             borderInlineStart: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -736,7 +765,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
