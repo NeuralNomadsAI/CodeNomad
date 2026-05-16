@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "Enviar",
   "toolCall.question.shortcuts.dismiss": "Descartar",
   "toolCall.question.queuedText": "Esperando respuestas anteriores.",
+  "toolCall.question.queuedLabel": "En cola",
+  "toolCall.question.queuedHint": "Esta pregunta está en cola detrás de otra interrupción. Resuelve la solicitud activa para responder esta.",
   "toolCall.question.validation.answerAll": "Responde todas las preguntas antes de enviar.",
   "toolCall.question.errors.unableToReply": "No se pudo responder",
   "toolCall.question.errors.unableToDismiss": "No se pudo descartar",

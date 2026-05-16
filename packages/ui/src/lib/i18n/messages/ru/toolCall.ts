@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "Отправить",
   "toolCall.question.shortcuts.dismiss": "Скрыть",
   "toolCall.question.queuedText": "Ожидание предыдущих ответов.",
+  "toolCall.question.queuedLabel": "В очереди",
+  "toolCall.question.queuedHint": "Этот вопрос находится в очереди за другим запросом. Ответьте на активный запрос, чтобы перейти к этому.",
   "toolCall.question.validation.answerAll": "Ответьте на все вопросы перед отправкой.",
   "toolCall.question.errors.unableToReply": "Не удалось ответить",
   "toolCall.question.errors.unableToDismiss": "Не удалось скрыть",

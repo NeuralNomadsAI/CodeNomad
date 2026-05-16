@@ -111,6 +111,8 @@ export const toolCallMessages = {
   "toolCall.question.shortcuts.submit": "提交",
   "toolCall.question.shortcuts.dismiss": "忽略",
   "toolCall.question.queuedText": "正在等待更早的响应。",
+  "toolCall.question.queuedLabel": "排队中",
+  "toolCall.question.queuedHint": "此问题正排在另一个中断之后。请先回应当前活动的提示，再回答此问题。",
   "toolCall.question.validation.answerAll": "请先回答所有问题再提交。",
   "toolCall.question.errors.unableToReply": "无法回复",
   "toolCall.question.errors.unableToDismiss": "无法忽略",

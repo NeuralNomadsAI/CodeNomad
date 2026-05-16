@@ -188,11 +188,39 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
     updateAnswer(questionIndex, next)
   }
 
+  // Task 059: when the question is pending but not active (e.g. a permission
+  // interruption is ahead of it, or another question is currently active),
+  // render an explicit "queued" state instead of a fully-rendered but
+  // unclickable radio list with no Submit button. This makes the inactive
+  // state self-explanatory and removes the false impression that the system
+  // is still loading.
+  const isQueuedBehindInterruption = createMemo(() => {
+    if (props.active()) return false
+    if (hasFinalAnswers()) return false
+    return Boolean(props.request())
+  })
+
   return (
     <Show when={isVisible() && questions().length > 0}>
       <div
         class={`tool-call-permission p-0 gap-2 ${props.active() ? "tool-call-permission-active" : "tool-call-permission-queued"} ${hasFinalAnswers() ? "tool-call-permission-answered" : ""}`}
       >
+        <Show when={isQueuedBehindInterruption()}>
+          <div class="tool-call-permission-body">
+            <div
+              class="tool-call-permission-queued-state border border-base bg-surface-secondary p-3 text-primary"
+              role="status"
+              aria-live="polite"
+              data-testid="question-queued-state"
+            >
+              <div class="text-sm font-semibold text-primary">{t("toolCall.question.queuedLabel")}</div>
+              <p class="tool-call-permission-queued-text mt-1 text-sm text-muted">
+                {t("toolCall.question.queuedHint")}
+              </p>
+            </div>
+          </div>
+        </Show>
+        <Show when={!isQueuedBehindInterruption()}>
         <div class="tool-call-permission-body">
           <div class="flex flex-col gap-2">
             <For each={questions()}>
@@ -340,11 +368,17 @@ export function QuestionToolBlock(props: QuestionToolBlockProps) {
               </div>
             </Show>
 
-            <Show when={!props.active() && props.request()}>
-              <p class="tool-call-permission-queued-text px-3 pb-3">{t("toolCall.question.queuedText")}</p>
-            </Show>
+            {/*
+              Task 059: the previous fallback queuedText was rendered alongside
+              fully-disabled radios. The dedicated `isQueuedBehindInterruption`
+              branch above now owns the inactive presentation, so the legacy
+              hint here would be dead code. If the question is in any other
+              non-active terminal state (already answered) the answered styling
+              keeps it readable without an extra hint.
+            */}
           </div>
         </div>
+        </Show>
       </div>
     </Show>
   )
