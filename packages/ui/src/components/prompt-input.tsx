@@ -463,10 +463,33 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
+  function clearTextareaWithUndo() {
+    const textarea = textareaRef
+    if (!textarea || textarea.disabled) return false
+
+    textarea.focus()
+    textarea.setSelectionRange(0, textarea.value.length)
+
+    let cleared = false
+    try {
+      cleared = typeof document !== "undefined" && typeof document.execCommand === "function" && document.execCommand("delete")
+    } catch {
+      cleared = false
+    }
+    if (!cleared || textarea.value.length > 0) {
+      textarea.value = ""
+    }
+
+    textarea.dispatchEvent(new Event("input", { bubbles: true }))
+    return cleared
+  }
+
   function handleClearPrompt() {
-    clearPrompt()
-    clearHistoryDraft()
     resetHistoryNavigation()
+    if (!clearTextareaWithUndo()) {
+      clearPrompt()
+    }
+    clearHistoryDraft()
     setShowPicker(false)
     setPickerMode("mention")
     setAtPosition(null)
@@ -747,6 +770,12 @@ export default function PromptInput(props: PromptInputProps) {
                 autocomplete="off"
                 style={inputHeight() !== null ? { height: `${inputHeight()}px`, "min-height": `${inputHeight()}px`, "overflow-y": "auto" } : undefined}
               />
+              <div class="prompt-expand-button-inline">
+                <ExpandButton
+                  expandState={expandState}
+                  onToggleExpand={handleExpandToggle}
+                />
+              </div>
               <button
                 type="button"
                 class="prompt-clear-button prompt-clear-button-inline"
@@ -757,12 +786,6 @@ export default function PromptInput(props: PromptInputProps) {
               >
                 <X class="h-4 w-4" aria-hidden="true" />
               </button>
-              <div class="prompt-expand-button-inline">
-                <ExpandButton
-                  expandState={expandState}
-                  onToggleExpand={handleExpandToggle}
-                />
-              </div>
               <Show when={shouldShowOverlay()}>
                 <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
                   <Show
