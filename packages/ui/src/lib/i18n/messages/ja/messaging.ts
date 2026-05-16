@@ -138,12 +138,14 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "リクエストが中断されました",
   "messageItem.errors.unknownFallback": "不明なエラーが発生しました",
 
+  "attachmentChip.symbol.ariaLabel": "シンボル {name} ({file}:{line})",
+  "attachmentChip.symbol.kindLabel": "{name} ({kind})",
   "attachmentChip.removeAriaLabel": "添付を削除",
 
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
 
   "promptInput.placeholder.shell": "シェルコマンドを実行 (Esc で終了)...",
-  "promptInput.placeholder.default": "メッセージ、@file、@agent を入力、または画像/テキストを貼り付け...",
+  "promptInput.placeholder.default": "メッセージ、@file、@symbol、@agent を入力、または画像/テキストを貼り付け...",
   "promptInput.hints.shell.exit": "でシェルモードを終了",
   "promptInput.hints.shell.enable": "シェルモード",
   "promptInput.hints.commands": "コマンド",

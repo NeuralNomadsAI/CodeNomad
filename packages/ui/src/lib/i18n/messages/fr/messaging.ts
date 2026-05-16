@@ -138,12 +138,14 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "La requête a été annulée",
   "messageItem.errors.unknownFallback": "Une erreur inconnue est survenue",
 
+  "attachmentChip.symbol.ariaLabel": "Symbole {name} ({file}:{line})",
+  "attachmentChip.symbol.kindLabel": "{name} ({kind})",
   "attachmentChip.removeAriaLabel": "Retirer la pièce jointe",
 
   "expandButton.toggleAriaLabel": "Basculer la hauteur de la zone de saisie",
 
   "promptInput.placeholder.shell": "Exécuter une commande shell (Esc pour quitter)...",
-  "promptInput.placeholder.default": "Tapez votre message, @fichier, @agent, ou collez des images et du texte...",
+  "promptInput.placeholder.default": "Tapez votre message, @fichier, @symbol, @agent, ou collez des images et du texte...",
   "promptInput.hints.shell.exit": "pour quitter le mode shell",
   "promptInput.hints.shell.enable": "Mode shell",
   "promptInput.hints.commands": "Commandes",

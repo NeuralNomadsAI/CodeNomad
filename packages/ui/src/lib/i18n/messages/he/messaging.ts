@@ -136,12 +136,14 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "הבקשה בוטלה",
   "messageItem.errors.unknownFallback": "אירעה שגיאה לא ידועה",
 
+  "attachmentChip.symbol.ariaLabel": "סמל {name} ({file}:{line})",
+  "attachmentChip.symbol.kindLabel": "{name} ({kind})",
   "attachmentChip.removeAriaLabel": "הסר קובץ מצורף",
 
   "expandButton.toggleAriaLabel": "שנה גובה תיבת הקלט",
 
   "promptInput.placeholder.shell": "הפעל פקודת מעטפת (Esc ליציאה)...",
-  "promptInput.placeholder.default": "הקלד הודעה, @file, @agent, או הדבק תמונות וטקסט...",
+  "promptInput.placeholder.default": "הקלד הודעה, @file, @symbol, @agent, או הדבק תמונות וטקסט...",
   "promptInput.hints.shell.exit": "לצאת ממצב מעטפת",
   "promptInput.hints.shell.enable": "מצב מעטפת",
   "promptInput.hints.commands": "פקודות",
