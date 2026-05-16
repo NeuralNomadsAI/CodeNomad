@@ -349,18 +349,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return pendingRequestCount() > 0
   })
 
-  let previousPendingRequestCount = 0
-  let previousIsActiveInstance = props.isActiveInstance !== false
-  createEffect(() => {
-    const count = pendingRequestCount()
-    const isActiveInstance = props.isActiveInstance !== false
-    if (isActiveInstance && count > 0 && (previousPendingRequestCount === 0 || !previousIsActiveInstance)) {
-      setPermissionModalOpen(true)
-    }
-    previousPendingRequestCount = count
-    previousIsActiveInstance = isActiveInstance
-  })
-
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return null
