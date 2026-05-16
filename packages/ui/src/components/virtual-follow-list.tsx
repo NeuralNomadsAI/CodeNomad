@@ -192,6 +192,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingInitialScroll = true
   let programmaticScrollUntil = 0
   let pendingBottomRepinAfterHold = false
+  let pendingContentRenderedFrame: number | null = null
 
   const state: VirtualFollowListState = {
     autoScroll,
@@ -729,6 +730,26 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
+  function flushContentRendered() {
+    pendingContentRenderedFrame = null
+
+    if (shouldHonorPrePinEscape() && escapeFollowIfDomMovedUp()) {
+      updateScrollButtons()
+      return
+    }
+
+    updateAutoPinHold()
+    if (activeHoldTargetKey() !== null) {
+      if (autoScroll() && streamingActive()) pendingBottomRepinAfterHold = true
+      updateScrollButtons()
+      return
+    }
+
+    const canPinToBottom = autoScroll() && !effectiveSuspendAutoPinToBottom()
+    dispatchFollowEvent({ type: "content-grew", canPinToBottom })
+    updateScrollButtons()
+  }
+
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true, { suppressAutoAnchor: opts?.suppressAutoAnchor, suppressHold: opts?.suppressHold }),
@@ -745,19 +766,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       })
     },
     notifyContentRendered: () => {
-      if (shouldHonorPrePinEscape() && escapeFollowIfDomMovedUp()) {
-        updateScrollButtons()
+      if (typeof requestAnimationFrame !== "function") {
+        flushContentRendered()
         return
       }
-      updateAutoPinHold()
-      if (activeHoldTargetKey() !== null) {
-        if (autoScroll() && streamingActive()) pendingBottomRepinAfterHold = true
-        updateScrollButtons()
-        return
-      }
-      const canPinToBottom = autoScroll() && !effectiveSuspendAutoPinToBottom()
-      dispatchFollowEvent({ type: "content-grew", canPinToBottom })
-      updateScrollButtons()
+      if (pendingContentRenderedFrame !== null) return
+      pendingContentRenderedFrame = requestAnimationFrame(() => flushContentRendered())
     },
     setAutoScroll: (enabled) => dispatchFollowEvent({ type: "set-follow", enabled: Boolean(enabled) }),
     getAutoScroll: () => autoScroll(),
@@ -841,6 +855,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }))
 
   onCleanup(() => {
+    if (pendingContentRenderedFrame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(pendingContentRenderedFrame)
+      pendingContentRenderedFrame = null
+    }
     detachScrollIntentListeners?.()
     detachScrollIntentListeners = undefined
   })
