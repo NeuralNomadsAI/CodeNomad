@@ -93,9 +93,9 @@ function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   const pref = preferences()
   if (!pref.osNotificationsEnabled) return false
   if (!pref.osNotificationsAllowWhenVisible && document.visibilityState === "visible") return false
-  if (kind === "needsInput") return Boolean(pref.notifyOnNeedsInput)
-  if (kind === "idle") return Boolean(pref.notifyOnIdle)
-  return false
+  if (kind === "needsInput" && !pref.notifyOnNeedsInput) return false
+  if (kind === "idle" && !pref.notifyOnIdle) return false
+  return true
 }
 
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
