@@ -485,11 +485,11 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleClearPrompt() {
+    resetHistoryNavigation()
     if (!clearTextareaWithUndo()) {
       clearPrompt()
     }
     clearHistoryDraft()
-    resetHistoryNavigation()
     setShowPicker(false)
     setPickerMode("mention")
     setAtPosition(null)
