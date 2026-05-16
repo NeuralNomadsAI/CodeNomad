@@ -216,6 +216,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     wasActiveInstance = isActive
   })
 
+  onMount(() => {
+    if (typeof document === "undefined") return
+
+    const handleFloatingDrawerPointerDown = (event: PointerEvent) => {
+      if (!props.isActiveInstance) return
+
+      const hasFloatingDrawerOpen = (!leftPinned() && leftOpen()) || (!rightPinned() && rightOpen())
+      if (!hasFloatingDrawerOpen) return
+
+      const target = event.target
+      if (!(target instanceof Node)) return
+
+      const leftContent = leftDrawerContentEl()
+      const rightContent = rightDrawerContentEl()
+      if (leftContent?.contains(target) || rightContent?.contains(target)) return
+
+      if (!leftPinned() && leftOpen()) setLeftOpen(false)
+      if (!rightPinned() && rightOpen()) setRightOpen(false)
+    }
+
+    document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
+  })
+
   createEffect(() => {
     const instanceId = props.instance.id
     loadBackgroundProcesses(instanceId).catch((error) => {
@@ -621,10 +645,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
-          // The outer modal layer is transparent to pointer events; only the
-          // paper and the (constrained) backdrop intercept. This lets taps on
-          // the still-visible instance tab bar above the drawer reach the tab
-          // buttons in a single gesture on phone layout.
+          // The tab bar sits outside the floating drawer. Let its controls
+          // receive the gesture; click-away handling above still closes the
+          // drawer when the target is not inside the drawer content.
           pointerEvents: "none",
           "& .MuiDrawer-paper": {
             pointerEvents: "auto",
@@ -640,9 +663,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
 
-          // Constrain the backdrop so it does not overlap the instance tab bar
-          // above the drawer; backdrop dismissal still works in the remaining
-          // area below the tab bar.
+          // Keep backdrop dismissal for the area below the tab bar without
+          // covering the tab bar itself.
           "& .MuiBackdrop-root": {
             pointerEvents: "auto",
             backgroundColor: "transparent",
