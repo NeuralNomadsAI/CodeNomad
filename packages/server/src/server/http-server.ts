@@ -87,8 +87,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
-  const perfLogger = deps.logger.child({ component: "perf242" })
-  const perf242BenchEnabled = process.env.PERF242_TRANSPORT_BENCH === "1"
 
   const sseClients = new Set<() => void>()
   const registerSseClient = (cleanup: () => void) => {
@@ -269,15 +267,6 @@ export function createHttpServer(deps: HttpServerDeps) {
 
     reply.code(404).send({ message: "UI bundle missing" })
   })
-
-  if (perf242BenchEnabled) {
-    app.post("/api/perf-log", async (request, reply) => {
-      console.log("[perf242-route]", JSON.stringify(request.body ?? {}))
-      perfLogger.info(request.body ?? {}, "frontend perf log")
-      reply.code(204)
-      return null
-    })
-  }
 
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })

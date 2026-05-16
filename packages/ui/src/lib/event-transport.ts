@@ -48,7 +48,6 @@ export async function connectWorkspaceEvents(
         callbacks,
         resolveDesktopEventTransportStartOptions(options),
       )
-      ;(globalThis as any).__TRANSPORT_TYPE = "rust-native"
       log.info("Event transport: rust-native (desktop_event_transport)")
       return conn
     } catch (error) {
@@ -58,7 +57,6 @@ export async function connectWorkspaceEvents(
     log.info("Event transport: browser-eventsource forced by settings")
   }
 
-  ;(globalThis as any).__TRANSPORT_TYPE = "browser-eventsource"
   log.info(`Event transport: browser-eventsource (host=${runtimeEnv.host})`)
   return connectBrowserWorkspaceEvents(callbacks)
 }

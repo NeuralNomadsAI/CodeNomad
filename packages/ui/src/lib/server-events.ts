@@ -9,30 +9,6 @@ const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
 const log = getLogger("sse")
 
-type Perf242ServerEventMetrics = {
-  batchesReceived: number
-  eventsReceived: number
-  maxBatchSize: number
-}
-
-let perf242ServerEventMetrics: Perf242ServerEventMetrics = {
-  batchesReceived: 0,
-  eventsReceived: 0,
-  maxBatchSize: 0,
-}
-
-export function resetPerf242ServerEventMetrics() {
-  perf242ServerEventMetrics = {
-    batchesReceived: 0,
-    eventsReceived: 0,
-    maxBatchSize: 0,
-  }
-}
-
-export function getPerf242ServerEventMetrics(): Perf242ServerEventMetrics {
-  return { ...perf242ServerEventMetrics }
-}
-
 function logSse(message: string, context?: Record<string, unknown>) {
   if (context) {
     log.info(message, context)
@@ -143,13 +119,6 @@ class ServerEvents {
     if (events.length === 0) {
       return
     }
-
-    perf242ServerEventMetrics.batchesReceived += 1
-    perf242ServerEventMetrics.eventsReceived += events.length
-    perf242ServerEventMetrics.maxBatchSize = Math.max(
-      perf242ServerEventMetrics.maxBatchSize,
-      events.length,
-    )
 
     logSse("event batch", { size: events.length })
     solidBatch(() => {
