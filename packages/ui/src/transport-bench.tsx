@@ -101,7 +101,7 @@ export default function TransportBench() {
       }
 
       await emitPerf242Log({ stage: "session-selected", instanceId, sessionId: targetSession.id, parentSessionId })
-      await loadMessages(instanceId, targetSession.id, true)
+      await loadMessages(instanceId, targetSession.id, { force: true })
       await emitPerf242Log({ stage: "messages-loaded", instanceId, sessionId: targetSession.id })
       await waitForMs(500)
 
