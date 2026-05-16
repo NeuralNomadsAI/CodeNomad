@@ -375,7 +375,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                       <button
                                         type="button"
                                         class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
+                                        disabled={!isActive() || permissionSubmitting().has(item.id)}
                                         onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "once")}
                                       >
                                         {t("permissionApproval.actions.allowOnce")}
@@ -383,7 +383,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                       <button
                                         type="button"
                                         class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
+                                        disabled={!isActive() || permissionSubmitting().has(item.id)}
                                         onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "always")}
                                       >
                                         {t("permissionApproval.actions.alwaysAllow")}
@@ -391,7 +391,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                       <button
                                         type="button"
                                         class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
+                                        disabled={!isActive() || permissionSubmitting().has(item.id)}
                                         onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "reject")}
                                       >
                                         {t("permissionApproval.actions.deny")}

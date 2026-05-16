@@ -81,7 +81,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting()}
+                  disabled={!props.active() || props.submitting()}
                   onClick={() => respond("once")}
                 >
                   {t("toolCall.permission.actions.allowOnce")}
@@ -89,7 +89,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting()}
+                  disabled={!props.active() || props.submitting()}
                   onClick={() => respond("always")}
                 >
                   {t("toolCall.permission.actions.alwaysAllow")}
@@ -97,7 +97,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                 <button
                   type="button"
                   class="tool-call-permission-button"
-                  disabled={props.submitting()}
+                  disabled={!props.active() || props.submitting()}
                   onClick={() => respond("reject")}
                 >
                   {t("toolCall.permission.actions.deny")}

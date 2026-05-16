@@ -340,10 +340,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return t("instanceShell.connection.unknown")
   }
 
-  const hasPendingRequests = createMemo(() => {
+  const pendingRequestCount = createMemo(() => {
     const permissions = getPermissionQueueLength(props.instance.id)
     const questions = getQuestionQueueLength(props.instance.id)
-    return permissions + questions > 0
+    return permissions + questions
+  })
+  const hasPendingRequests = createMemo(() => {
+    return pendingRequestCount() > 0
+  })
+
+  let previousPendingRequestCount = 0
+  let previousIsActiveInstance = props.isActiveInstance !== false
+  createEffect(() => {
+    const count = pendingRequestCount()
+    const isActiveInstance = props.isActiveInstance !== false
+    if (isActiveInstance && count > 0 && (previousPendingRequestCount === 0 || !previousIsActiveInstance)) {
+      setPermissionModalOpen(true)
+    }
+    previousPendingRequestCount = count
+    previousIsActiveInstance = isActiveInstance
   })
 
   const activePromptInputApi = createMemo(() => {
