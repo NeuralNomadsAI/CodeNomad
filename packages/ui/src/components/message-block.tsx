@@ -1076,6 +1076,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "compaction"}>
@@ -1135,6 +1136,7 @@ interface StepCardProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  onContentRendered?: () => void
 }
 
 interface CompactionCardProps {
@@ -1316,6 +1318,12 @@ function StepCard(props: StepCardProps) {
   }
 
   const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
+
+  createEffect(() => {
+    if (props.kind !== "finish") return
+    if (!usageStats()) return
+    props.onContentRendered?.()
+  })
 
   const canDeleteMessage = () =>
     Boolean(props.showDeleteMessage && props.instanceId && props.sessionId && props.messageId) && !deletingMessage()
