@@ -93,9 +93,9 @@ function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   const pref = preferences()
   if (!pref.osNotificationsEnabled) return false
   if (!pref.osNotificationsAllowWhenVisible && document.visibilityState === "visible") return false
-  if (kind === "needsInput") return Boolean(pref.notifyOnNeedsInput)
-  if (kind === "idle") return Boolean(pref.notifyOnIdle)
-  return false
+  if (kind === "needsInput" && !pref.notifyOnNeedsInput) return false
+  if (kind === "idle" && !pref.notifyOnIdle) return false
+  return true
 }
 
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
@@ -113,8 +113,6 @@ function shouldSendOsNotificationForSession(
   if (!sessionId) return true
 
   const child = isChildSession(instanceId, sessionId)
-
-  // Avoid notification spam from spawned child/subagent sessions arriving before hydration.
   if (child === null) return false
   if (child) return false
 
@@ -560,10 +558,11 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   const sessionId = event.properties?.sessionID
   if (!sessionId) return
 
-  if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
+  const shouldNotify = shouldSendOsNotificationForSession("idle", instanceId, sessionId)
+  if (shouldNotify) {
     const title = getInstanceDisplayName(instanceId)
     const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" is idle` : "Session is idle"
+    const body = label ? `${label} — AI terminó, listo para continuar` : "AI terminó de trabajar"
     fireOsNotification({ title, body })
   }
 

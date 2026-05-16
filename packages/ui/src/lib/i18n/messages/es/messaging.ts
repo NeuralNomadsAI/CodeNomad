@@ -138,12 +138,14 @@ export const messagingMessages = {
   "messageItem.errors.requestAborted": "La solicitud fue abortada",
   "messageItem.errors.unknownFallback": "Se produjo un error desconocido",
 
+  "attachmentChip.symbol.ariaLabel": "Símbolo {name} ({file}:{line})",
+  "attachmentChip.symbol.kindLabel": "{name} ({kind})",
   "attachmentChip.removeAriaLabel": "Quitar adjunto",
 
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
 
   "promptInput.placeholder.shell": "Ejecuta un comando de shell (Esc para salir)...",
-  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, o pega imágenes y texto...",
+  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @symbol, @agent, o pega imágenes y texto...",
   "promptInput.hints.shell.exit": "para salir del modo shell",
   "promptInput.hints.shell.enable": "Modo shell",
   "promptInput.hints.commands": "Comandos",
