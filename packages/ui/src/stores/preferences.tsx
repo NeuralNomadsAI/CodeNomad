@@ -1,5 +1,9 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
+import {
+  readUseTauriNativeEventTransportPreference,
+  writeUseTauriNativeEventTransportPreference,
+} from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
@@ -388,6 +392,9 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
+const [useTauriNativeEventTransport, setUseTauriNativeEventTransportSignal] = createSignal(
+  readUseTauriNativeEventTransportPreference(),
+)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
@@ -434,6 +441,23 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   const updated = await storage.patchConfigOwner(owner, patch)
   if (owner === "ui") setUiConfigBucket(updated as any)
   if (owner === "server") setServerConfigBucket(updated as any)
+}
+
+function setUseTauriNativeEventTransport(enabled: boolean): void {
+  if (useTauriNativeEventTransport() === enabled) {
+    return
+  }
+
+  setUseTauriNativeEventTransportSignal(enabled)
+  writeUseTauriNativeEventTransportPreference(enabled)
+
+  void import("../lib/server-events")
+    .then(({ serverEvents }) => {
+      serverEvents.restart("desktop transport preference changed")
+    })
+    .catch((error) => {
+      log.error("Failed to restart backend events stream after desktop transport preference change", error)
+    })
 }
 
 async function patchStateOwner(owner: string, patch: unknown) {
@@ -714,6 +738,8 @@ void ensureLoaded().catch((error: unknown) => {
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
+  useTauriNativeEventTransport: typeof useTauriNativeEventTransport
+  setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
@@ -772,6 +798,8 @@ const ConfigContext = createContext<ConfigContextValue>()
 const configContextValue: ConfigContextValue = {
   isLoaded,
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   updatePreferences,
   themePreference,
   setThemePreference,
@@ -858,6 +886,8 @@ export function useConfig(): ConfigContextValue {
 
 export {
   preferences,
+  useTauriNativeEventTransport,
+  setUseTauriNativeEventTransport,
   uiState,
   serverSettings,
   recentFolders,

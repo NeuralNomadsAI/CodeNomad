@@ -154,6 +154,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים.",
   "settings.behavior.keepUnseenSubagentIdle.title": "השאר סמני idle של תתי-סוכנים",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "השאר סמני idle של תתי-סוכנים גלויים עד צפייה במקום להסתיר אותם אחרי 5 שניות.",
+  "settings.behavior.tauriNativeEventTransport.title": "תעבורת אירועים מקורית של Tauri",
+  "settings.behavior.tauriNativeEventTransport.subtitle": "השתמש בתעבורת האירועים השולחנית המקורית ב-Rust בתוך Tauri. כבה זאת כדי לחזור למסלול browser EventSource.",
   "settings.behavior.promptVoiceInput.title": "קלט קולי לפרומפט",
   "settings.behavior.promptVoiceInput.subtitle": "הצג את כפתור המיקרופון לקלט דיבור-לטקסט כאשר תכונת הקול מוגדרת.",
   "settings.behavior.promptSubmit.title": "Enter לשליחה",

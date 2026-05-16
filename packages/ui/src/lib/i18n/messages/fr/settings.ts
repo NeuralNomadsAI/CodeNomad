@@ -155,6 +155,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Nettoyer automatiquement les sessions vides lors de la creation de nouvelles.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Garder les marqueurs inactifs des sous-agents",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Garde les marqueurs inactifs des sous-agents visibles jusqu'a consultation au lieu de les masquer apres 5 secondes.",
+  "settings.behavior.tauriNativeEventTransport.title": "Transport d'evenements natif Tauri",
+  "settings.behavior.tauriNativeEventTransport.subtitle": "Utiliser le transport d'evenements desktop natif Rust dans Tauri. Desactivez-le pour revenir au chemin browser EventSource.",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "Entrer pour envoyer",

@@ -1,5 +1,6 @@
 import { render } from "solid-js/web"
 import App from "./App"
+import TransportBench from "./transport-bench"
 import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
@@ -16,10 +17,36 @@ if (!root) {
 }
 
 const mount = root
+const bootParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
+const isPerf242TransportBenchBuild = import.meta.env.VITE_PERF242_TRANSPORT_BENCH === "1"
+const isPerf242TransportBench =
+  isPerf242TransportBenchBuild
+  && bootParams.get("perf242TransportBench") === "1"
 
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
+
+  if (isPerf242TransportBench) {
+    const payload = {
+      stage: "frontend-bootstrap",
+      host: runtimeEnv.host,
+      search: window.location.search,
+    }
+
+    void fetch("/api/perf-log", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {
+      console.info("[perf242] frontend-bootstrap", {
+        host: runtimeEnv.host,
+        search: window.location.search,
+      })
+    })
+  }
 }
 
 async function bootstrap() {
@@ -54,6 +81,7 @@ async function bootstrap() {
           <I18nProvider>
             <ThemeProvider>
               <App />
+              {isPerf242TransportBench ? <TransportBench /> : null}
             </ThemeProvider>
           </I18nProvider>
         </InstanceConfigProvider>
