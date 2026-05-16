@@ -76,6 +76,10 @@ class ServerEvents {
 
       this.connection = connection
     } catch (error) {
+      if (generation !== this.connectGeneration) {
+        return
+      }
+
       logSse("Events stream failed to connect, scheduling reconnect", {
         error: error instanceof Error ? error.message : String(error),
       })
