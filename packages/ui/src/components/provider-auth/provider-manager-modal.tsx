@@ -355,6 +355,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       setAuthorizationLaunchBlocked(isBrowserHostForOAuth() && pendingOauthPopup === null)
       await submitOAuthAuthorize(providerId, authClient)
     } catch (error) {
+      if (pendingOauthPopup && !pendingOauthPopup.closed) {
+        pendingOauthPopup.close()
+      }
+      pendingOauthPopup = null
       if (isAbortError(error)) {
         setStage("prompts")
         return
