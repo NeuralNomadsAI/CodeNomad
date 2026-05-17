@@ -1,5 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { Settings, Bell, FileCog, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
+import { Select } from "@kobalte/core/select"
+import { Settings, Bell, ChevronDown, FileCog, Info, MonitorUp, Paintbrush, Terminal, Volume2, Globe, X } from "lucide-solid"
 import { createMemo, For, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -19,26 +20,34 @@ import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 
+type SettingsSectionOption = {
+  id: SettingsSectionId
+  icon: typeof Settings
+  label: string
+}
+
 export const SettingsScreen: Component = () => {
   const { t } = useI18n()
 
   const sections = createMemo(() => {
-    const items = [
-      { id: "appearance" as SettingsSectionId, icon: Paintbrush, label: t("settings.nav.appearance") },
-      { id: "notifications" as SettingsSectionId, icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech" as SettingsSectionId, icon: Volume2, label: t("settings.nav.speech") },
-      { id: "sidecars" as SettingsSectionId, icon: Globe, label: t("settings.nav.sidecars") },
-      { id: "opencode" as SettingsSectionId, icon: Terminal, label: t("settings.nav.opencode") },
-      { id: "config-files" as SettingsSectionId, icon: FileCog, label: t("settings.nav.configFiles") },
-      { id: "info" as SettingsSectionId, icon: Info, label: t("settings.nav.info") },
+    const items: SettingsSectionOption[] = [
+      { id: "appearance", icon: Paintbrush, label: t("settings.nav.appearance") },
+      { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
+      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
+      { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
+      { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
+      { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
+      { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
 
     if (canOpenRemoteWindows()) {
-      items.splice(2, 0, { id: "remote" as SettingsSectionId, icon: MonitorUp, label: t("settings.nav.remote") })
+      items.splice(2, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     }
 
     return items
   })
+
+  const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0])
 
   const renderSection = () => {
     switch (activeSettingsSection()) {
@@ -71,6 +80,65 @@ export const SettingsScreen: Component = () => {
             <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
 
             <aside class="settings-screen-nav">
+              <div class="settings-screen-compact-bar">
+                <span class="settings-screen-compact-icon-wrap">
+                  <Settings class="settings-screen-nav-icon" />
+                </span>
+                <div class="settings-section-selector-wrap">
+                  <Select<SettingsSectionOption>
+                    value={activeSection()}
+                    onChange={(section) => section && setActiveSettingsSection(section.id)}
+                    options={sections()}
+                    optionValue="id"
+                    optionTextValue="label"
+                    itemComponent={(itemProps) => {
+                      const Icon = itemProps.item.rawValue.icon
+                      return (
+                        <Select.Item item={itemProps.item} class="selector-option settings-section-selector-option">
+                          <Icon class="settings-section-selector-option-icon" />
+                          <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                        </Select.Item>
+                      )
+                    }}
+                  >
+                    <Select.Trigger class="selector-trigger settings-section-selector-trigger" aria-label={t("settings.navigationAriaLabel")}>
+                      <div class="flex-1 min-w-0">
+                        <Select.Value<SettingsSectionOption>>
+                          {(state) => {
+                            const selected = state.selectedOption()
+                            const Icon = selected?.icon ?? Settings
+                            return (
+                              <span class="settings-section-selector-value">
+                                <Icon class="settings-section-selector-value-icon" />
+                                <span class="selector-trigger-primary selector-trigger-primary--align-left">{selected?.label}</span>
+                              </span>
+                            )
+                          }}
+                        </Select.Value>
+                      </div>
+                      <Select.Icon class="selector-trigger-icon">
+                        <ChevronDown class="w-3 h-3" />
+                      </Select.Icon>
+                    </Select.Trigger>
+
+                    <Select.Portal>
+                      <Select.Content class="selector-popover settings-section-selector-popover">
+                        <Select.Listbox class="selector-listbox" />
+                      </Select.Content>
+                    </Select.Portal>
+                  </Select>
+                </div>
+                <button
+                  type="button"
+                  class="selector-button selector-button-secondary settings-screen-close settings-screen-compact-close"
+                  onClick={closeSettings}
+                  aria-label={t("settings.close")}
+                  title={t("settings.close")}
+                >
+                  <X class="w-4 h-4" />
+                </button>
+              </div>
+
               <div class="settings-screen-nav-header">
                 <div class="settings-screen-nav-title-row">
                   <span class="settings-screen-nav-icon-wrap">
@@ -107,7 +175,7 @@ export const SettingsScreen: Component = () => {
                 <div class="settings-screen-content-header-title-group">
                   <p class="settings-screen-content-eyebrow">{t("settings.content.eyebrow")}</p>
                   <h1 class="settings-screen-content-title">
-                    {sections().find((section) => section.id === activeSettingsSection())?.label}
+                    {activeSection()?.label}
                   </h1>
                 </div>
                 <button
