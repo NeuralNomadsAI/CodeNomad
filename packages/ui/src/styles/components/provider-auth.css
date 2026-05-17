@@ -220,6 +220,16 @@
   font-size: var(--font-size-sm);
 }
 
+.providers-oauth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.providers-oauth-link {
+  text-decoration: none;
+}
+
 .providers-waiting-card {
   align-items: flex-start;
 }
@@ -348,6 +358,10 @@
   .providers-card-footer,
   .providers-actions-row {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .providers-oauth-actions {
     flex-direction: column;
   }
 

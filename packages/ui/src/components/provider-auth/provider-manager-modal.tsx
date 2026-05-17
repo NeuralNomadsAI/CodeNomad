@@ -6,6 +6,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { requestData } from "../../lib/opencode-api"
+import { isTauriHost } from "../../lib/runtime-env"
 import {
   extractProviderAuthErrorMessage,
   genericApiMethod,
@@ -73,7 +74,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   const [loading, setLoading] = createSignal(false)
   const [loadError, setLoadError] = createSignal<string | null>(null)
   const [actionError, setActionError] = createSignal<string | null>(null)
+  const [authorizationLaunchBlocked, setAuthorizationLaunchBlocked] = createSignal(false)
+  const [authorizationLinkCopied, setAuthorizationLinkCopied] = createSignal(false)
   let callbackAbortController: AbortController | null = null
+  let pendingOauthPopup: Window | null = null
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
   const client = createMemo<OpencodeClient | null>(() => instance()?.client ?? null)
@@ -174,6 +178,61 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     props.onOpenChange(open)
   }
 
+  function isBrowserHostForOAuth(): boolean {
+    return !isTauriHost() && typeof window !== "undefined"
+  }
+
+  function prepareOAuthPopupWindow(): Window | null {
+    if (!isBrowserHostForOAuth()) {
+      return null
+    }
+
+    try {
+      const popup = window.open("", "_blank")
+      if (popup && popup.document) {
+        popup.document.title = t("settings.providers.oauth.popup.loadingTitle")
+        popup.document.body.innerHTML = `<div style=\"font-family: sans-serif; padding: 24px; color: #111;\">${t("settings.providers.oauth.popup.loadingBody")}</div>`
+      }
+      return popup
+    } catch {
+      return null
+    }
+  }
+
+  async function launchAuthorizationUrl(url: string, options?: { popup?: Window | null; sameTab?: boolean }): Promise<boolean> {
+    if (options?.sameTab && typeof window !== "undefined") {
+      window.location.assign(url)
+      return true
+    }
+
+    const popup = options?.popup
+    if (popup && !popup.closed) {
+      try {
+        popup.location.href = url
+        return true
+      } catch {
+        // fall through to general opener path
+      }
+    }
+
+    return await openExternalUrl(url, "provider-auth")
+  }
+
+  async function copyAuthorizationUrl(): Promise<void> {
+    const url = authorization()?.url
+    if (!url || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(url)
+      setAuthorizationLinkCopied(true)
+      setTimeout(() => setAuthorizationLinkCopied(false), 1500)
+    } catch {
+      setAuthorizationLinkCopied(false)
+    }
+  }
+
   createEffect(() => {
     if (!props.open) return
     const authClient = client()
@@ -217,6 +276,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   function resetFlow(nextProviderId: string | null = null) {
     callbackAbortController?.abort()
     callbackAbortController = null
+    if (pendingOauthPopup && !pendingOauthPopup.closed) {
+      pendingOauthPopup.close()
+    }
+    pendingOauthPopup = null
     setActiveProviderId(nextProviderId)
     setSelectedMethodIndex(0)
     setApiKey("")
@@ -225,6 +288,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setCode("")
     setStage(nextProviderId ? "prompts" : "idle")
     setActionError(null)
+    setAuthorizationLaunchBlocked(false)
+    setAuthorizationLinkCopied(false)
   }
 
   function updatePromptValue(key: string, value: string) {
@@ -254,7 +319,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const data = response?.data as ProviderAuthAuthorization | undefined
     if (!data) throw new Error(t("settings.providers.errors.noAuthorization"))
     setAuthorization(data)
-    await openExternalUrl(data.url, "provider-auth")
+    const opened = await launchAuthorizationUrl(data.url, { popup: pendingOauthPopup })
+    pendingOauthPopup = null
+    setAuthorizationLaunchBlocked(!opened)
     if (data.method === "code") {
       setStage("code")
       return
@@ -284,6 +351,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         await submitApiAuth(providerId, authClient)
         return
       }
+      pendingOauthPopup = prepareOAuthPopupWindow()
+      setAuthorizationLaunchBlocked(isBrowserHostForOAuth() && pendingOauthPopup === null)
       await submitOAuthAuthorize(providerId, authClient)
     } catch (error) {
       if (isAbortError(error)) {
@@ -527,6 +596,23 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
                   <Show when={stage() === "code"}><div class="providers-form-stack"><div class="providers-oauth-instructions"><ExternalLink class="providers-instructions-icon" /><span>{authorization()?.instructions || t("settings.providers.oauth.enterCode")}</span></div><label class="providers-field"><span class="settings-form-label">{t("settings.providers.oauth.codeLabel")}</span><input type="text" class="providers-input" value={code()} onInput={(event) => setCode(event.currentTarget.value)} placeholder={t("settings.providers.oauth.codePlaceholder")} autocomplete="one-time-code" /></label></div></Show>
                   <Show when={stage() === "waiting"}><div class="providers-waiting-card"><Loader2 class="providers-spin-icon" /><div><div class="settings-toggle-title">{t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
+                  <Show when={authorization() && (stage() === "code" || stage() === "waiting")}>
+                    <div class="providers-oauth-actions">
+                      <a href={authorization()?.url} target="_blank" rel="noopener noreferrer" class="selector-button selector-button-secondary providers-oauth-link">
+                        <ExternalLink class="w-4 h-4" />
+                        {t("settings.providers.oauth.openPage")}
+                      </a>
+                      <button type="button" class="selector-button selector-button-secondary" onClick={() => void launchAuthorizationUrl(authorization()!.url, { sameTab: true })}>
+                        {t("settings.providers.oauth.openHere")}
+                      </button>
+                      <button type="button" class="selector-button selector-button-secondary" onClick={() => void copyAuthorizationUrl()}>
+                        {authorizationLinkCopied() ? t("settings.providers.oauth.linkCopied") : t("settings.providers.oauth.copyLink")}
+                      </button>
+                    </div>
+                  </Show>
+                  <Show when={authorizationLaunchBlocked() && authorization()}>
+                    <div class="settings-card-message">{t("settings.providers.oauth.popupBlocked")}</div>
+                  </Show>
                   <Show when={stage() === "success"}><div class="providers-success-card"><Check class="providers-success-icon" /><span>{t("settings.providers.success")}</span></div></Show>
                   <Show when={actionError()}><div class="settings-error-message">{actionError()}</div></Show>
 
