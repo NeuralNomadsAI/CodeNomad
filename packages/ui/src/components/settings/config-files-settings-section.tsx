@@ -1,11 +1,12 @@
 import { Select } from "@kobalte/core/select"
-import { createMemo, createSignal, lazy, onMount, Show, Suspense, type Component } from "solid-js"
+import { createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, type Component } from "solid-js"
 import { ChevronDown, RefreshCw, Save } from "lucide-solid"
 import type { ConfigFileDescriptor } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { showToastNotification } from "../../lib/notifications"
 import { showConfirmDialog } from "../../stores/alerts"
+import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
@@ -94,11 +95,14 @@ export const ConfigFilesSettingsSection: Component = () => {
   const handleSave = async () => {
     const file = selectedFile()
     if (!file) return
+    const payload = content()
     setSaving(true)
     setError(null)
     try {
-      await serverApi.writeConfigFile(file.id, content())
-      setOriginalContent(content())
+      await serverApi.writeConfigFile(file.id, payload)
+      if (content() === payload) {
+        setOriginalContent(payload)
+      }
       setExists(true)
       showToastNotification({ message: t("settings.configFiles.toast.saveSuccess"), variant: "success" })
     } catch (saveError) {
@@ -112,6 +116,9 @@ export const ConfigFilesSettingsSection: Component = () => {
   onMount(() => {
     void loadFiles()
   })
+
+  const unregisterDirtyGuard = registerSettingsDirtyGuard(confirmDiscardIfDirty)
+  onCleanup(unregisterDirtyGuard)
 
   return (
     <div class="settings-section-stack config-files-section">
@@ -163,6 +170,11 @@ export const ConfigFilesSettingsSection: Component = () => {
           </div>
 
           <div class="config-files-actions">
+            <Show when={selectedFile() && (dirty() || exists() === false)}>
+              <span class="config-files-state config-files-state-inline">
+                {dirty() ? t("settings.configFiles.state.unsaved") : t("settings.configFiles.state.notCreated")}
+              </span>
+            </Show>
             <button
               type="button"
               class="files-header-icon-button"
@@ -187,14 +199,6 @@ export const ConfigFilesSettingsSection: Component = () => {
             </button>
           </div>
         </div>
-
-        <Show when={selectedFile() && (dirty() || exists() === false)}>
-          <div class="config-files-state-row">
-            <Show when={dirty()} fallback={<span class="config-files-state">{t("settings.configFiles.state.notCreated")}</span>}>
-              <span class="config-files-state">{t("settings.configFiles.state.unsaved")}</span>
-            </Show>
-          </div>
-        </Show>
 
         <Show when={error()}>{(message) => <div class="settings-error-message">{message()}</div>}</Show>
 

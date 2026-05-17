@@ -9,6 +9,10 @@ type ConfigFileEntry = ConfigFileDescriptor & {
   absolutePath: string
 }
 
+interface ConfigFileRouteOptions {
+  files?: ConfigFileEntry[]
+}
+
 const ConfigFileContentBodySchema = z.object({
   contents: z.string(),
 })
@@ -36,23 +40,25 @@ function resolveOpenCodeGlobalConfigPath(): ConfigFileEntry {
   }
 }
 
-function listConfigFileEntries(): ConfigFileEntry[] {
+function defaultConfigFileEntries(): ConfigFileEntry[] {
   return [resolveOpenCodeGlobalConfigPath()]
 }
 
-function listConfigFiles(): ConfigFileDescriptor[] {
-  return listConfigFileEntries().map(({ absolutePath: _absolutePath, ...file }) => file)
+function listConfigFiles(files: ConfigFileEntry[]): ConfigFileDescriptor[] {
+  return files.map(({ absolutePath: _absolutePath, ...file }) => file)
 }
 
-function getConfigFile(id: string): ConfigFileEntry | null {
-  return listConfigFileEntries().find((file) => file.id === id) ?? null
+function getConfigFile(files: ConfigFileEntry[], id: string): ConfigFileEntry | null {
+  return files.find((file) => file.id === id) ?? null
 }
 
-export function registerConfigFileRoutes(app: FastifyInstance) {
-  app.get("/api/config-files", async () => listConfigFiles())
+export function registerConfigFileRoutes(app: FastifyInstance, options: ConfigFileRouteOptions = {}) {
+  const configFiles = options.files ?? defaultConfigFileEntries()
+
+  app.get("/api/config-files", async () => listConfigFiles(configFiles))
 
   app.get<{ Params: { id: string } }>("/api/config-files/:id/content", async (request, reply) => {
-    const file = getConfigFile(request.params.id)
+    const file = getConfigFile(configFiles, request.params.id)
     if (!file) {
       reply.code(404)
       return { error: "Config file not found" }
@@ -72,7 +78,7 @@ export function registerConfigFileRoutes(app: FastifyInstance) {
   })
 
   app.put<{ Params: { id: string } }>("/api/config-files/:id/content", async (request, reply) => {
-    const file = getConfigFile(request.params.id)
+    const file = getConfigFile(configFiles, request.params.id)
     if (!file) {
       reply.code(404)
       return { error: "Config file not found" }

@@ -19,6 +19,7 @@ import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-s
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
+import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -71,8 +72,19 @@ export const SettingsScreen: Component = () => {
     }
   }
 
+  const handleSectionChange = async (sectionId: SettingsSectionId) => {
+    if (sectionId === activeSettingsSection()) return
+    if (!(await confirmSettingsDiscard())) return
+    setActiveSettingsSection(sectionId)
+  }
+
+  const handleCloseSettings = async () => {
+    if (!(await confirmSettingsDiscard())) return
+    closeSettings()
+  }
+
   return (
-    <Dialog open={settingsOpen()} onOpenChange={(open) => !open && closeSettings()}>
+    <Dialog open={settingsOpen()} onOpenChange={(open) => !open && void handleCloseSettings()}>
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <div class="settings-screen-frame">
@@ -87,7 +99,7 @@ export const SettingsScreen: Component = () => {
                 <div class="settings-section-selector-wrap">
                   <Select<SettingsSectionOption>
                     value={activeSection()}
-                    onChange={(section) => section && setActiveSettingsSection(section.id)}
+                    onChange={(section) => section && void handleSectionChange(section.id)}
                     options={sections()}
                     optionValue="id"
                     optionTextValue="label"
@@ -131,7 +143,7 @@ export const SettingsScreen: Component = () => {
                 <button
                   type="button"
                   class="selector-button selector-button-secondary settings-screen-close settings-screen-compact-close"
-                  onClick={closeSettings}
+                  onClick={() => void handleCloseSettings()}
                   aria-label={t("settings.close")}
                   title={t("settings.close")}
                 >
@@ -159,7 +171,7 @@ export const SettingsScreen: Component = () => {
                         type="button"
                         class="settings-nav-button"
                         data-selected={activeSettingsSection() === section.id ? "true" : "false"}
-                        onClick={() => setActiveSettingsSection(section.id)}
+                        onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />
                         <span>{section.label}</span>
@@ -181,7 +193,7 @@ export const SettingsScreen: Component = () => {
                 <button
                   type="button"
                   class="selector-button selector-button-secondary settings-screen-close"
-                  onClick={closeSettings}
+                  onClick={() => void handleCloseSettings()}
                   aria-label={t("settings.close")}
                   title={t("settings.close")}
                 >
