@@ -1,11 +1,12 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { ChevronDown, Star } from "lucide-solid"
+import { ChevronDown, PlugZap, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { uiState, toggleFavoriteModelPreference } from "../stores/preferences"
+import { ProviderManagerModal } from "./provider-auth/provider-manager-modal"
 const log = getLogger("session")
 
 interface ModelSelectorProps {
@@ -52,6 +53,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [initialQuery, setInitialQuery] = createSignal("")
   const [initialQueryReady, setInitialQueryReady] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
+  const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
   let triggerRef!: HTMLButtonElement
   let searchInputRef!: HTMLInputElement
   let listboxRef!: HTMLUListElement
@@ -407,6 +409,27 @@ export default function ModelSelector(props: ModelSelectorProps) {
               <button
                 type="button"
                 class="selector-option selector-option-action w-full"
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setIsOpen(false)
+                  setProvidersModalOpen(true)
+                }}
+              >
+                <PlugZap class="w-4 h-4" />
+                <span class="selector-option-label">{t("modelSelector.manageProviders")}</span>
+              </button>
+              <button
+                type="button"
+                class="selector-option selector-option-action w-full"
                 style={{ display: favoritesOnlyEnabled() && !searchActive() ? "flex" : "none" }}
                 onMouseDown={(event) => {
                   event.preventDefault()
@@ -428,6 +451,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
           </Combobox.Content>
         </Combobox.Portal>
       </Combobox>
+      <ProviderManagerModal instanceId={props.instanceId} open={providersModalOpen()} onOpenChange={setProvidersModalOpen} />
     </div>
   )
 }
