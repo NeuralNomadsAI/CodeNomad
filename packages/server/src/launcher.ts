@@ -155,16 +155,6 @@ function buildLinuxCandidates(): BrowserCandidate[] {
 
   return [
     ...names.map((name) => ({ name, command: name, args: APP_ARGS })),
-    {
-      name: "Brave Browser (Flatpak)",
-      command: "flatpak",
-      args: (url: string) => ["run", "com.brave.Browser", ...APP_ARGS(url)],
-    },
-    {
-      name: "Vivaldi (Flatpak)",
-      command: "flatpak",
-      args: (url: string) => ["run", "com.vivaldi.Vivaldi", ...APP_ARGS(url)],
-    },
     { name: "xdg-open", command: "xdg-open", args: (url: string) => [url] },
   ]
 }
