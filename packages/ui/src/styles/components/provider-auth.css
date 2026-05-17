@@ -1,0 +1,373 @@
+.providers-manager-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 60;
+  transform: translate(-50%, -50%);
+  width: min(880px, calc(100vw - 2rem));
+  max-height: min(860px, calc(100dvh - 2rem));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0;
+}
+
+.providers-manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.providers-manager-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+}
+
+.providers-manager-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.providers-connect-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.875rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--surface-base) 84%, var(--surface-secondary) 16%);
+}
+
+.providers-connect-select {
+  width: 100%;
+}
+
+.providers-connect-panel,
+.providers-list-section {
+  padding: 1rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--surface-base) 88%, var(--surface-secondary) 12%);
+}
+
+.providers-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-base) 70%, transparent);
+}
+
+.providers-overview-card,
+.providers-auth-card {
+  position: relative;
+}
+
+.providers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.875rem;
+}
+
+.providers-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 13rem;
+  padding: 1rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--surface-base) 84%, var(--accent-primary) 5%), var(--surface-base));
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.providers-card:hover,
+.providers-card[data-active="true"] {
+  border-color: color-mix(in oklab, var(--accent-primary) 34%, var(--border-base));
+  background: color-mix(in oklab, var(--accent-primary) 8%, var(--surface-base));
+}
+
+.providers-card[data-active="true"] {
+  transform: translateY(-1px);
+}
+
+.providers-card-main {
+  display: flex;
+  gap: 0.875rem;
+  min-width: 0;
+}
+
+.providers-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in oklab, var(--accent-primary) 22%, var(--border-base));
+  border-radius: 0;
+  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-base));
+  color: var(--accent-primary);
+}
+
+.providers-card-mark-icon,
+.providers-button-icon,
+.providers-input-icon,
+.providers-instructions-icon,
+.providers-success-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.providers-card-copy {
+  min-width: 0;
+}
+
+.providers-card-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+}
+
+.providers-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.providers-connected-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid color-mix(in oklab, var(--accent-primary) 28%, var(--border-base));
+  border-radius: 0;
+  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-base));
+  color: var(--accent-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.providers-card-meta,
+.providers-card-methods,
+.providers-model-count,
+.providers-select-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.providers-card-source {
+  margin-top: 0.35rem;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.providers-card-meta {
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.providers-card-methods {
+  margin-top: 0.75rem;
+  line-height: 1.4;
+}
+
+.providers-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid color-mix(in oklab, var(--border-base) 70%, transparent);
+}
+
+.providers-disconnect-button {
+  width: min(9rem, 50%);
+  min-width: 6.5rem;
+  justify-content: center;
+  padding-inline: 0.75rem;
+}
+
+.providers-loading-row,
+.providers-waiting-card,
+.providers-success-card,
+.providers-oauth-instructions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.providers-waiting-card {
+  align-items: flex-start;
+}
+
+.providers-wait-cancel {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  width: auto;
+}
+
+.providers-success-card {
+  border-color: color-mix(in oklab, var(--accent-primary) 34%, var(--border-base));
+  background: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-base));
+  color: var(--text-primary);
+}
+
+.providers-success-icon {
+  color: var(--accent-primary);
+}
+
+.providers-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.providers-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.providers-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.providers-input-icon {
+  position: absolute;
+  inset-inline-start: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.providers-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.providers-input-wrap .providers-input {
+  padding-inline-start: 2.25rem;
+}
+
+.providers-input:focus {
+  border-color: color-mix(in oklab, var(--accent-primary) 48%, var(--border-base));
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 16%, transparent);
+}
+
+.providers-method-row {
+  margin-bottom: 1rem;
+  padding-top: 0;
+  border-top: none;
+}
+
+.providers-method-trigger,
+.providers-prompt-trigger {
+  min-width: min(22rem, 100%);
+}
+
+.providers-select-hint {
+  margin-inline-start: 0.5rem;
+}
+
+.providers-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.providers-spin-icon {
+  width: 1rem;
+  height: 1rem;
+  animation: providers-spin 900ms linear infinite;
+}
+
+@keyframes providers-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 640px) {
+  .providers-manager-modal {
+    width: 100vw;
+    max-height: 100dvh;
+    height: 100dvh;
+  }
+
+  .providers-connect-bar,
+  .providers-panel-header {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .providers-connect-bar .selector-button,
+  .providers-connect-bar .settings-pill-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .providers-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .providers-card-footer,
+  .providers-actions-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .providers-waiting-card {
+    flex-direction: column;
+  }
+
+  .providers-wait-cancel {
+    margin-inline-start: 0;
+    align-self: flex-start;
+  }
+
+  .providers-card-footer .selector-button,
+  .providers-actions-row .selector-button,
+  .providers-method-trigger,
+  .providers-prompt-trigger {
+    width: 100%;
+  }
+
+  .providers-disconnect-button {
+    min-width: 0;
+  }
+}
