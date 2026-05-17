@@ -17,31 +17,47 @@ const ConfigFileContentBodySchema = z.object({
   contents: z.string(),
 })
 
-function resolveOpenCodeGlobalConfigPath(): ConfigFileEntry {
+function resolveOpenCodeGlobalConfigPaths(): ConfigFileEntry[] {
   if (process.platform === "win32") {
-    const appData = process.env.APPDATA?.trim()
-    const basePath = appData || path.join(os.homedir(), "AppData", "Roaming")
-    const absolutePath = path.join(basePath, "opencode", "opencode.json")
-    return {
-      id: "opencode-global-config",
-      label: "OpenCode Global Config",
-      path: absolutePath,
-      absolutePath,
-      language: "json",
-    }
+    const basePath = path.join(os.homedir(), ".config", "opencode")
+    return [
+      {
+        id: "opencode-global-config",
+        label: "OpenCode Global Config",
+        path: "%USERPROFILE%\\.config\\opencode\\opencode.json",
+        absolutePath: path.join(basePath, "opencode.json"),
+        language: "json",
+      },
+      {
+        id: "opencode-global-config-jsonc",
+        label: "OpenCode Global Config (JSONC)",
+        path: "%USERPROFILE%\\.config\\opencode\\opencode.jsonc",
+        absolutePath: path.join(basePath, "opencode.jsonc"),
+        language: "jsonc",
+      },
+    ]
   }
 
-  return {
-    id: "opencode-global-config",
-    label: "OpenCode Global Config",
-    path: "~/.config/opencode/opencode.json",
-    absolutePath: path.join(os.homedir(), ".config", "opencode", "opencode.json"),
-    language: "json",
-  }
+  return [
+    {
+      id: "opencode-global-config",
+      label: "OpenCode Global Config",
+      path: "~/.config/opencode/opencode.json",
+      absolutePath: path.join(os.homedir(), ".config", "opencode", "opencode.json"),
+      language: "json",
+    },
+    {
+      id: "opencode-global-config-jsonc",
+      label: "OpenCode Global Config (JSONC)",
+      path: "~/.config/opencode/opencode.jsonc",
+      absolutePath: path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+      language: "jsonc",
+    },
+  ]
 }
 
 function defaultConfigFileEntries(): ConfigFileEntry[] {
-  return [resolveOpenCodeGlobalConfigPath()]
+  return resolveOpenCodeGlobalConfigPaths()
 }
 
 function listConfigFiles(files: ConfigFileEntry[]): ConfigFileDescriptor[] {

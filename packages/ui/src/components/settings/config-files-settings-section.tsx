@@ -215,6 +215,7 @@ export const ConfigFilesSettingsSection: Component = () => {
                     path={file().path}
                     content={content()}
                     wordWrap="off"
+                    compactGutter
                     onSave={() => void handleSave()}
                     onContentChange={(nextContent) => setContent(nextContent)}
                   />

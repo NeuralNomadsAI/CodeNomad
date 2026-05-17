@@ -19,7 +19,14 @@ afterEach(() => {
 describe("config file routes", () => {
   it("lists only allowlisted config file descriptors", async () => {
     const tempDir = createTempDir()
-    const app = createApp(path.join(tempDir, "opencode", "opencode.json"), "~/.config/opencode/opencode.json")
+    const app = createApp([
+      createConfigEntry(path.join(tempDir, "opencode", "opencode.json"), "~/.config/opencode/opencode.json"),
+      createConfigEntry(path.join(tempDir, "opencode", "opencode.jsonc"), "~/.config/opencode/opencode.jsonc", {
+        id: "test-config-jsonc",
+        label: "Test Config JSONC",
+        language: "jsonc",
+      }),
+    ])
 
     const response = await app.inject({ method: "GET", url: "/api/config-files" })
 
@@ -31,13 +38,19 @@ describe("config file routes", () => {
         path: "~/.config/opencode/opencode.json",
         language: "json",
       },
+      {
+        id: "test-config-jsonc",
+        label: "Test Config JSONC",
+        path: "~/.config/opencode/opencode.jsonc",
+        language: "jsonc",
+      },
     ])
     await app.close()
   })
 
   it("returns empty content for an allowlisted missing file", async () => {
     const tempDir = createTempDir()
-    const app = createApp(path.join(tempDir, "missing", "config.json"), "display/config.json")
+    const app = createApp([createConfigEntry(path.join(tempDir, "missing", "config.json"), "display/config.json")])
 
     const response = await app.inject({ method: "GET", url: "/api/config-files/test-config/content" })
 
@@ -54,7 +67,7 @@ describe("config file routes", () => {
   it("creates parent directories when writing an allowlisted file", async () => {
     const tempDir = createTempDir()
     const targetPath = path.join(tempDir, "nested", "opencode.json")
-    const app = createApp(targetPath, "display/opencode.json")
+    const app = createApp([createConfigEntry(targetPath, "display/opencode.json")])
 
     const response = await app.inject({
       method: "PUT",
@@ -69,7 +82,7 @@ describe("config file routes", () => {
 
   it("rejects unknown config file ids", async () => {
     const tempDir = createTempDir()
-    const app = createApp(path.join(tempDir, "opencode.json"), "display/opencode.json")
+    const app = createApp([createConfigEntry(path.join(tempDir, "opencode.json"), "display/opencode.json")])
 
     const readResponse = await app.inject({ method: "GET", url: "/api/config-files/unknown/content" })
     const writeResponse = await app.inject({
@@ -87,7 +100,7 @@ describe("config file routes", () => {
     const tempDir = createTempDir()
     const blockedParent = path.join(tempDir, "not-a-directory")
     fs.writeFileSync(blockedParent, "occupied")
-    const app = createApp(path.join(blockedParent, "opencode.json"), "display/opencode.json")
+    const app = createApp([createConfigEntry(path.join(blockedParent, "opencode.json"), "display/opencode.json")])
 
     const response = await app.inject({
       method: "PUT",
@@ -106,18 +119,22 @@ function createTempDir() {
   return dir
 }
 
-function createApp(absolutePath: string, displayPath: string) {
+function createConfigEntry(
+  absolutePath: string,
+  displayPath: string,
+  overrides: Partial<{ id: string; label: string; language: string }> = {},
+) {
+  return {
+    id: overrides.id ?? "test-config",
+    label: overrides.label ?? "Test Config",
+    path: displayPath,
+    absolutePath,
+    language: overrides.language ?? "json",
+  }
+}
+
+function createApp(files: Array<ReturnType<typeof createConfigEntry>>) {
   const app = Fastify({ logger: false })
-  registerConfigFileRoutes(app, {
-    files: [
-      {
-        id: "test-config",
-        label: "Test Config",
-        path: displayPath,
-        absolutePath,
-        language: "json",
-      },
-    ],
-  })
+  registerConfigFileRoutes(app, { files })
   return app
 }
