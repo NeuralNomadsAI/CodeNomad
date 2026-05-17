@@ -159,6 +159,7 @@ export const settingsMessages = {
   "settings.providers.apiKey.label": "API key",
   "settings.providers.apiKey.placeholder": "Paste provider API key",
   "settings.providers.oauth.noPrompts": "This OAuth method does not need additional details before opening the browser.",
+  "settings.providers.oauth.promptsUnsupported": "This OAuth method requires provider-specific prompt inputs that are not supported by the current SDK build.",
   "settings.providers.oauth.enterCode": "Complete the browser flow, then paste the authorization code.",
   "settings.providers.oauth.codeLabel": "Authorization code",
   "settings.providers.oauth.codePlaceholder": "Paste code from provider",

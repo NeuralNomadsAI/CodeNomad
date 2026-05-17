@@ -157,15 +157,22 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   const selectedMethodOption = createMemo(() => methodOptions().find((option) => option.index === selectedMethodIndex()) ?? methodOptions()[0])
   const selectedMethod = createMemo(() => selectedMethodOption()?.method ?? genericApiMethod)
+  const oauthPromptsUnsupported = createMemo(() => selectedMethod().type === "oauth" && (selectedMethod().prompts?.length ?? 0) > 0)
   const visiblePrompts = createMemo(() =>
     (selectedMethod().prompts ?? []).filter((prompt) => shouldShowProviderAuthPrompt(prompt, promptValues())),
   )
   const canSubmit = createMemo(() => {
     if (!activeProviderId()) return false
     if (stage() === "authorizing" || stage() === "waiting" || stage() === "success") return false
+    if (oauthPromptsUnsupported()) return false
     if (selectedMethod().type === "api") return apiKey().trim().length > 0
     return visiblePrompts().every((prompt) => (promptValues()[prompt.key] ?? "").trim().length > 0)
   })
+
+  function handleModalOpenChange(open: boolean) {
+    if (!open) resetFlow(null)
+    props.onOpenChange(open)
+  }
 
   createEffect(() => {
     if (!props.open) return
@@ -240,11 +247,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function submitOAuthAuthorize(providerId: string, authClient: OpencodeClient) {
-    const inputs = visiblePrompts().length > 0
-      ? Object.fromEntries(visiblePrompts().map((prompt) => [prompt.key, promptValues()[prompt.key] ?? ""]))
-      : undefined
     const response = await (authClient as any).provider.oauth.authorize(
-      { providerID: providerId, method: selectedMethodIndex(), ...(inputs ? { inputs } : {}) },
+      { providerID: providerId, method: selectedMethodIndex() },
       { throwOnError: true },
     )
     const data = response?.data as ProviderAuthAuthorization | undefined
@@ -333,8 +337,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         }
         await requestData(
           (authClient as any).config.update({
-            ...configData(),
-            disabled_providers: disabledProviders,
+            config: {
+              ...configData(),
+              disabled_providers: disabledProviders,
+            },
           }),
           "config.update",
         )
@@ -367,10 +373,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={(open) => {
-      if (!open) resetFlow(null)
-      props.onOpenChange(open)
-    }}>
+    <Dialog open={props.open} onOpenChange={handleModalOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <Dialog.Content class="modal-surface providers-manager-modal">
@@ -382,7 +385,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
               </div>
             </div>
-            <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => props.onOpenChange(false)} aria-label={t("settings.close")}>
+            <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
               <X class="w-4 h-4" />
             </button>
           </div>
@@ -504,8 +507,11 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
                   <Show when={selectedMethod().type === "oauth" && (stage() === "prompts" || stage() === "error" || stage() === "authorizing")}>
                     <div class="providers-form-stack">
+                      <Show when={oauthPromptsUnsupported()}>
+                        <div class="settings-error-message">{t("settings.providers.oauth.promptsUnsupported")}</div>
+                      </Show>
                       <Show when={visiblePrompts().length === 0}><div class="settings-card-message">{t("settings.providers.oauth.noPrompts")}</div></Show>
-                      <For each={visiblePrompts()}>{(prompt) => (
+                      <For each={oauthPromptsUnsupported() ? [] : visiblePrompts()}>{(prompt) => (
                         <div class="providers-field">
                           <label class="settings-form-label" for={`provider-prompt-${prompt.key}`}>{prompt.message}</label>
                           <Show when={prompt.type === "select"} fallback={<input id={`provider-prompt-${prompt.key}`} type="text" class="providers-input" value={promptValues()[prompt.key] ?? ""} onInput={(event) => updatePromptValue(prompt.key, event.currentTarget.value)} placeholder={prompt.type === "text" ? prompt.placeholder : undefined} />}>
