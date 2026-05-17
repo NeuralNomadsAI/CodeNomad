@@ -143,12 +143,30 @@ function buildLinuxCandidates(): BrowserCandidate[] {
     "chromium",
     "chromium-browser",
     "brave-browser",
+    "brave-browser-stable",
+    "brave",
+    "/snap/bin/brave",
     "microsoft-edge",
     "microsoft-edge-stable",
     "vivaldi",
+    "vivaldi-stable",
+    "/snap/bin/vivaldi",
   ]
 
-  return names.map((name) => ({ name, command: name, args: APP_ARGS }))
+  return [
+    ...names.map((name) => ({ name, command: name, args: APP_ARGS })),
+    {
+      name: "Brave Browser (Flatpak)",
+      command: "flatpak",
+      args: (url: string) => ["run", "com.brave.Browser", ...APP_ARGS(url)],
+    },
+    {
+      name: "Vivaldi (Flatpak)",
+      command: "flatpak",
+      args: (url: string) => ["run", "com.vivaldi.Vivaldi", ...APP_ARGS(url)],
+    },
+    { name: "xdg-open", command: "xdg-open", args: (url: string) => [url] },
+  ]
 }
 
 function buildMacManualExamples(url: string) {
@@ -172,6 +190,9 @@ function buildLinuxManualExamples(url: string) {
     `google-chrome --app="${url}" --new-window`,
     `chromium --app="${url}" --new-window`,
     `brave-browser --app="${url}" --new-window`,
+    `brave-browser-stable --app="${url}" --new-window`,
     `microsoft-edge --app="${url}" --new-window`,
+    `vivaldi-stable --app="${url}" --new-window`,
+    `xdg-open "${url}"`,
   ]
 }
