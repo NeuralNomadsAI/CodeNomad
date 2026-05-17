@@ -6,6 +6,7 @@ export type SettingsSectionId =
   | "remote"
   | "speech"
   | "opencode"
+  | "config-files"
   | "sidecars"
   | "info"
 
