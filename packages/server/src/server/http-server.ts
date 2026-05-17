@@ -18,6 +18,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
+import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
@@ -271,6 +272,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
+  registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
