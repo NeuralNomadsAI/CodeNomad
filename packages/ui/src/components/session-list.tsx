@@ -6,6 +6,7 @@ import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Squa
 import KeyboardHint from "./keyboard-hint"
 import SessionRenameDialog from "./session-rename-dialog"
 import { keyboardRegistry } from "../lib/keyboard-registry"
+import { MIN_RELOAD_SPINNER_MS, withMinimumDuration } from "../lib/min-duration"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
@@ -237,7 +238,16 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     try {
-      await loadMessages(props.instanceId, sessionId, { force: true })
+      // Hold the spinner for at least MIN_RELOAD_SPINNER_MS so the user can
+      // perceive the animation even when the underlying reload resolves
+      // very quickly (e.g. cached responses, or the in-flight dedupe path
+      // in loadMessages reusing an already-running fetch). Without this
+      // floor, the spinner can flash imperceptibly on the currently active
+      // session — task 060.
+      await withMinimumDuration(
+        loadMessages(props.instanceId, sessionId, { force: true }),
+        MIN_RELOAD_SPINNER_MS,
+      )
     } catch (error) {
       log.error(`Failed to reload session ${sessionId}:`, error)
       showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })

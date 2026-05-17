@@ -700,6 +700,25 @@ async function fetchProviders(instanceId: string): Promise<void> {
   }
 }
 
+/**
+ * Tracks the in-flight `loadMessages` promise for each `(instanceId, sessionId)`
+ * pair. Used to de-duplicate concurrent calls and — critically — to ensure
+ * that `force: true` callers wait for any in-flight load to finish before
+ * starting their own fresh fetch, rather than silently early-returning.
+ *
+ * Without this registry, a `force: true` reload triggered on the currently
+ * active session (which is the only session reliably in `loadingMessages`
+ * at click time, because of the active-session load effect in `session-view`
+ * and post-compaction reloads in `session-events`) would no-op via the
+ * `isLoading` short-circuit. That made the session-list refresh icon appear
+ * to never animate for the active session (task 060).
+ */
+const inFlightLoadMessages = new Map<string, Promise<void>>()
+
+function loadMessagesKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}:${sessionId}`
+}
+
 async function loadMessages(
   instanceId: string,
   sessionId: string,
@@ -725,9 +744,22 @@ async function loadMessages(
     return
   }
 
-  const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading) {
-    return
+  // If a load is already in flight for this session, share its promise.
+  // Non-force callers reuse the result; force callers wait for it to finish
+  // (or fail) and then fall through to start a fresh fetch. This replaces
+  // an earlier short-circuit that silently dropped force:true reloads when
+  // any prior load was in flight — see task 060.
+  const inFlightKey = loadMessagesKey(instanceId, sessionId)
+  const existing = inFlightLoadMessages.get(inFlightKey)
+  if (existing) {
+    if (!force) {
+      await existing
+      return
+    }
+    // Wait for the prior load to settle (success or failure) before
+    // starting a fresh fetch. Swallow the prior error so the new attempt
+    // still runs; the new attempt's outcome is what the caller sees.
+    await existing.catch(() => {})
   }
 
   const instance = instances().get(instanceId)
@@ -757,6 +789,22 @@ async function loadMessages(
     next.loadingMessages.set(instanceId, loadingSet)
     return next
   })
+
+  // Register the work as the new in-flight load before performing any
+  // awaits, so concurrent callers (including subsequent force:true clicks)
+  // observe it and queue against it instead of starting parallel fetches.
+  // The work promise is unregistered in the `finally` block below.
+  let resolveInFlight!: () => void
+  let rejectInFlight!: (reason: unknown) => void
+  const inFlight = new Promise<void>((resolve, reject) => {
+    resolveInFlight = resolve
+    rejectInFlight = reject
+  })
+  inFlightLoadMessages.set(inFlightKey, inFlight)
+  // Avoid unhandled-rejection warnings if no concurrent caller awaits this
+  // shared promise. The original work's error is still surfaced to the
+  // direct caller via the `throw` in the catch block below.
+  inFlight.catch(() => {})
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
@@ -876,6 +924,7 @@ async function loadMessages(
 
   } catch (error) {
     log.error("Failed to load messages:", error)
+    rejectInFlight(error)
     throw error
   } finally {
     setLoading((prev) => {
@@ -886,6 +935,15 @@ async function loadMessages(
       }
       return next
     })
+    // Always clear our entry from the registry. Only clear if the value
+    // is still ours — a slow finally could otherwise erase a newer
+    // entry registered by an immediately-following call.
+    if (inFlightLoadMessages.get(inFlightKey) === inFlight) {
+      inFlightLoadMessages.delete(inFlightKey)
+    }
+    // Resolve the shared promise so any concurrent waiters (which already
+    // attached their own .catch above for the error case) unblock cleanly.
+    resolveInFlight()
   }
 
   updateSessionInfo(instanceId, sessionId)
