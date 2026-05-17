@@ -54,12 +54,12 @@ describe("buildWindowsSpawnSpec", () => {
       {
         cwd: String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`,
         env: {
-          OPENCODE_CONFIG_DIR: String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\opencode-config`,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["file:///C:/Users/dev/AppData/Roaming/CodeNomad/plugin.tgz"] }),
           CODENOMAD_INSTANCE_ID: "workspace-123",
           OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:4321/workspaces/workspace-123/worktrees/root/instance",
           OPENCODE_SERVER_PASSWORD: "secret",
         },
-        propagateEnvKeys: ["OPENCODE_CONFIG_DIR", "CODENOMAD_INSTANCE_ID", "OPENCODE_SERVER_BASE_URL", "OPENCODE_SERVER_PASSWORD"],
+        propagateEnvKeys: ["OPENCODE_CONFIG_CONTENT", "CODENOMAD_INSTANCE_ID", "OPENCODE_SERVER_BASE_URL", "OPENCODE_SERVER_PASSWORD"],
       },
     )
 
@@ -76,7 +76,7 @@ describe("buildWindowsSpawnSpec", () => {
       "0",
     ])
     assert.equal(spec.cwd, undefined)
-    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
+    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_CONTENT:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
   })
 
   it("wraps plain Linux binary paths when a WSL distro is provided", () => {
@@ -100,20 +100,44 @@ describe("buildWindowsSpawnSpec", () => {
     ])
   })
 
-  it("upgrades existing WSLENV path entries to include /p", () => {
+  it("preserves non-path OPENCODE_CONFIG_CONTENT WSLENV entries", () => {
     const spec = buildWindowsSpawnSpec(
       String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
       ["serve"],
       {
         env: {
-          OPENCODE_CONFIG_DIR: String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\opencode-config`,
-          WSLENV: "OPENCODE_CONFIG_DIR:CODENOMAD_INSTANCE_ID/u",
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["file:///C:/Users/dev/AppData/Roaming/CodeNomad/plugin.tgz"] }),
+          WSLENV: "OPENCODE_CONFIG_CONTENT:CODENOMAD_INSTANCE_ID/u",
         },
-        propagateEnvKeys: ["OPENCODE_CONFIG_DIR", "CODENOMAD_INSTANCE_ID"],
+        propagateEnvKeys: ["OPENCODE_CONFIG_CONTENT", "CODENOMAD_INSTANCE_ID"],
       },
     )
 
-    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID/u")
+    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_CONTENT:CODENOMAD_INSTANCE_ID/u")
+  })
+
+  it("rewrites packaged plugin paths for WSL before launching", () => {
+    const spec = buildWindowsSpawnSpec(
+      String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+      ["serve"],
+      {
+        env: {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            plugin: [
+              "@codenomad/codenomad-opencode-plugin@file:C:/Users/dev/AppData/Roaming/CodeNomad/codenomad-opencode-plugin.tgz",
+            ],
+          }),
+        },
+        propagateEnvKeys: ["OPENCODE_CONFIG_CONTENT"],
+      },
+    )
+
+    assert.equal(spec.command, "wsl.exe")
+    assert.equal(spec.env?.CODENOMAD_OPENCODE_PLUGIN_WSL_PATH, String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\codenomad-opencode-plugin.tgz`)
+    assert.match(spec.env?.OPENCODE_CONFIG_CONTENT ?? "", /__CODENOMAD_OPENCODE_PLUGIN_WSL_PATH__/)
+    assert.equal(spec.env?.WSLENV, "OPENCODE_CONFIG_CONTENT:CODENOMAD_OPENCODE_PLUGIN_WSL_PATH/p")
+    assert.deepEqual(spec.args.slice(0, 4), ["--distribution", "Ubuntu", "--exec", "sh"])
+    assert.match(spec.args[5] ?? "", /CODENOMAD_OPENCODE_PLUGIN_WSL_PATH/)
   })
 
   it("propagates inherited known path variables even when they are not explicitly requested", () => {

@@ -27,6 +27,8 @@ interface SessionSidebarProps {
   threads: Accessor<SessionThread[]>
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
+  draftAgent?: Accessor<string>
+  draftModel?: Accessor<{ providerId: string; modelId: string }>
 
   showSearch: Accessor<boolean>
   onToggleSearch: () => void
@@ -40,6 +42,8 @@ interface SessionSidebarProps {
   onNewSession: () => Promise<void> | void
   onSidebarAgentChange: (sessionId: string, agent: string) => Promise<void>
   onSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
+  onDraftAgentChange?: (agent: string) => Promise<void>
+  onDraftModelChange?: (model: { providerId: string; modelId: string }) => Promise<void>
   onPinLeftDrawer: () => void
   onUnpinLeftDrawer: () => void
   onCloseLeftDrawer: () => void
@@ -143,7 +147,42 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
         />
 
         <div class="session-sidebar-separator" />
-        <Show when={props.activeSession()}>
+        <Show
+          when={props.activeSession()}
+          fallback={
+            <Show when={props.draftAgent && props.draftModel && props.onDraftAgentChange && props.onDraftModelChange}>
+              <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
+                <AgentSelector
+                  instanceId={props.instanceId}
+                  sessionId="__new_session__"
+                  currentAgent={props.draftAgent?.() ?? ""}
+                  onAgentChange={(agent) => props.onDraftAgentChange!(agent)}
+                />
+
+                <ModelSelector
+                  instanceId={props.instanceId}
+                  sessionId="__new_session__"
+                  currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }}
+                  onModelChange={(model) => props.onDraftModelChange!(model)}
+                />
+
+                <ThinkingSelector instanceId={props.instanceId} currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }} />
+
+                <KeyboardHint
+                  class="session-sidebar-selector-hints"
+                  ariaHidden={true}
+                  shortcuts={[
+                    keyboardRegistry.get("open-agent-selector"),
+                    keyboardRegistry.get("focus-model"),
+                    keyboardRegistry.get("focus-variant"),
+                  ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
+                  separator=" "
+                  showDescription={false}
+                />
+              </div>
+            </Show>
+          }
+        >
           {(activeSession) => (
             <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
               <WorktreeSelector instanceId={props.instanceId} sessionId={activeSession().id} />

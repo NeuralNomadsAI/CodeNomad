@@ -15,6 +15,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.subtitle.one": "{count} folder available",
   "folderSelection.recent.subtitle.other": "{count} folders available",
   "folderSelection.recent.remove": "Remove from recent",
+  "folderSelection.recent.openBadge": "Open",
+  "folderSelection.recent.alreadyOpenTitle": "Project already open",
+  "folderSelection.recent.alreadyOpenMessage": "Choose how to open this folder.",
+  "folderSelection.recent.switchToOpenProject": "Switch to open project",
+  "folderSelection.recent.openAnotherInstance": "Open another instance",
 
   "folderSelection.browse.title": "Browse for Folder",
   "folderSelection.browse.subtitle": "Select any folder on your computer",

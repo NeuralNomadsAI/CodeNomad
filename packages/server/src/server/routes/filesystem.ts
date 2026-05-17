@@ -16,6 +16,11 @@ const FilesystemCreateFolderSchema = z.object({
   name: z.string(),
 })
 
+const FilesystemFileContentQuerySchema = z.object({
+  path: z.string(),
+  encoding: z.enum(["utf-8", "base64"]).optional(),
+})
+
 export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/filesystem", async (request, reply) => {
     const query = FilesystemQuerySchema.parse(request.query ?? {})
@@ -48,6 +53,16 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
         return
       }
 
+      reply.code(400).type("text/plain").send((error as Error).message)
+    }
+  })
+
+  app.get("/api/filesystem/files/content", async (request, reply) => {
+    const query = FilesystemFileContentQuerySchema.parse(request.query ?? {})
+
+    try {
+      return deps.fileSystemBrowser.readFileContent(query.path, { encoding: query.encoding })
+    } catch (error) {
       reply.code(400).type("text/plain").send((error as Error).message)
     }
   })

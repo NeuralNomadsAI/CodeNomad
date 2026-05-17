@@ -42,7 +42,11 @@ describe("buildLaunchCommand", () => {
       execution,
       workspacePath: "D:/CodeNomad",
       environment: {
-        OPENCODE_CONFIG_DIR: "C:/Users/Admin/.config/opencode",
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          plugin: [
+            "@codenomad/codenomad-opencode-plugin@file:C:/Users/Admin/.config/CodeNomad/codenomad-opencode-plugin.tgz",
+          ],
+        }),
         NODE_EXTRA_CA_CERTS: "C:/Users/Admin/.config/codenomad/certs.pem",
         CODENOMAD_BASE_URL: "https://127.0.0.1:9898",
         OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:9898/workspaces/abc/worktrees/root/instance",
@@ -54,14 +58,14 @@ describe("buildLaunchCommand", () => {
     assert.equal(result.command, "docker")
     assert.ok(result.args.includes("ghcr.io/example/opencode:latest"))
     assert.ok(result.args.includes("D:/CodeNomad:/workspace"))
-    assert.ok(result.args.includes("C:/Users/Admin/.config/opencode:/root/.config/opencode"))
+    assert.ok(result.args.includes("C:/Users/Admin/.config/CodeNomad/codenomad-opencode-plugin.tgz:/root/.config/opencode/codenomad-opencode-plugin.tgz:ro"))
     assert.ok(result.args.includes("C:/Users/Admin/.config/codenomad/certs.pem:/tmp/codenomad-node-extra-ca.pem:ro"))
     assert.ok(result.args.includes("127.0.0.1:17600:17600"))
     assert.ok(result.args.includes("CODENOMAD_BASE_URL"))
-    assert.ok(result.args.includes("OPENCODE_CONFIG_DIR"))
+    assert.ok(result.args.includes("OPENCODE_CONFIG_CONTENT"))
     assert.ok(result.args.includes("NODE_EXTRA_CA_CERTS"))
     assert.equal(result.environment?.CODENOMAD_BASE_URL, "https://host.docker.internal:9898")
-    assert.equal(result.environment?.OPENCODE_CONFIG_DIR, "/root/.config/opencode")
+    assert.match(result.environment?.OPENCODE_CONFIG_CONTENT ?? "", /\/root\/\.config\/opencode\/codenomad-opencode-plugin\.tgz/)
     assert.equal(result.environment?.NODE_EXTRA_CA_CERTS, "/tmp/codenomad-node-extra-ca.pem")
     assert.deepEqual(result.args.slice(-8), ["serve", "--port", "17600", "--print-logs", "--log-level", "INFO", "--hostname", "0.0.0.0"])
   })
@@ -79,7 +83,7 @@ describe("buildLaunchCommand", () => {
       () => buildLaunchCommand({
         execution,
         workspacePath: "D:/CodeNomad",
-        environment: { OPENCODE_CONFIG_DIR: "C:/Users/Admin/.config/opencode" },
+        environment: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [] }) },
         logLevel: "INFO",
       }),
       /Reserved local port is required/,
@@ -159,7 +163,7 @@ describe("buildLaunchCommand", () => {
         execution,
         workspacePath: String.raw`D:\CodeNomad`,
         environment: {
-          OPENCODE_CONFIG_DIR: String.raw`C:\Users\dev\AppData\Roaming\CodeNomad\opencode-config`,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["npm:user-plugin"] }),
           CODENOMAD_INSTANCE_ID: "preview-instance",
           OPENCODE_SERVER_BASE_URL: "https://127.0.0.1:9898/workspaces/preview-instance/worktrees/root/instance",
           OPENCODE_SERVER_PASSWORD: "REDACTED",
@@ -176,7 +180,7 @@ describe("buildLaunchCommand", () => {
         "-lc",
         'printf \'%s%s\\n\' \'__CODENOMAD_WSL_PID__:\' "$$" && cd "$(wslpath -au "$1")" && shift && exec "$@"',
       ])
-      assert.equal(result.environment?.WSLENV, "OPENCODE_CONFIG_DIR/p:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
+      assert.equal(result.environment?.WSLENV, "OPENCODE_CONFIG_CONTENT:CODENOMAD_INSTANCE_ID:OPENCODE_SERVER_BASE_URL:OPENCODE_SERVER_PASSWORD")
     })
   }
 })

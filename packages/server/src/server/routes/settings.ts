@@ -2,7 +2,11 @@ import { spawnSync } from "child_process"
 import { FastifyInstance, type FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { ExecutionProfilePreviewResponse, ExecutionProfileTestResponse } from "../../api-types"
-import { getOpencodeConfigDir } from "../../opencode-config.js"
+import {
+  buildOpencodeConfigContent,
+  getCodeNomadPluginUrl,
+  resolveExistingOpencodeConfigContent,
+} from "../../opencode-plugin.js"
 import { buildLaunchPreview, formatCommandLine } from "../../workspaces/execution-launch"
 import {
   OPENCODE_SERVER_BASE_URL_ENV,
@@ -232,6 +236,10 @@ function buildExecutionProfilePreview(
   const userEnvironment = readConfiguredServerEnvironment(options.settings)
   const previewInstanceId = "preview-instance"
   const normalizedBaseUrl = options.requestBaseUrl.replace(/\/+$/, "")
+  const opencodeConfigContent = buildOpencodeConfigContent(
+    resolveExistingOpencodeConfigContent(userEnvironment),
+    getCodeNomadPluginUrl(),
+  )
   const { username } = resolveOpencodeServerAuth({
     userEnvironment,
     processEnv: process.env,
@@ -239,7 +247,7 @@ function buildExecutionProfilePreview(
 
   const environment = {
     ...redactPreviewEnvironment(userEnvironment),
-    OPENCODE_CONFIG_DIR: getOpencodeConfigDir(),
+    OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
     CODENOMAD_INSTANCE_ID: previewInstanceId,
     CODENOMAD_BASE_URL: normalizedBaseUrl,
     [OPENCODE_SERVER_BASE_URL_ENV]: `${normalizedBaseUrl}/workspaces/${previewInstanceId}/worktrees/root/instance`,

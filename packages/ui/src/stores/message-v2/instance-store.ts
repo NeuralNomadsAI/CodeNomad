@@ -3,6 +3,8 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
+import type { PermissionRequestLike } from "../../types/permission"
+import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
   InstanceMessageState,
@@ -904,13 +906,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return messageInfoCache.get(messageId)
   }
 
-  function upsertPermission(entry: PermissionEntry) {
+  function mergePermissionEntry(entry: PermissionEntry): PermissionEntry {
+    const existing = state.permissions.queue.find((item) => item.permission.id === entry.permission.id)
+    if (!existing) return entry
+    return {
+      ...entry,
+      permission: mergePermissionRequest(existing.permission, entry.permission),
+      messageId: entry.messageId ?? existing.messageId,
+      partId: entry.partId ?? existing.partId,
+      enqueuedAt: Math.min(existing.enqueuedAt, entry.enqueuedAt),
+    }
+  }
+
+  function upsertPermission(input: PermissionEntry) {
+    const entry = mergePermissionEntry(input)
     const messageKey = entry.messageId ?? "__global__"
     const partKey = entry.partId ?? entry.permission?.id ?? "__global__"
 
     setState(
       "permissions",
       produce((draft) => {
+        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
+          const partEntries = draft.byMessage[existingMessageKey]
+          Object.keys(partEntries).forEach((existingPartKey) => {
+            if (partEntries[existingPartKey].permission.id === entry.permission.id) {
+              delete partEntries[existingPartKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[existingMessageKey]
+          }
+        })
         draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
         draft.byMessage[messageKey][partKey] = entry
         const existingIndex = draft.queue.findIndex((item) => item.permission.id === entry.permission.id)
@@ -919,9 +945,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         } else {
           draft.queue[existingIndex] = entry
         }
-        if (!draft.active || draft.active.permission.id === entry.permission.id) {
-          draft.active = entry
-        }
+        draft.queue.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+        draft.active = draft.queue[0] ?? null
       }),
     )
   }

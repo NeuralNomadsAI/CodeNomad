@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
-import { Component, createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
+import { Component, createSignal, Show, For, onMount, onCleanup, createEffect, createMemo } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
@@ -19,6 +19,7 @@ import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
+import { getExistingInstanceForFolder } from "../stores/instances"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -27,7 +28,7 @@ const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028
 type HomeTab = "local" | "servers"
 
 interface FolderSelectionViewProps {
-  onSelectFolder: (folder: string, binaryPath?: string, options?: { executionProfileId?: string }) => void
+  onSelectFolder: (folder: string, binaryPath?: string, options?: { executionProfileId?: string; forceNew?: boolean }) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
@@ -926,8 +927,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         ref={(el) => (recentListRef = el)}
                       >
                         <For each={folders()}>
-                          {(folder, index) => (
-                            <div
+                          {(folder, index) => {
+                            const existingInstance = () => getExistingInstanceForFolder(folder.path)
+
+                            return <div
                               class="panel-list-item"
                               classList={{
                                 "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
@@ -953,6 +956,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         <span class="text-sm font-medium truncate text-primary">
                                           {splitFolderPath(folder.path).baseName}
                                         </span>
+                                        <Show when={existingInstance()}>
+                                          <span class="rounded-full border border-base px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary">
+                                            {t("folderSelection.recent.openBadge")}
+                                          </span>
+                                        </Show>
                                       </div>
                                       <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
                                         <span class="font-mono truncate-start flex-1 min-w-0">
@@ -976,7 +984,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 </button>
                               </div>
                             </div>
-                          )}
+                          }}
                         </For>
                       </div>
                     </Show>

@@ -35,6 +35,8 @@ import {
   instances,
   addPermissionToQueue,
   removePermissionFromQueue,
+  markPermissionReplied,
+  hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
 } from "./instances"
@@ -59,6 +61,7 @@ import {
   applyPartUpdateV2,
   applyPartDeltaV2,
   replaceMessageIdV2,
+  reconcilePendingPermissionsV2,
   reconcilePendingQuestionsV2,
   upsertMessageInfoV2,
   upsertPermissionV2,
@@ -370,8 +373,9 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
-    if (part.type === "tool" && part.tool === "question") {
-      // Questions can arrive before their tool part exists; re-link now.
+    if (part.type === "tool") {
+      // Interruptions can arrive before their tool part exists; re-link now.
+      reconcilePendingPermissionsV2(instanceId, sessionId)
       reconcilePendingQuestionsV2(instanceId, sessionId)
     }
 
@@ -614,7 +618,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
     ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
   }
 
-  loadMessages(instanceId, sessionID, true).catch((error) => log.error("Failed to reload session after compaction", error))
+  loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
@@ -689,10 +693,15 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
 function handlePermissionUpdated(instanceId: string, event: { type: string; properties?: PermissionRequestLike } | any): void {
   const permission = event?.properties as PermissionRequestLike | undefined
   if (!permission) return
+  const permissionId = getPermissionId(permission)
+  if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
+    log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
+    return
+  }
 
-  log.info(`[SSE] Permission request: ${getPermissionId(permission)} (${getPermissionKind(permission)})`)
-  addPermissionToQueue(instanceId, permission)
-  upsertPermissionV2(instanceId, permission)
+  log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
+  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
 
@@ -710,6 +719,7 @@ function handlePermissionReplied(instanceId: string, event: { type: string; prop
   if (!requestId) return
 
   log.info(`[SSE] Permission replied: ${requestId}`)
+  markPermissionReplied(instanceId, requestId)
   removePermissionFromQueue(instanceId, requestId)
   removePermissionV2(instanceId, requestId)
 }

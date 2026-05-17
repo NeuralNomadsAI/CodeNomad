@@ -58,8 +58,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "新しいセッション",
   "instanceWelcome.empty.title": "以前のセッションはありません",
   "instanceWelcome.empty.description": "下で新しいセッションを作成して開始",
-  "instanceWelcome.loading.title": "セッションを読み込み中",
-  "instanceWelcome.loading.description": "以前のセッションを取得中...",
+  "instanceWelcome.loading.title": "ワークスペースを起動中",
+  "instanceWelcome.loading.description": "このワークスペース用に OpenCode を起動しています...",
   "instanceWelcome.resume.title": "セッションを再開",
   "instanceWelcome.resume.subtitle.one": "{count} 件のセッション",
   "instanceWelcome.resume.subtitle.other": "{count} 件のセッション",
@@ -87,7 +87,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "インスタンスを閉じる",
 
   "instanceShell.empty.title": "セッションが選択されていません",
-  "instanceShell.empty.description": "メッセージを表示するにはセッションを選択してください",
+  "instanceShell.empty.description": "下にメッセージを送信して新しいセッションを作成するか、既存のセッションを選択して続行してください。",
 
   "instanceShell.rightPanel.title": "ステータスパネル",
   "instanceShell.rightPanel.tabs.changes": "変更",

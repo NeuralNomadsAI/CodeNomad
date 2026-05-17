@@ -10,7 +10,13 @@ import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
-import { getOpencodeConfigDir } from "../opencode-config.js"
+import {
+  buildOpencodeConfigContent,
+  findPackagedCodeNomadPluginReference,
+  getCodeNomadPluginUrl,
+  rewritePackagedCodeNomadPluginReference,
+  resolveExistingOpencodeConfigContent,
+} from "../opencode-plugin.js"
 import { buildLaunchCommand } from "./execution-launch"
 import {
   OPENCODE_SERVER_BASE_URL_ENV,
@@ -35,6 +41,11 @@ interface WorkspaceManagerOptions {
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
 
+interface SshPackagedPluginArtifact {
+  remotePath: string
+  configContent: string
+}
+
 function shellQuote(value: string): string {
   if (!value) return "''"
   return `'${value.replace(/'/g, `'"'"'`)}'`
@@ -43,12 +54,12 @@ function shellQuote(value: string): string {
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
   private readonly runtime: WorkspaceRuntime
-  private readonly opencodeConfigDir: string
+  private readonly codeNomadPluginUrl: string
   private readonly opencodeAuth = new Map<string, { username: string; password: string; authorization: string }>()
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.runtime = new WorkspaceRuntime(this.options.eventBus, this.options.logger)
-    this.opencodeConfigDir = getOpencodeConfigDir()
+    this.codeNomadPluginUrl = getCodeNomadPluginUrl()
   }
 
   list(): WorkspaceDescriptor[] {
@@ -78,14 +89,16 @@ export class WorkspaceManager {
     return searchWorkspaceFiles(workspace.path, query, options)
   }
 
-  readFile(workspaceId: string, relativePath: string): WorkspaceFileResponse {
+  readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): WorkspaceFileResponse {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
-    const contents = browser.readFile(relativePath)
+    const encoding = options?.encoding ?? "utf-8"
+    const contents = encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath)
     return {
       workspaceId,
       relativePath,
       contents,
+      encoding,
     }
   }
 
@@ -134,6 +147,10 @@ export class WorkspaceManager {
     const serverConfig = this.options.settings.getOwner("config", "server")
     const envVars = (serverConfig as any)?.environmentVariables
     const userEnvironment = envVars && typeof envVars === "object" && !Array.isArray(envVars) ? (envVars as any) : {}
+    const opencodeConfigContent = buildOpencodeConfigContent(
+      resolveExistingOpencodeConfigContent(userEnvironment),
+      this.codeNomadPluginUrl,
+    )
     const serverBaseUrl = this.options.getServerBaseUrl()
     const normalizedServerBaseUrl = serverBaseUrl.replace(/\/+$/, "")
 
@@ -149,7 +166,7 @@ export class WorkspaceManager {
 
     const environment = {
       ...userEnvironment,
-      OPENCODE_CONFIG_DIR: this.opencodeConfigDir,
+      OPENCODE_CONFIG_CONTENT: opencodeConfigContent,
       CODENOMAD_INSTANCE_ID: id,
       CODENOMAD_BASE_URL: serverBaseUrl,
       ...(this.options.nodeExtraCaCertsPath ? { NODE_EXTRA_CA_CERTS: this.options.nodeExtraCaCertsPath } : {}),
@@ -158,9 +175,10 @@ export class WorkspaceManager {
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
-    const sshRemoteConfigDir = execution.kind === "ssh" ? await this.syncSshOpencodeConfig(execution, id) : undefined
-    if (sshRemoteConfigDir) {
-      environment.OPENCODE_CONFIG_DIR = sshRemoteConfigDir
+    const sshPackagedPlugin =
+      execution.kind === "ssh" ? await this.syncSshPackagedPlugin(execution, id, environment.OPENCODE_CONFIG_CONTENT) : undefined
+    if (sshPackagedPlugin) {
+      environment.OPENCODE_CONFIG_CONTENT = sshPackagedPlugin.configContent
     }
 
     const logLevel = (serverConfig as any)?.logLevel
@@ -189,8 +207,8 @@ export class WorkspaceManager {
         stdin: launchCommand.stdin,
         logLevel,
         onExit: (info) => {
-          if (execution.kind === "ssh" && sshRemoteConfigDir) {
-            this.cleanupSshOpencodeConfig(execution, sshRemoteConfigDir)
+          if (execution.kind === "ssh" && sshPackagedPlugin) {
+            this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
           }
           this.handleProcessExit(info.workspaceId, info)
         },
@@ -220,8 +238,8 @@ export class WorkspaceManager {
           this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup failure")
         })
       }
-      if (execution.kind === "ssh" && sshRemoteConfigDir) {
-        this.cleanupSshOpencodeConfig(execution, sshRemoteConfigDir)
+      if (execution.kind === "ssh" && sshPackagedPlugin) {
+        this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
       }
       throw error
     }
@@ -520,12 +538,22 @@ export class WorkspaceManager {
     })
   }
 
-  private async syncSshOpencodeConfig(execution: Extract<ResolvedBinary, { kind: "ssh" }>, workspaceId: string): Promise<string> {
-    const remoteConfigDir = `/tmp/codenomad-opencode-config-${workspaceId}`
+  private async syncSshPackagedPlugin(
+    execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+    workspaceId: string,
+    configContent: string | undefined,
+  ): Promise<SshPackagedPluginArtifact | undefined> {
+    const packagedPlugin = findPackagedCodeNomadPluginReference(configContent)
+    if (!packagedPlugin || !configContent) {
+      return undefined
+    }
+
+    const localPluginPath = path.normalize(packagedPlugin.filePath)
+    const remotePluginPath = `/tmp/codenomad-opencode-plugin-${workspaceId}.tgz`
     const sshArgs = this.buildSshCommandArgs(execution, [
       "sh",
       "-lc",
-      `rm -rf ${shellQuote(remoteConfigDir)}`,
+      `rm -f ${shellQuote(remotePluginPath)}`,
     ])
     const cleanupResult = spawnSync("ssh", sshArgs, {
       encoding: "utf8",
@@ -535,30 +563,37 @@ export class WorkspaceManager {
       throw cleanupResult.error
     }
     if (cleanupResult.status !== 0) {
-      throw new Error(`Failed to prepare SSH OpenCode config directory: ${cleanupResult.stderr || `ssh exited with ${cleanupResult.status}`}`)
+      throw new Error(`Failed to prepare SSH OpenCode plugin path: ${cleanupResult.stderr || `ssh exited with ${cleanupResult.status}`}`)
     }
 
-    const scpResult = spawnSync("scp", this.buildScpCommandArgs(execution, ["-r", this.opencodeConfigDir, `${this.buildSshTarget(execution)}:${remoteConfigDir}`]), {
-      encoding: "utf8",
-      maxBuffer: 10 * 1024 * 1024,
-    })
+    const scpResult = spawnSync(
+      "scp",
+      this.buildScpCommandArgs(execution, [localPluginPath, `${this.buildSshTarget(execution)}:${remotePluginPath}`]),
+      {
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    )
     if (scpResult.error) {
       throw scpResult.error
     }
     if (scpResult.status !== 0) {
-      throw new Error(`Failed to copy OpenCode config to SSH host: ${scpResult.stderr || `scp exited with ${scpResult.status}`}`)
+      throw new Error(`Failed to copy OpenCode plugin to SSH host: ${scpResult.stderr || `scp exited with ${scpResult.status}`}`)
     }
 
-    return remoteConfigDir
+    return {
+      remotePath: remotePluginPath,
+      configContent: rewritePackagedCodeNomadPluginReference(configContent, remotePluginPath),
+    }
   }
 
-  private cleanupSshOpencodeConfig(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteConfigDir: string): void {
-    const result = spawnSync("ssh", this.buildSshCommandArgs(execution, ["sh", "-lc", `rm -rf ${shellQuote(remoteConfigDir)}`]), {
+  private cleanupSshPackagedPlugin(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remotePluginPath: string): void {
+    const result = spawnSync("ssh", this.buildSshCommandArgs(execution, ["sh", "-lc", `rm -f ${shellQuote(remotePluginPath)}`]), {
       encoding: "utf8",
       timeout: 10_000,
     })
     if (result.error || result.status !== 0) {
-      this.options.logger.debug({ err: result.error, stderr: result.stderr, status: result.status }, "Failed to clean SSH OpenCode config directory")
+      this.options.logger.debug({ err: result.error, stderr: result.stderr, status: result.status }, "Failed to clean SSH OpenCode plugin path")
     }
   }
 

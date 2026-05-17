@@ -17,10 +17,15 @@ export interface PermissionRequestLike {
   pattern?: string
   title?: string
   sessionID?: string
+  sessionId?: string
   messageID?: string
   messageId?: string
   callID?: string
   callId?: string
+  partID?: string
+  partId?: string
+  toolCallID?: string
+  toolCallId?: string
   metadata?: Record<string, unknown>
   time?: { created?: number }
 
@@ -40,6 +45,50 @@ export interface PermissionReplyEventPropertiesLike {
   requestId?: string
   response?: PermissionReply
   reply?: PermissionReply
+}
+
+// Permission payloads can come from legacy/new SDK shapes. Preserve known
+// top-level routing aliases when an out-of-order duplicate omits them.
+const TOP_LEVEL_ROUTING_ALIAS_KEYS = [
+  "sessionID",
+  "sessionId",
+  "messageID",
+  "messageId",
+  "callID",
+  "callId",
+  "partID",
+  "partId",
+  "toolCallID",
+  "toolCallId",
+] as const satisfies ReadonlyArray<keyof PermissionRequestLike>
+
+function mergeRecordPreservingKnown<T extends Record<string, unknown>>(previous: T | undefined, next: T | undefined): T | undefined {
+  if (!previous) return next
+  if (!next) return previous
+  const merged: Record<string, unknown> = { ...previous, ...next }
+  for (const key of Object.keys(previous)) {
+    if (next[key] == null && previous[key] != null) {
+      merged[key] = previous[key]
+    }
+  }
+  return merged as T
+}
+
+export function mergePermissionRequest(previous: PermissionRequestLike | undefined, next: PermissionRequestLike): PermissionRequestLike {
+  if (!previous) return next
+  const merged = {
+    ...previous,
+    ...next,
+    metadata: mergeRecordPreservingKnown(previous.metadata, next.metadata),
+    time: mergeRecordPreservingKnown(previous.time as Record<string, unknown> | undefined, next.time as Record<string, unknown> | undefined) as PermissionRequestLike["time"],
+    tool: mergeRecordPreservingKnown(previous.tool as Record<string, unknown> | undefined, next.tool as Record<string, unknown> | undefined) as PermissionRequestLike["tool"],
+  }
+  for (const key of TOP_LEVEL_ROUTING_ALIAS_KEYS) {
+    if ((next as any)[key] == null && (previous as any)[key] != null) {
+      ;(merged as any)[key] = (previous as any)[key]
+    }
+  }
+  return merged
 }
 
 export function getPermissionId(permission: PermissionRequestLike | null | undefined): string {

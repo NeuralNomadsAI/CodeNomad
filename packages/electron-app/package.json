@@ -79,8 +79,8 @@
         ]
       },
       {
-        "from": "../server/dist/opencode-config",
-        "to": "opencode-config"
+        "from": "../server/dist/opencode-plugin",
+        "to": "opencode-plugin"
       }
     ],
     "mac": {

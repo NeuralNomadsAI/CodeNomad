@@ -1,9 +1,14 @@
 import { URL } from "url"
 import type { ResolvedBinary } from "../settings/binaries"
+import {
+  findPackagedCodeNomadPluginReference,
+  rewritePackagedCodeNomadPluginReference,
+} from "../opencode-plugin.js"
 import { buildSpawnSpec, WSL_PID_MARKER } from "./spawn"
 
 const DOCKER_HOST_ALIAS = "host.docker.internal"
 const DOCKER_CA_CERT_PATH = "/tmp/codenomad-node-extra-ca.pem"
+const DOCKER_PLUGIN_TARBALL_NAME = "codenomad-opencode-plugin.tgz"
 
 export interface LaunchCommandSpec {
   command: string
@@ -160,13 +165,13 @@ function buildDockerLaunchCommand(
   openCodeArgs: string[],
   forwardedPort: number,
 ): LaunchCommandSpec {
-  const configDir = environment.OPENCODE_CONFIG_DIR?.trim()
-  if (!configDir) {
-    throw new Error("OPENCODE_CONFIG_DIR is required for Docker execution profiles")
+  const configContent = environment.OPENCODE_CONFIG_CONTENT?.trim()
+  if (!configContent) {
+    throw new Error("OPENCODE_CONFIG_CONTENT is required for Docker execution profiles")
   }
 
   const containerEnvironment: Record<string, string> = { ...environment }
-  containerEnvironment.OPENCODE_CONFIG_DIR = execution.configMountPath
+  const packagedPlugin = findPackagedCodeNomadPluginReference(configContent)
 
   if (containerEnvironment.CODENOMAD_BASE_URL) {
     containerEnvironment.CODENOMAD_BASE_URL = rewriteDockerBaseUrl(containerEnvironment.CODENOMAD_BASE_URL)
@@ -188,9 +193,13 @@ function buildDockerLaunchCommand(
     `127.0.0.1:${forwardedPort}:${forwardedPort}`,
     "-v",
     `${workspacePath}:${execution.workspaceMountPath}`,
-    "-v",
-    `${configDir}:${execution.configMountPath}`,
   ]
+
+  if (packagedPlugin) {
+    const containerPluginPath = joinPosixPath(execution.configMountPath, DOCKER_PLUGIN_TARBALL_NAME)
+    containerEnvironment.OPENCODE_CONFIG_CONTENT = rewritePackagedCodeNomadPluginReference(configContent, containerPluginPath)
+    dockerArgs.push("-v", `${packagedPlugin.filePath.replace(/\\/g, "/")}:${containerPluginPath}:ro`)
+  }
 
   if (nodeExtraCaCerts) {
     dockerArgs.push("-v", `${nodeExtraCaCerts}:${DOCKER_CA_CERT_PATH}:ro`)
@@ -304,4 +313,8 @@ function rewriteDockerBaseUrl(input: string): string {
   } catch {
     return input
   }
+}
+
+function joinPosixPath(base: string, name: string): string {
+  return `${base.replace(/\/+$/, "")}/${name}`
 }
