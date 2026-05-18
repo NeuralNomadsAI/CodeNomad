@@ -14,6 +14,7 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { formatElapsedClock, getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 
 function DeleteUpToIcon() {
   return (
@@ -139,7 +140,9 @@ export default function MessageItem(props: MessageItemProps) {
   })
 
   const isUser = () => props.record.role === "user"
-  const createdTimestamp = () => props.messageInfo?.time?.created ?? props.record.createdAt
+  const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
+  const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
+  const totalDurationLabel = () => (!isUser() ? formatElapsedClock(totalDuration()) : "")
 
   const timestamp = () => {
     const date = new Date(createdTimestamp())
@@ -641,7 +644,12 @@ export default function MessageItem(props: MessageItemProps) {
                 minItems={2}
               />
             </Show>
-            <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
+            <div class="message-meta-timing">
+              <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
+              <Show when={totalDurationLabel()}>
+                {(value) => <span class="message-duration">{value()}</span>}
+              </Show>
+            </div>
           </div>
         </div>
 
