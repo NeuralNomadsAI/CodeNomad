@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, Trash, Volume2 } from "lucide-solid"
+import { ChevronsDownUp, ChevronsUpDown, ExternalLink, FoldVertical, ListStart, RefreshCw, Trash, Volume2 } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, MessageInfo } from "../types/message"
@@ -417,6 +417,7 @@ interface ToolCallItemProps {
   deleteHover?: () => DeleteHoverState
   onDeleteHoverChange?: (state: DeleteHoverState) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
+  onRevert?: (messageId: string) => void
   selectedMessageIds?: () => Set<string>
   selectedToolPartKeys?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
@@ -533,8 +534,22 @@ function ToolCallItem(props: ToolCallItemProps) {
     await deleteUpTo()
   }
 
+  const handleRetry = () => {
+    if (!props.onRevert) return
+    props.onRevert(props.messageId)
+  }
+
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
+
+    if (isToolStateError(toolState())) {
+      items.push({
+        key: "retry",
+        label: t("toolCall.retry.label"),
+        icon: <RefreshCw class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: handleRetry,
+      })
+    }
 
     if (taskSessionId()) {
       items.push({
@@ -1036,6 +1051,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                           deleteHover={props.deleteHover}
                           onDeleteHoverChange={props.onDeleteHoverChange}
                           onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
+                          onRevert={props.onRevert}
                           selectedMessageIds={props.selectedMessageIds}
                           selectedToolPartKeys={props.selectedToolPartKeys}
                           onToggleSelectedMessage={props.onToggleSelectedMessage}

@@ -130,6 +130,9 @@ export const toolCallMessages = {
   "toolCall.status.error": "Ошибка",
   "toolCall.status.unknown": "Неизвестно",
 
+  "toolCall.retry.label": "Повторить",
+  "toolCall.retry.title": "Повторить этот вызов инструмента",
+
   "toolCall.applyPatch.action.preparing": "Подготовка apply_patch…",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} файл)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} файлов)",

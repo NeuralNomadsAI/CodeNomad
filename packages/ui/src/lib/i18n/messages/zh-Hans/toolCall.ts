@@ -130,6 +130,9 @@ export const toolCallMessages = {
   "toolCall.status.error": "错误",
   "toolCall.status.unknown": "未知",
 
+  "toolCall.retry.label": "重试",
+  "toolCall.retry.title": "重试此工具调用",
+
   "toolCall.applyPatch.action.preparing": "正在准备 apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.title.withFileCount.other": "{tool}（{count} 个文件）",

@@ -130,6 +130,9 @@ export const toolCallMessages = {
   "toolCall.status.error": "エラー",
   "toolCall.status.unknown": "不明",
 
+  "toolCall.retry.label": "再試行",
+  "toolCall.retry.title": "このツール呼び出しを再試行",
+
   "toolCall.applyPatch.action.preparing": "apply_patch を準備中...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} 件のファイル)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} 件のファイル)",
