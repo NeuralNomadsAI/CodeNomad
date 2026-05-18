@@ -32,8 +32,10 @@
 You can run CodeNomad directly without installing it:
 
 ```sh
-npx @neuralnomads/codenomad --launch
+npx @neuralnomads/codenomad --password <your-password> --launch
 ```
+
+> **Authentication required:** The server requires a password. Pass it via `--password`, the `CODENOMAD_SERVER_PASSWORD` environment variable, or create an `auth.json` file (see [Authentication](#authentication) below).
 
 To list all CLI options:
 
@@ -102,7 +104,7 @@ You can configure the server using flags or environment variables:
 If you want the latest bleeding-edge builds (published as GitHub pre-releases), use the dev package:
 
 ```sh
-npx @neuralnomads/codenomad-dev --launch
+npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
 
 These environment variables control how CodeNomad checks for dev updates:
@@ -148,12 +150,37 @@ Certificates are valid for about 30 days and rotate automatically on startup whe
 codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 ```
 
+> **Browser warning:** Self-signed certificates trigger a "Your connection is not private" (or similar) warning in browsers on first visit. This is expected and safe for localhost. Click **Advanced → Proceed to localhost** (Chrome/Brave) or **Accept the Risk and Continue** (Firefox). For local-only development without the warning, run with `--https=false --http=true`.
+
 ### Authentication
 
 - Default behavior: CodeNomad requires a login (username/password) and stores a session cookie in the browser.
 - `--dangerously-skip-auth` / `CODENOMAD_SKIP_AUTH=true` disables the login prompt and treats all requests as authenticated.
   Use this only when access is already protected by another layer (SSO proxy, VPN, Coder workspace auth, etc.).
   If you bind to `0.0.0.0` while skipping auth, anyone who can reach the port can access the API.
+
+#### Setting a password
+
+There are three ways to configure authentication:
+
+1. **CLI flag:** `--password <your-password>`
+2. **Environment variable:** `CODENOMAD_SERVER_PASSWORD=<your-password>`
+3. **Auth file:** Create `~/.config/codenomad/auth.json` with the following structure:
+
+```json
+{
+  "version": 1,
+  "username": "codenomad",
+  "password": {
+    "hash": "<bcrypt-hash>",
+    "salt": "<salt>"
+  },
+  "userProvided": true,
+  "updatedAt": "2026-05-18T12:00:00.000Z"
+}
+```
+
+> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. For manual setup, use `--password` or `CODENOMAD_SERVER_PASSWORD` instead — the server will hash and store the password for you on first run.
 
 ### Progressive Web App (PWA)
 
