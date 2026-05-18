@@ -130,6 +130,9 @@ export const toolCallMessages = {
   "toolCall.status.error": "שגיאה",
   "toolCall.status.unknown": "לא ידוע",
 
+  "toolCall.retry.label": "נסה שוב",
+  "toolCall.retry.title": "נסה שוב קריאת כלי זו",
+
   "toolCall.applyPatch.action.preparing": "מכין apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} (קובץ אחד)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",

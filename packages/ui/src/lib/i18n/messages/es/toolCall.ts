@@ -125,10 +125,13 @@ export const toolCallMessages = {
   "toolCall.task.meta.model": "Modelo: {model}",
 
   "toolCall.status.pending": "Pendiente",
-  "toolCall.status.running": "En ejecución",
+  "toolCall.status.running": "Ejecutando",
   "toolCall.status.completed": "Completado",
   "toolCall.status.error": "Error",
   "toolCall.status.unknown": "Desconocido",
+
+  "toolCall.retry.label": "Reintentar",
+  "toolCall.retry.title": "Reintentar esta llamada de herramienta",
 
   "toolCall.applyPatch.action.preparing": "Preparando apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} archivo)",
