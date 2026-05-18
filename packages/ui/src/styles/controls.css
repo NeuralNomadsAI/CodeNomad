@@ -11,3 +11,5 @@
 @import "./components/permission-notification.css";
 @import "./components/settings-screen.css";
 @import "./components/settings-info.css";
+@import "./components/config-files-settings.css";
+@import "./components/provider-auth.css";
