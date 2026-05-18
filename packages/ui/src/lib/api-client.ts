@@ -3,6 +3,9 @@ import type {
   BackgroundProcessListResponse,
   BackgroundProcessOutputResponse,
   BinaryValidationResult,
+  ExecutionProfilePreviewRequest,
+  ExecutionProfilePreviewResponse,
+  ExecutionProfileTestResponse,
   ConfigFileContentRequest,
   ConfigFileContentResponse,
   ConfigFileListResponse,
@@ -423,6 +426,18 @@ export const serverApi = {
     return request<BinaryValidationResult>("/api/storage/binaries/validate", {
       method: "POST",
       body: JSON.stringify({ path }),
+    })
+  },
+  previewExecutionProfile(payload: ExecutionProfilePreviewRequest): Promise<ExecutionProfilePreviewResponse> {
+    return request<ExecutionProfilePreviewResponse>("/api/storage/execution-profiles/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  testExecutionProfile(payload: ExecutionProfilePreviewRequest): Promise<ExecutionProfileTestResponse> {
+    return request<ExecutionProfileTestResponse>("/api/storage/execution-profiles/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {

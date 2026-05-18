@@ -14,6 +14,65 @@ const CanonicalLogLevelSchema = z.preprocess(
   z.enum(["DEBUG", "INFO", "WARN", "ERROR"]),
 )
 
+const ExecutionProfileIdSchema = z.string().trim().min(1)
+const ExecutionProfileNameSchema = z.string().trim().min(1)
+const ExecutionProfileStringListSchema = z.array(z.string().trim().min(1)).max(64)
+
+const LocalExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("local"),
+  binaryPath: z.string().trim().min(1),
+})
+
+const WslExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("wsl"),
+  distro: z.string().trim().min(1),
+  binaryPath: z.string().trim().min(1),
+})
+
+const DockerExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("docker"),
+  image: z.string().trim().min(1),
+  workspaceMountPath: z.string().trim().min(1),
+  configMountPath: z.string().trim().min(1),
+  command: ExecutionProfileStringListSchema.optional(),
+  extraDockerArgs: ExecutionProfileStringListSchema.optional(),
+})
+
+const CommandExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("command"),
+  executable: z.string().trim().min(1),
+  args: ExecutionProfileStringListSchema.optional(),
+  cwdMode: z.enum(["workspace", "inherit"]).optional(),
+})
+
+const SshExecutionProfileSchema = z.object({
+  id: ExecutionProfileIdSchema,
+  name: ExecutionProfileNameSchema,
+  kind: z.literal("ssh"),
+  host: z.string().trim().min(1),
+  port: z.number().int().positive().max(65535).optional(),
+  username: z.string().trim().optional(),
+  remotePath: z.string().trim().min(1),
+  binaryPath: z.string().trim().min(1),
+  args: ExecutionProfileStringListSchema.optional(),
+})
+
+const ExecutionProfileSchema = z.discriminatedUnion("kind", [
+  LocalExecutionProfileSchema,
+  WslExecutionProfileSchema,
+  DockerExecutionProfileSchema,
+  CommandExecutionProfileSchema,
+  SshExecutionProfileSchema,
+])
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -39,6 +98,25 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   } else if (next.logLevel !== undefined) {
     next.logLevel = "DEBUG"
   }
+
+   if (Array.isArray(next.executionProfiles)) {
+     next.executionProfiles = next.executionProfiles.flatMap((profile) => {
+       const parsed = ExecutionProfileSchema.safeParse(profile)
+       return parsed.success ? [parsed.data] : []
+     })
+   } else if (next.executionProfiles !== undefined) {
+     next.executionProfiles = []
+   }
+
+   const parsedDefaultExecutionProfileId = ExecutionProfileIdSchema.safeParse(next.defaultExecutionProfileId)
+   if (parsedDefaultExecutionProfileId.success) {
+     const profiles = Array.isArray(next.executionProfiles) ? next.executionProfiles : []
+     const exists = profiles.some((profile) => isPlainObject(profile) && profile.id === parsedDefaultExecutionProfileId.data)
+     next.defaultExecutionProfileId = exists ? parsedDefaultExecutionProfileId.data : undefined
+   } else if (next.defaultExecutionProfileId !== undefined) {
+     next.defaultExecutionProfileId = undefined
+   }
+
   return next
 }
 

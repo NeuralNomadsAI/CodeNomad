@@ -264,7 +264,7 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
+  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { executionProfileId?: string; forceNew?: boolean }) {
     if (!folderPath) {
       return
     }
@@ -282,7 +282,9 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const instanceId = await createInstance(folderPath, selectedBinary)
+      const instanceId = await createInstance(folderPath, selectedBinary, {
+        executionProfileId: options?.executionProfileId,
+      })
       selectInstanceTab(instanceId)
       setShowFolderSelection(false)
 

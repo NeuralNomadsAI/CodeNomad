@@ -10,6 +10,7 @@ export const instanceMessages = {
   "instanceInfo.labels.versionControl": "Version Control",
   "instanceInfo.labels.opencodeVersion": "OpenCode Version",
   "instanceInfo.labels.binaryPath": "Binary Path",
+  "instanceInfo.labels.executionProfile": "Execution Profile",
   "instanceInfo.labels.environmentVariables": "Environment Variables ({count})",
   "instanceInfo.loading": "Loading...",
   "instanceInfo.server.title": "Server",

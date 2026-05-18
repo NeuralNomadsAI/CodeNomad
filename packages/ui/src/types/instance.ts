@@ -43,5 +43,8 @@ export interface Instance {
   binaryPath?: string
   binaryLabel?: string
   binaryVersion?: string
+  executionProfileId?: string
+  executionProfileName?: string
+  executionProfileKind?: "local" | "wsl" | "docker" | "command" | "ssh"
   environmentVariables?: Record<string, string>
 }

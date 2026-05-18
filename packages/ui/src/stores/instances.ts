@@ -113,6 +113,9 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instanc
     binaryPath: descriptor.binaryId ?? descriptor.binaryLabel ?? existing?.binaryPath,
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
+    executionProfileId: descriptor.executionProfileId ?? existing?.executionProfileId,
+    executionProfileName: descriptor.executionProfileName ?? existing?.executionProfileName,
+    executionProfileKind: descriptor.executionProfileKind ?? existing?.executionProfileKind,
     environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
   }
 }
@@ -541,9 +544,9 @@ function removeInstance(id: string) {
   syncHasInstancesFlag()
 }
 
-async function createInstance(folder: string, _binaryPath?: string): Promise<string> {
+async function createInstance(folder: string, _binaryPath?: string, options?: { executionProfileId?: string }): Promise<string> {
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder })
+    const workspace = await serverApi.createWorkspace({ path: folder, executionProfileId: options?.executionProfileId })
     upsertWorkspace(workspace)
     setActiveInstanceId(workspace.id)
     return workspace.id

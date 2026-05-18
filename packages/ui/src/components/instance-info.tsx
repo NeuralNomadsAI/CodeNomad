@@ -144,6 +144,17 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </Show>
 
+        <Show when={currentInstance().executionProfileName}>
+          <div>
+            <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+              {t("instanceInfo.labels.executionProfile")}
+            </div>
+            <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+              {currentInstance().executionProfileName}
+            </div>
+          </div>
+        </Show>
+
         <Show when={environmentEntries().length > 0}>
           <div>
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1.5">

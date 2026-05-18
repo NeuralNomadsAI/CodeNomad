@@ -14,6 +14,73 @@ import type {
 
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
+export type ExecutionProfileKind = "local" | "wsl" | "docker" | "command" | "ssh"
+export type ExecutionProfileCwdMode = "workspace" | "inherit"
+
+export interface ExecutionProfileBase {
+  id: string
+  name: string
+  kind: ExecutionProfileKind
+}
+
+export interface LocalExecutionProfile extends ExecutionProfileBase {
+  kind: "local"
+  binaryPath: string
+}
+
+export interface WslExecutionProfile extends ExecutionProfileBase {
+  kind: "wsl"
+  distro: string
+  binaryPath: string
+}
+
+export interface DockerExecutionProfile extends ExecutionProfileBase {
+  kind: "docker"
+  image: string
+  workspaceMountPath: string
+  configMountPath: string
+  command?: string[]
+  extraDockerArgs?: string[]
+}
+
+export interface CommandExecutionProfile extends ExecutionProfileBase {
+  kind: "command"
+  executable: string
+  args?: string[]
+  cwdMode?: ExecutionProfileCwdMode
+}
+
+export interface SshExecutionProfile extends ExecutionProfileBase {
+  kind: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath: string
+  binaryPath: string
+  args?: string[]
+}
+
+export type ExecutionProfile = LocalExecutionProfile | WslExecutionProfile | DockerExecutionProfile | CommandExecutionProfile | SshExecutionProfile
+
+export interface ExecutionProfilePreviewRequest {
+  profile: ExecutionProfile
+  workspacePath?: string
+}
+
+export interface ExecutionProfilePreviewResponse {
+  command: string
+  args: string[]
+  commandLine: string
+  cwd?: string
+  environment: Record<string, string>
+}
+
+export interface ExecutionProfileTestResponse extends ExecutionProfilePreviewResponse {
+  valid: boolean
+  version?: string
+  error?: string
+}
+
 export interface WorkspaceDescriptor {
   id: string
   /** Absolute path on the server host. */
@@ -29,6 +96,9 @@ export interface WorkspaceDescriptor {
   binaryId: string
   binaryLabel: string
   binaryVersion?: string
+  executionProfileId?: string
+  executionProfileName?: string
+  executionProfileKind?: ExecutionProfileKind
   createdAt: string
   updatedAt: string
   /** Present when `status` is "error". */
@@ -38,6 +108,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
+  executionProfileId?: string
 }
 
 export interface WorkspaceCloneRequest {

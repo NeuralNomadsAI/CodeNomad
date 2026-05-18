@@ -1,4 +1,13 @@
 import type { SettingsService } from "./service"
+import type {
+  CommandExecutionProfile,
+  DockerExecutionProfile,
+  ExecutionProfile,
+  ExecutionProfileKind,
+  LocalExecutionProfile,
+  SshExecutionProfile,
+  WslExecutionProfile,
+} from "../api-types"
 
 export interface OpenCodeBinaryEntry {
   path: string
@@ -7,11 +16,47 @@ export interface OpenCodeBinaryEntry {
   label?: string
 }
 
-export interface ResolvedBinary {
-  path: string
+interface ResolvedExecutionBase {
   label: string
   version?: string
+  executionProfileId?: string
+  executionProfileName?: string
+  executionProfileKind?: ExecutionProfileKind
 }
+
+export interface ResolvedHostExecution extends ResolvedExecutionBase {
+  kind: "local" | "wsl"
+  path: string
+  wslDistro?: string
+}
+
+export interface ResolvedDockerExecution extends ResolvedExecutionBase {
+  kind: "docker"
+  image: string
+  workspaceMountPath: string
+  configMountPath: string
+  command?: string[]
+  extraDockerArgs?: string[]
+}
+
+export interface ResolvedCommandExecution extends ResolvedExecutionBase {
+  kind: "command"
+  executable: string
+  args?: string[]
+  cwdMode?: "workspace" | "inherit"
+}
+
+export interface ResolvedSshExecution extends ResolvedExecutionBase {
+  kind: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath: string
+  binaryPath: string
+  args?: string[]
+}
+
+export type ResolvedBinary = ResolvedHostExecution | ResolvedDockerExecution | ResolvedCommandExecution | ResolvedSshExecution
 
 function prettyLabel(p: string): string {
   const parts = p.split(/[\\/]/)
@@ -32,11 +77,50 @@ function readDefaultBinaryPath(settings: SettingsService): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
+function isExecutionProfile(value: unknown): value is ExecutionProfile {
+  return !!value && typeof value === "object" && typeof (value as any).id === "string" && typeof (value as any).kind === "string"
+}
+
+function readExecutionProfiles(settings: SettingsService): ExecutionProfile[] {
+  const server = settings.getOwner("config", "server")
+  const list = (server as any)?.executionProfiles
+  if (!Array.isArray(list)) return []
+  return list.filter(isExecutionProfile)
+}
+
+function readDefaultExecutionProfileId(settings: SettingsService): string | undefined {
+  const server = settings.getOwner("config", "server")
+  const value = (server as any)?.defaultExecutionProfileId
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
 export class BinaryResolver {
   constructor(private readonly settings: SettingsService) {}
 
   list(): OpenCodeBinaryEntry[] {
     return readUiBinaries(this.settings)
+  }
+
+  listExecutionProfiles(): ExecutionProfile[] {
+    return readExecutionProfiles(this.settings)
+  }
+
+  resolveActive(executionProfileId?: string): ResolvedBinary {
+    const profiles = this.listExecutionProfiles()
+    const requestedId = executionProfileId?.trim() || readDefaultExecutionProfileId(this.settings)
+    if (!requestedId) {
+      return this.resolveDefault()
+    }
+
+    const profile = profiles.find((entry) => entry.id === requestedId)
+    if (!profile) {
+      if (executionProfileId?.trim()) {
+        throw new Error(`Execution profile not found: ${executionProfileId}`)
+      }
+      return this.resolveDefault()
+    }
+
+    return this.resolveProfile(profile)
   }
 
   resolveDefault(): ResolvedBinary {
@@ -47,9 +131,89 @@ export class BinaryResolver {
 
     const entry = binaries.find((b) => b.path === path)
     return {
+      kind: "local",
       path,
       label: entry?.label ?? prettyLabel(path),
       version: entry?.version,
+    }
+  }
+
+  private resolveProfile(profile: ExecutionProfile): ResolvedBinary {
+    const shared = {
+      label: profile.name,
+      executionProfileId: profile.id,
+      executionProfileName: profile.name,
+      executionProfileKind: profile.kind,
+    }
+
+    if (profile.kind === "local") {
+      return this.resolveLocalProfile(profile, shared)
+    }
+
+    if (profile.kind === "wsl") {
+      return this.resolveWslProfile(profile, shared)
+    }
+
+    if (profile.kind === "docker") {
+      return this.resolveDockerProfile(profile, shared)
+    }
+
+    if (profile.kind === "command") {
+      return this.resolveCommandProfile(profile, shared)
+    }
+
+    return this.resolveSshProfile(profile, shared)
+  }
+
+  private resolveLocalProfile(profile: LocalExecutionProfile, shared: Omit<ResolvedHostExecution, "kind" | "path">): ResolvedHostExecution {
+    return {
+      ...shared,
+      kind: "local",
+      path: profile.binaryPath,
+    }
+  }
+
+  private resolveWslProfile(profile: WslExecutionProfile, shared: Omit<ResolvedHostExecution, "kind" | "path">): ResolvedHostExecution {
+    return {
+      ...shared,
+      kind: "wsl",
+      path: profile.binaryPath,
+      wslDistro: profile.distro,
+    }
+  }
+
+  private resolveDockerProfile(profile: DockerExecutionProfile, shared: Omit<ResolvedDockerExecution, "kind" | "image" | "workspaceMountPath" | "configMountPath">): ResolvedDockerExecution {
+    return {
+      ...shared,
+      kind: "docker",
+      image: profile.image,
+      workspaceMountPath: profile.workspaceMountPath,
+      configMountPath: profile.configMountPath,
+      command: profile.command,
+      extraDockerArgs: profile.extraDockerArgs,
+    }
+  }
+
+  private resolveCommandProfile(profile: CommandExecutionProfile, shared: Omit<ResolvedCommandExecution, "kind" | "executable">): ResolvedCommandExecution {
+    return {
+      ...shared,
+      kind: "command",
+      executable: profile.executable,
+      args: profile.args,
+      cwdMode: profile.cwdMode,
+    }
+  }
+
+  private resolveSshProfile(profile: SshExecutionProfile, shared: Omit<ResolvedSshExecution, "kind" | "host" | "remotePath" | "binaryPath">): ResolvedSshExecution {
+    return {
+      ...shared,
+      kind: "ssh",
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      remotePath: profile.remotePath,
+      binaryPath: profile.binaryPath,
+      args: profile.args,
     }
   }
 }

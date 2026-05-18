@@ -4,10 +4,9 @@ import path from "path"
 import { EventBus } from "../events/bus"
 import { LogLevel, WorkspaceLogEntry } from "../api-types"
 import { Logger } from "../logger"
-import { buildSpawnSpec, buildWslSignalSpec } from "./spawn"
+import { buildSpawnSpec, buildWslSignalSpec, WSL_PID_MARKER } from "./spawn"
 
-const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET)/i
-const WSL_PID_MARKER = "__CODENOMAD_WSL_PID__:"
+const SENSITIVE_ENV_KEY = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY)/i
 
 function redactEnvironment(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const redacted: Record<string, string | undefined> = {}
@@ -21,11 +20,31 @@ function redactEnvironment(env: Record<string, string | undefined>): Record<stri
   return redacted
 }
 
+function redactArgs(args: string[]): string[] {
+  return args.map((arg, index) => {
+    const [key] = arg.split("=", 1)
+    if (key && SENSITIVE_ENV_KEY.test(key)) {
+      return arg.includes("=") ? `${key}=[REDACTED]` : "[REDACTED]"
+    }
+
+    const previous = args[index - 1]
+    if ((previous === "-e" || previous === "--env") && SENSITIVE_ENV_KEY.test(key ?? arg)) {
+      return arg.includes("=") ? `${key}=[REDACTED]` : arg
+    }
+
+    return arg
+  })
+}
+
 interface LaunchOptions {
   workspaceId: string
   folder: string
   binaryPath: string
+  commandArgs?: string[]
+  spawnCwd?: string
   environment?: Record<string, string>
+  wslDistro?: string
+  stdin?: string
   logLevel?: string
   onExit?: (info: ProcessExitInfo) => void
 }
@@ -55,7 +74,7 @@ export class WorkspaceRuntime {
     this.validateFolder(options.folder)
 
     const logLevel = typeof options.logLevel === "string" ? options.logLevel.toUpperCase() : "DEBUG"
-    const args = ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
+    const args = options.commandArgs ?? ["serve", "--port", "0", "--print-logs", "--log-level", logLevel]
     const env = { ...process.env, ...(options.environment ?? {}) }
 
     let exitResolve: ((info: ProcessExitInfo) => void) | null = null
@@ -83,12 +102,14 @@ export class WorkspaceRuntime {
     return new Promise((resolve, reject) => {
       const propagatedEnvKeys = Object.keys(options.environment ?? {})
       const spec = buildSpawnSpec(options.binaryPath, args, {
-        cwd: options.folder,
+        cwd: options.spawnCwd ?? options.folder,
         env,
         propagateEnvKeys: propagatedEnvKeys,
         wslPidMarker: WSL_PID_MARKER,
+        wslDistro: options.wslDistro,
       })
-      const commandLine = [spec.command, ...spec.args].join(" ")
+      const redactedArgs = redactArgs(spec.args)
+      const commandLine = [spec.command, ...redactedArgs].join(" ")
       this.logger.info(
         {
           workspaceId: options.workspaceId,
@@ -103,7 +124,7 @@ export class WorkspaceRuntime {
       this.logger.debug(
         {
           workspaceId: options.workspaceId,
-          spawnArgs: spec.args,
+          spawnArgs: redactedArgs,
         },
         "OpenCode spawn args",
       )
@@ -119,10 +140,14 @@ export class WorkspaceRuntime {
       const child = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
         env: spec.env,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         detached,
         ...spec.options,
       })
+
+      if (options.stdin !== undefined) {
+        child.stdin?.end(options.stdin)
+      }
 
       const managed: ManagedProcess = {
         child,

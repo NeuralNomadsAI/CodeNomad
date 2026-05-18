@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildOpencodeConfigContent } from "./opencode-plugin"
+import {
+  buildOpencodeConfigContent,
+  findPackagedCodeNomadPluginReference,
+  rewritePackagedCodeNomadPluginReference,
+} from "./opencode-plugin"
 
 describe("buildOpencodeConfigContent", () => {
   it("creates config content with the CodeNomad plugin", () => {
@@ -34,5 +38,38 @@ describe("buildOpencodeConfigContent", () => {
     const content = buildOpencodeConfigContent('{"plugin":["file:///plugin.tgz"]}', "file:///plugin.tgz")
 
     assert.deepEqual(JSON.parse(content).plugin, ["file:///plugin.tgz"])
+  })
+
+  it("finds the packaged CodeNomad plugin tarball reference", () => {
+    const reference = findPackagedCodeNomadPluginReference(`{
+      "plugin": [
+        "npm:user-plugin",
+        "@codenomad/codenomad-opencode-plugin@file:C:/Users/dev/AppData/Roaming/CodeNomad/codenomad-opencode-plugin.tgz"
+      ]
+    }`)
+
+    assert.deepEqual(reference, {
+      specifier: "@codenomad/codenomad-opencode-plugin@file:C:/Users/dev/AppData/Roaming/CodeNomad/codenomad-opencode-plugin.tgz",
+      filePath: "C:/Users/dev/AppData/Roaming/CodeNomad/codenomad-opencode-plugin.tgz",
+    })
+  })
+
+  it("rewrites the packaged CodeNomad plugin tarball reference", () => {
+    const content = rewritePackagedCodeNomadPluginReference(
+      `{
+        "plugin": [
+          "npm:user-plugin",
+          "@codenomad/codenomad-opencode-plugin@file:C:/Users/dev/AppData/Roaming/CodeNomad/codenomad-opencode-plugin.tgz"
+        ]
+      }`,
+      "/tmp/codenomad-opencode-plugin.tgz",
+    )
+
+    assert.deepEqual(JSON.parse(content), {
+      plugin: [
+        "npm:user-plugin",
+        "@codenomad/codenomad-opencode-plugin@file:/tmp/codenomad-opencode-plugin.tgz",
+      ],
+    })
   })
 })

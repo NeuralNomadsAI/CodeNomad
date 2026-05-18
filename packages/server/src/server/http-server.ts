@@ -76,6 +76,16 @@ interface HttpServerStartResult {
   displayHost: string
 }
 
+function redactSensitivePayload(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(redactSensitivePayload)
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = /(PASSWORD|TOKEN|SECRET|API[_-]?KEY)/i.test(key) ? "[REDACTED]" : redactSensitivePayload(entry)
+  }
+  return output
+}
+
 export function createHttpServer(deps: HttpServerDeps) {
   // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
   // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
@@ -119,7 +129,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({ ...base, params: request.params, query: request.query, body: request.body }, "HTTP request payload")
+      const body = redactSensitivePayload(request.body)
+      apiLogger.trace({ ...base, params: request.params, query: request.query, body }, "HTTP request payload")
     }
     done()
   })
@@ -697,7 +708,7 @@ async function proxyWorkspaceRequest(args: {
 
   logger.debug({ workspaceId, method: request.method, targetUrl }, "Proxying request to instance")
   if (logger.isLevelEnabled("trace")) {
-    logger.trace({ workspaceId, targetUrl, body: request.body }, "Instance proxy payload")
+    logger.trace({ workspaceId, targetUrl, body: redactSensitivePayload(request.body) }, "Instance proxy payload")
   }
 
   return reply.from(targetUrl, {
@@ -735,7 +746,7 @@ async function proxyWorkspaceRequest(args: {
             worktreeSlug,
             directory,
             contentType: request.headers["content-type"],
-            body: bodyToJson(request.body),
+            body: redactSensitivePayload(bodyToJson(request.body)),
             headers: outgoing,
           },
           "Proxy -> OpenCode request",

@@ -1,9 +1,9 @@
 import path from "path"
 import { spawnSync } from "child_process"
-import { connect } from "net"
+import { connect, createServer } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
-import type { BinaryResolver } from "../settings/binaries"
+import type { BinaryResolver, ResolvedBinary } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
@@ -12,9 +12,12 @@ import { WorkspaceRuntime, ProcessExitInfo } from "./runtime"
 import { Logger } from "../logger"
 import {
   buildOpencodeConfigContent,
+  findPackagedCodeNomadPluginReference,
   getCodeNomadPluginUrl,
+  rewritePackagedCodeNomadPluginReference,
   resolveExistingOpencodeConfigContent,
 } from "../opencode-plugin.js"
+import { buildLaunchCommand } from "./execution-launch"
 import {
   OPENCODE_SERVER_BASE_URL_ENV,
   buildOpencodeBasicAuthHeader,
@@ -37,6 +40,16 @@ interface WorkspaceManagerOptions {
 }
 
 interface WorkspaceRecord extends WorkspaceDescriptor {}
+
+interface SshPackagedPluginArtifact {
+  remotePath: string
+  configContent: string
+}
+
+function shellQuote(value: string): string {
+  if (!value) return "''"
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
 
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
@@ -95,15 +108,17 @@ export class WorkspaceManager {
     browser.writeFile(relativePath, contents)
   }
 
-  async create(folder: string, name?: string): Promise<WorkspaceDescriptor> {
+  async create(folder: string, name?: string, options?: { executionProfileId?: string }): Promise<WorkspaceDescriptor> {
  
     const id = `${Date.now().toString(36)}`
-    const binary = this.options.binaryResolver.resolveDefault()
-    const resolvedBinaryPath = this.resolveBinaryPath(binary.path)
+    const execution = this.options.binaryResolver.resolveActive(options?.executionProfileId)
+    const resolvedBinaryPath = this.resolveBinaryPath(
+      execution.kind === "command" ? execution.executable : execution.kind === "docker" ? "docker" : execution.kind === "ssh" ? "ssh" : execution.path,
+    )
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
 
-    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
+    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath, executionKind: execution.kind }, "Creating workspace")
 
     const proxyPath = `/workspaces/${id}/worktrees/root/instance`
 
@@ -115,8 +130,11 @@ export class WorkspaceManager {
       status: "starting",
       proxyPath,
       binaryId: resolvedBinaryPath,
-      binaryLabel: binary.label,
-      binaryVersion: binary.version,
+      binaryLabel: execution.label,
+      binaryVersion: execution.version,
+      executionProfileId: execution.executionProfileId,
+      executionProfileName: execution.executionProfileName,
+      executionProfileKind: execution.executionProfileKind,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -157,17 +175,45 @@ export class WorkspaceManager {
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
+    const sshPackagedPlugin =
+      execution.kind === "ssh" ? await this.syncSshPackagedPlugin(execution, id, environment.OPENCODE_CONFIG_CONTENT) : undefined
+    if (sshPackagedPlugin) {
+      environment.OPENCODE_CONFIG_CONTENT = sshPackagedPlugin.configContent
+    }
+
     const logLevel = (serverConfig as any)?.logLevel
+    const reservedPort = execution.kind === "docker" || execution.kind === "ssh" ? await this.getAvailablePort() : undefined
+    const callbackPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
+    const launchCommand = buildLaunchCommand({
+      execution,
+      workspacePath,
+      environment,
+      logLevel: typeof logLevel === "string" ? logLevel.toUpperCase() : "DEBUG",
+      reservedPort,
+      callbackPort,
+    })
+
+    let launchedPid: number | undefined
 
     try {
       const { pid, port, exitPromise, getLastOutput } = await this.runtime.launch({
         workspaceId: id,
         folder: workspacePath,
-        binaryPath: resolvedBinaryPath,
-        environment,
+        binaryPath: launchCommand.command,
+        commandArgs: launchCommand.args,
+        spawnCwd: launchCommand.cwd,
+        environment: launchCommand.environment,
+        wslDistro: launchCommand.wslDistro,
+        stdin: launchCommand.stdin,
         logLevel,
-        onExit: (info) => this.handleProcessExit(info.workspaceId, info),
+        onExit: (info) => {
+          if (execution.kind === "ssh" && sshPackagedPlugin) {
+            this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
+          }
+          this.handleProcessExit(info.workspaceId, info)
+        },
       })
+      launchedPid = pid
 
       const runtimeVersion = await this.waitForWorkspaceReadiness({ workspaceId: id, port, exitPromise, getLastOutput })
       if (runtimeVersion) {
@@ -187,6 +233,14 @@ export class WorkspaceManager {
       descriptor.updatedAt = new Date().toISOString()
       this.options.eventBus.publish({ type: "workspace.error", workspace: descriptor })
       this.options.logger.error({ workspaceId: id, err: error }, "Workspace failed to start")
+      if (launchedPid !== undefined) {
+        await this.runtime.stop(id).catch((stopError) => {
+          this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup failure")
+        })
+      }
+      if (execution.kind === "ssh" && sshPackagedPlugin) {
+        this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
+      }
       throw error
     }
   }
@@ -459,6 +513,125 @@ export class WorkspaceManager {
 
       tryConnect()
     })
+  }
+
+  private async getAvailablePort(): Promise<number> {
+    return await new Promise<number>((resolve, reject) => {
+      const server = createServer()
+      server.unref()
+      server.once("error", reject)
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address()
+        if (!address || typeof address === "string") {
+          server.close(() => reject(new Error("Failed to reserve a local port for SSH execution profile")))
+          return
+        }
+        const port = address.port
+        server.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve(port)
+        })
+      })
+    })
+  }
+
+  private async syncSshPackagedPlugin(
+    execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+    workspaceId: string,
+    configContent: string | undefined,
+  ): Promise<SshPackagedPluginArtifact | undefined> {
+    const packagedPlugin = findPackagedCodeNomadPluginReference(configContent)
+    if (!packagedPlugin || !configContent) {
+      return undefined
+    }
+
+    const localPluginPath = path.normalize(packagedPlugin.filePath)
+    const remotePluginPath = `/tmp/codenomad-opencode-plugin-${workspaceId}.tgz`
+    const sshArgs = this.buildSshCommandArgs(execution, [
+      "sh",
+      "-lc",
+      `rm -f ${shellQuote(remotePluginPath)}`,
+    ])
+    const cleanupResult = spawnSync("ssh", sshArgs, {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    if (cleanupResult.error) {
+      throw cleanupResult.error
+    }
+    if (cleanupResult.status !== 0) {
+      throw new Error(`Failed to prepare SSH OpenCode plugin path: ${cleanupResult.stderr || `ssh exited with ${cleanupResult.status}`}`)
+    }
+
+    const scpResult = spawnSync(
+      "scp",
+      this.buildScpCommandArgs(execution, [localPluginPath, `${this.buildSshTarget(execution)}:${remotePluginPath}`]),
+      {
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    )
+    if (scpResult.error) {
+      throw scpResult.error
+    }
+    if (scpResult.status !== 0) {
+      throw new Error(`Failed to copy OpenCode plugin to SSH host: ${scpResult.stderr || `scp exited with ${scpResult.status}`}`)
+    }
+
+    return {
+      remotePath: remotePluginPath,
+      configContent: rewritePackagedCodeNomadPluginReference(configContent, remotePluginPath),
+    }
+  }
+
+  private cleanupSshPackagedPlugin(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remotePluginPath: string): void {
+    const result = spawnSync("ssh", this.buildSshCommandArgs(execution, ["sh", "-lc", `rm -f ${shellQuote(remotePluginPath)}`]), {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    if (result.error || result.status !== 0) {
+      this.options.logger.debug({ err: result.error, stderr: result.stderr, status: result.status }, "Failed to clean SSH OpenCode plugin path")
+    }
+  }
+
+  private buildSshCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteArgs: string[]): string[] {
+    return [
+      "-p",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      this.buildSshTarget(execution),
+      ...remoteArgs,
+    ]
+  }
+
+  private buildScpCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, args: string[]): string[] {
+    return [
+      "-P",
+      String(execution.port ?? 22),
+      "-o",
+      "BatchMode=yes",
+      ...args,
+    ]
+  }
+
+  private buildSshTarget(execution: Extract<ResolvedBinary, { kind: "ssh" }>): string {
+    const host = execution.host.trim()
+    if (!host || host.startsWith("-") || /\s/.test(host)) {
+      throw new Error("SSH host must not be empty, start with '-', or contain whitespace")
+    }
+
+    const username = execution.username?.trim()
+    if (username && (username.startsWith("-") || /[@\s]/.test(username))) {
+      throw new Error("SSH username must not start with '-' or contain '@' or whitespace")
+    }
+
+    return username ? `${username}@${host}` : host
   }
 
   private delay(durationMs: number): Promise<void> {

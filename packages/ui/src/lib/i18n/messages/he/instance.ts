@@ -10,6 +10,7 @@ export const instanceMessages = {
   "instanceInfo.labels.versionControl": "בקרת גרסאות",
   "instanceInfo.labels.opencodeVersion": "גרסת OpenCode",
   "instanceInfo.labels.binaryPath": "נתיב קובץ בינארי",
+  "instanceInfo.labels.executionProfile": "פרופיל הרצה",
   "instanceInfo.labels.environmentVariables": "משתני סביבה ({count})",
   "instanceInfo.loading": "טוען...",
   "instanceInfo.server.title": "שרת",

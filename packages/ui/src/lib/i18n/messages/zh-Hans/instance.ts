@@ -10,6 +10,7 @@ export const instanceMessages = {
   "instanceInfo.labels.versionControl": "版本控制",
   "instanceInfo.labels.opencodeVersion": "OpenCode 版本",
   "instanceInfo.labels.binaryPath": "可执行文件路径",
+  "instanceInfo.labels.executionProfile": "执行配置",
   "instanceInfo.labels.environmentVariables": "环境变量（{count}）",
   "instanceInfo.loading": "正在加载...",
   "instanceInfo.server.title": "服务器",

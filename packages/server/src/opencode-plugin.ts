@@ -68,6 +68,49 @@ export function resolveExistingOpencodeConfigContent(userEnvironment: Record<str
   return normalizeConfigContentValue(process.env.OPENCODE_CONFIG_CONTENT)
 }
 
+export function findPackagedCodeNomadPluginReference(configContent: string | undefined): { specifier: string; filePath: string } | null {
+  if (!configContent?.trim()) {
+    return null
+  }
+
+  const config = parseJsoncObject(configContent)
+  for (const entry of normalizePluginEntries(config.plugin)) {
+    const reference = parsePackagedPluginSpecifier(entry)
+    if (reference) {
+      return reference
+    }
+  }
+
+  return null
+}
+
+export function rewritePackagedCodeNomadPluginReference(configContent: string, filePath: string): string {
+  const config = parseJsoncObject(configContent)
+  let changed = false
+  const nextPluginEntries = normalizePluginEntries(config.plugin).map((entry) => {
+    const reference = parsePackagedPluginSpecifier(entry)
+    if (!reference) {
+      return entry
+    }
+
+    changed = true
+    return toNpmFileSpecifier(filePath)
+  })
+
+  if (!changed) {
+    return configContent
+  }
+
+  return JSON.stringify(
+    {
+      ...config,
+      plugin: typeof config.plugin === "string" ? nextPluginEntries[0] ?? toNpmFileSpecifier(filePath) : nextPluginEntries,
+    },
+    null,
+    2,
+  )
+}
+
 function toNpmFileSpecifier(filePath: string): string {
   return `${pluginPackageName}@file:${filePath.replace(/\\/g, "/")}`
 }
@@ -85,6 +128,20 @@ function findPluginTarball(dir: string): string | null {
 
 function normalizeConfigContentValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined
+}
+
+function parsePackagedPluginSpecifier(value: string): { specifier: string; filePath: string } | null {
+  const prefix = `${pluginPackageName}@file:`
+  if (!value.startsWith(prefix)) {
+    return null
+  }
+
+  const filePath = value.slice(prefix.length).trim()
+  if (!filePath.endsWith(".tgz")) {
+    return null
+  }
+
+  return { specifier: value, filePath }
 }
 
 function parseJsoncObject(content: string): Record<string, unknown> {

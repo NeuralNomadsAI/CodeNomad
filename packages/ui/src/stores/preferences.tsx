@@ -1,7 +1,10 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
+import type {
+  ExecutionProfile,
+  RemoteServerProfile,
+} from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -102,6 +105,8 @@ interface ServerConfigBucket {
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
   opencodeBinary?: string
+  executionProfiles?: ExecutionProfile[]
+  defaultExecutionProfileId?: string
   speech?: Partial<SpeechSettings>
 }
 
@@ -109,6 +114,7 @@ interface UiStateBucket {
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
+  lastSelectedExecutionProfileId?: string
   models?: {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
@@ -120,6 +126,7 @@ interface NormalizedUiState {
   recentFolders: RecentFolder[]
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
+  lastSelectedExecutionProfileId?: string
   models: {
     recents: ModelPreference[]
     favorites: ModelPreference[]
@@ -205,6 +212,96 @@ function normalizeRecord(value: unknown): Record<string, string> {
   return out
 }
 
+function normalizeStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out = value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0)
+  return out.length > 0 ? out : undefined
+}
+
+function normalizeExecutionProfiles(value: unknown): ExecutionProfile[] {
+  if (!Array.isArray(value)) return []
+
+  const profiles: ExecutionProfile[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue
+
+    const id = typeof (entry as any).id === "string" ? (entry as any).id.trim() : ""
+    const name = typeof (entry as any).name === "string" ? (entry as any).name.trim() : ""
+    const kind = typeof (entry as any).kind === "string" ? (entry as any).kind.trim() : ""
+    if (!id || !name) continue
+
+    if (kind === "local") {
+      const binaryPath = typeof (entry as any).binaryPath === "string" ? (entry as any).binaryPath.trim() : ""
+      if (!binaryPath) continue
+      profiles.push({ id, name, kind, binaryPath })
+      continue
+    }
+
+    if (kind === "wsl") {
+      const distro = typeof (entry as any).distro === "string" ? (entry as any).distro.trim() : ""
+      const binaryPath = typeof (entry as any).binaryPath === "string" ? (entry as any).binaryPath.trim() : ""
+      if (!distro || !binaryPath) continue
+      profiles.push({ id, name, kind, distro, binaryPath })
+      continue
+    }
+
+    if (kind === "docker") {
+      const image = typeof (entry as any).image === "string" ? (entry as any).image.trim() : ""
+      const workspaceMountPath = typeof (entry as any).workspaceMountPath === "string" ? (entry as any).workspaceMountPath.trim() : ""
+      const configMountPath = typeof (entry as any).configMountPath === "string" ? (entry as any).configMountPath.trim() : ""
+      if (!image || !workspaceMountPath || !configMountPath) continue
+      profiles.push({
+        id,
+        name,
+        kind,
+        image,
+        workspaceMountPath,
+        configMountPath,
+        command: normalizeStringList((entry as any).command),
+        extraDockerArgs: normalizeStringList((entry as any).extraDockerArgs),
+      })
+      continue
+    }
+
+    if (kind === "command") {
+      const executable = typeof (entry as any).executable === "string" ? (entry as any).executable.trim() : ""
+      const cwdMode = (entry as any).cwdMode === "inherit" ? "inherit" : (entry as any).cwdMode === "workspace" ? "workspace" : undefined
+      if (!executable) continue
+      profiles.push({
+        id,
+        name,
+        kind,
+        executable,
+        args: normalizeStringList((entry as any).args),
+        cwdMode,
+      })
+      continue
+    }
+
+    if (kind === "ssh") {
+      const host = typeof (entry as any).host === "string" ? (entry as any).host.trim() : ""
+      const remotePath = typeof (entry as any).remotePath === "string" ? (entry as any).remotePath.trim() : ""
+      const binaryPath = typeof (entry as any).binaryPath === "string" ? (entry as any).binaryPath.trim() : ""
+      const port = typeof (entry as any).port === "number" && Number.isInteger((entry as any).port) ? (entry as any).port : undefined
+      const username = typeof (entry as any).username === "string" ? (entry as any).username.trim() : ""
+      if (!host || !remotePath || !binaryPath) continue
+      profiles.push({
+        id,
+        name,
+        kind,
+        host,
+        port: port && port > 0 && port <= 65535 ? port : undefined,
+        username: username || undefined,
+        remotePath,
+        binaryPath,
+        args: normalizeStringList((entry as any).args),
+      })
+    }
+  }
+
+  return profiles
+}
+
 function normalizeSpeechSettings(input?: Partial<SpeechSettings> | null): SpeechSettings {
   const sanitized = input ?? {}
   return {
@@ -245,8 +342,40 @@ function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
   return out
 }
 
+function sortByRecentActivity<T extends { lastConnectedAt?: string; updatedAt: string }>(entries: T[]): T[] {
+  return [...entries].sort((a, b) => {
+    const left = a.lastConnectedAt ?? a.updatedAt
+    const right = b.lastConnectedAt ?? b.updatedAt
+    return right.localeCompare(left)
+  })
+}
+
+function normalizeRemoteServerProfile(value: unknown): RemoteServerProfile | null {
+  if (!value || typeof value !== "object") return null
+  const id = typeof (value as any).id === "string" ? (value as any).id.trim() : ""
+  const name = typeof (value as any).name === "string" ? (value as any).name.trim() : ""
+  const baseUrl = typeof (value as any).baseUrl === "string" ? (value as any).baseUrl.trim() : ""
+  if (!id || !name || !baseUrl) return null
+  const createdAt = typeof (value as any).createdAt === "string" ? (value as any).createdAt : new Date().toISOString()
+  const updatedAt = typeof (value as any).updatedAt === "string" ? (value as any).updatedAt : createdAt
+  const lastConnectedAt = typeof (value as any).lastConnectedAt === "string" ? (value as any).lastConnectedAt : undefined
+  return {
+    id,
+    name,
+    baseUrl,
+    skipTlsVerify: Boolean((value as any).skipTlsVerify),
+    createdAt,
+    updatedAt,
+    lastConnectedAt,
+  }
+}
+
 function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   const source = input ?? {}
+  const remoteServers = sortByRecentActivity(
+    cloneArray<RemoteServerProfile>(source.remoteServers, (server) => normalizeRemoteServerProfile(server)),
+  )
+
   return {
     recentFolders: cloneArray<RecentFolder>(source.recentFolders, (f) => {
       if (!f || typeof f !== "object") return null
@@ -265,29 +394,11 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const label = typeof (b as any).label === "string" ? (b as any).label : undefined
       return { path: p, version, label, lastUsed }
     }),
-    remoteServers: cloneArray<RemoteServerProfile>(source.remoteServers, (server) => {
-      if (!server || typeof server !== "object") return null
-      const id = typeof (server as any).id === "string" ? (server as any).id.trim() : ""
-      const name = typeof (server as any).name === "string" ? (server as any).name.trim() : ""
-      const baseUrl = typeof (server as any).baseUrl === "string" ? (server as any).baseUrl.trim() : ""
-      if (!id || !name || !baseUrl) return null
-      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
-      const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
-      const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
-      return {
-        id,
-        name,
-        baseUrl,
-        skipTlsVerify: Boolean((server as any).skipTlsVerify),
-        createdAt,
-        updatedAt,
-        lastConnectedAt,
-      }
-    }).sort((a, b) => {
-      const left = a.lastConnectedAt ?? a.updatedAt
-      const right = b.lastConnectedAt ?? b.updatedAt
-      return right.localeCompare(left)
-    }),
+    remoteServers,
+    lastSelectedExecutionProfileId:
+      typeof source.lastSelectedExecutionProfileId === "string" && source.lastSelectedExecutionProfileId.trim()
+        ? source.lastSelectedExecutionProfileId.trim()
+        : undefined,
     models: {
       recents: cloneArray<ModelPreference>((source.models as any)?.recents, (m) => {
         if (!m || typeof m !== "object") return null
@@ -310,7 +421,11 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary">> & {
+  executionProfiles: ExecutionProfile[]
+  defaultExecutionProfileId?: string
+  speech: SpeechSettings
+} {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -319,8 +434,13 @@ function normalizeServerConfig(
       : "DEBUG"
   const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
   const environmentVariables = normalizeRecord(source.environmentVariables)
+  const executionProfiles = normalizeExecutionProfiles(source.executionProfiles)
+  const defaultExecutionProfileId =
+    typeof source.defaultExecutionProfileId === "string" && executionProfiles.some((profile) => profile.id === source.defaultExecutionProfileId)
+      ? source.defaultExecutionProfileId
+      : undefined
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, speech }
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, executionProfiles, defaultExecutionProfileId, speech }
 }
 
 function getModelKey(model: { providerId: string; modelId: string }): string {
@@ -370,11 +490,12 @@ function buildRemoteServerProfile(input: RemoteServerProfileInput, source: Remot
 
 function buildRemoteServerList(profile: RemoteServerProfile, source: RemoteServerProfile[]): RemoteServerProfile[] {
   const remaining = source.filter((entry) => entry.id !== profile.id)
-  return [profile, ...remaining].sort((a, b) => {
-    const left = a.lastConnectedAt ?? a.updatedAt
-    const right = b.lastConnectedAt ?? b.updatedAt
-    return right.localeCompare(left)
-  })
+  return sortByRecentActivity([profile, ...remaining])
+}
+
+function buildExecutionProfileList(profile: ExecutionProfile, source: ExecutionProfile[]): ExecutionProfile[] {
+  const remaining = source.filter((entry) => entry.id !== profile.id)
+  return [profile, ...remaining]
 }
 
 function createRandomId(): string {
@@ -398,6 +519,9 @@ const preferences = uiSettings
 const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
+const lastSelectedExecutionProfileId = createMemo<string | undefined>(() => uiState().lastSelectedExecutionProfileId)
+const executionProfiles = createMemo<ExecutionProfile[]>(() => serverSettings().executionProfiles)
+const defaultExecutionProfileId = createMemo<string | undefined>(() => serverSettings().defaultExecutionProfileId)
 
 let loadPromise: Promise<void> | null = null
 
@@ -560,8 +684,40 @@ async function markRemoteServerConnected(id: string): Promise<void> {
 }
 
 function removeRemoteServerProfile(id: string): void {
-  const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
+  const nextRemoteServers = remoteServers().filter((entry) => entry.id !== id)
+  void patchStateOwner("ui", { remoteServers: nextRemoteServers }).catch((error) => log.error("Failed to remove remote server profile", error))
+}
+
+function setLastSelectedExecutionProfileId(profileId: string | undefined): void {
+  const nextId = profileId?.trim() || undefined
+  void patchStateOwner("ui", { lastSelectedExecutionProfileId: nextId }).catch((error) =>
+    log.error("Failed to save last selected execution profile", error),
+  )
+}
+
+async function saveExecutionProfile(profile: ExecutionProfile): Promise<ExecutionProfile> {
+  const nextProfiles = buildExecutionProfileList(profile, executionProfiles())
+  const nextDefaultExecutionProfileId = defaultExecutionProfileId() ?? profile.id
+  await patchConfigOwner("server", {
+    executionProfiles: nextProfiles,
+    defaultExecutionProfileId: nextDefaultExecutionProfileId,
+  })
+  return profile
+}
+
+async function setDefaultExecutionProfileId(profileId: string | undefined): Promise<void> {
+  const trimmed = profileId?.trim()
+  const nextDefault = trimmed && executionProfiles().some((profile) => profile.id === trimmed) ? trimmed : undefined
+  await patchConfigOwner("server", { defaultExecutionProfileId: nextDefault })
+}
+
+function removeExecutionProfile(profileId: string): void {
+  const nextProfiles = executionProfiles().filter((profile) => profile.id !== profileId)
+  const nextDefault = defaultExecutionProfileId() === profileId ? nextProfiles[0]?.id : defaultExecutionProfileId()
+  void patchConfigOwner("server", {
+    executionProfiles: nextProfiles,
+    defaultExecutionProfileId: nextDefault,
+  }).catch((error) => log.error("Failed to remove execution profile", error))
 }
 
 function recordWorkspaceLaunch(folderPath: string, binaryPath?: string): void {
@@ -720,6 +876,8 @@ interface ConfigContextValue {
 
   // server-owned stable config
   serverSettings: typeof serverSettings
+  executionProfiles: typeof executionProfiles
+  defaultExecutionProfileId: typeof defaultExecutionProfileId
   setListeningMode: typeof setListeningMode
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
@@ -727,16 +885,21 @@ interface ConfigContextValue {
     updateLastUsedBinary: typeof updateLastUsedBinary
     updateLogLevel: typeof updateLogLevel
     updateSpeechSettings: typeof updateSpeechSettings
+    saveExecutionProfile: typeof saveExecutionProfile
+    setDefaultExecutionProfileId: typeof setDefaultExecutionProfileId
+    removeExecutionProfile: typeof removeExecutionProfile
 
   // ui-owned state
   recentFolders: typeof recentFolders
   opencodeBinaries: typeof opencodeBinaries
   remoteServers: typeof remoteServers
+  lastSelectedExecutionProfileId: typeof lastSelectedExecutionProfileId
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
+  setLastSelectedExecutionProfileId: typeof setLastSelectedExecutionProfileId
   saveRemoteServerProfile: typeof saveRemoteServerProfile
   markRemoteServerConnected: typeof markRemoteServerConnected
   removeRemoteServerProfile: typeof removeRemoteServerProfile
@@ -776,6 +939,8 @@ const configContextValue: ConfigContextValue = {
   themePreference,
   setThemePreference,
   serverSettings,
+  executionProfiles,
+  defaultExecutionProfileId,
   setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,
@@ -783,14 +948,19 @@ const configContextValue: ConfigContextValue = {
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
+  saveExecutionProfile,
+  setDefaultExecutionProfileId,
+  removeExecutionProfile,
   recentFolders,
   opencodeBinaries,
   remoteServers,
+  lastSelectedExecutionProfileId,
   uiState,
   addRecentFolder,
   removeRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
+  setLastSelectedExecutionProfileId,
   saveRemoteServerProfile,
   markRemoteServerConnected,
   removeRemoteServerProfile,
@@ -860,8 +1030,11 @@ export {
   preferences,
   uiState,
   serverSettings,
+  executionProfiles,
+  defaultExecutionProfileId,
   recentFolders,
   opencodeBinaries,
+  lastSelectedExecutionProfileId,
   themePreference,
   setThemePreference,
   updatePreferences,
@@ -872,10 +1045,14 @@ export {
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
+  saveExecutionProfile,
+  setDefaultExecutionProfileId,
+  removeExecutionProfile,
   addRecentFolder,
   removeRecentFolder,
   addOpenCodeBinary,
   removeOpenCodeBinary,
+  setLastSelectedExecutionProfileId,
   recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,

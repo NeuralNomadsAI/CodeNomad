@@ -10,6 +10,7 @@ export const instanceMessages = {
   "instanceInfo.labels.versionControl": "バージョン管理",
   "instanceInfo.labels.opencodeVersion": "OpenCode バージョン",
   "instanceInfo.labels.binaryPath": "バイナリのパス",
+  "instanceInfo.labels.executionProfile": "実行プロファイル",
   "instanceInfo.labels.environmentVariables": "環境変数 ({count})",
   "instanceInfo.loading": "読み込み中...",
   "instanceInfo.server.title": "サーバー",
