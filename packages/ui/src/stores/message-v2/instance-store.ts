@@ -990,6 +990,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState(
       "questions",
       produce((draft) => {
+        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
+          const partEntries = draft.byMessage[existingMessageKey]
+          Object.keys(partEntries).forEach((existingPartKey) => {
+            if (partEntries[existingPartKey].request.id === entry.request.id) {
+              delete partEntries[existingPartKey]
+            }
+          })
+          if (Object.keys(partEntries).length === 0) {
+            delete draft.byMessage[existingMessageKey]
+          }
+        })
         draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
         draft.byMessage[messageKey][partKey] = entry
         const existingIndex = draft.queue.findIndex((item) => item.request.id === entry.request.id)
@@ -998,9 +1009,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         } else {
           draft.queue[existingIndex] = entry
         }
-        if (!draft.active || draft.active.request.id === entry.request.id) {
-          draft.active = entry
-        }
+        draft.queue.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+        draft.active = draft.queue[0] ?? null
       }),
     )
   }

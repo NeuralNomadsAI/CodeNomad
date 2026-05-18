@@ -340,10 +340,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return t("instanceShell.connection.unknown")
   }
 
-  const hasPendingRequests = createMemo(() => {
+  const pendingRequestCount = createMemo(() => {
     const permissions = getPermissionQueueLength(props.instance.id)
     const questions = getQuestionQueueLength(props.instance.id)
-    return permissions + questions > 0
+    return permissions + questions
+  })
+  const hasPendingRequests = createMemo(() => {
+    return pendingRequestCount() > 0
   })
 
   const activePromptInputApi = createMemo(() => {

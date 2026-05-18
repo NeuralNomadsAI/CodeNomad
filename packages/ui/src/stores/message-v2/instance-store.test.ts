@@ -35,3 +35,36 @@ describe("message-v2 permission state", () => {
     assert.equal(store.getPermissionState(undefined, "permission-2")?.active, true)
   })
 })
+
+describe("message-v2 question state", () => {
+  it("keeps one question attachment when a duplicate moves from global to a tool part", () => {
+    const store = createInstanceMessageStore("instance-1")
+
+    store.upsertQuestion({
+      request: { id: "question-1", questions: [] } as any,
+      enqueuedAt: 1_000,
+    })
+    store.upsertQuestion({
+      request: { id: "question-1", questions: [] } as any,
+      messageId: "message-1",
+      partId: "part-1",
+      enqueuedAt: 2_000,
+    })
+
+    assert.equal(store.state.questions.queue.length, 1)
+    assert.equal(store.getQuestionState(undefined, "question-1"), null)
+    assert.equal(store.getQuestionState("message-1", "part-1")?.entry.request.id, "question-1")
+    assert.equal(store.getQuestionState("message-1", "part-1")?.active, true)
+  })
+
+  it("uses enqueue time when recalculating the active question", () => {
+    const store = createInstanceMessageStore("instance-1")
+
+    store.upsertQuestion({ request: { id: "question-2", questions: [] } as any, enqueuedAt: 2_000 })
+    store.upsertQuestion({ request: { id: "question-1", questions: [] } as any, enqueuedAt: 1_000 })
+
+    assert.equal(store.state.questions.active?.request.id, "question-1")
+    assert.equal(store.getQuestionState(undefined, "question-1")?.active, true)
+    assert.equal(store.getQuestionState(undefined, "question-2")?.active, false)
+  })
+})
