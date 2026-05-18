@@ -29,6 +29,8 @@ function splitKeywords(key: string): string[] {
 
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
+  useTauriNativeEventTransport: Accessor<boolean>
+  setUseTauriNativeEventTransport: (next: boolean) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
@@ -419,6 +421,8 @@ export function useCommands(options: UseCommandsOptions) {
 
     registerBehaviorCommands((command) => commandRegistry.register(command), {
       preferences: options.preferences,
+      useTauriNativeEventTransport: options.useTauriNativeEventTransport,
+      setUseTauriNativeEventTransport: options.setUseTauriNativeEventTransport,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
       toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
       toggleShowMessageTimeline: options.toggleShowMessageTimeline,
