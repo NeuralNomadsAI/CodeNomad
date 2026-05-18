@@ -11,15 +11,15 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
-  ensureSessionParentExpanded,
+  ensureSessionExpanded,
   getVisibleSessionIds,
-  isSessionParentExpanded,
+  isSessionExpanded,
   loadMessages,
   loading,
   renameSession,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
-  toggleSessionParentExpanded,
+  toggleSessionExpanded,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
@@ -78,33 +78,63 @@ const SessionList: Component<SessionListProps> = (props) => {
     return sessionId.toLowerCase().includes(query)
   }
 
+  // Recursively check if any session in a thread subtree matches the query
+  const subtreeHasMatch = (thread: SessionThread, query: string): boolean => {
+    if (sessionMatchesQuery(thread.session.id, query)) return true
+    for (const child of thread.children) {
+      if (subtreeHasMatch(child, query)) return true
+    }
+    return false
+  }
+
+  // Recursively filter threads while preserving the tree structure
+  const filterThreadTree = (thread: SessionThread, query: string): SessionThread | null => {
+    const parentMatches = sessionMatchesQuery(thread.session.id, query)
+
+    if (parentMatches) {
+      // Parent matches: keep all children (but filter them recursively in case query is deeper)
+      const filteredChildren: SessionThread[] = []
+      for (const child of thread.children) {
+        const filteredChild = filterThreadTree(child, query)
+        if (filteredChild !== null) filteredChildren.push(filteredChild)
+      }
+      return { ...thread, children: filteredChildren }
+    }
+
+    // Parent doesn't match: check if any descendant matches
+    const matchingChildren: SessionThread[] = []
+    for (const child of thread.children) {
+      const filteredChild = filterThreadTree(child, query)
+      if (filteredChild !== null) matchingChildren.push(filteredChild)
+    }
+
+    if (matchingChildren.length === 0) return null
+
+    // Return thread with only matching descendants
+    return { ...thread, children: matchingChildren }
+  }
+
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
 
-    const next: SessionThread[] = []
+    const result: SessionThread[] = []
     for (const thread of props.threads) {
-      const parentMatches = sessionMatchesQuery(thread.parent.id, query)
-      const matchingChildren = thread.children.filter((child) => sessionMatchesQuery(child.id, query))
-
-      if (!parentMatches && matchingChildren.length === 0) continue
-
-      next.push({
-        parent: thread.parent,
-        children: matchingChildren,
-        latestUpdated: thread.latestUpdated,
-      })
+      const filtered = filterThreadTree(thread, query)
+      if (filtered !== null) result.push(filtered)
     }
-
-    return next
+    return result
   })
 
   const allMatchingSessionIds = createMemo<string[]>(() => {
     const ids: string[] = []
-    for (const thread of filteredThreads()) {
-      ids.push(thread.parent.id)
-      for (const child of thread.children) ids.push(child.id)
+    const collectIds = (threads: SessionThread[]) => {
+      for (const thread of threads) {
+        ids.push(thread.session.id)
+        collectIds(thread.children)
+      }
     }
+    collectIds(filteredThreads())
     return ids
   })
 
@@ -128,14 +158,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     const deleting = loading().deletingSession.get(props.instanceId)
     return deleting ? deleting.has(sessionId) : false
   }
- 
+  
 
   const selectSession = (sessionId: string) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     // If the user selects a child session, make sure its parent thread is expanded.
     // For parent sessions we don't force expansion; user can collapse/expand freely.
     if (session?.parentId) {
-      ensureSessionParentExpanded(props.instanceId, session.parentId)
+      ensureSessionExpanded(props.instanceId, session.parentId)
     }
 
     props.onSelect(sessionId)
@@ -282,21 +312,25 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   }
 
-  const getSelectableThreadIds = (parentId: string): string[] => {
-    const query = normalizedQuery()
-    const source = query ? filteredThreads() : props.threads
-    const thread = source.find((t) => t.parent.id === parentId)
-    if (!thread) return [parentId]
-    return [thread.parent.id, ...thread.children.map((c) => c.id)]
+  // Recursively collect all session IDs from a thread tree
+  const collectThreadIds = (threads: SessionThread[]): string[] => {
+    const ids: string[] = []
+    for (const thread of threads) {
+      ids.push(thread.session.id)
+      ids.push(...collectThreadIds(thread.children))
+    }
+    return ids
+  }
+
+  const getSelectableThreadIds = (rootSessionId: string): string[] => {
+    const source = normalizedQuery() ? filteredThreads() : props.threads
+    const rootThread = source.find((t) => t.session.id === rootSessionId)
+    if (!rootThread) return [rootSessionId]
+    return collectThreadIds([rootThread])
   }
 
   const getAllSessionIdsInOrder = (threads: SessionThread[]): string[] => {
-    const ids: string[] = []
-    threads.forEach((thread) => {
-      ids.push(thread.parent.id)
-      thread.children.forEach((child) => ids.push(child.id))
-    })
-    return ids
+    return collectThreadIds(threads)
   }
 
   const handleToggleSelectAll = (checked: boolean) => {
@@ -379,37 +413,35 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
   }
- 
+  
 
   const SessionRow: Component<{
-    sessionId: string
-    isChild?: boolean
-    isLastChild?: boolean
-    hasChildren?: boolean
+    session: SessionThread["session"]
+    depth: number
+    isLastChild: boolean
+    hasChildren: boolean
     expanded?: boolean
     onToggleExpand?: () => void
   }> = (rowProps) => {
-    const session = createMemo(() => sessionStateSessions().get(props.instanceId)?.get(rowProps.sessionId))
-    if (!session()) {
-      return <></>
-    }
+    const sessionId = () => rowProps.session.id
+    const isChild = () => rowProps.depth > 0
 
     const worktreeSlug = createMemo(() => {
-      if (rowProps.isChild) return "root"
-      return getWorktreeSlugForParentSession(props.instanceId, rowProps.sessionId)
+      if (isChild()) return "root"
+      return getWorktreeSlugForParentSession(props.instanceId, sessionId())
     })
 
     const showWorktreeBadge = createMemo(() => {
-      if (rowProps.isChild) return false
+      if (isChild()) return false
       if (getGitRepoStatus(props.instanceId) === false) return false
       const slug = worktreeSlug()
       return Boolean(slug) && slug !== "root"
     })
 
-    const isActive = () => props.activeSessionId === rowProps.sessionId
-    const title = () => session()?.title || t("sessionList.session.untitled")
-    const status = () => getSessionStatus(props.instanceId, rowProps.sessionId)
-    const retry = () => getSessionRetry(props.instanceId, rowProps.sessionId)
+    const isActive = () => props.activeSessionId === sessionId()
+    const title = () => rowProps.session.title || t("sessionList.session.untitled")
+    const status = () => getSessionStatus(props.instanceId, sessionId())
+    const retry = () => getSessionRetry(props.instanceId, sessionId())
     const statusLabel = () => {
       const retryState = retry()
       if (retryState) {
@@ -425,20 +457,20 @@ const SessionList: Component<SessionListProps> = (props) => {
           return t("sessionList.status.idle")
       }
     }
-    const needsPermission = () => Boolean(session()?.pendingPermission)
-    const needsQuestion = () => Boolean((session() as any)?.pendingQuestion)
+    const needsPermission = () => Boolean(rowProps.session.pendingPermission)
+    const needsQuestion = () => Boolean((rowProps.session as any)?.pendingQuestion)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => {
       if (needsInput()) return "session-permission"
       const base = `session-${retry() ? "retrying" : status()}`
-      const fadeClass = getSessionIdleFadeClass(props.instanceId, rowProps.sessionId)
+      const fadeClass = getSessionIdleFadeClass(props.instanceId, sessionId())
       return fadeClass ? `${base} ${fadeClass}` : base
     }
     const showStatus = () =>
       needsInput() ||
       shouldShowSessionStatus(
         props.instanceId,
-        rowProps.sessionId,
+        sessionId(),
         now(),
         preferences().keepUnseenSubagentIdleStatus,
       )
@@ -457,14 +489,14 @@ const SessionList: Component<SessionListProps> = (props) => {
       })
     }
  
-    const isSelected = () => selectedSessionIds().has(rowProps.sessionId)
+    const isSelected = () => selectedSessionIds().has(sessionId())
 
     const parentGroupState = createMemo(() => {
-      if (rowProps.isChild) {
-        return { checked: isSelected(), indeterminate: false, ids: [rowProps.sessionId] }
+      if (isChild()) {
+        return { checked: isSelected(), indeterminate: false, ids: [sessionId()] }
       }
 
-      const ids = getSelectableThreadIds(rowProps.sessionId)
+      const ids = getSelectableThreadIds(sessionId())
       const selected = selectedSessionIds()
       const selectedInGroup = ids.reduce((count, id) => (selected.has(id) ? count + 1 : count), 0)
       return {
@@ -480,12 +512,15 @@ const SessionList: Component<SessionListProps> = (props) => {
       rowCheckboxEl.indeterminate = parentGroupState().indeterminate
     })
 
+    // Build depth-based class for indentation
+    const depthClass = () => isChild() ? `session-item-depth-${Math.min(rowProps.depth, 10)}` : ""
+
     return (
       <div class="session-list-item group">
         <button
-          class={`session-item-base ${rowProps.isChild ? `session-item-child${rowProps.isLastChild ? " session-item-child-last" : ""} session-item-border-assistant session-item-kind-assistant` : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
-          data-session-id={rowProps.sessionId}
-          onClick={() => selectSession(rowProps.sessionId)}
+          class={`session-item-base ${depthClass()} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          data-session-id={sessionId()}
+          onClick={() => selectSession(sessionId())}
           title={title()}
           role="button"
           aria-selected={isActive()}
@@ -509,15 +544,15 @@ const SessionList: Component<SessionListProps> = (props) => {
                 />
               </Show>
 
-              {rowProps.isChild ? <Bot class="w-4 h-4 flex-shrink-0" /> : <User class="w-4 h-4 flex-shrink-0" />}
+              <User class="w-4 h-4 flex-shrink-0" />
               <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             </div>
           </div>
           <div class="session-item-row session-item-meta">
             <div class="flex items-center gap-2 min-w-0">
               <Show
-                when={rowProps.hasChildren && !rowProps.isChild}
-                fallback={rowProps.isChild ? null : <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
+                when={rowProps.hasChildren}
+                fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
               >
                 <span
                   class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
@@ -555,7 +590,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             <div class="session-item-actions">
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => copySessionId(event, rowProps.sessionId)}
+                onClick={(event) => copySessionId(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.copyId.ariaLabel")}
@@ -565,14 +600,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleReloadSession(event, rowProps.sessionId)}
+                onClick={(event) => handleReloadSession(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.reload.ariaLabel")}
                 title={t("sessionList.actions.reload.title")}
               >
                 <Show
-                  when={!isSessionReloading(rowProps.sessionId)}
+                  when={!isSessionReloading(sessionId())}
                   fallback={<RotateCw class="w-3 h-3 animate-spin" />}
                 >
                   <RotateCw class="w-3 h-3" />
@@ -582,7 +617,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
                 onClick={(event) => {
                   event.stopPropagation()
-                  openRenameDialog(rowProps.sessionId)
+                  openRenameDialog(sessionId())
                 }}
                 role="button"
                 tabIndex={0}
@@ -593,14 +628,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               </span>
               <span
                 class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleDeleteSession(event, rowProps.sessionId)}
+                onClick={(event) => handleDeleteSession(event, sessionId())}
                 role="button"
                 tabIndex={0}
                 aria-label={t("sessionList.actions.delete.ariaLabel")}
                 title={t("sessionList.actions.delete.title")}
               >
                 <Show
-                  when={!isSessionDeleting(rowProps.sessionId)}
+                  when={!isSessionDeleting(sessionId())}
                   fallback={
                     <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -621,7 +656,43 @@ const SessionList: Component<SessionListProps> = (props) => {
       </div>
     )
   }
- 
+
+  // Recursive component for rendering a thread and its children
+  const SessionThreadRow: Component<{
+    thread: SessionThread
+    instanceId: string
+    activeSessionId: string | null
+    depth?: number
+  }> = (props) => {
+    const depth = () => props.depth ?? 0
+    const expanded = () => isSessionExpanded(props.instanceId, props.thread.session.id)
+
+    return (
+      <>
+        <SessionRow
+          session={props.thread.session}
+          depth={depth()}
+          hasChildren={props.thread.hasChildren}
+          expanded={expanded()}
+          onToggleExpand={() => toggleSessionExpanded(props.instanceId, props.thread.session.id)}
+          isLastChild={false}
+        />
+        <Show when={expanded() && props.thread.children.length > 0}>
+          <For each={props.thread.children}>
+            {(childThread) => (
+              <SessionThreadRow
+                thread={childThread}
+                instanceId={props.instanceId}
+                activeSessionId={props.activeSessionId}
+                depth={depth() + 1}
+              />
+            )}
+          </For>
+        </Show>
+      </>
+    )
+  }
+
   const activeParentId = createMemo(() => {
     const activeId = props.activeSessionId
     if (!activeId || activeId === "info") return null
@@ -642,7 +713,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!activeSession.parentId) return
     const parentId = activeParentId()
     if (!parentId) return
-    ensureSessionParentExpanded(props.instanceId, parentId)
+    ensureSessionExpanded(props.instanceId, parentId)
   })
  
   const listEl = createSignal<HTMLElement | null>(null)
@@ -651,7 +722,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
       return (CSS as any).escape(value)
     }
-    return value.replace(/\\/g, "\\\\").replace(/\"/g, "\\\"")
+    return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")
   }
 
   const scrollActiveIntoView = (sessionId: string) => {
@@ -770,35 +841,21 @@ const SessionList: Component<SessionListProps> = (props) => {
 
        <div class="session-list flex-1 overflow-y-auto" ref={(el) => listEl[1](el)}>
 
-          <Show when={filteredThreads().length > 0}>
-            <div class="session-section">
-              <For each={filteredThreads()}>
-
-               {(thread) => {
-                 const expanded = () => (normalizedQuery() ? true : isSessionParentExpanded(props.instanceId, thread.parent.id))
-                 return (
-                   <>
-                       <SessionRow
-                         sessionId={thread.parent.id}
-                         hasChildren={thread.children.length > 0}
-                         expanded={expanded()}
-                         onToggleExpand={() => toggleSessionParentExpanded(props.instanceId, thread.parent.id)}
-                       />
-
-                     <Show when={expanded() && thread.children.length > 0}>
-                       <For each={thread.children}>
-                         {(child, index) => (
-                           <SessionRow sessionId={child.id} isChild isLastChild={index() === thread.children.length - 1} />
-                         )}
-                       </For>
-                     </Show>
-                   </>
-                 )
-               }}
-            </For>
-          </div>
-        </Show>
-      </div>
+         <Show when={filteredThreads().length > 0}>
+           <div class="session-section">
+             <For each={filteredThreads()}>
+                {(thread) => (
+                  <SessionThreadRow
+                    thread={thread}
+                    instanceId={props.instanceId}
+                    activeSessionId={props.activeSessionId}
+                    depth={0}
+                  />
+                )}
+             </For>
+           </div>
+         </Show>
+       </div>
 
       <Show when={props.showFooter !== false}>
         <div class="session-list-footer p-3 border-t border-base">
