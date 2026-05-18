@@ -2,6 +2,7 @@ import { Component, For, createSignal, createEffect, Show, onMount, onCleanup, c
 import { instances, getInstanceLogs, isInstanceLogStreaming, setInstanceLogStreaming } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
+import { useConfig } from "../stores/preferences"
 
 interface LogsViewProps {
   instanceId: string
@@ -11,6 +12,7 @@ const logsScrollState = new Map<string, { scrollTop: number; autoScroll: boolean
 
 const LogsView: Component<LogsViewProps> = (props) => {
   const { t } = useI18n()
+  const { isSecureEnvVar } = useConfig()
   let scrollRef: HTMLDivElement | undefined
   const savedState = logsScrollState.get(props.instanceId)
   const [autoScroll, setAutoScroll] = createSignal(savedState?.autoScroll ?? false)
@@ -112,10 +114,12 @@ const LogsView: Component<LogsViewProps> = (props) => {
               {([key, value]) => (
                 <div class="env-var-item">
                   <span class="env-var-key">{key}</span>
-                  <span class="env-var-separator">=</span>
-                  <span class="env-var-value" title={value}>
-                    {value}
-                  </span>
+                  <Show when={!isSecureEnvVar(key)}>
+                    <span class="env-var-separator">=</span>
+                    <span class="env-var-value" title={value}>
+                      {value}
+                    </span>
+                  </Show>
                 </div>
               )}
             </For>

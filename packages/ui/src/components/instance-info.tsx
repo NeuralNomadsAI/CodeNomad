@@ -3,6 +3,7 @@ import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
 import { useI18n } from "../lib/i18n"
+import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { disposeInstance } from "../stores/instances"
 import { showToastNotification } from "../lib/notifications"
@@ -18,6 +19,7 @@ const log = getLogger("actions")
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const { t } = useI18n()
+  const { isSecureEnvVar } = useConfig()
   const metadataContext = useOptionalInstanceMetadataContext()
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
@@ -156,8 +158,8 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
                       {key}
                     </span>
-                    <span class="text-xs font-mono flex-1 text-secondary" title={value}>
-                      {value}
+                    <span class="text-xs font-mono flex-1 text-secondary" title={isSecureEnvVar(key) ? t("envEditor.fields.secure.masked") : value}>
+                      {isSecureEnvVar(key) ? "***" : value}
                     </span>
                   </div>
                 )}
