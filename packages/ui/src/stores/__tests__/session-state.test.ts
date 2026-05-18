@@ -213,6 +213,56 @@ describe("getSessionThreads", () => {
     assert.equal(threads[0].children[0].children[0].hasChildren, false)
   })
 
+  it("rebuilds tree when a deep descendant is added (cache invalidation)", () => {
+    setupSessions([
+      { id: "root", parentId: null, updated: 1000 },
+      { id: "child", parentId: "root", updated: 1000 },
+      { id: "grandchild", parentId: "child", updated: 1000 },
+    ])
+
+    const initial = getSessionThreads(INSTANCE_ID)
+    assert.equal(initial[0].children[0].children.length, 1)
+    assert.equal(initial[0].children[0].children[0].session.id, "grandchild")
+
+    // Add a great-grandchild below "grandchild" without changing root or
+    // root's direct children. This simulates a live SSE event arriving for
+    // a deeply nested subagent.
+    setupSessions([
+      { id: "root", parentId: null, updated: 1000 },
+      { id: "child", parentId: "root", updated: 1000 },
+      { id: "grandchild", parentId: "child", updated: 1000 },
+      { id: "great-grandchild", parentId: "grandchild", updated: 2000 },
+    ])
+
+    const updated = getSessionThreads(INSTANCE_ID)
+    const grandchildThread = updated[0].children[0].children[0]
+    assert.equal(grandchildThread.children.length, 1)
+    assert.equal(grandchildThread.children[0].session.id, "great-grandchild")
+    assert.equal(grandchildThread.hasChildren, true)
+  })
+
+  it("rebuilds tree when a descendant's updated time changes", () => {
+    setupSessions([
+      { id: "root", parentId: null, updated: 1000 },
+      { id: "child", parentId: "root", updated: 1000 },
+      { id: "grandchild", parentId: "child", updated: 1000 },
+    ])
+
+    const initial = getSessionThreads(INSTANCE_ID)
+    assert.equal(initial[0].latestUpdated, 1000)
+
+    // Bump only the grandchild's updated time — root and direct children unchanged
+    setupSessions([
+      { id: "root", parentId: null, updated: 1000 },
+      { id: "child", parentId: "root", updated: 1000 },
+      { id: "grandchild", parentId: "child", updated: 5000 },
+    ])
+
+    const updated = getSessionThreads(INSTANCE_ID)
+    // latestUpdated must propagate the deep descendant's new time
+    assert.equal(updated[0].latestUpdated, 5000)
+  })
+
   it("threads are sorted by latestUpdated when update times differ", () => {
     setupSessions([
       { id: "root-old", parentId: null, updated: 1000 },

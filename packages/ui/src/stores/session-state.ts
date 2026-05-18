@@ -534,22 +534,25 @@ function buildSessionThreadTree(
 
 /**
  * Generates a signature for cache invalidation based on session state.
- * Includes the session's update time and all descendant IDs.
+ * Walks the entire descendant subtree so any change — a new descendant at any
+ * depth, or a bumped `time.updated` on any descendant — invalidates the cache.
+ * Without the deep walk, live SSE events for grandchildren and below would not
+ * cause a re-render until the page was refreshed.
  */
 function computeThreadSignature(
   session: Session,
   childrenByParent: Map<string, Session[]>,
-  visitedDescendants: Set<string> = new Set(),
 ): string {
   const parts: string[] = []
-  parts.push(String(session.time.updated ?? 0))
-
-  const directChildren = childrenByParent.get(session.id) ?? []
-  for (const child of directChildren) {
-    if (visitedDescendants.has(child.id)) continue
-    visitedDescendants.add(child.id)
-    parts.push(child.id)
+  const visited = new Set<string>()
+  const walk = (current: Session) => {
+    if (visited.has(current.id)) return
+    visited.add(current.id)
+    parts.push(`${current.id}@${current.time.updated ?? 0}`)
+    const directChildren = childrenByParent.get(current.id) ?? []
+    for (const child of directChildren) walk(child)
   }
+  walk(session)
 
   // Sort to ensure deterministic signature regardless of iteration order
   parts.sort()
