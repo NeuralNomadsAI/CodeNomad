@@ -50,7 +50,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionExpanded, sessions, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
@@ -175,7 +175,7 @@ function applySessionStatus(instanceId: string, sessionId: string, status: Sessi
   })
 
   if (parentToExpand) {
-    ensureSessionParentExpanded(instanceId, parentToExpand)
+    ensureSessionExpanded(instanceId, parentToExpand)
   }
 }
 
@@ -253,7 +253,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
 
     if (shouldExpandParent) {
-      ensureSessionParentExpanded(instanceId, shouldExpandParent)
+      ensureSessionExpanded(instanceId, shouldExpandParent)
     }
 
     return fetched

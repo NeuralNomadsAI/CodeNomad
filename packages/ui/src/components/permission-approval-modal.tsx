@@ -10,7 +10,7 @@ import {
   getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
 } from "../stores/instances"
-import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
+import { ensureSessionExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -249,7 +249,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     const parentId = session?.parentId ?? session?.id
     if (parentId) {
-      ensureSessionParentExpanded(props.instanceId, parentId)
+      ensureSessionExpanded(props.instanceId, parentId)
     }
 
     setActiveSessionFromList(props.instanceId, sessionId)
