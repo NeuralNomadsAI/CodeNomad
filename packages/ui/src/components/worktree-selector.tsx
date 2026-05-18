@@ -422,8 +422,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
       <Dialog open={createOpen()} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <Dialog.Portal>
-          <Dialog.Overlay class="modal-overlay" />
-          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <Dialog.Overlay class="modal-overlay z-[60]" />
+          <div class="fixed inset-0 z-[1310] flex items-center justify-center p-4">
             <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-5">
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">Create worktree</Dialog.Title>
@@ -494,8 +494,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
       <Dialog open={deleteOpen()} onOpenChange={(open) => !open && closeDeleteDialog()}>
         <Dialog.Portal>
-          <Dialog.Overlay class="modal-overlay" />
-          <div class="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4">
+          <Dialog.Overlay class="modal-overlay z-[60]" />
+          <div class="fixed inset-0 z-[1310] flex items-center justify-center p-3 md:p-4">
             <Dialog.Content class="modal-surface w-[clamp(640px,45vw,960px)] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-2rem)] overflow-y-auto p-4 flex flex-col gap-3">
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">Delete worktree</Dialog.Title>
