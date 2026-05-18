@@ -16,8 +16,8 @@ const serverDest = join(resourcesRoot, "server")
 const npmExecPath = process.env.npm_execpath
 const npmNodeExecPath = process.env.npm_node_execpath
 const { prepareBundledNodeRuntime } = require(join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
+const { copyPackagedServerResources } = require(join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
 
-const serverSources = ["dist", "public", "node_modules", "package.json"]
 const serverDepsMarker = join(serverRoot, "node_modules", "fastify", "package.json")
 
 function log(message) {
@@ -68,65 +68,10 @@ function ensureServerDependencies() {
   }
 }
 
-function copyServerArtifacts() {
-  fs.rmSync(serverDest, { recursive: true, force: true })
-  fs.mkdirSync(serverDest, { recursive: true })
-
-  for (const name of serverSources) {
-    const from = join(serverRoot, name)
-    const to = join(serverDest, name)
-    if (!fs.existsSync(from)) {
-      throw new Error(`Missing required server artifact: ${from}`)
-    }
-    fs.cpSync(from, to, { recursive: true, dereference: true })
-    log(`copied ${name} to Electron resources`) 
-  }
-}
-
-function stripNodeModuleBins() {
-  const root = join(serverDest, "node_modules")
-  if (!fs.existsSync(root)) {
-    return
-  }
-
-  const stack = [root]
-  let removed = 0
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) break
-
-    let entries
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const entry of entries) {
-      const full = join(current, entry.name)
-      if (entry.name === ".bin") {
-        fs.rmSync(full, { recursive: true, force: true })
-        removed += 1
-        continue
-      }
-
-      if (entry.isDirectory()) {
-        stack.push(full)
-      }
-    }
-  }
-
-  if (removed > 0) {
-    log(`removed ${removed} node_modules/.bin directories`)
-  }
-}
-
 async function main() {
   ensureServerBuild()
   ensureServerDependencies()
-  copyServerArtifacts()
-  stripNodeModuleBins()
+  copyPackagedServerResources({ serverRoot, serverDest, log })
   await prepareBundledNodeRuntime({ resourcesRoot })
 }
 

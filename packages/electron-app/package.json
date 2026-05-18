@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "CodeNomad - AI coding assistant",
   "license": "MIT",
   "author": {
@@ -37,11 +37,10 @@
     "build:all": "node scripts/build.js all",
     "package:mac": "node scripts/build.js mac",
     "package:win": "node scripts/build.js win",
-    "package:linux": "node scripts/build.js linux"
+    "package:linux": "node scripts/build.js linux",
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources electron/resources --loading dist/renderer"
   },
   "dependencies": {
-    "@neuralnomads/codenomad": "file:../server",
-    "@codenomad/ui": "file:../ui",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
@@ -66,7 +65,10 @@
       "buildResources": "electron/resources"
     },
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/renderer/loading.html",
+      "dist/renderer/assets/**/*",
       "package.json"
     ],
     "extraResources": [

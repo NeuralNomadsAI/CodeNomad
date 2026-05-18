@@ -291,6 +291,26 @@ export interface FileSystemFileContentResponse {
   encoding: "utf-8" | "base64"
 }
 
+export interface ConfigFileDescriptor {
+  id: string
+  label: string
+  path: string
+  language: string
+}
+
+export type ConfigFileListResponse = ConfigFileDescriptor[]
+
+export interface ConfigFileContentResponse {
+  id: string
+  path: string
+  contents: string
+  exists: boolean
+}
+
+export interface ConfigFileContentRequest {
+  contents: string
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {

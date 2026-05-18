@@ -6,6 +6,9 @@ import type {
   ExecutionProfilePreviewRequest,
   ExecutionProfilePreviewResponse,
   ExecutionProfileTestResponse,
+  ConfigFileContentRequest,
+  ConfigFileContentResponse,
+  ConfigFileListResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
   FileSystemFileContentResponse,
@@ -286,6 +289,19 @@ export const serverApi = {
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
+  },
+  listConfigFiles(): Promise<ConfigFileListResponse> {
+    return request<ConfigFileListResponse>("/api/config-files")
+  },
+  readConfigFile(id: string): Promise<ConfigFileContentResponse> {
+    return request<ConfigFileContentResponse>(`/api/config-files/${encodeURIComponent(id)}/content`)
+  },
+  writeConfigFile(id: string, contents: string): Promise<void> {
+    const body: ConfigFileContentRequest = { contents }
+    return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    })
   },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {

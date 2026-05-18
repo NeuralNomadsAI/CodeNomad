@@ -147,6 +147,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "פקודות",
   "promptInput.history.previousAriaLabel": "פקודה קודמת",
   "promptInput.history.nextAriaLabel": "פקודה הבאה",
+  "promptInput.resizeHandle.title": "גרור כדי לשנות את גובה שדה הקלט",
   "promptInput.overlay.newLine": "שורה חדשה",
   "promptInput.overlay.send": "שלח",
   "promptInput.overlay.filesAgents": "קבצים/סוכנים",

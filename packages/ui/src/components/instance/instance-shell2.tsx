@@ -29,6 +29,7 @@ import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
+import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -50,7 +51,8 @@ import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showPromptDialog } from "../../stores/alerts"
 import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
-import { createSession, getDefaultModel, providers, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -123,6 +125,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [draftAgent, setDraftAgent] = createSignal("")
   const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
   const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
+  const [draftPromptInputApi, setDraftPromptInputApi] = createSignal<PromptInputApi | null>(null)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -191,6 +194,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     unpinRight: unpinRightDrawer,
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
+    closeFloatingDrawersIfAny,
     leftAppBarButtonLabel,
     rightAppBarButtonLabel,
     leftAppBarButtonIcon,
@@ -198,6 +202,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  // When the user switches away from this instance (e.g., taps a different
+  // instance/project tab while a floating drawer is open on phone), close any
+  // open floating drawers so the previous instance's drawer doesn't remain
+  // visually or interactively open when its tab regains focus later.
+  let wasActiveInstance = Boolean(props.isActiveInstance)
+  createEffect(() => {
+    const isActive = Boolean(props.isActiveInstance)
+    if (wasActiveInstance && !isActive) {
+      closeFloatingDrawersIfAny()
+    }
+    wasActiveInstance = isActive
+  })
+
+  onMount(() => {
+    if (typeof document === "undefined") return
+
+    const handleFloatingDrawerPointerDown = (event: PointerEvent) => {
+      if (!props.isActiveInstance) return
+
+      const hasFloatingDrawerOpen = (!leftPinned() && leftOpen()) || (!rightPinned() && rightOpen())
+      if (!hasFloatingDrawerOpen) return
+
+      const target = event.target
+      if (!(target instanceof Node)) return
+
+      const leftContent = leftDrawerContentEl()
+      const rightContent = rightDrawerContentEl()
+      const leftPaper = leftContent?.closest(".MuiDrawer-paper")
+      const rightPaper = rightContent?.closest(".MuiDrawer-paper")
+      if (leftPaper?.contains(target) || rightPaper?.contains(target)) return
+
+      if (!leftPinned() && leftOpen()) setLeftOpen(false)
+      if (!rightPinned() && rightOpen()) setRightOpen(false)
+    }
+
+    document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
+  })
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -604,7 +647,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // The tab bar sits outside the floating drawer. Let its controls
+          // receive the gesture; click-away handling above still closes the
+          // drawer when the target is not inside the drawer content.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
             borderInlineEnd: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -617,8 +665,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
 
+          // Keep backdrop dismissal for the area below the tab bar without
+          // covering the tab bar itself.
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -720,7 +773,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // See the matching override on the left drawer for rationale.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
             borderInlineStart: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -733,7 +789,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -805,7 +864,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     setDraftModelManuallySelected(true)
   }
 
-  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+  const draftAttachments = createMemo(() => getAttachments(props.instance.id, NO_SESSION_DRAFT_SESSION_ID))
+
+  function registerDraftPromptInputApi(api: PromptInputApi) {
+    setDraftPromptInputApi(api)
+    return () => {
+      setDraftPromptInputApi((current) => (current === api ? null : current))
+    }
+  }
+
+  async function createAndActivateDraftSession() {
     const agent = draftAgent()
     const model = draftModel()
     if (agent && model.providerId && model.modelId) {
@@ -816,7 +884,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       await updateSessionModel(props.instance.id, session.id, model)
     }
     setActiveParentSession(props.instance.id, session.id)
+    return session
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    const session = await createAndActivateDraftSession()
     await sendMessage(props.instance.id, session.id, prompt, attachments)
+  }
+
+  async function handleFirstPromptCommand(commandName: string, args: string) {
+    const session = await createAndActivateDraftSession()
+    await executeCustomCommand(props.instance.id, session.id, commandName, args)
+  }
+
+  async function handleFirstPromptShell(command: string) {
+    const session = await createAndActivateDraftSession()
+    await runShellCommand(props.instance.id, session.id, command)
   }
 
   const sessionLayout = (
@@ -1079,6 +1162,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
 
+                    <Show when={draftAttachments().length > 0}>
+                      <PromptAttachmentsBar
+                        attachments={draftAttachments()}
+                        onRemoveAttachment={(attachmentId) => {
+                          const api = draftPromptInputApi()
+                          if (api) {
+                            api.removeAttachment(attachmentId)
+                            return
+                          }
+                          removeAttachment(props.instance.id, NO_SESSION_DRAFT_SESSION_ID, attachmentId)
+                        }}
+                        onExpandTextAttachment={(attachmentId) => draftPromptInputApi()?.expandTextAttachment(attachmentId)}
+                      />
+                    </Show>
+
                     <PromptInput
                       instanceId={props.instance.id}
                       instanceFolder={props.instance.folder}
@@ -1086,7 +1184,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       isActive={props.isActiveInstance}
                       compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
+                      onCommand={handleFirstPromptCommand}
+                      onRunShell={handleFirstPromptShell}
                       escapeInDebounce={props.escapeInDebounce}
+                      registerPromptInputApi={registerDraftPromptInputApi}
                     />
                   </div>
                 }

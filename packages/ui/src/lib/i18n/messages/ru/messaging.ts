@@ -149,6 +149,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "Команды",
   "promptInput.history.previousAriaLabel": "Предыдущий prompt",
   "promptInput.history.nextAriaLabel": "Следующий prompt",
+  "promptInput.resizeHandle.title": "Перетащите, чтобы изменить высоту поля ввода",
   "promptInput.overlay.newLine": "Новая строка",
   "promptInput.overlay.send": "Отправить",
   "promptInput.overlay.filesAgents": "Файлы/агенты",
