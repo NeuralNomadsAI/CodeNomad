@@ -2,6 +2,14 @@ import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
+import {
+  clearPromptDisplayOverride,
+  clearPromptDisplayOverridesForInstance,
+  clearPromptDisplayOverridesForSession,
+  getPromptDisplayOverride,
+  movePromptDisplayOverride,
+  setPromptDisplayOverride,
+} from "../message-prompt-display"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import type { PermissionRequestLike } from "../../types/permission"
 import { mergePermissionRequest } from "../../types/permission"
@@ -104,6 +112,23 @@ function createEmptyUsageState(): SessionUsageState {
     actualUsageTokens: 0,
     latestMessageId: undefined,
   }
+}
+
+function resolveClientPromptDisplayText(
+  instanceId: string,
+  input: Pick<MessageUpsertInput, "id" | "sessionId" | "clientPromptDisplayMetadata">,
+  previous?: Pick<MessageRecord, "clientPromptDisplayMetadata">,
+) {
+  if (input.clientPromptDisplayMetadata) {
+    return input.clientPromptDisplayMetadata
+  }
+
+  const persisted = getPromptDisplayOverride(instanceId, input.sessionId, input.id)
+  if (persisted) {
+    return persisted
+  }
+
+  return previous?.clientPromptDisplayMetadata
 }
 
 function extractUsageEntry(info: MessageInfo | undefined): UsageEntry | null {
@@ -417,6 +442,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       const normalizedParts = normalizeParts(input.id, input.parts)
       const shouldBump = Boolean(input.bumpRevision || normalizedParts)
       const previous = state.messages[input.id]
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
       normalizedRecords[input.id] = {
         id: input.id,
         sessionId: input.sessionId,
@@ -425,10 +451,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         createdAt: input.createdAt ?? previous?.createdAt ?? now,
         updatedAt: input.updatedAt ?? now,
         isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
+        clientPromptDisplayMetadata,
         revision: previous ? previous.revision + (shouldBump ? 1 : 0) : 0,
         partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
         parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
       }
+      setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
     })
 
     const infoList = infos ? Array.from(infos) : undefined
@@ -519,6 +547,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     setState("messages", input.id, (previous) => {
       const revision = previous ? previous.revision + (shouldBump ? 1 : 0) : 0
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
       const record: MessageRecord = {
         id: input.id,
         sessionId: input.sessionId,
@@ -527,10 +556,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         createdAt: input.createdAt ?? previous?.createdAt ?? now,
         updatedAt: input.updatedAt ?? now,
         isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
+        clientPromptDisplayMetadata,
         revision,
         partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
         parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
       }
+      setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
       nextRecord = record
       return record
     })
@@ -705,6 +736,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const sessionIds = new Set<string>()
 
     if (record?.sessionId) {
+      clearPromptDisplayOverride(instanceId, record.sessionId, messageId)
+    }
+
+    if (record?.sessionId) {
       sessionIds.add(record.sessionId)
     } else {
       Object.values(state.sessions).forEach((session) => {
@@ -813,6 +848,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (options.oldId === options.newId) return
     const existing = state.messages[options.oldId]
     if (!existing) return
+
+    movePromptDisplayOverride(instanceId, existing.sessionId, options.oldId, options.newId)
 
     const cloned: MessageRecord = {
       ...existing,
@@ -1046,6 +1083,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const keptIds = session.messageIds.slice(0, stopIndex)
     if (removedIds.length === 0) return
 
+    removedIds.forEach((messageId) => clearPromptDisplayOverride(instanceId, sessionId, messageId))
+
     setState("sessions", sessionId, "messageIds", keptIds)
 
     setState("messages", (prev) => {
@@ -1121,8 +1160,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-   function clearSession(sessionId: string) {
-     if (!sessionId) return
+  function clearSession(sessionId: string) {
+    if (!sessionId) return
+
+    clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
     const messageIds = Object.values(state.messages)
       .filter((record) => record.sessionId === sessionId)
@@ -1220,6 +1261,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
  
    function clearInstance() {
+     clearPromptDisplayOverridesForInstance(instanceId)
      messageInfoCache.clear()
       setState(reconcile(createInitialState(instanceId)))
     }

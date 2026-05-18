@@ -127,6 +127,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "מחק פריט זה",
   "messagePart.actions.deleteFailedTitle": "המחיקה נכשלה",
   "messagePart.actions.deleteFailedMessage": "מחיקת הפריט נכשלה",
+  "messagePart.hiddenPrompt.summary": "מקטע פרומפט מוסתר",
   "messageItem.attachment.defaultName": "קובץ מצורף",
   "messageItem.attachment.downloadAriaLabel": "הורד {name}",
   "messageItem.agentMeta.agentLabel": "סוכן: {agent}",

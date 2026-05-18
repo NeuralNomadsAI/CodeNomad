@@ -1,8 +1,10 @@
-import { Match, Show, Suspense, Switch, lazy } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createMemo, lazy } from "solid-js"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
+import { useI18n } from "../lib/i18n"
+import { splitHiddenPromptSections, type HiddenPromptDisplayMetadata } from "../lib/hidden-prompt-sections"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -16,11 +18,13 @@ interface MessagePartProps {
   // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
+  displayMetadataOverride?: HiddenPromptDisplayMetadata
   onRendered?: () => void
 }
 
 export default function MessagePart(props: MessagePartProps) {
 
+  const { t } = useI18n()
   const { isDark } = useTheme()
   const partType = () => props.part?.type || ""
   const reasoningId = () => `reasoning-${props.part?.id || ""}`
@@ -51,6 +55,14 @@ export default function MessagePart(props: MessagePartProps) {
     const id = (props.part as unknown as { id?: unknown })?.id
     return typeof id === "string" && id.length > 0
   }
+
+  const hiddenPromptSegments = createMemo(() => {
+    if (props.messageType !== "user") return null
+    if (props.part?.type !== "text") return null
+    if (typeof props.part.text !== "string") return null
+
+    return splitHiddenPromptSections(props.part.text, props.displayMetadataOverride)
+  })
 
   function reasoningSegmentHasText(segment: unknown): boolean {
     if (typeof segment === "string") {
@@ -111,6 +123,15 @@ export default function MessagePart(props: MessagePartProps) {
     }
   }
 
+  function createSegmentTextPart(text: string, index: number): TextPart {
+    return {
+      id: `${String((props.part as { id?: string }).id ?? "text")}:display:${index}`,
+      type: "text",
+      text,
+      synthetic: false,
+    }
+  }
+
   function handleReasoningClick(e: Event) {
     e.preventDefault()
     toggleItemExpanded(reasoningId())
@@ -127,16 +148,58 @@ export default function MessagePart(props: MessagePartProps) {
             data-part-type="text"
             data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
           >
-            <Show when={canRenderMarkdown()} fallback={<span class="text-primary" dir="auto">{plainTextContent()}</span>}>
-              <Markdown
-                part={createTextPartForMarkdown()}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                isDark={isDark()}
-                size={isAssistantMessage() ? "tight" : "base"}
-                escapeRawHtml={props.messageType === "user"}
-                onRendered={props.onRendered}
-              />
+            <Show
+              when={hiddenPromptSegments()}
+              fallback={
+                <Show when={canRenderMarkdown()} fallback={<span class="text-primary" dir="auto">{plainTextContent()}</span>}>
+                  <Markdown
+                    part={createTextPartForMarkdown()}
+                    instanceId={props.instanceId}
+                    sessionId={props.sessionId}
+                    isDark={isDark()}
+                    size={isAssistantMessage() ? "tight" : "base"}
+                    escapeRawHtml={props.messageType === "user"}
+                    onRendered={props.onRendered}
+                  />
+                </Show>
+              }
+            >
+              {(segments) => (
+                <div class="flex flex-col gap-2">
+                  <For each={segments().filter((segment) => segment.text.length > 0)}>
+                    {(segment, index) =>
+                      segment.hidden ? (
+                        <details class="rounded-md border border-base bg-surface-secondary px-3 py-2">
+                          <summary class="cursor-pointer select-none text-xs font-medium text-secondary">
+                            {t("messagePart.hiddenPrompt.summary")}
+                          </summary>
+                          <div class="pt-2">
+                            <Markdown
+                              part={createSegmentTextPart(segment.text, index())}
+                              instanceId={props.instanceId}
+                              sessionId={props.sessionId}
+                              isDark={isDark()}
+                              size="base"
+                              escapeRawHtml
+                              onRendered={props.onRendered}
+                            />
+                          </div>
+                        </details>
+                      ) : (
+                        <Markdown
+                          part={createSegmentTextPart(segment.text, index())}
+                          instanceId={props.instanceId}
+                          sessionId={props.sessionId}
+                          isDark={isDark()}
+                          size="base"
+                          escapeRawHtml
+                          onRendered={props.onRendered}
+                        />
+                      )
+                    }
+                  </For>
+                </div>
+              )}
             </Show>
           </div>
         </Show>

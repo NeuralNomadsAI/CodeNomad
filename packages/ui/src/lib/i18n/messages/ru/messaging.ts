@@ -129,6 +129,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "Удалить этот элемент",
   "messagePart.actions.deleteFailedTitle": "Ошибка удаления",
   "messagePart.actions.deleteFailedMessage": "Не удалось удалить элемент",
+  "messagePart.hiddenPrompt.summary": "Скрытый раздел промпта",
   "messageItem.attachment.defaultName": "вложение",
   "messageItem.attachment.downloadAriaLabel": "Скачать {name}",
   "messageItem.agentMeta.agentLabel": "Агент: {agent}",

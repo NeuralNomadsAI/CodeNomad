@@ -127,6 +127,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "Delete this item",
   "messagePart.actions.deleteFailedTitle": "Delete failed",
   "messagePart.actions.deleteFailedMessage": "Failed to delete item",
+  "messagePart.hiddenPrompt.summary": "Hidden prompt section",
   "messageItem.attachment.defaultName": "attachment",
   "messageItem.attachment.downloadAriaLabel": "Download {name}",
   "messageItem.agentMeta.agentLabel": "Agent: {agent}",
