@@ -1,6 +1,8 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
+import fs from "node:fs/promises"
 import { FileSystemBrowser } from "../../filesystem/browser"
+import { RecentFolder, RecentFolderSchema } from '../../config/schema'
 
 interface RouteDeps {
   fileSystemBrowser: FileSystemBrowser
@@ -19,6 +21,11 @@ const FilesystemCreateFolderSchema = z.object({
 const FilesystemFileContentQuerySchema = z.object({
   path: z.string(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
+})
+
+const FilesystemFileRealpathQuerySchema = z.object({
+  currentPath: z.string(),
+  recentFolders: z.array(RecentFolderSchema).default([]),
 })
 
 export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -66,4 +73,38 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
       reply.code(400).type("text/plain").send((error as Error).message)
     }
   })
+
+  app.post("/api/filesystem/detect-path-existing-in-recent", async (request, reply) => {
+    const query = FilesystemFileRealpathQuerySchema.parse(request.body ?? {})
+
+    try {
+      const currentPath = query.currentPath
+      const currentReal = await fs.realpath(currentPath)
+
+      let exists = false
+      let foundResult: RecentFolder | undefined
+
+      const fn = async (folder: RecentFolder) => {
+        return (await fs.exists(folder.path)) && currentReal === await fs.realpath(folder.path)
+      }
+
+      for (const folder of query.recentFolders) {
+        if (currentPath === folder.path || currentReal === folder.path || await fn(folder).catch(() => false)) {
+          exists = true
+          foundResult = folder
+          break
+        }
+      }
+
+      return {
+        exists,
+        currentPath,
+        currentReal,
+        foundResult
+      }
+    } catch (error) {
+      reply.code(400).type("text/plain").send((error as Error).message)
+    }
+  })
+
 }

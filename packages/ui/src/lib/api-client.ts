@@ -42,6 +42,8 @@ import type {
   WorktreeCreateRequest,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
+  RecentFolder,
+  DetectPathExistingInRecentResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
@@ -480,6 +482,12 @@ export const serverApi = {
       params.set("encoding", options.encoding)
     }
     return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
+  },
+  detectPathExistingInRecent(currentPath: string, recentFolders: RecentFolder[]): Promise<DetectPathExistingInRecentResponse> {
+    return request<DetectPathExistingInRecentResponse>(`/api/filesystem/detect-path-existing-in-recent`, {
+      method: "POST",
+      body: JSON.stringify({ currentPath, recentFolders }),
+    })
   },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)

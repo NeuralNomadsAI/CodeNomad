@@ -31,7 +31,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { useConfig } from "./stores/preferences"
+import { recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   getExistingInstanceForFolder,
@@ -70,6 +70,7 @@ import {
   selectInstanceTab,
   selectSidecarTab,
 } from "./stores/app-tabs"
+import { serverApi } from './lib/api-client'
 
 const log = getLogger("actions")
 
@@ -268,6 +269,13 @@ const App: Component = () => {
     if (!folderPath) {
       return
     }
+
+    const detectResult = await serverApi.detectPathExistingInRecent(folderPath, recentFolders())
+
+    if (detectResult?.exists) {
+      folderPath = detectResult.foundResult.path
+    }
+
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
     recordWorkspaceLaunch(folderPath, selectedBinary)
     clearLaunchError()
@@ -485,7 +493,7 @@ const App: Component = () => {
       const tauriBridge = (window as { __TAURI__?: { event?: { listen: (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__
       if (tauriBridge?.event) {
         let unlistenMenu: (() => void) | null = null
-        
+
         tauriBridge.event.listen("menu:newInstance", () => {
           handleNewInstanceRequest()
         }).then((unlisten) => {
@@ -527,7 +535,7 @@ const App: Component = () => {
                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                    <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
                  </div>
- 
+
                  <Show when={launchErrorMessage()}>
                    <div class="rounded-lg border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
                      <p class="text-xs font-medium text-muted uppercase tracking-wide">{t("app.launchError.errorOutputLabel")}</p>
@@ -652,7 +660,7 @@ const App: Component = () => {
             </div>
           </div>
         </Show>
- 
+
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <Show when={alreadyOpenFolderChoice()}>
@@ -679,7 +687,7 @@ const App: Component = () => {
             </Dialog.Portal>
           </Dialog>
         </Show>
- 
+
         <AlertDialog />
 
         <Toaster
