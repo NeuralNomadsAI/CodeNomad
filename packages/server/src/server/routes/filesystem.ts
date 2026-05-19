@@ -85,7 +85,8 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
       let foundResult: RecentFolder | undefined
 
       const fn = async (folder: RecentFolder) => {
-        return (await fs.exists(folder.path)) && currentReal === await fs.realpath(folder.path)
+        await fs.access(folder.path, fs.constants.F_OK)
+        return currentReal === await fs.realpath(folder.path)
       }
 
       for (const folder of query.recentFolders) {
