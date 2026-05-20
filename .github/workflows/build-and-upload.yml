@@ -311,6 +311,16 @@ jobs:
       - name: Ensure rollup native binary
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
+      - name: Install Flatpak build dependencies (Electron)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install --system --noninteractive flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.electronjs.Electron2.BaseApp//24.08
+
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
@@ -322,7 +332,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in packages/electron-app/release/*.zip packages/electron-app/release/*.AppImage; do
+          for file in packages/electron-app/release/*.zip packages/electron-app/release/*.AppImage packages/electron-app/release/*.flatpak; do
             [ -f "$file" ] || continue
             echo "Uploading $file"
             gh release upload "$TAG" "$file" --clobber
@@ -336,6 +346,7 @@ jobs:
           path: |
             packages/electron-app/release/*.zip
             packages/electron-app/release/*.AppImage
+            packages/electron-app/release/*.flatpak
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
@@ -637,7 +648,15 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            xdg-utils \
+            rpm \
+            flatpak \
+            flatpak-builder
+          sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install --system --noninteractive flathub \
+            org.gnome.Platform//46 \
+            org.gnome.Sdk//46
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
@@ -673,6 +692,9 @@ jobs:
         working-directory: packages/tauri-app
         run: npm exec -- tauri build
 
+      - name: Build Flatpak bundle (Tauri)
+        run: npm run build:flatpak --workspace @codenomad/tauri-app
+
       - name: Package Tauri artifacts (Linux)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
         run: |
@@ -688,14 +710,20 @@ jobs:
           }
 
           appimage=$(find_one "*.AppImage")
+          deb=$(find_one "*.deb")
+          rpm=$(find_one "*.rpm")
+          flatpak=$(find_one "*.flatpak")
           fallback_bin="$SEARCH_ROOT/release/codenomad-tauri"
 
-          if [ -z "$appimage" ] || [ ! -f "$fallback_bin" ]; then
-            echo "Missing bundle(s): appimage=${appimage:-none} binary=$fallback_bin" >&2
+          if [ -z "$appimage" ] || [ -z "$deb" ] || [ -z "$rpm" ] || [ -z "$flatpak" ] || [ ! -f "$fallback_bin" ]; then
+            echo "Missing bundle(s): appimage=${appimage:-none} deb=${deb:-none} rpm=${rpm:-none} flatpak=${flatpak:-none} binary=$fallback_bin" >&2
             exit 1
           fi
 
           cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.AppImage"
+          cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.deb"
+          cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.rpm"
+          cp "$flatpak" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.flatpak"
           zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.zip" "$fallback_bin"
 
       - name: Upload Actions artifacts (Tauri Linux)
