@@ -50,6 +50,19 @@ describe("preparePromptDisplayText", () => {
       ],
     })
   })
+
+  it("normalizes pasted CRLF content so collapsed metadata survives LF hydration", () => {
+    const attachment = createTextAttachment("a\r\nb\r\nc\r\nd", "pasted #1 (4 lines)", "paste-1.txt")
+
+    const prepared = preparePromptDisplayText("Intro\n[pasted #1]\nOutro", [attachment])
+
+    assert.equal(prepared.promptToSend, "Intro\na\nb\nc\nd\nOutro")
+    assert.deepEqual(splitPromptDisplaySections("Intro\na\nb\nc\nd\nOutro", prepared.displayMetadata), [
+      { kind: "inline", text: "Intro\n" },
+      { kind: "pasted", text: "a\nb\nc\nd" },
+      { kind: "inline", text: "\nOutro" },
+    ])
+  })
 })
 
 describe("splitPromptDisplaySections", () => {

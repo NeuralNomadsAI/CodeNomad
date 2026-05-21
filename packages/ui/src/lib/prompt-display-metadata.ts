@@ -23,6 +23,10 @@ export interface PreparedPromptDisplayText {
 
 const PASTED_PLACEHOLDER_REGEX = /\[\s*pasted\s*#\s*(\d+)\s*\]/gi
 
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, "\n")
+}
+
 function hasPastedPlaceholders(text: string): boolean {
   PASTED_PLACEHOLDER_REGEX.lastIndex = 0
   return PASTED_PLACEHOLDER_REGEX.test(text)
@@ -98,7 +102,7 @@ function createPastedLookup(attachments: Attachment[]): Map<string, string> {
     const match = attachment.display.match(/pasted #(\d+)/i)
     if (!match) continue
     if (!lookup.has(match[1])) {
-      lookup.set(match[1], attachment.source.value)
+      lookup.set(match[1], normalizeLineEndings(attachment.source.value))
     }
   }
 

@@ -2,8 +2,8 @@ import { Suspense, createEffect, createSignal, lazy, on, onCleanup, Show } from 
 import { ArrowBigUp, ArrowBigDown, Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import ExpandButton from "./expand-button"
 import { clearAttachments, removeAttachment } from "../stores/attachments"
-import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
+import { preparePromptSubmission } from "./prompt-input/submitPrompt"
 import Kbd from "./kbd"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
@@ -383,13 +383,16 @@ export default function PromptInput(props: PromptInputProps) {
       commandName.length > 0 &&
       getCommands(props.instanceId).some((cmd) => cmd.name === commandName)
 
-    const resolvedCommandArgs = isKnownSlashCommand ? resolvePastedPlaceholders(commandArgs, currentAttachments) : ""
-    const resolvedPrompt = isKnownSlashCommand
-      ? resolvedCommandArgs
-        ? `${commandToken} ${resolvedCommandArgs}`
-        : commandToken
-      : resolvePastedPlaceholders(text, currentAttachments)
-    const historyEntry = resolvedPrompt
+    const submission = preparePromptSubmission({
+      mode: isKnownSlashCommand ? "slash" : isShellMode ? "shell" : "message",
+      text,
+      attachments: currentAttachments,
+      commandToken,
+      commandArgs,
+    })
+    const resolvedCommandArgs = submission.resolvedCommandArgs
+    const resolvedPrompt = submission.submitPrompt
+    const historyEntry = submission.historyEntry
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
 
