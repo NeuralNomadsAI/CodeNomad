@@ -34,6 +34,7 @@
     "build:linux": "node scripts/build.js linux",
     "build:linux-arm64": "node scripts/build.js linux-arm64",
     "build:linux-rpm": "node scripts/build.js linux-rpm",
+    "build:flatpak": "node scripts/build-flatpak.js",
     "build:all": "node scripts/build.js all",
     "package:mac": "node scripts/build.js mac",
     "package:win": "node scripts/build.js win",
@@ -137,30 +138,11 @@
         },
         {
           "target": "AppImage"
-        },
-        {
-          "target": "flatpak"
         }
       ],
       "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",
       "category": "Development",
       "icon": "electron/resources/icon.png"
-    },
-    "flatpak": {
-      "runtimeVersion": "24.08",
-      "baseVersion": "24.08",
-      "branch": "stable",
-      "useWaylandFlags": true,
-      "finishArgs": [
-        "--socket=wayland",
-        "--socket=x11",
-        "--share=ipc",
-        "--device=dri",
-        "--socket=pulseaudio",
-        "--filesystem=home",
-        "--share=network",
-        "--talk-name=org.freedesktop.Notifications"
-      ]
     }
   },
   "private": true

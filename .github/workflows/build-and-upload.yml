@@ -318,11 +318,13 @@ jobs:
           sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install --system --noninteractive flathub \
             org.freedesktop.Platform//24.08 \
-            org.freedesktop.Sdk//24.08 \
-            org.electronjs.Electron2.BaseApp//24.08
+            org.freedesktop.Sdk//24.08
 
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
+
+      - name: Build Flatpak bundle (Electron)
+        run: npm run build:flatpak --workspace @neuralnomads/codenomad-electron-app
 
       - name: Verify bundled Node resource (Electron Linux)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
@@ -667,8 +669,8 @@ jobs:
             flatpak-builder
           sudo flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install --system --noninteractive flathub \
-            org.gnome.Platform//46 \
-            org.gnome.Sdk//46
+            org.gnome.Platform//47 \
+            org.gnome.Sdk//47
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
