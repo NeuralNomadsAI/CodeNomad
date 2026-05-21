@@ -128,7 +128,7 @@ export const messagingMessages = {
   "messagePart.actions.deleteTitle": "Eliminar este elemento",
   "messagePart.actions.deleteFailedTitle": "Error al eliminar",
   "messagePart.actions.deleteFailedMessage": "No se pudo eliminar el elemento",
-  "messagePart.hiddenPrompt.summary": "Sección de prompt oculta",
+  "messagePart.pastedText.summary": "Texto pegado",
   "messageItem.attachment.defaultName": "adjunto",
   "messageItem.attachment.downloadAriaLabel": "Descargar {name}",
   "messageItem.agentMeta.agentLabel": "Agente: {agent}",

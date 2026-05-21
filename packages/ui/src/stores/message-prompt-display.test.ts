@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
+import type { PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 import {
   clearPromptDisplayOverride,
   clearPromptDisplayOverridesForInstance,
@@ -39,7 +40,7 @@ type WindowWithMemoryStorage = {
 }
 
 describe("message prompt display overrides", () => {
-  it("persists and moves hidden prompt display text by message id", () => {
+  it("persists and moves prompt display metadata by message id", () => {
     const instanceId = `instance-${Date.now()}`
     const sessionId = "session-1"
     const oldMessageId = "temp-msg"
@@ -49,7 +50,7 @@ describe("message prompt display overrides", () => {
 
     clearPromptDisplayOverridesForInstance(instanceId)
 
-    const metadata = { segments: [{ hidden: false, length: 7 }, { hidden: true, length: 6 }] }
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 7 }, { kind: "pasted", length: 6 }] }
 
     setPromptDisplayOverride(instanceId, sessionId, oldMessageId, metadata)
     assert.deepEqual(

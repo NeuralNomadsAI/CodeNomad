@@ -4,7 +4,7 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 import { useI18n } from "../lib/i18n"
-import { splitHiddenPromptSections, type HiddenPromptDisplayMetadata } from "../lib/hidden-prompt-sections"
+import { splitPromptDisplaySections, type PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -18,7 +18,7 @@ interface MessagePartProps {
   // For user messages, keep the primary prompt text visible even when synthetic (optimistic).
   // Other synthetic text parts (tool traces, read outputs, etc.) should be hidden.
   primaryUserTextPartId?: string | null
-  displayMetadataOverride?: HiddenPromptDisplayMetadata
+  displayMetadataOverride?: PromptDisplayMetadata
   onRendered?: () => void
 }
 
@@ -56,12 +56,12 @@ export default function MessagePart(props: MessagePartProps) {
     return typeof id === "string" && id.length > 0
   }
 
-  const hiddenPromptSegments = createMemo(() => {
+  const promptDisplaySegments = createMemo(() => {
     if (props.messageType !== "user") return null
     if (props.part?.type !== "text") return null
     if (typeof props.part.text !== "string") return null
 
-    return splitHiddenPromptSections(props.part.text, props.displayMetadataOverride)
+    return splitPromptDisplaySections(props.part.text, props.displayMetadataOverride)
   })
 
   function reasoningSegmentHasText(segment: unknown): boolean {
@@ -149,7 +149,7 @@ export default function MessagePart(props: MessagePartProps) {
             data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
           >
             <Show
-              when={hiddenPromptSegments()}
+              when={promptDisplaySegments()}
               fallback={
                 <Show when={canRenderMarkdown()} fallback={<span class="text-primary" dir="auto">{plainTextContent()}</span>}>
                   <Markdown
@@ -168,10 +168,10 @@ export default function MessagePart(props: MessagePartProps) {
                 <div class="flex flex-col gap-2">
                   <For each={segments().filter((segment) => segment.text.length > 0)}>
                     {(segment, index) =>
-                      segment.hidden ? (
+                      segment.kind === "pasted" ? (
                         <details class="rounded-md border border-base bg-surface-secondary px-3 py-2">
                           <summary class="cursor-pointer select-none text-xs font-medium text-secondary">
-                            {t("messagePart.hiddenPrompt.summary")}
+                            {t("messagePart.pastedText.summary")}
                           </summary>
                           <div class="pt-2">
                             <Markdown

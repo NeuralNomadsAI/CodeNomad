@@ -1,5 +1,4 @@
-import { resolvePastedPlaceholders } from "../lib/prompt-placeholders"
-import { preparePromptDisplayText } from "../lib/hidden-prompt-sections"
+import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 
@@ -98,8 +97,7 @@ async function sendMessage(
   const messageId = createId("msg")
   const textPartId = createId("prt")
 
-  const resolvedPrompt = resolvePastedPlaceholders(prompt, attachments)
-  const preparedPrompt = preparePromptDisplayText(resolvedPrompt)
+  const preparedPrompt = preparePromptDisplayText(prompt, attachments)
 
   const optimisticParts: any[] = [
     {
