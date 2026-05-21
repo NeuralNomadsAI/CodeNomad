@@ -220,16 +220,11 @@ export interface FileSystemFileContentResponse {
   encoding: "utf-8" | "base64"
 }
 
-export interface DetectPathExistingInRecentRequest {
-  currentPath: string
-  recentPaths: RecentFolder[]
-}
-
 export interface DetectPathExistingInRecentResponse {
   exists: boolean
   currentPath: string
   currentReal: string
-  foundResult: RecentFolder | undefined
+  foundResult: string | undefined
 }
 
 export interface ConfigFileDescriptor {

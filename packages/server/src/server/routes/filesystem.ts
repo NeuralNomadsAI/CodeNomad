@@ -25,7 +25,7 @@ const FilesystemFileContentQuerySchema = z.object({
 
 const FilesystemFileRealpathQuerySchema = z.object({
   currentPath: z.string(),
-  recentFolders: z.array(RecentFolderSchema).default([]),
+  recentPaths: z.array(z.string()).default([]),
 })
 
 export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -82,17 +82,17 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
       const currentReal = await fs.realpath(currentPath)
 
       let exists = false
-      let foundResult: RecentFolder | undefined
+      let foundResult: string | undefined
 
-      const fn = async (folder: RecentFolder) => {
-        await fs.access(folder.path, fs.constants.F_OK)
-        return currentReal === await fs.realpath(folder.path)
+      const fn = async (path: string) => {
+        await fs.access(path, fs.constants.F_OK)
+        return currentReal === await fs.realpath(path)
       }
 
-      for (const folder of query.recentFolders) {
-        if (currentPath === folder.path || currentReal === folder.path || await fn(folder).catch(() => false)) {
+      for (const path of query.recentPaths) {
+        if (currentPath === path || currentReal === path || await fn(path).catch(() => false)) {
           exists = true
-          foundResult = folder
+          foundResult = path
           break
         }
       }

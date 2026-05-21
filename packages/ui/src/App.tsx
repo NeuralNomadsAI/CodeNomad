@@ -71,6 +71,8 @@ import {
   selectSidecarTab,
 } from "./stores/app-tabs"
 import { serverApi } from './lib/api-client'
+import { RecentFolder } from '../../server/src/api-types'
+import { Instance } from './types/instance'
 
 const log = getLogger("actions")
 
@@ -270,10 +272,22 @@ const App: Component = () => {
       return
     }
 
-    const detectResult = await serverApi.detectPathExistingInRecent(folderPath, recentFolders())
+    let existingInstance = getExistingInstanceForFolder(folderPath)
 
-    if (detectResult?.exists) {
-      folderPath = detectResult.foundResult.path
+    if (!existingInstance) {
+      const detectResult = await serverApi.detectPathExistingInRecent(folderPath, [
+        ...(Array.from(instances().values()) as Instance[]).reduce((acc: string[], instance: Instance) => {
+          if (instance.status === "stopped") return acc
+          acc.push(instance.folder)
+          return acc
+        }, [] as string[]),
+        ...recentFolders().map((folder: RecentFolder) => folder.path),
+      ]).catch(() => null)
+
+      if (detectResult?.exists) {
+        folderPath = detectResult.foundResult!
+        existingInstance = getExistingInstanceForFolder(folderPath)
+      }
     }
 
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
@@ -281,7 +295,6 @@ const App: Component = () => {
     clearLaunchError()
 
     if (!options?.forceNew) {
-      const existingInstance = getExistingInstanceForFolder(folderPath)
       if (existingInstance) {
         setAlreadyOpenFolderChoice({ folderPath, binaryPath: selectedBinary, instanceId: existingInstance.id })
         return

@@ -483,10 +483,10 @@ export const serverApi = {
     }
     return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
   },
-  detectPathExistingInRecent(currentPath: string, recentFolders: RecentFolder[]): Promise<DetectPathExistingInRecentResponse> {
+  detectPathExistingInRecent(currentPath: string, recentPaths: string[]): Promise<DetectPathExistingInRecentResponse> {
     return request<DetectPathExistingInRecentResponse>(`/api/filesystem/detect-path-existing-in-recent`, {
       method: "POST",
-      body: JSON.stringify({ currentPath, recentFolders }),
+      body: JSON.stringify({ currentPath, recentPaths }),
     })
   },
   readInstanceData(id: string): Promise<InstanceData> {
