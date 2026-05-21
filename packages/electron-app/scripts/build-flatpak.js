@@ -39,7 +39,7 @@ fs.mkdirSync(stagingRoot, { recursive: true })
 fs.mkdirSync(releaseRoot, { recursive: true })
 
 copyRequired(appSource, path.join(stagingRoot, "CodeNomad"))
-copyRequired(path.join(root, "electron", "resources", "icon.png"), path.join(stagingRoot, `${appId}.png`))
+copyRequired(path.join(root, "electron", "resources", "server", "public", "pwa-512x512.png"), path.join(stagingRoot, `${appId}.png`))
 
 fs.writeFileSync(
   path.join(stagingRoot, `${appId}.desktop`),
