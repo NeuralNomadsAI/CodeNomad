@@ -50,10 +50,11 @@ export type { ExampleResponse } from "../../../server/src/api-types"
 
 ### Settings Documents
 
-| Document | Purpose | File |
-|----------|---------|------|
-| Config | User preferences, binaries, models | `~/.config/codenomad/config.json` |
-| State | Recent folders, session metadata | `~/.config/codenomad/state.json` |
+| Document | Purpose | File | Notes |
+|----------|---------|------|-------|
+| Config | User preferences, binaries, models | `~/.config/codenomad/config.yaml` | Canonical format |
+| State | Recent folders, session metadata | `~/.config/codenomad/state.yaml` | Canonical format |
+| Config (legacy) | Migration fallback | `~/.config/codenomad/config.json` | Supported as input fallback |
 
 ## Testing
 

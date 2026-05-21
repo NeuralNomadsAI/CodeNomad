@@ -53,7 +53,7 @@ export function buildInstanceBaseUrl(proxyPath: string): string {
 
 ### RequestData Wrapper
 
-All SDK calls go through `requestData()` for consistent error handling:
+Most SDK calls that return `{ data, error }` go through `requestData()` for consistent error handling:
 
 ```typescript
 // packages/ui/src/lib/opencode-api.ts
@@ -82,8 +82,8 @@ const sessions = await requestData(
   "session.list"
 )
 
-// Never call SDK directly without wrapper
-// ❌ Wrong: const result = await client.session.list()
+// Direct SDK calls are also used when the method doesn't return { data, error }
+// Example: const response = await rootClient.session.list()
 ```
 
 ## Optimistic Updates

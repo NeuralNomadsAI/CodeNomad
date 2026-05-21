@@ -83,10 +83,14 @@ await requestData(
 
 ### File
 
+**SDK:** `client.file.list({ path })` — List directory contents
+**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx`
+
+**SDK:** `client.file.read({ path })` — Read file content
+**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx`
+
 **SDK:** `client.file.status()` — Get Git status of files
 **Wrapper:** `packages/ui/src/components/instance/shell/right-panel/useGitChanges.ts`
-
-**Note:** `client.file.list()` and `client.file.read()` are available in the SDK but not currently used by CodeNomad UI code.
 
 ### Config
 
