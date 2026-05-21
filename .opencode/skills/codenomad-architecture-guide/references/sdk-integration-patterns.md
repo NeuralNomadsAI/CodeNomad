@@ -116,8 +116,8 @@ SSE events from the server eventually reconcile optimistic state:
 |-------|---------|------|
 | `message.part.updated` | `updateMessagePartV2()` | `bridge.ts` |
 | `message.part.removed` | `removeMessagePartV2()` | `bridge.ts` |
-| `message.permission.replied` | `removePermissionV2()` | `bridge.ts` |
-| `message.question.replied` | `removeQuestionV2()` | `bridge.ts` |
+| `permission.replied` | `removePermissionV2()` | `bridge.ts` |
+| `question.replied` | `removeQuestionV2()` | `bridge.ts` |
 
 ### Race Condition Warning
 
@@ -127,8 +127,8 @@ Rapid successive operations can cause temporary desync:
 
 ## Permission Flow
 
-1. **Server emits** `permission.requested` SSE event
-   - File: `packages/server/src/server/routes/permissions.ts`
+1. **Server emits** `permission.asked` or `permission.updated` SSE event
+   - Pushed through instance event stream
 2. **UI Store receives** via `serverEvents`
    - File: `packages/ui/src/stores/instances.ts`
    - **Branch:** IF `isPermissionAutoAcceptEnabled()` 
@@ -139,10 +139,10 @@ Rapid successive operations can cause temporary desync:
      - Action: Display modal
 3. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
 4. **UI Component:** `packages/ui/src/components/permission-approval-modal.tsx` displays
-5. **User Action:** Calls `packages/ui/src/stores/session-actions.ts:sendPermissionResponse()`
+5. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
 6. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
 7. **Optimistic Update:** `removePermissionV2()` in bridge
-8. **SSE Confirmation:** `message.permission.replied` event
+8. **SSE Confirmation:** `permission.replied` event
    - **Branch:** IF SSE disconnected → `syncPendingPermissions()` reconciles on reconnect
 
 ## Session Event Handling
@@ -155,10 +155,12 @@ Rapid successive operations can cause temporary desync:
 | `message.part.updated` | Server → UI | Part content changed |
 | `message.part.removed` | Server → UI | Part deleted |
 | `session.status` | Server → UI | Session status changed |
-| `permission.requested` | Server → UI | New permission request |
+| `permission.asked` | Server → UI | New permission request |
+| `permission.updated` | Server → UI | Permission updated |
 | `permission.replied` | Server → UI | Permission resolved |
-| `question.requested` | Server → UI | New question |
+| `question.asked` | Server → UI | New question |
 | `question.replied` | Server → UI | Question answered |
+| `question.rejected` | Server → UI | Question rejected |
 
 ### Event Source Setup
 

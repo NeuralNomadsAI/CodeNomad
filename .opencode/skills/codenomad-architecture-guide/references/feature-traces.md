@@ -4,7 +4,8 @@ End-to-end feature flows with decision branches and mechanism references.
 
 ## Permission Flow (with branches)
 
-1. **Server:** `packages/server/src/server/routes/permissions.ts` emits SSE event `permission.requested`
+1. **Server:** Backend emits SSE event `permission.asked` or `permission.updated`
+   - Events are pushed through the instance event stream
 
 2. **UI Store:** `packages/ui/src/stores/instances.ts` receives via `serverEvents` handler
    - **Branch:** IF `isPermissionAutoAcceptEnabled(instanceId, sessionId)` is true
@@ -17,29 +18,29 @@ End-to-end feature flows with decision branches and mechanism references.
      - **File:** `packages/ui/src/components/permission-approval-modal.tsx`
 
 3. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
-   - Adds permission to message store for display in chat
+    - Adds permission to message store for display in chat
 
 4. **UI Component:** Modal displays (if not auto-accepted)
-   - Shows permission details and allow/deny/once buttons
+    - Shows permission details and allow/deny/once buttons
 
-5. **User Action:** Calls `packages/ui/src/stores/session-actions.ts:sendPermissionResponse()`
-   - Validates permission still pending
-   - Prepares reply payload
+5. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
+    - Validates permission still pending
+    - Prepares reply payload
 
 6. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
-   - Wrapped with `requestData()` for error handling
+    - Wrapped with `requestData()` for error handling
 
 7. **Optimistic Update:** `removePermissionV2()` in bridge
-   - Immediately removes from local store
-   - UI updates without waiting for server
+    - Immediately removes from local store
+    - UI updates without waiting for server
 
-8. **SSE Confirmation:** Server emits `message.permission.replied` event
-   - **Branch:** IF SSE is connected
-     - Bridge reconciles (no-op if already removed optimistically)
-   - **Branch:** IF SSE is disconnected during reply
-     - **Mechanism:** `serverEvents` reconnection triggers `syncPendingPermissions()` in `packages/ui/src/stores/instances.ts`
-     - **Action:** Re-fetches pending permissions, reconciles state
-     - If permission was already replied, it disappears from queue
+8. **SSE Confirmation:** Server emits `permission.replied` event
+    - **Branch:** IF SSE is connected
+      - Bridge reconciles (no-op if already removed optimistically)
+    - **Branch:** IF SSE is disconnected during reply
+      - **Mechanism:** `serverEvents` reconnection triggers `syncPendingPermissions()` in `packages/ui/src/stores/instances.ts`
+      - **Action:** Re-fetches pending permissions, reconciles state
+      - If permission was already replied, it disappears from queue
 
 ---
 
@@ -48,7 +49,7 @@ End-to-end feature flows with decision branches and mechanism references.
 1. **UI:** `packages/ui/src/stores/session-api.ts:fetchSessions()` calls `client.session.list()`
    - Uses root worktree client (no worktree slug needed for listing)
 
-2. **Server:** `packages/server/src/server/routes/sessions.ts` returns session array
+2. **Server:** Backend returns session array via API response
    - Includes status, title, parentID, version
 
 3. **UI:** Normalizes with `toClientSession()` → stores in `session-state.ts`
@@ -60,7 +61,7 @@ End-to-end feature flows with decision branches and mechanism references.
      - **Mechanism:** `fetchSessionChildren()` called recursively
      - **File:** `packages/ui/src/stores/session-api.ts`
 
-4. **SSE:** Server pushes updates via `server-events.ts`
+4. **SSE:** Server pushes updates via instance event stream
    - **Branch:** IF `message.part.delta` event
      - **Mechanism:** Incremental text update streamed to UI
      - **File:** `packages/ui/src/stores/message-v2/bridge.ts:updateMessagePartDelta()`

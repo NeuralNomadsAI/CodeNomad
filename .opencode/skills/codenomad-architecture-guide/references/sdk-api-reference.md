@@ -4,24 +4,26 @@
 
 CodeNomad uses the OpenCode SDK V2 (`@opencode-ai/sdk/v2/client`) via `createOpencodeClient()`.
 
-**⚠️ REQUIRED:** Before relying on any schema detail here, verify by reading:
-`packages/sdk/js/src/v2/gen/types.gen.ts`
+**⚠️ REQUIRED:** Before relying on any schema detail here, verify by reading the installed SDK type declarations:
+- Inspect imported types from `@opencode-ai/sdk/v2/client`
+- Check TypeScript definitions in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
 
-## SDK Categories Used by CodeNomad
+The SDK implementation lives outside this repository. This document reflects how CodeNomad currently consumes the SDK.
+
+## SDK Methods Used by CodeNomad
 
 ### Session
 
-**SDK:** `client.session.prompt({ sessionID, content, command?, agent? })`
-**Wrapper:** `packages/ui/src/stores/session-api.ts`
+**SDK:** `client.session.promptAsync({ sessionID, content, command?, agent? })`
+**Wrapper:** `packages/ui/src/stores/session-actions.ts`
 ```typescript
 const response = await requestData(
-  client.session.prompt({ sessionID, content }),
-  "session.prompt"
+  client.session.promptAsync({ sessionID, content }),
+  "session.promptAsync"
 )
 ```
-**Returns:** `{ data, error }` — always check `error` first
 
-**Other Session Methods:**
+**Other Session Methods Used:**
 - `client.session.list()` — List all sessions
 - `client.session.create({ parentID? })` — Create new session
 - `client.session.get({ sessionID })` — Get session info
@@ -29,38 +31,51 @@ const response = await requestData(
 - `client.session.children({ sessionID })` — Get child sessions
 - `client.session.diff({ sessionID })` — Get file changes
 - `client.session.revert({ sessionID, messageID? })` — Revert code
-- `client.session.unrevert({ sessionID })` — Unrevert
+- `client.session.summarize({ sessionID })` — Generate summary
 - `client.session.messages({ sessionID })` — List messages
-- `client.session.message({ sessionID, messageID })` — Get single message
-- `client.session.deleteMessage({ sessionID, messageID })` — Delete message
+- `client.session.update({ sessionID, ... })` — Update session properties
+- `client.session.command({ sessionID, command })` — Send command
+- `client.session.shell({ sessionID, command })` — Execute shell command
+- `client.session.abort({ sessionID })` — Abort active session
 
-### Part (Critical — Schema Constraints)
+**Note on Message Deletion:** The SDK does not expose a typed method for message deletion. CodeNomad uses a raw client call:
+```typescript
+// packages/ui/src/stores/session-actions.ts:451-457
+await requestData(
+  (client as any).client.delete({
+    url: `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
+  }),
+  "session.message.delete",
+)
+```
 
-**SDK:** `client.session.message.part.update({ sessionID, messageID, partID, data })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts:updateMessagePart()`
+### Part
 
-**⚠️ Schema Requirements:**
-- Must spread existing part fields
-- Assistant part metadata → `providerMetadata` (must be `Record<providerName, Record<string, any>>`)
-- Flat objects like `{ compacted: true }` cause fatal schema errors
-
-**SDK:** `client.session.message.part.delete({ sessionID, messageID, partID })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts`
+**SDK:** `client.part.delete({ sessionID, messageID, partID })`
+**Wrapper:** `packages/ui/src/stores/session-actions.ts:deleteMessagePart()`
+```typescript
+await requestData(
+  client.part.delete({ sessionID: sessionId, messageID: messageId, partID: partId }),
+  "part.delete",
+)
+```
 
 **⚠️ Constraint:** Message must retain ≥1 part. Delete entire message if removing last part.
+
+**Note on Part Updates:** CodeNomad does not currently use `client.part.update()`. Part modifications are handled through other mechanisms.
 
 ### Permission
 
 **SDK:** `client.permission.reply({ requestID, reply: "allow" | "deny" | "once" })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts:sendPermissionResponse()`
+**Wrapper:** `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
 
 **Other Permission Methods:**
 - `client.permission.list()` — Get pending permissions
 
 ### Question
 
-**SDK:** `client.question.reply({ requestID, answer: string[] })`
-**Wrapper:** `packages/ui/src/stores/session-actions.ts`
+**SDK:** `client.question.reply({ requestID, answers: string[] })`
+**Wrapper:** `packages/ui/src/stores/instances.ts:sendQuestionReply()`
 
 **Other Question Methods:**
 - `client.question.list()` — Get pending questions
@@ -68,48 +83,23 @@ const response = await requestData(
 
 ### File
 
-**SDK:** Direct SDK calls via worktree client
-- `client.file.list({ path })` — List directory
-- `client.file.read({ path })` — Read file content
-- `client.file.status({ path })` — Get Git status
+**SDK:** `client.file.status()` — Get Git status of files
+**Wrapper:** `packages/ui/src/components/instance/shell/right-panel/useGitChanges.ts`
 
-### Find
-
-**SDK:** Direct SDK calls
-- `client.find.text({ query })` — Search file contents
-- `client.find.files({ query })` — Search filenames
-- `client.find.symbols({ query })` — Search workspace symbols
+**Note:** `client.file.list()` and `client.file.read()` are available in the SDK but not currently used by CodeNomad UI code.
 
 ### Config
 
-**SDK:**
-- `client.config.get()` — Get current config
-- `client.config.update({ ... })` — Update config
-- `client.config.providers()` — List AI providers
+**SDK:** `client.config.get()` — Get current configuration
+**Wrapper:** `packages/ui/src/lib/hooks/use-instance-metadata.ts`
 
-**Wrapper:** `packages/ui/src/stores/preferences.tsx`
+**Note:** `client.config.update()` and `client.config.providers()` are available but configuration updates flow through server routes instead.
 
-### Global
+## SDK Categories Not Currently Used
 
-**SDK:**
-- `client.global.config.get()` — Get global config
-- `client.global.health()` — Health check
+The following SDK categories are available but not actively used by CodeNomad:
 
-**Wrapper:** `packages/ui/src/lib/server-meta.ts`
-
-### App
-
-**SDK:**
-- `client.app.log({ level, message })` — Write log entry
-- `client.app.agents()` — List available agents
-
-**Wrapper:** Background process logging
-
-### Worktree
-
-**SDK:**
-- `client.worktree.list()` — List worktrees
-- `client.worktree.create({ slug, branch? })` — Create worktree
-- `client.worktree.remove({ slug })` — Remove worktree
-
-**Wrapper:** `packages/ui/src/stores/worktrees.ts`
+- `client.find.*` — File/symbol search (CodeNomad uses server routes)
+- `client.global.*` — Global config/health (CodeNomad uses server meta endpoint)
+- `client.app.*` — App logging/agents
+- `client.worktree.*` — Git worktree management (CodeNomad uses server routes)

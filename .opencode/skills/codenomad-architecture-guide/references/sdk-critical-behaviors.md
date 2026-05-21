@@ -1,36 +1,31 @@
 # SDK Critical Behaviors
 
+## Upstream OpenCode Behaviors
+
+The following behaviors are implemented in the upstream OpenCode SDK/server, not in the CodeNomad repository. They affect how CodeNomad must interact with the SDK.
+
 ## Critical Behaviors Table
 
-| Behavior | Detail | Impact | Code Location |
-|----------|--------|--------|---------------|
-| `ignored: true` on assistant parts | Backend only checks for user parts | Assistant parts still sent to AI model | `packages/opencode/src/session/message-v2.ts` |
+| Behavior | Detail | Impact | Verification |
+|----------|--------|--------|--------------|
+| `ignored: true` on assistant parts | Backend only checks for user parts | Assistant parts still sent to AI model | Observe via SSE behavior; not verifiable locally |
 | Part delete | Message must retain ≥1 part | Delete entire message if last part | `packages/ui/src/stores/session-actions.ts` |
-| Metadata on assistant parts | Passed as `providerMetadata` to ai SDK | Flat objects cause fatal schema violations | `packages/opencode/src/session/message-v2.ts` |
-| Session revert | Only restores files to Git snapshot | Not an undo mechanism for messages | `packages/opencode/src/session/revert.ts` |
+| Metadata on assistant parts | Passed as `providerMetadata` to ai SDK | Flat objects cause fatal schema violations | Avoid setting metadata on assistant parts |
+| Session revert | Only restores files to Git snapshot | Not an undo mechanism for messages | Test via `client.session.revert()` |
 | Empty messages | Backend rejects `parts: []` | Check part count before delete | `packages/ui/src/stores/session-actions.ts` |
 
 ## Schema Violation Details
 
 ### Assistant Part Metadata (Fatal)
 
-**Root Cause:** `packages/opencode/src/session/message-v2.ts:704-710`
+**Behavior:** Assistant text part `metadata` is passed as `providerMetadata` to the underlying AI SDK.
 
-```typescript
-if (part.type === "text")
-  assistantMessage.parts.push({
-    type: "text",
-    text: part.text,
-    ...(differentModel ? {} : { providerMetadata: part.metadata }),
-  })
-```
-
-**ai SDK expects:**
+**Expected format:**
 ```typescript
 providerMetadata?: Record<string, Record<string, JsonValue>>
 ```
 
-**Violation:**
+**Violation examples:**
 ```typescript
 // ❌ WRONG: Flat object
 metadata: { compacted: true }
@@ -66,10 +61,10 @@ if (record.partIds.length <= 1) {
 
 ## `ignored` Flag Asymmetry
 
-| Part Type | `ignored: true` Effect | Backend Code |
-|-----------|------------------------|--------------|
-| User text | ✅ Excluded from AI model context | `message-v2.ts:649` |
-| Assistant text | ❌ No effect — still sent to model | `message-v2.ts:704-710` |
+| Part Type | `ignored: true` Effect | Notes |
+|-----------|------------------------|-------|
+| User text | ✅ Excluded from AI model context | Safe to use |
+| Assistant text | ❌ No effect — still sent to model | Do not rely on this |
 | Tool | ❌ No `ignored` field exists | N/A |
 | Reasoning | ❌ No `ignored` field exists | N/A |
 
@@ -77,17 +72,17 @@ if (record.partIds.length <= 1) {
 
 ## Decision Matrix: Context Modification
 
-| Goal | Strategy | SDK Support | Backend Support | Safe? |
-|------|----------|-------------|-----------------|-------|
-| Update assistant text | `Part.update()` | ✅ | ✅ | ✅ Yes (no metadata) |
-| Update user text | `Part.update()` | ✅ | ✅ | ✅ Yes |
-| Hide user part from AI | `ignored: true` | ✅ | ✅ | ✅ Yes |
-| Hide assistant part from AI | `ignored: true` | ✅ | ❌ | ❌ No effect |
-| Delete part | `Part.delete()` | ✅ | ✅ | ✅ Yes (check message parts) |
-| Delete message | `Session.deleteMessage()` | ✅ | ✅ | ✅ Yes (irreversible) |
-| Undo message deletion | Client-side restore | ⚠️ Manual | ⚠️ Manual | ⚠️ Must recreate |
-| Revert code changes | `Session.revert()` | ✅ | ✅ | ✅ Only affects files |
-| Store UI state | Client-side registry | N/A | N/A | ✅ localStorage/Set |
+| Goal | Strategy | SDK Support | Safe? |
+|------|----------|-------------|-------|
+| Update assistant text | `Part.update()` (if available) | ✅ | ✅ Yes (no metadata) |
+| Update user text | `Part.update()` (if available) | ✅ | ✅ Yes |
+| Hide user part from AI | `ignored: true` | ✅ | ✅ Yes |
+| Hide assistant part from AI | `ignored: true` | ⚠️ No effect | ❌ No effect |
+| Delete part | `client.part.delete()` | ✅ | ✅ Yes (check message parts) |
+| Delete message | Raw DELETE via client | ✅ | ✅ Yes (irreversible) |
+| Undo message deletion | Client-side restore | ⚠️ Manual | ⚠️ Must recreate |
+| Revert code changes | `client.session.revert()` | ✅ | ✅ Only affects files |
+| Store UI state | Client-side registry | N/A | ✅ localStorage/Set |
 
 ## Race Conditions
 

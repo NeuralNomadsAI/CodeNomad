@@ -73,10 +73,10 @@ Use grep and file search tools to navigate:
 ## 3. SDK Schema Verification (Mandatory)
 
 **Before relying on any SDK schema in this skill, verify by reading:**
-- `packages/sdk/js/src/v2/gen/types.gen.ts`
-- `packages/sdk/js/src/v2/gen/sdk.gen.ts`
+- Type declarations in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
+- Imported types from `@opencode-ai/sdk/v2/client`
 
-SDK schemas evolve. This skill provides navigation and patterns, not definitive schemas.
+The SDK implementation lives outside this repository. This skill provides navigation and patterns, not definitive schemas.
 
 ## 4. Anti-Patterns
 
@@ -115,7 +115,7 @@ Before submitting changes:
 - [ ] Check i18n: Search for hardcoded strings in modified files
 - [ ] Verify file length: Check line count (warn >500, reject >800 source; >1000 tests)
 - [ ] Check DesktopClient: Does this need IPC/main-process changes?
-- [ ] Verify SDK compatibility: Read relevant types in `packages/sdk/js/src/v2/gen/types.gen.ts`
+- [ ] Verify SDK compatibility: Check types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
 - [ ] Cross-area check: If modifying server routes, check UI stores and API clients
 - [ ] Check anti-patterns: Review "Common Mistakes" section above
 - [ ] API compatibility: If changing `api-types.ts`, check UI type matches
