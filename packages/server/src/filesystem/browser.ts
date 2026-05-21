@@ -4,6 +4,7 @@ import path from "path"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
+  FileSystemFileContentResponse,
   FileSystemListResponse,
   FileSystemListingMetadata,
   WINDOWS_DRIVES_ROOT,
@@ -22,6 +23,7 @@ interface DirectoryReadOptions {
 }
 
 const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
+const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
 
 export class FileSystemBrowser {
   private readonly root: string
@@ -96,6 +98,28 @@ export class FileSystemBrowser {
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
     return fs.readFileSync(resolved, "utf-8")
+  }
+
+  readFileBase64(relativePath: string): string {
+    if (this.unrestricted) {
+      throw new Error("readFileBase64 is not available in unrestricted mode")
+    }
+    const resolved = this.toRestrictedAbsolute(relativePath)
+    return fs.readFileSync(resolved).toString("base64")
+  }
+
+  readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): FileSystemFileContentResponse {
+    const encoding = options?.encoding ?? "utf-8"
+    const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
+    const stats = fs.statSync(resolved)
+    if (!stats.isFile()) {
+      throw new Error("Selected path is not a file")
+    }
+    if (stats.size > MAX_READABLE_FILE_BYTES) {
+      throw new Error("Selected file is too large to attach")
+    }
+    const contents = encoding === "base64" ? fs.readFileSync(resolved).toString("base64") : fs.readFileSync(resolved, "utf-8")
+    return { path: targetPath, contents, encoding }
   }
 
   private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {

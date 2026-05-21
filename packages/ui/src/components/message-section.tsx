@@ -1,6 +1,7 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
 import { ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
 import Kbd from "./kbd"
+import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
@@ -28,13 +29,13 @@ const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 
 export interface MessageSectionProps {
   instanceId: string
   sessionId: string
   loading?: boolean
+  emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
@@ -50,8 +51,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const { preferences, updatePreferences } = useConfig()
   const { t } = useI18n()
   const showUsagePreference = () => preferences().showUsageMetrics ?? true
+  const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
+  const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
@@ -1226,6 +1229,8 @@ export default function MessageSection(props: MessageSectionProps) {
     clearQuoteSelection()
   })
 
+  const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+
   return (
     <div
       class="message-stream-container"
@@ -1234,7 +1239,7 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <div
-        class={`message-layout${hasTimelineSegments() ? " message-layout--with-timeline" : ""}`}
+        class={`message-layout${showTimeline() ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
@@ -1337,14 +1342,30 @@ export default function MessageSection(props: MessageSectionProps) {
           renderBeforeItems={() => (
             <>
               <Show when={!props.loading && visibleMessageIds().length === 0}>
-                <div class="empty-state">
-                  <div class="empty-state-content">
-                    <div class="flex flex-col items-center gap-3 mb-6">
-                      <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="h-48 w-auto" loading="lazy" />
-                      <h1 class="text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
-                    </div>
-                    <h3>{t("messageSection.empty.title")}</h3>
-                    <p>{t("messageSection.empty.description")}</p>
+                <Show
+                  when={emptyStateVariant() === "no-session"}
+                  fallback={
+                    <BrandedEmptyState
+                      title={t("messageSection.empty.title")}
+                      description={t("messageSection.empty.description")}
+                    >
+                      <ul>
+                        <li>
+                          <span>{t("messageSection.empty.tips.commandPalette")}</span>
+                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
+                        </li>
+                        <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
+                        <li>
+                          {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
+                        </li>
+                      </ul>
+                    </BrandedEmptyState>
+                  }
+                >
+                  <BrandedEmptyState
+                    title={t("messageSection.empty.title")}
+                    description={t("instanceShell.empty.description")}
+                  >
                     <ul>
                       <li>
                         <span>{t("messageSection.empty.tips.commandPalette")}</span>
@@ -1355,8 +1376,8 @@ export default function MessageSection(props: MessageSectionProps) {
                         {t("messageSection.empty.tips.attachFilesPrefix")} <code>@</code>
                       </li>
                     </ul>
-                  </div>
-                </div>
+                  </BrandedEmptyState>
+                </Show>
               </Show>
 
               <Show when={props.loading}>
@@ -1616,7 +1637,7 @@ export default function MessageSection(props: MessageSectionProps) {
           </div>
         </Show>
 
-        <Show when={hasTimelineSegments()}>
+        <Show when={showTimeline()}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}

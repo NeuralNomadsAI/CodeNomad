@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, ArrowUpLeft, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -36,10 +36,11 @@ function isAbsolutePathLike(input: string) {
 
 interface DirectoryBrowserDialogProps {
   open: boolean
+  mode?: "directories" | "files"
   title: string
   description?: string
   initialPath?: string
-  onSelect: (absolutePath: string) => void
+  onSelect: (absolutePath: string, entry?: FileSystemEntry) => void
   onClose: () => void
 }
 
@@ -71,7 +72,7 @@ function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null)
 
 type FolderRow =
   | { type: "up"; path: string }
-  | { type: "folder"; entry: FileSystemEntry }
+  | { type: "entry"; entry: FileSystemEntry }
 
 const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) => {
   const { t } = useI18n()
@@ -171,15 +172,20 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
         })
       }
 
-      const response = await serverApi.listFileSystem(targetPath, { includeFiles: false })
+      const response = await serverApi.listFileSystem(targetPath, { includeFiles: props.mode === "files" })
       const canonicalKey = normalizePathKey(response.metadata.currentPath)
-      const directories = response.entries
-        .filter((entry) => entry.type === "directory")
-        .sort((a, b) => a.name.localeCompare(b.name))
+      const entries = response.entries
+        .filter((entry) => props.mode === "files" || entry.type === "directory")
+        .sort((a, b) => {
+          const aDirectory = a.type === "directory" ? 0 : 1
+          const bDirectory = b.type === "directory" ? 0 : 1
+          if (aDirectory !== bDirectory) return aDirectory - bDirectory
+          return a.name.localeCompare(b.name)
+        })
 
       setDirectoryChildren((prev) => {
         const next = new Map(prev)
-        next.set(canonicalKey, directories)
+        next.set(canonicalKey, entries)
         return next
       })
 
@@ -251,7 +257,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     }
     const children = directoryChildren().get(key) ?? []
     for (const entry of children) {
-      rows.push({ type: "folder", entry })
+      rows.push({ type: "entry", entry })
     }
     return rows
   })
@@ -296,7 +302,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     setPathInput(getAbsolutePathFromMetadata(metadata))
   }
 
-  async function handleSelectCurrent() {
+  async function handleOpenCurrent() {
     const target = pathInput().trim()
     const metadata = target && target !== currentAbsolutePath() ? await navigateTo(target) : currentMetadata()
     if (!metadata) {
@@ -304,7 +310,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     }
     setPathInputDirty(false)
     const absolute = getAbsolutePathFromMetadata(metadata)
-    if (absolute) {
+    if (absolute && props.mode !== "files") {
       setPathInput(absolute)
       props.onSelect(absolute)
     }
@@ -316,7 +322,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       : isAbsolutePathLike(entry.path)
         ? entry.path
         : resolveAbsolutePath(rootPath(), entry.path)
-    props.onSelect(absolutePath)
+    props.onSelect(absolutePath, entry)
   }
 
   async function handleCreateFolder() {
@@ -380,7 +386,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={handleOverlayClick}>
+      <div class="fixed inset-0 z-[1305] flex items-center justify-center bg-black/60 p-6" onClick={handleOverlayClick}>
         <div class="modal-surface directory-browser-modal" role="dialog" aria-modal="true">
           <div class="panel directory-browser-panel">
             <div class="directory-browser-header">
@@ -417,22 +423,24 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
                     class="selector-input directory-browser-current-path"
                   />
-                  <button
-                    type="button"
-                    class="selector-button selector-button-secondary directory-browser-select directory-browser-new-folder"
-                    disabled={!canSelectCurrent() || creatingFolder()}
-                    onClick={() => void handleCreateFolder()}
-                  >
-                    <span class="inline-flex items-center gap-2">
-                      <FolderPlus class="w-4 h-4" />
-                      {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
-                    </span>
-                  </button>
+                  <Show when={props.mode !== "files"}>
+                    <button
+                      type="button"
+                      class="selector-button selector-button-secondary directory-browser-select directory-browser-new-folder"
+                      disabled={!canSelectCurrent() || creatingFolder()}
+                      onClick={() => void handleCreateFolder()}
+                    >
+                      <span class="inline-flex items-center gap-2">
+                        <FolderPlus class="w-4 h-4" />
+                        {creatingFolder() ? t("directoryBrowser.creating") : t("directoryBrowser.newFolder")}
+                      </span>
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="selector-button selector-button-secondary directory-browser-open-path"
                     disabled={(!canSelectCurrent() && !canSubmitPath()) || creatingFolder()}
-                    onClick={() => void handleSelectCurrent()}
+                    onClick={() => void handleOpenCurrent()}
                     title={t("directoryBrowser.openCurrent")}
                     aria-label={t("directoryBrowser.openCurrent")}
                   >
@@ -461,32 +469,46 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                   <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto directory-browser-list" role="listbox">
                     <For each={folderRows()}>
                       {(item) => {
-                        const isFolder = item.type === "folder"
-                        const label = isFolder ? item.entry.name || item.entry.path : t("directoryBrowser.upOneLevel")
-                        const navigate = () => (isFolder ? handleNavigateTo(item.entry.path) : handleNavigateUp())
+                        const isEntry = item.type === "entry"
+                        const isFolder = isEntry && item.entry.type === "directory"
+                        const isSelectable = isEntry && (props.mode === "files" ? item.entry.type === "file" : item.entry.type === "directory")
+                        const label = isEntry ? item.entry.name || item.entry.path : t("directoryBrowser.upOneLevel")
+                        const navigate = () => {
+                          if (!isEntry) {
+                            handleNavigateUp()
+                            return
+                          }
+                          if (item.entry.type === "directory") {
+                            handleNavigateTo(item.entry.path)
+                            return
+                          }
+                          handleEntrySelect(item.entry)
+                        }
                         return (
                           <div class="panel-list-item" role="option">
                             <div class="panel-list-item-content directory-browser-row">
                               <button type="button" class="directory-browser-row-main" onClick={navigate}>
                                 <div class="directory-browser-row-icon">
                                   <Show when={!isFolder} fallback={<FolderIcon class="w-4 h-4" />}>
-                                    <ArrowUpLeft class="w-4 h-4" />
+                                    <Show when={isEntry} fallback={<ArrowUpLeft class="w-4 h-4" />}>
+                                      <FileIcon class="w-4 h-4" />
+                                    </Show>
                                   </Show>
                                 </div>
                                 <div class="directory-browser-row-text">
                                   <span class="directory-browser-row-name">{label}</span>
                                 </div>
-                                <Show when={isFolder && isPathLoading(item.entry.path)}>
+                                <Show when={isFolder && isEntry && isPathLoading(item.entry.path)}>
                                   <Loader2 class="directory-browser-row-spinner animate-spin" />
                                 </Show>
                               </button>
-                              {isFolder ? (
+                              {isSelectable ? (
                                 <button
                                   type="button"
                                   class="selector-button selector-button-secondary directory-browser-select"
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    handleEntrySelect(item.entry)
+                                    if (isEntry) handleEntrySelect(item.entry)
                                   }}
                                 >
                                   {t("directoryBrowser.select")}

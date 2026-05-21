@@ -44,6 +44,7 @@ export interface DrawerChromeApi {
   unpinRight: () => void
   closeLeft: () => void
   closeRight: () => void
+  closeFloatingDrawersIfAny: () => boolean
   leftAppBarButtonLabel: Accessor<string>
   rightAppBarButtonLabel: Accessor<string>
   leftAppBarButtonIcon: Accessor<JSX.Element>
@@ -250,6 +251,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     unpinRight,
     closeLeft,
     closeRight,
+    closeFloatingDrawersIfAny,
     leftAppBarButtonLabel,
     rightAppBarButtonLabel,
     leftAppBarButtonIcon,

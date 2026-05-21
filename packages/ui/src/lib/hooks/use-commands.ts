@@ -31,6 +31,7 @@ export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
+  toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
@@ -420,6 +421,7 @@ export function useCommands(options: UseCommandsOptions) {
       preferences: options.preferences,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
       toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
+      toggleShowMessageTimeline: options.toggleShowMessageTimeline,
       toggleShowTimelineTools: options.toggleShowTimelineTools,
       toggleUsageMetrics: options.toggleUsageMetrics,
       toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,

@@ -10,6 +10,7 @@ import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { tGlobal } from "../lib/i18n"
+import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 
 const log = getLogger("session")
 
@@ -47,6 +48,7 @@ const [loading, setLoading] = createSignal({
 
 const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>>>(new Map())
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
+const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
 
 const [expandedSessionParents, setExpandedSessionParents] = createSignal<Map<string, Set<string>>>(new Map())
 
@@ -648,6 +650,29 @@ function getSessionInfo(instanceId: string, sessionId: string): SessionInfo | un
   return sessionInfoByInstance().get(instanceId)?.get(sessionId)
 }
 
+function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTotals | undefined {
+  return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
+}
+
+function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
+  const family = getSessionFamily(instanceId, parentSessionId)
+  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
+
+  setThreadTotalsByInstance((prev) => {
+    const next = new Map(prev)
+    const instanceTotals = new Map(next.get(instanceId))
+    instanceTotals.set(parentSessionId, totals)
+    next.set(instanceId, instanceTotals)
+    return next
+  })
+}
+
+function updateThreadTotalsForSession(instanceId: string, sessionId: string): void {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return
+  updateThreadTotalsForParent(instanceId, session.parentId ?? session.id)
+}
+
 async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
   const created = session.time?.created || 0
   const updated = session.time?.updated || 0
@@ -774,6 +799,10 @@ export {
   setMessagesLoaded,
   sessionInfoByInstance,
   setSessionInfoByInstance,
+  threadTotalsByInstance,
+  getThreadTotals,
+  updateThreadTotalsForParent,
+  updateThreadTotalsForSession,
   getSessionDraftPrompt,
   setSessionDraftPrompt,
   clearSessionDraftPrompt,

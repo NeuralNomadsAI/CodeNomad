@@ -3,9 +3,9 @@
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
-mod managed_node;
 #[cfg(target_os = "linux")]
 mod linux_tls;
+mod managed_node;
 
 use cli_manager::{CliProcessManager, CliStatus};
 use keepawake::KeepAwake;
@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
-use tauri::webview::Webview;
+use tauri::webview::{PageLoadEvent, Webview};
 use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
@@ -55,6 +55,7 @@ pub struct AppState {
     pub remote_proxy_sessions: Mutex<HashMap<String, String>>,
     pub remote_skip_tls_verify: Mutex<HashMap<String, bool>>,
     pub remote_tls_handlers: Mutex<HashSet<String>>,
+    pub remote_titles: Mutex<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,26 +228,38 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     false
 }
 
+fn apply_remote_window_title(app_handle: &AppHandle, window_label: &str) {
+    let Some(title) = app_handle
+        .state::<AppState>()
+        .remote_titles
+        .lock()
+        .ok()
+        .and_then(|titles| titles.get(window_label).cloned())
+    else {
+        return;
+    };
+
+    if let Some(window) = app_handle.get_webview_window(window_label) {
+        let _ = window.set_title(&title);
+    }
+}
+
 async fn open_remote_window_impl(
     app: AppHandle,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+    let entry_url = payload
+        .entry_url
+        .as_deref()
+        .unwrap_or(payload.base_url.as_str());
     let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", payload.id);
-    let title = format!(
-        "{} - {}",
-        payload.name,
-        Url::parse(&payload.base_url)
-            .ok()
-            .and_then(|url| url.host_str().map(str::to_string))
-            .unwrap_or_else(|| payload.base_url.clone())
-    );
+    let title = format!("{} - {}", payload.name, payload.base_url);
 
     let window_url = parsed.clone();
 
-    let allow_linux_tls_certificate =
-        parsed.scheme() == "https" && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
+    let allow_linux_tls_certificate = parsed.scheme() == "https"
+        && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
 
     app.state::<AppState>()
         .remote_origins
@@ -258,6 +271,11 @@ async fn open_remote_window_impl(
         .lock()
         .map_err(|err| err.to_string())?
         .insert(label.clone(), allow_linux_tls_certificate);
+    app.state::<AppState>()
+        .remote_titles
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(label.clone(), title.clone());
 
     let replaced_session = {
         let state = app.state::<AppState>();
@@ -281,8 +299,9 @@ async fn open_remote_window_impl(
         #[cfg(target_os = "linux")]
         linux_tls::ensure_remote_window_tls_handler(&existing, &app, &label)?;
 
-        let _ = existing.navigate(window_url.clone());
         let _ = existing.set_title(&title);
+        let _ = existing.navigate(window_url.clone());
+        apply_remote_window_title(&app, &label);
         let _ = existing.show();
         let _ = existing.unminimize();
         let _ = existing.set_focus();
@@ -290,25 +309,27 @@ async fn open_remote_window_impl(
     }
 
     #[cfg(target_os = "linux")]
-    let initial_url = if linux_tls::should_bootstrap_tls_navigation(
-        &window_url,
-        allow_linux_tls_certificate,
-    ) {
-        Url::parse("about:blank").map_err(|err| err.to_string())?
-    } else {
-        window_url.clone()
-    };
+    let initial_url =
+        if linux_tls::should_bootstrap_tls_navigation(&window_url, allow_linux_tls_certificate) {
+            Url::parse("about:blank").map_err(|err| err.to_string())?
+        } else {
+            window_url.clone()
+        };
 
     #[cfg(not(target_os = "linux"))]
     let initial_url = window_url.clone();
 
-    let window = WebviewWindowBuilder::new(&app, label.clone(), WebviewUrl::External(initial_url.clone()))
-        .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
-        .title(title)
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(800.0, 600.0)
-        .build()
-        .map_err(|err| err.to_string())?;
+    let window = WebviewWindowBuilder::new(
+        &app,
+        label.clone(),
+        WebviewUrl::External(initial_url.clone()),
+    )
+    .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
+    .title(title)
+    .inner_size(1400.0, 900.0)
+    .min_inner_size(800.0, 600.0)
+    .build()
+    .map_err(|err| err.to_string())?;
 
     #[cfg(target_os = "linux")]
     {
@@ -335,6 +356,9 @@ async fn open_remote_window_impl(
             }
             if let Ok(mut handlers) = app_handle.state::<AppState>().remote_tls_handlers.lock() {
                 handlers.remove(&label_for_cleanup);
+            }
+            if let Ok(mut titles) = app_handle.state::<AppState>().remote_titles.lock() {
+                titles.remove(&label_for_cleanup);
             }
         }
     });
@@ -364,7 +388,10 @@ fn needs_local_certificate_install() -> Result<bool, String> {
 async fn open_remote_window(app: AppHandle, payload: RemoteWindowPayload) -> Result<(), String> {
     #[cfg(not(target_os = "linux"))]
     {
-        let entry_url = payload.entry_url.as_deref().unwrap_or(payload.base_url.as_str());
+        let entry_url = payload
+            .entry_url
+            .as_deref()
+            .unwrap_or(payload.base_url.as_str());
         let parsed = Url::parse(entry_url).map_err(|err| err.to_string())?;
         if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
             let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
@@ -542,6 +569,15 @@ fn main() {
             remote_proxy_sessions: Mutex::new(HashMap::new()),
             remote_skip_tls_verify: Mutex::new(HashMap::new()),
             remote_tls_handlers: Mutex::new(HashSet::new()),
+            remote_titles: Mutex::new(HashMap::new()),
+        })
+        .on_page_load(|webview, payload| {
+            if matches!(
+                payload.event(),
+                PageLoadEvent::Started | PageLoadEvent::Finished
+            ) {
+                apply_remote_window_title(&webview.app_handle(), webview.label());
+            }
         })
         .setup(|app| {
             set_windows_app_user_model_id();

@@ -57,8 +57,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "Новая сессия",
   "instanceWelcome.empty.title": "Нет предыдущих сессий",
   "instanceWelcome.empty.description": "Создайте новую сессию ниже, чтобы начать",
-  "instanceWelcome.loading.title": "Загрузка сессий",
-  "instanceWelcome.loading.description": "Получаем ваши предыдущие сессии…",
+  "instanceWelcome.loading.title": "Запуск рабочего пространства",
+  "instanceWelcome.loading.description": "Запускаем OpenCode для этого рабочего пространства...",
   "instanceWelcome.resume.title": "Продолжить сессию",
   "instanceWelcome.resume.subtitle.one": "{count} сессия доступна",
   "instanceWelcome.resume.subtitle.other": "{count} сессий доступно",
@@ -86,7 +86,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "Закрыть экземпляр",
 
   "instanceShell.empty.title": "Сессия не выбрана",
-  "instanceShell.empty.description": "Выберите сессию, чтобы просмотреть сообщения",
+  "instanceShell.empty.description": "Отправьте сообщение ниже, чтобы создать новую сессию, или выберите существующую сессию, чтобы продолжить.",
 
   "instanceShell.rightPanel.title": "Панель состояния",
   "instanceShell.rightPanel.tabs.changes": "Изменения",

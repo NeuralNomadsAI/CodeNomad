@@ -13,7 +13,8 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "../../../../../stores/permission-auto-accept"
+import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
+import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -63,7 +64,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
             color="warning"
             size="small"
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAccept(props.instanceId, session.id)}
+            onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
           />
         </div>
       </div>

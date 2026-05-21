@@ -13,13 +13,14 @@ const serverDest = path.resolve(root, "src-tauri", "resources", "server")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
 const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
-
-const sources = ["dist", "public", "node_modules", "package.json"]
+const { copyPackagedServerResources } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
 
 const serverInstallCommand =
   "npm install --omit=dev --ignore-scripts --workspaces=false --package-lock=false --install-strategy=shallow --fund=false --audit=false"
 const serverDevInstallCommand =
   "npm install --workspace @neuralnomads/codenomad --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
+const pluginDevInstallCommand =
+  "npm install --workspace @codenomad/codenomad-opencode-plugin --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const uiDevInstallCommand =
   "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
@@ -43,6 +44,12 @@ const serverBuildDependencyPaths = [
   path.join(serverRoot, "node_modules", "typescript", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
   path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
+]
+
+const pluginRoot = path.resolve(root, "..", "opencode-plugin")
+const pluginBuildDependencyPaths = [
+  path.join(pluginRoot, "node_modules", "typescript", "package.json"),
+  path.join(pluginRoot, "node_modules", "@types", "node", "package.json"),
 ]
 
 const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
@@ -112,6 +119,19 @@ function ensureServerDevDependencies() {
 
   console.log("[prebuild] ensuring server build dependencies (with dev)...")
   execSync(serverDevInstallCommand, {
+    cwd: workspaceRoot,
+    stdio: "inherit",
+    env: envWithRootBin,
+  })
+}
+
+function ensurePluginDevDependencies() {
+  if (pluginBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
+    return
+  }
+
+  console.log("[prebuild] ensuring OpenCode plugin build dependencies...")
+  execSync(pluginDevInstallCommand, {
     cwd: workspaceRoot,
     stdio: "inherit",
     env: envWithRootBin,
@@ -227,60 +247,6 @@ function ensureEsbuildPlatformBinary() {
   })
 }
 
-function copyServerArtifacts() {
-  fs.rmSync(serverDest, { recursive: true, force: true })
-  fs.mkdirSync(serverDest, { recursive: true })
-
-  for (const name of sources) {
-    const from = path.join(serverRoot, name)
-    const to = path.join(serverDest, name)
-    if (!fs.existsSync(from)) {
-      console.warn(`[prebuild] skipped missing ${from}`)
-      continue
-    }
-    fs.cpSync(from, to, { recursive: true, dereference: true })
-    console.log(`[prebuild] copied ${from} -> ${to}`)
-  }
-}
-
-function stripNodeModuleBins() {
-  const root = path.join(serverDest, "node_modules")
-  if (!fs.existsSync(root)) {
-    return
-  }
-
-  const stack = [root]
-  let removed = 0
-
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) break
-
-    let entries
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-
-    for (const entry of entries) {
-      const full = path.join(current, entry.name)
-      if (entry.name === ".bin") {
-        fs.rmSync(full, { recursive: true, force: true })
-        removed += 1
-        continue
-      }
-      if (entry.isDirectory()) {
-        stack.push(full)
-      }
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`[prebuild] removed ${removed} node_modules/.bin directories`)
-  }
-}
-
 function copyUiLoadingAssets() {
   const loadingSource = path.join(uiDist, "loading.html")
   const assetsSource = path.join(uiDist, "assets")
@@ -302,6 +268,7 @@ function copyUiLoadingAssets() {
 
 ;(async () => {
   ensureServerDevDependencies()
+  ensurePluginDevDependencies()
   ensureUiDevDependencies()
   await ensureMonacoAssets()
   ensureRollupPlatformBinary()
@@ -310,10 +277,20 @@ function copyUiLoadingAssets() {
   ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
-  copyServerArtifacts()
-  stripNodeModuleBins()
+  copyPackagedServerResources({
+    serverRoot,
+    serverDest,
+    log: (message) => console.log(`[prebuild] ${message}`),
+  })
   copyUiLoadingAssets()
   await prepareBundledNodeRuntime({ resourcesRoot })
+  execSync(
+    `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"))} --resources ${JSON.stringify(resourcesRoot)} --loading ${JSON.stringify(uiLoadingDest)}`,
+    {
+      cwd: workspaceRoot,
+      stdio: "inherit",
+    },
+  )
 })().catch((err) => {
   console.error("[prebuild] failed:", err)
   process.exit(1)

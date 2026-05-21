@@ -137,7 +137,22 @@ async function build(platform) {
       console.log(`\n📦 Preparing resources for ${job.nodeTarget}...\n`)
       await run(process.execPath, [join(appDir, "scripts", "prepare-resources.js")], {
         cwd: workspaceRoot,
+        shell: false,
         env: { NODE_PATH: workspaceNodeModulesPath, CODENOMAD_NODE_TARGET: job.nodeTarget },
+      })
+
+      console.log(`\n🔎 Validating resources for ${job.nodeTarget}...\n`)
+      await run(process.execPath, [
+        join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"),
+        "--resources",
+        join(appDir, "electron", "resources"),
+        "--loading",
+        join(appDir, "dist", "renderer"),
+        "--target",
+        job.nodeTarget,
+      ], {
+        cwd: workspaceRoot,
+        shell: false,
       })
 
       console.log(`\n📦 Packaging ${job.nodeTarget}...\n`)

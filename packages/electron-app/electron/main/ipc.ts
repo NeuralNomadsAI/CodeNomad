@@ -10,6 +10,7 @@ interface DialogOpenRequest {
   title?: string
   defaultPath?: string
   filters?: Array<{ name?: string; extensions: string[] }>
+  multiple?: boolean
 }
 
 interface DialogOpenResult {
@@ -47,6 +48,9 @@ export function setupCliIPC(mainWindow: BrowserWindow, cliManager: CliProcessMan
   ipcMain.handle("dialog:open", async (_, request: DialogOpenRequest): Promise<DialogOpenResult> => {
     const properties: OpenDialogOptions["properties"] =
       request.mode === "directory" ? ["openDirectory", "createDirectory"] : ["openFile"]
+    if (request.mode === "file" && request.multiple) {
+      properties.push("multiSelections")
+    }
 
     const filters = request.filters?.map((filter) => ({
       name: filter.name ?? "Files",

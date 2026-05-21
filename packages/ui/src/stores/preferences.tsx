@@ -54,6 +54,7 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   showKeyboardShortcutHints: boolean
   thinkingBlocksExpansion: ExpansionPreference
+  showMessageTimeline: boolean
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
@@ -134,6 +135,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   showKeyboardShortcutHints: true,
   thinkingBlocksExpansion: "expanded",
+  showMessageTimeline: true,
   showTimelineTools: true,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: false,
@@ -169,6 +171,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showKeyboardShortcutHints:
       sanitized.showKeyboardShortcutHints ?? defaultUiSettings.showKeyboardShortcutHints,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
+    showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
@@ -661,6 +664,10 @@ function toggleShowTimelineTools(): void {
   updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
 }
 
+function toggleShowMessageTimeline(): void {
+  updateUiSettings({ showMessageTimeline: !(preferences().showMessageTimeline ?? true) })
+}
+
 function toggleUsageMetrics(): void {
   updateUiSettings({ showUsageMetrics: !preferences().showUsageMetrics })
 }
@@ -743,6 +750,7 @@ interface ConfigContextValue {
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
   toggleKeyboardShortcutHints: typeof toggleKeyboardShortcutHints
+  toggleShowMessageTimeline: typeof toggleShowMessageTimeline
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
@@ -794,6 +802,7 @@ const configContextValue: ConfigContextValue = {
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
   toggleKeyboardShortcutHints,
+  toggleShowMessageTimeline,
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,

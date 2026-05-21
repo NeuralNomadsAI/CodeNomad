@@ -57,8 +57,8 @@ export const instanceMessages = {
   "instanceWelcome.shortcuts.newSession": "New Session",
   "instanceWelcome.empty.title": "No Previous Sessions",
   "instanceWelcome.empty.description": "Create a new session below to get started",
-  "instanceWelcome.loading.title": "Loading Sessions",
-  "instanceWelcome.loading.description": "Fetching your previous sessions...",
+  "instanceWelcome.loading.title": "Launching workspace",
+  "instanceWelcome.loading.description": "Starting OpenCode for this workspace...",
   "instanceWelcome.resume.title": "Resume Session",
   "instanceWelcome.resume.subtitle.one": "{count} session available",
   "instanceWelcome.resume.subtitle.other": "{count} sessions available",
@@ -86,7 +86,7 @@ export const instanceMessages = {
   "instanceDisconnected.actions.closeInstance": "Close Instance",
 
   "instanceShell.empty.title": "No session selected",
-  "instanceShell.empty.description": "Select a session to view messages",
+  "instanceShell.empty.description": "Send a message below to create a new session, or select an existing session to continue.",
 
   "instanceShell.rightPanel.title": "Status Panel",
   "instanceShell.rightPanel.tabs.changes": "Session Changes",

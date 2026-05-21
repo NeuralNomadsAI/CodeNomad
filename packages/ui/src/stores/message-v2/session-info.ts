@@ -1,6 +1,6 @@
 import type { Provider } from "../../types/session"
 import { DEFAULT_MODEL_OUTPUT_LIMIT } from "../session-models"
-import { providers, sessions, sessionInfoByInstance, setSessionInfoByInstance } from "../session-state"
+import { providers, sessions, sessionInfoByInstance, setSessionInfoByInstance, updateThreadTotalsForSession } from "../session-state"
 import { messageStoreBus } from "./bus"
 import type { SessionUsageState } from "./types"
 
@@ -140,4 +140,6 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
     next.set(instanceId, instanceInfo)
     return next
   })
+
+  updateThreadTotalsForSession(instanceId, sessionId)
 }
