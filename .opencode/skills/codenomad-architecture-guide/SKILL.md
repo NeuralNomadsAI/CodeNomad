@@ -72,11 +72,13 @@ Use grep and file search tools to navigate:
 
 ## 3. SDK Schema Verification (Mandatory)
 
-**Before relying on any SDK schema in this skill, verify by reading:**
-- Type declarations in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
-- Imported types from `@opencode-ai/sdk/v2/client`
+**SDK Note:** The OpenCode SDK is an external package (`@opencode-ai/sdk/v2/client`). Its implementation lives outside this repository.
 
-The SDK implementation lives outside this repository. This skill provides navigation and patterns, not definitive schemas.
+- After `npm install`, you can inspect types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
+- **Fallback:** Read the actual usage patterns in CodeNomad code (see `references/sdk-api-reference.md` for file locations)
+- When in doubt, check how the SDK is imported and used in existing CodeNomad files
+
+This skill provides navigation and patterns, not definitive schemas.
 
 ## 4. Anti-Patterns
 

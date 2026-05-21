@@ -4,11 +4,11 @@
 
 CodeNomad uses the OpenCode SDK V2 (`@opencode-ai/sdk/v2/client`) via `createOpencodeClient()`.
 
-**⚠️ REQUIRED:** Before relying on any schema detail here, verify by reading the installed SDK type declarations:
-- Inspect imported types from `@opencode-ai/sdk/v2/client`
-- Check TypeScript definitions in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
+**Note:** The SDK implementation lives outside this repository.
 
-The SDK implementation lives outside this repository. This document reflects how CodeNomad currently consumes the SDK.
+- After `npm install`, inspect types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
+- **Fallback:** Use the CodeNomad wrapper locations documented below as the source of truth
+- When node_modules is unavailable, read how the SDK is imported in existing files
 
 ## SDK Methods Used by CodeNomad
 
@@ -74,7 +74,7 @@ await requestData(
 
 ### Question
 
-**SDK:** `client.question.reply({ requestID, answers: string[] })`
+**SDK:** `client.question.reply({ requestID, answers: string[][] })`
 **Wrapper:** `packages/ui/src/stores/instances.ts:sendQuestionReply()`
 
 **Other Question Methods:**
