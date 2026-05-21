@@ -14,6 +14,7 @@ const flatpakBuildRoot = path.join(buildRoot, "build")
 const manifestPath = path.join(buildRoot, `${appId}.json`)
 const artifactDir = path.join(root, "target", "release", "bundle", "flatpak")
 const artifactPath = path.join(artifactDir, `CodeNomad-Tauri-linux-x64-${version}.flatpak`)
+const desktopSource = path.join(root, "src-tauri", "icons", "linux", `${appId}.desktop`)
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: "inherit", ...options })
@@ -38,21 +39,9 @@ copyRequired(path.join(root, "target", "release", "codenomad-tauri"), path.join(
 copyRequired(path.join(root, "target", "release", "resources"), path.join(stagingRoot, "resources"))
 copyRequired(
   path.join(root, "src-tauri", "icons", "linux", "512x512.png"),
-  path.join(stagingRoot, `${appId}.png`),
+  path.join(stagingRoot, "codenomad-tauri.png"),
 )
-
-const desktopFile = [
-  "[Desktop Entry]",
-  "Type=Application",
-  "Name=CodeNomad",
-  "Comment=AI coding assistant",
-  "Categories=Development;IDE;",
-  "Exec=codenomad-tauri",
-  `Icon=${appId}`,
-  "Terminal=false",
-  "",
-].join("\n")
-fs.writeFileSync(path.join(stagingRoot, `${appId}.desktop`), desktopFile)
+copyRequired(desktopSource, path.join(stagingRoot, `${appId}.desktop`))
 
 const manifest = {
   "app-id": appId,
@@ -80,7 +69,7 @@ const manifest = {
         "mkdir -p /app/lib/CodeNomad",
         "cp -a resources /app/lib/CodeNomad/resources",
         `install -Dm644 ${appId}.desktop /app/share/applications/${appId}.desktop`,
-        `install -Dm644 ${appId}.png /app/share/icons/hicolor/512x512/apps/${appId}.png`,
+        "install -Dm644 codenomad-tauri.png /app/share/icons/hicolor/512x512/apps/codenomad-tauri.png",
       ],
       sources: [
         {

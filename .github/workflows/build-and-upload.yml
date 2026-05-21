@@ -327,6 +327,18 @@ jobs:
       - name: Verify bundled Node resource (Electron Linux)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
 
+      - name: Verify Electron Linux artifacts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=(packages/electron-app/release/*.zip)
+          appimages=(packages/electron-app/release/*.AppImage)
+          flatpaks=(packages/electron-app/release/*.flatpak)
+          if [ "${#zips[@]}" -eq 0 ] || [ "${#appimages[@]}" -eq 0 ] || [ "${#flatpaks[@]}" -eq 0 ]; then
+            echo "Missing Electron Linux artifact(s): zip=${#zips[@]} appimage=${#appimages[@]} flatpak=${#flatpaks[@]}" >&2
+            exit 1
+          fi
+
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}
         run: |
@@ -694,6 +706,30 @@ jobs:
 
       - name: Build Flatpak bundle (Tauri)
         run: npm run build:flatpak --workspace @codenomad/tauri-app
+
+      - name: Verify Tauri Flatpak runtime closure
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          flatpaks=(packages/tauri-app/target/release/bundle/flatpak/*.flatpak)
+          if [ "${#flatpaks[@]}" -eq 0 ]; then
+            echo "Missing Tauri Flatpak artifact" >&2
+            exit 1
+          fi
+
+          flatpak install --user --noninteractive --bundle "${flatpaks[0]}"
+          cleanup() {
+            flatpak uninstall --user --noninteractive ai.neuralnomads.codenomad.client >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          flatpak run --user --command=sh ai.neuralnomads.codenomad.client -c '
+            set -e
+            test -x /app/bin/codenomad-tauri
+            test -d /app/lib/CodeNomad/resources
+            ldd /app/bin/codenomad-tauri | tee /tmp/codenomad-tauri-ldd.txt
+            ! grep -q "not found" /tmp/codenomad-tauri-ldd.txt
+          '
 
       - name: Package Tauri artifacts (Linux)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
