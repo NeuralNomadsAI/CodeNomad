@@ -1,0 +1,47 @@
+:root[data-chat-style="simple"] .message-stream-container,
+:root[data-chat-style="simple"] .prompt-input-container {
+  --simple-chat-surface: oklch(98.8% 0.006 247);
+  --simple-chat-muted-surface: oklch(96.5% 0.01 247);
+  --simple-chat-soft-border: oklch(88% 0.02 247);
+  --simple-chat-faint-border: oklch(92% 0.012 247);
+  --simple-chat-code-surface: oklch(95.2% 0.012 247);
+  --message-tool-bg: transparent;
+  --message-tool-border: var(--simple-chat-soft-border);
+  --message-assistant-bg: transparent;
+  --message-assistant-border: oklch(68% 0.12 76);
+  --message-user-bg: transparent;
+  --message-user-border: var(--accent-primary);
+  --surface-code: var(--simple-chat-code-surface);
+  --button-danger-bg: oklch(74% 0.14 24);
+  --button-danger-hover-bg: oklch(69% 0.16 24);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-chat-style="simple"]:not([data-theme]) .message-stream-container,
+  :root[data-chat-style="simple"]:not([data-theme]) .prompt-input-container {
+    --simple-chat-surface: oklch(19% 0.018 252);
+    --simple-chat-muted-surface: oklch(23% 0.02 252);
+    --simple-chat-soft-border: oklch(34% 0.025 252);
+    --simple-chat-faint-border: oklch(29% 0.02 252);
+    --simple-chat-code-surface: oklch(17% 0.018 252);
+    --message-tool-bg: transparent;
+    --message-assistant-bg: transparent;
+    --message-user-bg: transparent;
+    --button-danger-bg: oklch(62% 0.16 24);
+    --button-danger-hover-bg: oklch(67% 0.16 24);
+  }
+}
+
+:root[data-chat-style="simple"][data-theme="dark"] .message-stream-container,
+:root[data-chat-style="simple"][data-theme="dark"] .prompt-input-container {
+  --simple-chat-surface: oklch(19% 0.018 252);
+  --simple-chat-muted-surface: oklch(23% 0.02 252);
+  --simple-chat-soft-border: oklch(34% 0.025 252);
+  --simple-chat-faint-border: oklch(29% 0.02 252);
+  --simple-chat-code-surface: oklch(17% 0.018 252);
+  --message-tool-bg: transparent;
+  --message-assistant-bg: transparent;
+  --message-user-bg: transparent;
+  --button-danger-bg: oklch(62% 0.16 24);
+  --button-danger-hover-bg: oklch(67% 0.16 24);
+}

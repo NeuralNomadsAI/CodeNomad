@@ -23,6 +23,15 @@ function applyThemeMode(mode: ThemeMode) {
   document.documentElement.setAttribute("data-theme", mode)
 }
 
+function applyChatStyle(style: string) {
+  if (typeof document === "undefined") return
+  if (style === "simple") {
+    document.documentElement.setAttribute("data-chat-style", "simple")
+    return
+  }
+  document.documentElement.removeAttribute("data-chat-style")
+}
+
 interface ResolvedPaletteColors {
   backgroundDefault: string
   backgroundPaper: string
@@ -78,7 +87,7 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
-  const { themePreference, setThemePreference } = useConfig()
+  const { preferences, themePreference, setThemePreference } = useConfig()
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
 
@@ -109,6 +118,10 @@ export function ThemeProvider(props: { children: JSX.Element }) {
 
   createEffect(() => {
     applyResolvedTheme()
+  })
+
+  createEffect(() => {
+    applyChatStyle(preferences().chatStyle)
   })
 
   onMount(() => {

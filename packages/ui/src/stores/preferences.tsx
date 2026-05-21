@@ -28,6 +28,7 @@ export interface ModelPreference {
 export type DiffViewMode = "split" | "unified"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type ToolInputsVisibilityPreference = "hidden" | "collapsed" | "expanded"
+export type ChatStylePreference = "default" | "simple"
 export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
@@ -67,6 +68,7 @@ export interface UiSettings {
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  chatStyle: ChatStylePreference
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -147,6 +149,7 @@ const defaultUiSettings: UiSettings = {
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
+  chatStyle: "default",
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -188,6 +191,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    chatStyle:
+      sanitized.chatStyle === "simple" || sanitized.chatStyle === "default"
+        ? sanitized.chatStyle
+        : defaultUiSettings.chatStyle,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -647,6 +654,11 @@ function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
   updateUiSettings({ toolInputsVisibility: mode })
 }
 
+function setChatStyle(style: ChatStylePreference): void {
+  if (preferences().chatStyle === style) return
+  updateUiSettings({ chatStyle: style })
+}
+
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   if (preferences().thinkingBlocksExpansion === mode) return
   updateUiSettings({ thinkingBlocksExpansion: mode })
@@ -761,6 +773,7 @@ interface ConfigContextValue {
   setDiagnosticsExpansion: typeof setDiagnosticsExpansion
   setThinkingBlocksExpansion: typeof setThinkingBlocksExpansion
   setToolInputsVisibility: typeof setToolInputsVisibility
+  setChatStyle: typeof setChatStyle
 
   // instance scoped
   setAgentModelPreference: typeof setAgentModelPreference
@@ -813,6 +826,7 @@ const configContextValue: ConfigContextValue = {
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
   setToolInputsVisibility,
+  setChatStyle,
   setAgentModelPreference,
   getAgentModelPreference,
 }
@@ -893,6 +907,7 @@ export {
   setToolOutputExpansion,
   setDiagnosticsExpansion,
   setThinkingBlocksExpansion,
+  setChatStyle,
   setAgentModelPreference,
   getAgentModelPreference,
 }

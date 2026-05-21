@@ -1,0 +1,194 @@
+:root[data-chat-style="simple"] .connection-status,
+:root[data-chat-style="simple"] .prompt-input-container {
+  border-color: var(--simple-chat-faint-border, var(--border-muted));
+}
+
+:root[data-chat-style="simple"] .message-stream-block {
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="user"] {
+  align-self: flex-end;
+  width: fit-content;
+  max-width: min(78%, calc(100% - 1rem));
+  border: 0;
+  border-radius: 1.25rem;
+  background: var(--surface-secondary);
+  margin-inline-end: 0.5rem;
+  text-align: start;
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="assistant"] {
+  width: auto;
+  border-inline-start-width: 0;
+  background: transparent;
+  color: var(--text-primary);
+  margin-inline: 0.5rem;
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="assistant"] .message-speaker-label[data-role="assistant"] {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-bold);
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="assistant"] .message-text {
+  color: var(--text-primary);
+  line-height: 1.5;
+  max-width: 75ch;
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="user"] .message-item-header-row {
+  justify-content: flex-end;
+}
+
+:root[data-chat-style="simple"] .message-item-base[data-message-role="user"] .message-header-left,
+:root[data-chat-style="simple"] .message-item-base[data-message-role="user"] .message-item-actions,
+:root[data-chat-style="simple"] .message-item-base[data-message-role="user"] .message-attachments {
+  justify-content: flex-end;
+}
+
+:root[data-chat-style="simple"] .message-step-start,
+:root[data-chat-style="simple"] .message-step-finish,
+:root[data-chat-style="simple"] .message-reasoning-card,
+:root[data-chat-style="simple"] .tool-call-message {
+  border-inline-start-width: 0;
+  border-radius: 0;
+  margin-inline: 0.5rem;
+  background: transparent;
+}
+
+:root[data-chat-style="simple"] .tool-call-message {
+  width: auto;
+  padding-block: 0.35rem;
+  margin-inline: 0.5rem 1rem;
+}
+
+:root[data-chat-style="simple"] .tool-call-message .delete-hover-scope {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--simple-chat-faint-border, var(--border-muted));
+  border-radius: 0.75rem;
+  background: var(--surface-base);
+  margin-inline-end: 0.75rem;
+  overflow: hidden;
+  min-width: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-label {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  gap: 0.45rem 0.6rem;
+  padding: 0.35rem 0 0.35rem 0.55rem;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-meta,
+:root[data-chat-style="simple"] .tool-call-header-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-meta {
+  min-width: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-actions {
+  flex: 0 0 auto;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-label .tool-name {
+  background: transparent;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-meta > span:not(.tool-call-icon):not(.tool-name) {
+  display: none;
+}
+
+:root[data-chat-style="simple"] .tool-call,
+:root[data-chat-style="simple"] .message-reasoning-output,
+:root[data-chat-style="simple"] .message-text pre {
+  border-radius: 0.75rem;
+}
+
+:root[data-chat-style="simple"] .tool-call {
+  border: 0;
+  background: transparent;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-header-toggle {
+  padding: 0.4rem 0.55rem;
+}
+
+:root[data-chat-style="simple"] .tool-call-header {
+  border-bottom: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-summary {
+  color: var(--text-muted);
+}
+
+:root[data-chat-style="simple"] .tool-call-preview,
+:root[data-chat-style="simple"] .tool-call-details,
+:root[data-chat-style="simple"] .tool-call-diagnostics-section,
+:root[data-chat-style="simple"] .tool-call-task-section {
+  border-top: 0;
+  border-bottom: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-io-section,
+:root[data-chat-style="simple"] .tool-call-markdown,
+:root[data-chat-style="simple"] .tool-call-markdown .markdown-code-block,
+:root[data-chat-style="simple"] .tool-call-markdown .tool-call-content {
+  border: 0;
+}
+
+:root[data-chat-style="simple"] .tool-call-io-toggle,
+:root[data-chat-style="simple"] .tool-call-io-body,
+:root[data-chat-style="simple"] .tool-call-markdown,
+:root[data-chat-style="simple"] .tool-call-diff-viewer,
+:root[data-chat-style="simple"] .tool-call-diff-fallback {
+  background: transparent;
+}
+
+:root[data-chat-style="simple"] .tool-call-io-toggle {
+  border-bottom: 0;
+  padding-inline: 0;
+}
+
+:root[data-chat-style="simple"] .prompt-input-wrapper {
+  grid-template-columns: minmax(0, 1fr) 70px 58px;
+}
+
+:root[data-chat-style="simple"] .prompt-input {
+  border: 0;
+  background-color: var(--surface-base);
+}
+
+:root[data-chat-style="simple"] .prompt-expand-button,
+:root[data-chat-style="simple"] .prompt-history-button,
+:root[data-chat-style="simple"] .prompt-attach-button,
+:root[data-chat-style="simple"] .prompt-clear-button,
+:root[data-chat-style="simple"] .stop-button,
+:root[data-chat-style="simple"] .send-button {
+  border-radius: 0.875rem;
+}
+
+@media (max-width: 640px) {
+  :root[data-chat-style="simple"] .connection-status {
+    padding: 0.7rem 0.85rem;
+  }
+
+  :root[data-chat-style="simple"] .prompt-input-wrapper {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+  }
+
+  :root[data-chat-style="simple"] .send-button,
+  :root[data-chat-style="simple"] .stop-button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}

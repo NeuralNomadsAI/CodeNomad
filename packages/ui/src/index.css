@@ -4,6 +4,7 @@
 @import './styles/messaging.css';
 @import './styles/panels.css';
 @import './styles/markdown.css';
+@import './styles/appearance/simple-ui.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -32,7 +33,6 @@ body {
   height: 100vh;
   background-color: var(--surface-base);
 }
-
 
 
 

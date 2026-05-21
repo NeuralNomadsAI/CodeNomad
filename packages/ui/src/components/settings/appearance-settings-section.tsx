@@ -3,13 +3,18 @@ import { createEffect, createMemo, createSignal, For, type Component } from "sol
 import { Check, ChevronDown, Laptop, Moon, Sun } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { useTheme, type ThemeMode } from "../../lib/theme"
-import { useConfig } from "../../stores/preferences"
+import { useConfig, type ChatStylePreference } from "../../stores/preferences"
 import { getBehaviorSettings, type BehaviorSetting } from "../../lib/settings/behavior-registry"
 
 const themeModeOptions: Array<{ value: ThemeMode; icon: typeof Laptop }> = [
   { value: "system", icon: Laptop },
   { value: "light", icon: Sun },
   { value: "dark", icon: Moon },
+]
+
+const chatStyleOptions: Array<{ value: ChatStylePreference; icon: typeof Laptop }> = [
+  { value: "default", icon: Laptop },
+  { value: "simple", icon: Sun },
 ]
 
 export const AppearanceSettingsSection: Component = () => {
@@ -31,6 +36,7 @@ export const AppearanceSettingsSection: Component = () => {
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
+    setChatStyle,
   } = useConfig()
 
   const behaviorSettings = createMemo(() =>
@@ -220,6 +226,11 @@ export const AppearanceSettingsSection: Component = () => {
     return t("theme.mode.dark")
   }
 
+  const chatStyleLabel = (style: ChatStylePreference) => {
+    if (style === "simple") return t("settings.appearance.chatStyle.option.simple.label")
+    return t("settings.appearance.chatStyle.option.default.label")
+  }
+
   return (
     <div class="settings-section-stack">
       <div class="settings-card">
@@ -246,6 +257,42 @@ export const AppearanceSettingsSection: Component = () => {
                 <span class="settings-choice-copy">
                   <span class="settings-choice-label">{modeLabel(option.value)}</span>
                   <span class="settings-choice-description">{t(`settings.appearance.theme.option.${option.value}`)}</span>
+                </span>
+                <span class="settings-choice-check" aria-hidden="true">
+                  <Check class="w-4 h-4" />
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.appearance.chatStyle.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.appearance.chatStyle.subtitle")}</p>
+          </div>
+          <span class="settings-scope-badge">{t("settings.scope.device")}</span>
+        </div>
+        <div class="settings-choice-grid">
+          {chatStyleOptions.map((option) => {
+            const Icon = option.icon
+            return (
+              <button
+                type="button"
+                class="settings-choice"
+                data-selected={preferences().chatStyle === option.value ? "true" : "false"}
+                onClick={() => setChatStyle(option.value)}
+              >
+                <span class="settings-choice-icon-wrap">
+                  <Icon class="settings-choice-icon" />
+                </span>
+                <span class="settings-choice-copy">
+                  <span class="settings-choice-label">{chatStyleLabel(option.value)}</span>
+                  <span class="settings-choice-description">
+                    {t(`settings.appearance.chatStyle.option.${option.value}.description`)}
+                  </span>
                 </span>
                 <span class="settings-choice-check" aria-hidden="true">
                   <Check class="w-4 h-4" />
