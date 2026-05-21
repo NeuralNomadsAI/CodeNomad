@@ -1261,7 +1261,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
  
    function clearInstance() {
-     clearPromptDisplayOverridesForInstance(instanceId)
+     clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
      messageInfoCache.clear()
       setState(reconcile(createInitialState(instanceId)))
     }

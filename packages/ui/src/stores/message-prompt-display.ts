@@ -140,10 +140,11 @@ export function clearPromptDisplayOverride(instanceId: string, sessionId: string
 
 export function clearPromptDisplayOverridesForSession(instanceId: string, sessionId: string): void {
   ensureLoaded()
-  const prefix = `${instanceId}:${sessionId}:`
+  const stablePrefix = `${sessionId}:`
+  const legacyPrefix = `${instanceId}:${sessionId}:`
   let changed = false
   for (const key of promptDisplayOverrides.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(stablePrefix) || key.startsWith(legacyPrefix)) {
       promptDisplayOverrides.delete(key)
       changed = true
     }
@@ -152,12 +153,13 @@ export function clearPromptDisplayOverridesForSession(instanceId: string, sessio
   persist()
 }
 
-export function clearPromptDisplayOverridesForInstance(instanceId: string): void {
+export function clearPromptDisplayOverridesForInstance(instanceId: string, sessionIds: string[] = []): void {
   ensureLoaded()
-  const prefix = `${instanceId}:`
   let changed = false
   for (const key of promptDisplayOverrides.keys()) {
-    if (key.startsWith(prefix)) {
+    const shouldDeleteStableKey = sessionIds.some((sessionId) => key.startsWith(`${sessionId}:`))
+    const shouldDeleteLegacyKey = key.startsWith(`${instanceId}:`)
+    if (shouldDeleteStableKey || shouldDeleteLegacyKey) {
       promptDisplayOverrides.delete(key)
       changed = true
     }

@@ -117,4 +117,42 @@ describe("message prompt display overrides", () => {
     clearPromptDisplayOverride(reopenedInstanceId, sessionId, messageId)
     delete (globalThis as unknown as { window?: unknown }).window
   })
+
+  it("clears stable v3 entries for a session", () => {
+    const instanceId = `instance-${Date.now()}`
+    const storage = new MemoryStorage()
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
+
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 3 }, { kind: "pasted", length: 8 }] }
+    setPromptDisplayOverride(instanceId, "session-a", "msg-1", metadata)
+    setPromptDisplayOverride(instanceId, "session-b", "msg-2", metadata)
+
+    clearPromptDisplayOverridesForSession(instanceId, "session-a")
+
+    assert.equal(getPromptDisplayOverride("other-instance", "session-a", "msg-1"), undefined)
+    assert.deepEqual(getPromptDisplayOverride("other-instance", "session-b", "msg-2"), metadata)
+
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("clears stable v3 entries for all known instance sessions", () => {
+    const instanceId = `instance-${Date.now()}`
+    const storage = new MemoryStorage()
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
+
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 2 }, { kind: "pasted", length: 5 }] }
+    setPromptDisplayOverride(instanceId, "session-a", "msg-1", metadata)
+    setPromptDisplayOverride(instanceId, "session-b", "msg-2", metadata)
+    setPromptDisplayOverride(instanceId, "session-c", "msg-3", metadata)
+
+    clearPromptDisplayOverridesForInstance(instanceId, ["session-a", "session-b"])
+
+    assert.equal(getPromptDisplayOverride("reopened", "session-a", "msg-1"), undefined)
+    assert.equal(getPromptDisplayOverride("reopened", "session-b", "msg-2"), undefined)
+    assert.deepEqual(getPromptDisplayOverride("reopened", "session-c", "msg-3"), metadata)
+
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
 })
