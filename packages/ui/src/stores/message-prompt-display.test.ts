@@ -4,9 +4,11 @@ import { describe, it } from "node:test"
 import type { PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 import {
   clearPromptDisplayOverride,
+  clearPromptDisplayOverridesForSession,
   clearPromptDisplayOverridesForInstance,
   getPromptDisplayOverride,
   movePromptDisplayOverride,
+  resetPromptDisplayOverrideStateForTests,
   setPromptDisplayOverride,
 } from "./message-prompt-display"
 
@@ -47,6 +49,7 @@ describe("message prompt display overrides", () => {
     const newMessageId = "real-msg"
     const storage = new MemoryStorage()
     ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
 
     clearPromptDisplayOverridesForInstance(instanceId)
 
@@ -68,6 +71,50 @@ describe("message prompt display overrides", () => {
     clearPromptDisplayOverride(instanceId, sessionId, newMessageId)
     assert.equal(getPromptDisplayOverride(instanceId, sessionId, newMessageId), undefined)
 
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("finds persisted metadata after reopening with a different instance id", () => {
+    const firstInstanceId = `instance-a-${Date.now()}`
+    const reopenedInstanceId = `instance-b-${Date.now()}`
+    const sessionId = "session-stable"
+    const messageId = "msg-1"
+    const storage = new MemoryStorage()
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
+
+    clearPromptDisplayOverridesForSession(firstInstanceId, sessionId)
+
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 5 }, { kind: "pasted", length: 12 }] }
+    setPromptDisplayOverride(firstInstanceId, sessionId, messageId, metadata)
+
+    assert.deepEqual(getPromptDisplayOverride(reopenedInstanceId, sessionId, messageId), metadata)
+
+    clearPromptDisplayOverride(reopenedInstanceId, sessionId, messageId)
+    assert.equal(getPromptDisplayOverride(firstInstanceId, sessionId, messageId), undefined)
+
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("migrates legacy instance-scoped storage keys to stable reopen keys", () => {
+    const storage = new MemoryStorage()
+    const legacyInstanceId = "legacy-instance"
+    const reopenedInstanceId = "reopened-instance"
+    const sessionId = "session-legacy"
+    const messageId = "msg-legacy"
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 4 }, { kind: "pasted", length: 9 }] }
+
+    storage.setItem(
+      "codenomad:prompt-display:v2",
+      JSON.stringify({ [`${legacyInstanceId}:${sessionId}:${messageId}`]: metadata }),
+    )
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
+
+    assert.deepEqual(getPromptDisplayOverride(reopenedInstanceId, sessionId, messageId), metadata)
+    assert.equal(storage.getItem("codenomad:prompt-display:v3")?.includes(`${sessionId}:${messageId}`), true)
+
+    clearPromptDisplayOverride(reopenedInstanceId, sessionId, messageId)
     delete (globalThis as unknown as { window?: unknown }).window
   })
 })

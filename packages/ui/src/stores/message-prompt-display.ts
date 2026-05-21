@@ -1,12 +1,27 @@
 import type { PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 
-const STORAGE_KEY = "codenomad:prompt-display:v2"
+const STORAGE_KEY = "codenomad:prompt-display:v3"
 
 let loaded = false
 const promptDisplayOverrides = new Map<string, PromptDisplayMetadata>()
 
-function makeKey(instanceId: string, sessionId: string, messageId: string): string {
-  return `${instanceId}:${sessionId}:${messageId}`
+function makeKey(_instanceId: string, sessionId: string, messageId: string): string {
+  return `${sessionId}:${messageId}`
+}
+
+function isLegacyInstanceScopedKey(key: string): boolean {
+  return key.split(":").length === 3
+}
+
+function migrateStoredKey(key: string): string {
+  if (!isLegacyInstanceScopedKey(key)) {
+    return key
+  }
+  const [, sessionId, messageId] = key.split(":")
+  if (!sessionId || !messageId) {
+    return key
+  }
+  return `${sessionId}:${messageId}`
 }
 
 function readStorage(): Storage | null {
@@ -25,14 +40,24 @@ function ensureLoaded(): void {
   if (!storage) return
 
   try {
+    const parsedEntries: Record<string, PromptDisplayMetadata>[] = []
     const raw = storage.getItem(STORAGE_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as Record<string, PromptDisplayMetadata>
-    for (const [key, value] of Object.entries(parsed)) {
-      if (isPromptDisplayMetadata(value)) {
-        promptDisplayOverrides.set(key, value)
+    if (raw) {
+      parsedEntries.push(JSON.parse(raw) as Record<string, PromptDisplayMetadata>)
+    }
+    const legacyRaw = storage.getItem("codenomad:prompt-display:v2")
+    if (legacyRaw) {
+      parsedEntries.push(JSON.parse(legacyRaw) as Record<string, PromptDisplayMetadata>)
+    }
+    if (parsedEntries.length === 0) return
+    for (const parsed of parsedEntries) {
+      for (const [key, value] of Object.entries(parsed)) {
+        if (isPromptDisplayMetadata(value)) {
+          promptDisplayOverrides.set(migrateStoredKey(key), value)
+        }
       }
     }
+    persist()
   } catch {
     promptDisplayOverrides.clear()
   }
@@ -139,4 +164,9 @@ export function clearPromptDisplayOverridesForInstance(instanceId: string): void
   }
   if (!changed) return
   persist()
+}
+
+export function resetPromptDisplayOverrideStateForTests(): void {
+  loaded = false
+  promptDisplayOverrides.clear()
 }

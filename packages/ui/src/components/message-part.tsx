@@ -1,4 +1,4 @@
-import { For, Match, Show, Suspense, Switch, createMemo, lazy } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createMemo, createSignal, lazy } from "solid-js"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
@@ -137,6 +137,38 @@ export default function MessagePart(props: MessagePartProps) {
     toggleItemExpanded(reasoningId())
   }
 
+  function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
+    const [hasExpanded, setHasExpanded] = createSignal(false)
+
+    return (
+      <details
+        class="rounded-md border border-base bg-surface-secondary px-3 py-2"
+        onToggle={(event) => {
+          if ((event.currentTarget as HTMLDetailsElement).open) {
+            setHasExpanded(true)
+          }
+        }}
+      >
+        <summary class="cursor-pointer select-none text-xs font-medium text-secondary">
+          {t("messagePart.pastedText.summary")}
+        </summary>
+        <Show when={hasExpanded()}>
+          <div class="pt-2">
+            <Markdown
+              part={createSegmentTextPart(disclosureProps.text, disclosureProps.index)}
+              instanceId={props.instanceId}
+              sessionId={props.sessionId}
+              isDark={isDark()}
+              size="base"
+              escapeRawHtml
+              onRendered={props.onRendered}
+            />
+          </div>
+        </Show>
+      </details>
+    )
+  }
+
   return (
     <Switch>
       <Match when={partType() === "text"}>
@@ -169,22 +201,7 @@ export default function MessagePart(props: MessagePartProps) {
                   <For each={segments().filter((segment) => segment.text.length > 0)}>
                     {(segment, index) =>
                       segment.kind === "pasted" ? (
-                        <details class="rounded-md border border-base bg-surface-secondary px-3 py-2">
-                          <summary class="cursor-pointer select-none text-xs font-medium text-secondary">
-                            {t("messagePart.pastedText.summary")}
-                          </summary>
-                          <div class="pt-2">
-                            <Markdown
-                              part={createSegmentTextPart(segment.text, index())}
-                              instanceId={props.instanceId}
-                              sessionId={props.sessionId}
-                              isDark={isDark()}
-                              size="base"
-                              escapeRawHtml
-                              onRendered={props.onRendered}
-                            />
-                          </div>
-                        </details>
+                        <PastedTextDisclosure text={segment.text} index={index()} />
                       ) : (
                         <Markdown
                           part={createSegmentTextPart(segment.text, index())}
