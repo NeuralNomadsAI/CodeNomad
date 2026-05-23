@@ -9,9 +9,6 @@ import {
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
-import { showConfirmDialog } from "./alerts"
-import { tGlobal } from "../lib/i18n"
-import { confirmSubagentsInheritYoloModeChange, createSubagentYoloConfirmDialogArgs } from "./yolo-confirmation"
 
 const log = getLogger("actions")
 
@@ -70,7 +67,6 @@ export interface UiSettings {
   showUsageMetrics: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
-  subagentsInheritYoloMode: boolean
 
   // OS notifications
   osNotificationsEnabled: boolean
@@ -151,7 +147,6 @@ const defaultUiSettings: UiSettings = {
   showUsageMetrics: true,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: false,
-  subagentsInheritYoloMode: false,
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -193,7 +188,6 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
-    subagentsInheritYoloMode: sanitized.subagentsInheritYoloMode ?? defaultUiSettings.subagentsInheritYoloMode,
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,
@@ -457,24 +451,6 @@ function updateUiSettings(updates: Partial<UiSettings>) {
 
 function updatePreferences(updates: Partial<UiSettings>): void {
   updateUiSettings(updates)
-}
-
-export async function confirmEnableSubagentsInheritYoloMode(
-  confirmDialog: typeof showConfirmDialog = showConfirmDialog,
-): Promise<boolean> {
-  return confirmDialog(...createSubagentYoloConfirmDialogArgs(tGlobal))
-}
-
-async function setSubagentsInheritYoloMode(enabled: boolean): Promise<boolean> {
-  const confirmed = await confirmSubagentsInheritYoloModeChange(
-    preferences().subagentsInheritYoloMode,
-    enabled,
-    confirmEnableSubagentsInheritYoloMode,
-  )
-  if (!confirmed) return false
-
-  updateUiSettings({ subagentsInheritYoloMode: enabled })
-  return true
 }
 
 function setThemePreference(preference: ThemePreference): void {
@@ -778,7 +754,6 @@ interface ConfigContextValue {
   toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
-  setSubagentsInheritYoloMode: typeof setSubagentsInheritYoloMode
   togglePromptSubmitOnEnter: typeof togglePromptSubmitOnEnter
   toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
   setDiffViewMode: typeof setDiffViewMode
@@ -831,7 +806,6 @@ const configContextValue: ConfigContextValue = {
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  setSubagentsInheritYoloMode,
   togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,
@@ -913,7 +887,6 @@ export {
   toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
-  setSubagentsInheritYoloMode,
   togglePromptSubmitOnEnter,
   toggleShowPromptVoiceInput,
   setDiffViewMode,

@@ -39,6 +39,7 @@ import {
   hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
+  drainAutoAcceptPermissionsForSession,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -76,7 +77,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 import { adoptSubagentPermissionAutoAccept } from "./permission-auto-accept"
-import { createSessionFromSessionUpdateInfo, mapSessionRevert } from "./session-event-adapters"
+import { adoptSubagentPermissionAutoAcceptAndDrain, createSessionFromSessionUpdateInfo, mapSessionRevert } from "./session-event-adapters"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -223,6 +224,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
+    let newSessionForAutoAccept: Session | null = null
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -246,9 +248,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
 
-      if (!existing) {
-        adoptSubagentPermissionAutoAccept(instanceId, merged)
-      }
+      if (!existing) newSessionForAutoAccept = merged
 
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
         shouldExpandParent = merged.parentId
@@ -257,6 +257,15 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
+
+    if (newSessionForAutoAccept) {
+      adoptSubagentPermissionAutoAcceptAndDrain(
+        instanceId,
+        newSessionForAutoAccept,
+        adoptSubagentPermissionAutoAccept,
+        drainAutoAcceptPermissionsForSession,
+      )
+    }
 
     if (shouldExpandParent) {
       ensureSessionParentExpanded(instanceId, shouldExpandParent)
@@ -478,7 +487,12 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    adoptSubagentPermissionAutoAccept(instanceId, newSession)
+    adoptSubagentPermissionAutoAcceptAndDrain(
+      instanceId,
+      newSession,
+      adoptSubagentPermissionAutoAccept,
+      drainAutoAcceptPermissionsForSession,
+    )
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {

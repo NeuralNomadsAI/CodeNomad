@@ -6,12 +6,10 @@ export function isYoloEligibleSubagentSession(session: Pick<Session, "parentId" 
 
 export function shouldSubagentInheritPermissionAutoAcceptValue(
   session: Pick<Session, "parentId" | "revert">,
-  subagentsInheritYoloMode: boolean,
   parentYoloModeEnabled: boolean,
 ) {
   return Boolean(
-    subagentsInheritYoloMode &&
-      isYoloEligibleSubagentSession(session) &&
+    isYoloEligibleSubagentSession(session) &&
       session.parentId &&
       parentYoloModeEnabled,
   )

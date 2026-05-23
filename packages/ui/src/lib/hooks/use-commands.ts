@@ -42,7 +42,6 @@ export interface UseCommandsOptions {
   setDiagnosticsExpansion: (mode: ExpansionPreference) => void
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
-  setSubagentsInheritYoloMode: (enabled: boolean) => Promise<boolean>
   handleNewInstanceRequest: () => void
   handleCloseActiveTab: () => Promise<void>
   handleCloseInstance: (instanceId: string) => Promise<void>
@@ -433,7 +432,6 @@ export function useCommands(options: UseCommandsOptions) {
       setDiagnosticsExpansion: options.setDiagnosticsExpansion,
       setThinkingBlocksExpansion: options.setThinkingBlocksExpansion,
       setToolInputsVisibility: options.setToolInputsVisibility,
-      setSubagentsInheritYoloMode: options.setSubagentsInheritYoloMode,
     })
  
     commandRegistry.register({

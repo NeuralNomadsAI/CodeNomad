@@ -177,12 +177,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "מאשר אוטומטית בקשות הרשאה עבור הסשן הזה. כבוי כברירת מחדל.",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "מצב Yolo פעיל",
-  "instanceShell.yoloMode.subagents.title": "תתי-סוכנים משתמשים במצב YOLO",
-  "instanceShell.yoloMode.subagents.description": "אפשרו לתת-סוכנים שנוצרו לרשת מצב YOLO ולדלג על בקשות אישור היכן שנתמך.",
-  "instanceShell.yoloMode.subagents.confirm.title": "להפעיל מצב YOLO לתת-סוכנים?",
-  "instanceShell.yoloMode.subagents.confirm.body": "תתי-סוכנים עשויים להריץ פקודות או לשנות קבצים ללא בקשות אישור נוספות. הפעילו זאת רק בסביבות עבודה מהימנות.",
-  "instanceShell.yoloMode.subagents.confirm.cancel": "ביטול",
-  "instanceShell.yoloMode.subagents.confirm.enable": "הפעל לתת-סוכנים",
 
   "instanceShell.backgroundProcesses.empty": "אין תהליכי רקע.",
   "instanceShell.backgroundProcesses.status": "סטטוס: {status}",

@@ -203,12 +203,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "Automatically approve permission requests for this session. Disabled by default.",
   "instanceShell.yoloMode.badge": "Yolo mode",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo mode enabled",
-  "instanceShell.yoloMode.subagents.title": "Subagents use YOLO Mode",
-  "instanceShell.yoloMode.subagents.description": "Allow spawned subagents to inherit YOLO Mode and skip approval prompts where supported.",
-  "instanceShell.yoloMode.subagents.confirm.title": "Enable YOLO Mode for Subagents?",
-  "instanceShell.yoloMode.subagents.confirm.body": "Subagents may execute commands or make file changes without additional approval prompts. Only enable this in trusted workspaces.",
-  "instanceShell.yoloMode.subagents.confirm.cancel": "Cancel",
-  "instanceShell.yoloMode.subagents.confirm.enable": "Enable for Subagents",
 
   "instanceShell.backgroundProcesses.empty": "No background processes.",
   "instanceShell.backgroundProcesses.status": "Status: {status}",

@@ -44,3 +44,14 @@ export function createSessionFromSessionUpdateInfo(
     revert: mapSessionRevert(info.revert),
   }
 }
+
+export function adoptSubagentPermissionAutoAcceptAndDrain(
+  instanceId: string,
+  session: Pick<Session, "id" | "parentId" | "revert">,
+  adopt: (instanceId: string, session: Pick<Session, "id" | "parentId" | "revert">) => boolean,
+  drainSessionPermissions: (instanceId: string, sessionId: string) => void,
+): boolean {
+  if (!adopt(instanceId, session)) return false
+  drainSessionPermissions(instanceId, session.id)
+  return true
+}

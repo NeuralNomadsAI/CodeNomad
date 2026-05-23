@@ -169,12 +169,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "Approuve automatiquement les demandes d'autorisation pour cette session. Desactive par defaut.",
   "instanceShell.yoloMode.badge": "Mode yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Mode yolo active",
-  "instanceShell.yoloMode.subagents.title": "Les sous-agents utilisent le mode YOLO",
-  "instanceShell.yoloMode.subagents.description": "Autorise les sous-agents lances a heriter du mode YOLO et a ignorer les demandes d'approbation lorsque c'est pris en charge.",
-  "instanceShell.yoloMode.subagents.confirm.title": "Activer le mode YOLO pour les sous-agents ?",
-  "instanceShell.yoloMode.subagents.confirm.body": "Les sous-agents peuvent executer des commandes ou modifier des fichiers sans demandes d'approbation supplementaires. Activez cette option uniquement dans des espaces de travail fiables.",
-  "instanceShell.yoloMode.subagents.confirm.cancel": "Annuler",
-  "instanceShell.yoloMode.subagents.confirm.enable": "Activer pour les sous-agents",
 
   "instanceShell.backgroundProcesses.empty": "Aucun processus en arrière-plan.",
   "instanceShell.backgroundProcesses.status": "Statut : {status}",

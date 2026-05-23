@@ -169,12 +169,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "自动批准此会话的权限请求。默认关闭。",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yolo 模式已启用",
-  "instanceShell.yoloMode.subagents.title": "子智能体使用 YOLO 模式",
-  "instanceShell.yoloMode.subagents.description": "允许生成的子智能体继承 YOLO 模式，并在支持时跳过批准提示。",
-  "instanceShell.yoloMode.subagents.confirm.title": "为子智能体启用 YOLO 模式？",
-  "instanceShell.yoloMode.subagents.confirm.body": "子智能体可能会在没有额外批准提示的情况下执行命令或修改文件。仅在受信任的工作区中启用。",
-  "instanceShell.yoloMode.subagents.confirm.cancel": "取消",
-  "instanceShell.yoloMode.subagents.confirm.enable": "为子智能体启用",
 
   "instanceShell.backgroundProcesses.empty": "没有后台进程。",
   "instanceShell.backgroundProcesses.status": "状态：{status}",

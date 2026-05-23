@@ -2,7 +2,6 @@ import { batch, createSignal } from "solid-js"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages } from "./session-api"
-import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
@@ -11,6 +10,7 @@ import { requestData } from "../lib/opencode-api"
 import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { registerPermissionAutoAcceptSessionProvider, syncAllInheritedPermissionAutoAccept } from "./permission-auto-accept"
 
 const log = getLogger("session")
 
@@ -32,7 +32,15 @@ export type SessionThread = {
   latestUpdated: number
 }
 
-const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
+const [sessions, setSessionsSignal] = createSignal<Map<string, Map<string, Session>>>(new Map())
+registerPermissionAutoAcceptSessionProvider(sessions)
+
+function setSessions(...args: Parameters<typeof setSessionsSignal>): ReturnType<typeof setSessionsSignal> {
+  const result = setSessionsSignal(...args)
+  syncAllInheritedPermissionAutoAccept()
+  return result
+}
+
 const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
@@ -772,6 +780,7 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
     const deletedCount = deletionResults.filter(Boolean).length
 
     if (deletedCount > 0) {
+      const { showToastNotification } = await import("../lib/notifications")
       showToastNotification({
         message: deletedCount === 1
           ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })

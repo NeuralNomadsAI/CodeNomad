@@ -169,12 +169,6 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "このセッションの権限リクエストを自動承認します。デフォルトでは無効です。",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Yoloモードが有効",
-  "instanceShell.yoloMode.subagents.title": "サブエージェントがYOLOモードを使用",
-  "instanceShell.yoloMode.subagents.description": "生成されたサブエージェントがYOLOモードを継承し、対応している場合は承認プロンプトを省略できるようにします。",
-  "instanceShell.yoloMode.subagents.confirm.title": "サブエージェントのYOLOモードを有効にしますか？",
-  "instanceShell.yoloMode.subagents.confirm.body": "サブエージェントは追加の承認プロンプトなしでコマンドを実行したりファイルを変更したりする可能性があります。信頼できるワークスペースでのみ有効にしてください。",
-  "instanceShell.yoloMode.subagents.confirm.cancel": "キャンセル",
-  "instanceShell.yoloMode.subagents.confirm.enable": "サブエージェントで有効化",
 
   "instanceShell.backgroundProcesses.empty": "バックグラウンドプロセスはありません。",
   "instanceShell.backgroundProcesses.status": "状態: {status}",

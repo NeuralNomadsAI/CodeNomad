@@ -27,6 +27,7 @@ class ServerEvents {
   }
 
   private connect() {
+    if (typeof EventSource === "undefined") return
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null

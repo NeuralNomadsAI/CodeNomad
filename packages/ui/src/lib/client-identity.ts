@@ -13,18 +13,18 @@ export function getClientIdentity(): { clientId: string; connectionId: string } 
 
 function getOrCreateClientId(): string {
   if (cachedClientId) return cachedClientId
-  cachedClientId = getOrCreateStoredValue(CLIENT_ID_STORAGE_KEY, window.localStorage)
+  cachedClientId = getOrCreateStoredValue(CLIENT_ID_STORAGE_KEY, typeof window === "undefined" ? undefined : window.localStorage)
   return cachedClientId
 }
 
 function getOrCreateConnectionId(): string {
   if (cachedConnectionId) return cachedConnectionId
-  cachedConnectionId = getOrCreateStoredValue(CONNECTION_ID_STORAGE_KEY, window.sessionStorage)
+  cachedConnectionId = getOrCreateStoredValue(CONNECTION_ID_STORAGE_KEY, typeof window === "undefined" ? undefined : window.sessionStorage)
   return cachedConnectionId
 }
 
-function getOrCreateStoredValue(key: string, storage: Storage): string {
-  if (typeof window === "undefined") {
+function getOrCreateStoredValue(key: string, storage: Storage | undefined): string {
+  if (!storage) {
     return generateUUID()
   }
 
