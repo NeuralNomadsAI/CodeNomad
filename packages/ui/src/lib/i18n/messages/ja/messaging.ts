@@ -124,6 +124,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "生成中...",
   "messageItem.status.sending": "送信中...",
   "messageItem.status.failedToSend": "メッセージの送信に失敗しました",
+  "messageItem.status.retry": "再試行",
   "messagePart.actions.delete": "パートを削除",
   "messagePart.actions.deleting": "削除中...",
   "messagePart.actions.deleteTitle": "この項目を削除",

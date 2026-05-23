@@ -46,6 +46,7 @@ import type {
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { debugInfo, debugWarn, debugError } from "../stores/debug-log"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -85,6 +86,19 @@ function buildAbsoluteUrl(path: string): string {
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+
+function fetchWithTimeout(url: string | URL, init?: RequestInit, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  if (init?.signal) {
+    init.signal.addEventListener("abort", () => controller.abort(), { once: true })
+  }
+
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeoutId))
+}
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -146,7 +160,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${path}`)
 
   try {
-    const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    const response = await fetchWithTimeout(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -160,6 +174,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return (await response.json()) as T
   } catch (error) {
     logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
+    if (error instanceof Error && error.name === "AbortError") {
+      debugWarn("api", `Request timed out: ${method} ${path}`)
+      throw new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s`)
+    }
+    debugError("api", `Request failed: ${method} ${path} - ${error instanceof Error ? error.message : String(error)}`)
     throw error
   }
 }
@@ -175,7 +194,16 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  let response: Response
+  try {
+    response = await fetchWithTimeout(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  } catch (error) {
+    logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s`)
+    }
+    throw error
+  }
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })

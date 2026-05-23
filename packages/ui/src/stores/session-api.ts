@@ -822,10 +822,14 @@ async function loadMessages(
     }
 
     if (!agentName && !providerID && !modelID) {
-      const defaultModel = await getDefaultModel(instanceId, session.agent)
-      agentName = session.agent
-      providerID = defaultModel.providerId
-      modelID = defaultModel.modelId
+      if (session.model?.providerId && session.model?.modelId) {
+        // Preserve existing session model when messages don't include model info
+      } else {
+        const defaultModel = await getDefaultModel(instanceId, session.agent)
+        agentName = session.agent
+        providerID = defaultModel.providerId
+        modelID = defaultModel.modelId
+      }
     }
 
     setSessions((prev) => {

@@ -8,7 +8,7 @@ import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage } from "../stores/session-actions"
+import { deleteMessage, retrySendMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
@@ -770,7 +770,16 @@ export default function MessageItem(props: MessageItemProps) {
         </Show>
 
         <Show when={props.record.status === "error"}>
-          <div class="message-error">⚠ {t("messageItem.status.failedToSend")}</div>
+          <div class="message-error">
+            <span>⚠ {t("messageItem.status.failedToSend")}</span>
+            <button
+              type="button"
+              class="message-retry-button"
+              onClick={() => retrySendMessage(props.instanceId, props.sessionId, props.record.id)}
+            >
+              {t("messageItem.status.retry")}
+            </button>
+          </div>
         </Show>
       </div>
     </div>

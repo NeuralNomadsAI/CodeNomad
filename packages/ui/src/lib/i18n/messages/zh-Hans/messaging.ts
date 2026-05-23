@@ -124,6 +124,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "正在生成...",
   "messageItem.status.sending": "正在发送...",
   "messageItem.status.failedToSend": "消息发送失败",
+  "messageItem.status.retry": "重试",
   "messagePart.actions.delete": "删除部分",
   "messagePart.actions.deleting": "正在删除...",
   "messagePart.actions.deleteTitle": "删除此项",

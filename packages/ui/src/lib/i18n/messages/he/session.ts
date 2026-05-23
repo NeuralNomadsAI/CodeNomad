@@ -108,9 +108,14 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "נייד לרוחב (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "הסשן {label} סוכם",
+  "sessionEvents.compactionTimeout.title": "פג זמן הסיכום",
+  "sessionEvents.compactionTimeout.message": "סיכום הסשן לא הושלם. ניתן לנסות שוב.",
   "sessionEvents.sessionError.unknown": "שגיאה לא ידועה",
   "sessionEvents.sessionError.title": "שגיאת סשן",
   "sessionEvents.sessionError.message": "שגיאה: {message}",
+
+  "networkStatus.offline": "אין חיבור",
+  "networkStatus.backOnline": "החיבור שוחזר",
 
   "sessionState.cleanup.deepConfirm.message": "ניקוי עמוק זה עשוי להיות איטי, ועלול למחוק סשנים שלא התכוונת למחוק. האם אתה בטוח?",
   "sessionState.cleanup.deepConfirm.title": "ניקוי עמוק של סשנים",

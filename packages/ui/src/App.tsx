@@ -1,5 +1,7 @@
 import { Component, For, Show, createMemo, createEffect, createSignal, onMount, onCleanup } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
+import NetworkStatusBanner from "./components/network-status-banner"
+import DebugOverlay from "./components/debug-overlay"
 import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
@@ -555,6 +557,7 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
+        <NetworkStatusBanner />
         <Show when={isPhoneLayout() && mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
             <button
@@ -690,6 +693,7 @@ const App: Component = () => {
             className: "bg-transparent border-none shadow-none p-0",
           }}
         />
+        <DebugOverlay />
       </div>
     </>
   )

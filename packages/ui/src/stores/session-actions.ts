@@ -11,6 +11,8 @@ import { removeMessagePartV2, removeMessageV2 } from "./message-v2/bridge"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { onNetworkRestored } from "../lib/network-status"
+import { debugInfo, debugWarn, debugError } from "./debug-log"
 
 const log = getLogger("actions")
 
@@ -80,6 +82,7 @@ async function sendMessage(
   prompt: string,
   attachments: any[] = [],
 ): Promise<void> {
+  debugInfo("actions", `sendMessage: session=${sessionId.slice(0, 8)} len=${prompt.length}`)
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -218,6 +221,17 @@ async function sendMessage(
     )
   } catch (error) {
     log.error("Failed to send prompt", error)
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    debugError("actions", `sendMessage failed: ${errorMsg}`)
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "error",
+      parts: optimisticParts,
+      createdAt,
+      isEphemeral: true,
+    })
     throw error
   }
 }
@@ -462,12 +476,76 @@ async function deleteMessage(instanceId: string, sessionId: string, messageId: s
   updateSessionInfo(instanceId, sessionId)
 }
 
+async function retrySendMessage(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  debugInfo("actions", `retrySendMessage: session=${sessionId.slice(0, 8)} msg=${messageId.slice(0, 8)}`)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const message = store.getMessage(messageId)
+  if (!message) {
+    log.error("retrySendMessage: message not found", { instanceId, sessionId, messageId })
+    throw new Error("Message not found")
+  }
+
+  const textParts: string[] = []
+  for (const partId of message.partIds) {
+    const part = message.parts[partId]
+    if (part?.data?.type === "text") {
+      textParts.push((part.data as { text: string }).text)
+    }
+  }
+
+  const prompt = textParts.join("\n")
+  if (!prompt) {
+    log.error("retrySendMessage: no text content in message", { instanceId, sessionId, messageId })
+    throw new Error("Message has no text content")
+  }
+
+  removeMessageV2(instanceId, messageId)
+
+  await sendMessage(instanceId, sessionId, prompt)
+}
+
+// Auto-retry failed user messages when the browser regains connectivity
+// and the message store indicates they are in error state.
+function autoRetryOnReconnect() {
+  onNetworkRestored(() => {
+    const ids = instances()
+    for (const instId of ids.keys()) {
+      const store = messageStoreBus.getOrCreate(instId)
+      if (!store) continue
+      const retryPromises: Promise<void>[] = []
+      const sessEntries = Object.entries(store.state.sessions)
+      for (const [sessId] of sessEntries) {
+        const msgIds = store.getSessionMessageIds(sessId)
+        for (const msgId of msgIds) {
+          const msg = store.getMessage(msgId)
+          if (msg && msg.status === "error" && msg.role === "user") {
+            retryPromises.push(
+              retrySendMessage(instId, sessId, msgId).catch((e) => {
+                log.error("Auto-retry failed", { instanceId: instId, sessionId: sessId, messageId: msgId, error: e })
+              }),
+            )
+          }
+        }
+      }
+      if (retryPromises.length > 0) {
+        log.info(`Auto-retrying ${retryPromises.length} failed message(s)`)
+        debugInfo("actions", `Auto-retrying ${retryPromises.length} message(s) on reconnect`)
+      }
+    }
+  })
+}
+
+if (typeof window !== "undefined") {
+  autoRetryOnReconnect()
+}
+
 export {
   abortSession,
   deleteMessage,
   deleteMessagePart,
   executeCustomCommand,
   renameSession,
+  retrySendMessage,
   runShellCommand,
   sendMessage,
   updateSessionAgent,

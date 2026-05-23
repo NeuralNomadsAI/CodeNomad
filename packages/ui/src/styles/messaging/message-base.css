@@ -244,8 +244,22 @@
 }
 
 .message-error {
-  @apply text-xs mt-1;
+  @apply text-xs mt-1 flex items-center gap-2;
   color: var(--status-error);
+}
+
+.message-retry-button {
+  @apply text-xs font-medium underline underline-offset-2;
+  color: var(--status-error);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.message-retry-button:hover {
+  color: var(--status-error);
+  opacity: 0.8;
 }
 
 .generating-spinner {

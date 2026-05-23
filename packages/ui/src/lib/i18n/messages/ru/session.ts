@@ -108,9 +108,14 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "Мобильный горизонтально (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "Сессия {label} была компактирована",
+  "sessionEvents.compactionTimeout.title": "Тайм-аут компактизации",
+  "sessionEvents.compactionTimeout.message": "Компактизация сессии не завершена. Попробуйте снова.",
   "sessionEvents.sessionError.unknown": "Неизвестная ошибка",
   "sessionEvents.sessionError.title": "Ошибка сессии",
   "sessionEvents.sessionError.message": "Ошибка: {message}",
+
+  "networkStatus.offline": "Нет соединения",
+  "networkStatus.backOnline": "Соединение восстановлено",
 
   "sessionState.cleanup.deepConfirm.message": "Эта очистка может быть медленной и может удалить сессии, которые вы не хотели удалять. Вы уверены?",
   "sessionState.cleanup.deepConfirm.title": "Глубокая очистка сессий",

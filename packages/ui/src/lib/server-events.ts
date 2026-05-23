@@ -2,6 +2,7 @@ import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
+import { debugInfo } from "../stores/debug-log"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -89,6 +90,14 @@ class ServerEvents {
   onOpen(handler: () => void): () => void {
     this.openHandlers.add(handler)
     return () => this.openHandlers.delete(handler)
+  }
+
+  resetRetry() {
+    debugInfo("sse", "Reset retry delay and reconnect")
+    this.retryDelay = RETRY_BASE_DELAY
+    if (!this.source && this.reconnectTimer === null) {
+      this.connect()
+    }
   }
 }
 

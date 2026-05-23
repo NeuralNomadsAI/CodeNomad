@@ -124,6 +124,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "Генерация…",
   "messageItem.status.sending": "Отправка…",
   "messageItem.status.failedToSend": "Не удалось отправить сообщение",
+  "messageItem.status.retry": "Повторить",
   "messagePart.actions.delete": "Удалить часть",
   "messagePart.actions.deleting": "Удаление...",
   "messagePart.actions.deleteTitle": "Удалить этот элемент",

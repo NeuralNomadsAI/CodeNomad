@@ -124,6 +124,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "Generando...",
   "messageItem.status.sending": "Enviando...",
   "messageItem.status.failedToSend": "No se pudo enviar el mensaje",
+  "messageItem.status.retry": "Reintentar",
   "messagePart.actions.delete": "Eliminar parte",
   "messagePart.actions.deleting": "Eliminando...",
   "messagePart.actions.deleteTitle": "Eliminar este elemento",

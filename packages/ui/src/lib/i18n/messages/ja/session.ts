@@ -108,9 +108,14 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "モバイル横向き (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "セッション {label} をコンパクト化しました",
+  "sessionEvents.compactionTimeout.title": "コンパクト化がタイムアウト",
+  "sessionEvents.compactionTimeout.message": "セッションのコンパクト化が完了しませんでした。もう一度お試しください。",
   "sessionEvents.sessionError.unknown": "不明なエラー",
   "sessionEvents.sessionError.title": "セッションエラー",
   "sessionEvents.sessionError.message": "エラー: {message}",
+
+  "networkStatus.offline": "オフライン",
+  "networkStatus.backOnline": "接続が復旧しました",
 
   "sessionState.cleanup.deepConfirm.message": "このクリーンアップは時間がかかる場合があり、意図しないセッションを削除する可能性があります。続行しますか？",
   "sessionState.cleanup.deepConfirm.title": "セッションを徹底クリーン",

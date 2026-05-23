@@ -122,6 +122,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "מייצר...",
   "messageItem.status.sending": "שולח...",
   "messageItem.status.failedToSend": "שליחת ההודעה נכשלה",
+  "messageItem.status.retry": "נסה שוב",
   "messagePart.actions.delete": "מחק חלק",
   "messagePart.actions.deleting": "מוחק...",
   "messagePart.actions.deleteTitle": "מחק פריט זה",

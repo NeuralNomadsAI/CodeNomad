@@ -108,9 +108,14 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "移动横屏 (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "会话 {label} 已被压缩",
+  "sessionEvents.compactionTimeout.title": "压缩超时",
+  "sessionEvents.compactionTimeout.message": "会话压缩未完成。您可以重试压缩。",
   "sessionEvents.sessionError.unknown": "未知错误",
   "sessionEvents.sessionError.title": "会话错误",
   "sessionEvents.sessionError.message": "错误：{message}",
+
+  "networkStatus.offline": "无网络连接",
+  "networkStatus.backOnline": "网络连接已恢复",
 
   "sessionState.cleanup.deepConfirm.message": "此清理可能较慢，并且可能删除你并不想删除的会话。确定要继续吗？",
   "sessionState.cleanup.deepConfirm.title": "深度清理会话",

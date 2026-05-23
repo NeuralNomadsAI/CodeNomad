@@ -80,6 +80,41 @@ const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
 let activeRetryToast: ToastHandle | null = null
 
+const COMPACTION_TIMEOUT_MS = 180_000
+const compactionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearCompactionTimer(instanceId: string, sessionId: string) {
+  const key = `${instanceId}:${sessionId}`
+  const timer = compactionTimers.get(key)
+  if (timer) {
+    clearTimeout(timer)
+    compactionTimers.delete(key)
+  }
+}
+
+function setCompactionTimer(instanceId: string, sessionId: string) {
+  const key = `${instanceId}:${sessionId}`
+  clearCompactionTimer(instanceId, sessionId)
+  compactionTimers.set(
+    key,
+    setTimeout(() => {
+      compactionTimers.delete(key)
+      log.warn(`[SSE] Compaction timeout for session ${sessionId}, recovering to "idle"`)
+      withSession(instanceId, sessionId, (session) => {
+        if (session.status === "compacting") {
+          session.status = "idle"
+          showToastNotification({
+            title: tGlobal("sessionEvents.compactionTimeout.title"),
+            message: tGlobal("sessionEvents.compactionTimeout.message"),
+            variant: "warning",
+            duration: 10000,
+          })
+        }
+      })
+    }, COMPACTION_TIMEOUT_MS),
+  )
+}
+
 function isSameRetryState(left: SessionRetryState | null | undefined, right: SessionRetryState | null | undefined): boolean {
   const a = left ?? null
   const b = right ?? null
@@ -338,6 +373,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     if (!sessionId || !messageId) return
     if (part.type === "compaction") {
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
+      setCompactionTimer(instanceId, sessionId)
     }
 
     const store = messageStoreBus.getOrCreate(instanceId)
@@ -606,6 +642,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
+  clearCompactionTimer(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) {
@@ -635,8 +672,9 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   })
 }
 
-function handleSessionError(_instanceId: string, event: EventSessionError): void {
+function handleSessionError(instanceId: string, event: EventSessionError): void {
   const error = event.properties?.error
+  const sessionID = event.properties?.sessionID
   log.error(`[SSE] Session error:`, error)
 
   let message = tGlobal("sessionEvents.sessionError.unknown")
@@ -647,6 +685,16 @@ function handleSessionError(_instanceId: string, event: EventSessionError): void
     } else if ("message" in error && typeof error.message === "string") {
       message = error.message
     }
+  }
+
+  if (sessionID) {
+    withSession(instanceId, sessionID, (session) => {
+      if (session.status === "compacting") {
+        log.warn(`[SSE] Compaction failed for session ${sessionID}, resetting status to "idle"`)
+        clearCompactionTimer(instanceId, sessionID)
+        session.status = "idle"
+      }
+    })
   }
 
   showAlertDialog(tGlobal("sessionEvents.sessionError.message", { message }), {

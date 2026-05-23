@@ -108,9 +108,14 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "Mobile paysage (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "La session {label} a été compactée",
+  "sessionEvents.compactionTimeout.title": "Compaction expirée",
+  "sessionEvents.compactionTimeout.message": "La compaction de la session n'a pas abouti. Vous pouvez réessayer.",
   "sessionEvents.sessionError.unknown": "Erreur inconnue",
   "sessionEvents.sessionError.title": "Erreur de session",
   "sessionEvents.sessionError.message": "Erreur : {message}",
+
+  "networkStatus.offline": "Hors connexion",
+  "networkStatus.backOnline": "Connexion rétablie",
 
   "sessionState.cleanup.deepConfirm.message": "Ce nettoyage peut être lent et peut supprimer des sessions que vous ne vouliez pas supprimer. Confirmez-vous ?",
   "sessionState.cleanup.deepConfirm.title": "Nettoyage approfondi des sessions",
