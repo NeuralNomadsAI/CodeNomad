@@ -24,6 +24,7 @@ export const AppearanceSettingsSection: Component = () => {
     toggleShowTimelineTools,
     toggleUsageMetrics,
     toggleAutoCleanupBlankSessions,
+    setSubagentsInheritYoloMode,
     togglePromptSubmitOnEnter,
     toggleShowPromptVoiceInput,
     setDiffViewMode,
@@ -43,6 +44,7 @@ export const AppearanceSettingsSection: Component = () => {
       toggleShowTimelineTools,
         toggleUsageMetrics,
         toggleAutoCleanupBlankSessions,
+        setSubagentsInheritYoloMode,
         togglePromptSubmitOnEnter,
         toggleShowPromptVoiceInput,
         setDiffViewMode,
@@ -118,8 +120,11 @@ export const AppearanceSettingsSection: Component = () => {
             onChange={(opt) => {
               if (!opt) return
               const next = opt.value === "true"
+              const previous = Boolean(readSettingValue(setting))
               setOverride(setting.id, next)
-              setting.set(next)
+              void Promise.resolve(setting.set(next)).then((result) => {
+                if (result === false) setOverride(setting.id, previous)
+              })
             }}
             options={options()}
             optionValue="value"

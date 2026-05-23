@@ -2,6 +2,12 @@ import { createSignal } from "solid-js"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
+import { preferences } from "./preferences"
+import {
+  isYoloEligibleSubagentSession,
+  shouldSubagentInheritPermissionAutoAcceptValue as shouldSubagentInheritPermissionAutoAcceptRule,
+} from "./permission-auto-accept-rules"
+import type { Session } from "../types/session"
 
 const STORAGE_KEY = "codenomad:permission-auto-accept:v1"
 
@@ -72,6 +78,23 @@ export function togglePermissionAutoAccept(instanceId: string, sessionId: string
 
 function makeRequestKey(instanceId: string, sessionId: string, requestId: string) {
   return `${makeKey(instanceId, sessionId)}:${requestId}`
+}
+
+export function shouldSubagentInheritPermissionAutoAccept(
+  instanceId: string,
+  session: Pick<Session, "parentId" | "revert">,
+) {
+  return shouldSubagentInheritPermissionAutoAcceptRule(
+    session,
+    preferences().subagentsInheritYoloMode,
+    Boolean(session.parentId && isPermissionAutoAcceptEnabled(instanceId, session.parentId)),
+  )
+}
+
+export function adoptSubagentPermissionAutoAccept(instanceId: string, session: Pick<Session, "id" | "parentId" | "revert">) {
+  if (!shouldSubagentInheritPermissionAutoAccept(instanceId, session)) return false
+  setPermissionAutoAcceptEnabled(instanceId, session.id, true)
+  return true
 }
 
 export function clearAutoAcceptPermission(instanceId: string, sessionId: string, requestId: string) {

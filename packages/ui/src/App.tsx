@@ -92,6 +92,7 @@ const App: Component = () => {
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
+    setSubagentsInheritYoloMode,
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
@@ -457,6 +458,7 @@ const App: Component = () => {
     setDiagnosticsExpansion,
     setThinkingBlocksExpansion,
     setToolInputsVisibility,
+    setSubagentsInheritYoloMode,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
     handleCloseInstance,

@@ -52,6 +52,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       )
     }
 
+    const yoloEnabled = isPermissionAutoAcceptEnabled(props.instanceId, session.id)
+
     return (
       <div class="rounded-md border border-base bg-surface-secondary px-3 py-2">
         <div class="flex items-start justify-between gap-3">
@@ -60,7 +62,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
             <p class="mt-1 text-xs text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
           </div>
           <Switch
-            checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
+            checked={yoloEnabled}
             color="warning"
             size="small"
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}

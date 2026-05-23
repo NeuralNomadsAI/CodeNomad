@@ -43,6 +43,10 @@ import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import {
+  isPermissionAutoAcceptEnabled,
+  setPermissionAutoAcceptEnabled,
+} from "./permission-auto-accept"
+import {
   getOrCreateWorktreeClient,
   getRootClient,
   getWorktreeSlugForSession,
@@ -175,7 +179,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
       }
 
-      sessionMap.set(apiSession.id, {
+      const mappedSession: Session = {
         id: apiSession.id,
         instanceId,
         title: apiSession.title || "Untitled",
@@ -197,7 +201,9 @@ async function fetchSessions(instanceId: string): Promise<void> {
               diff: apiSession.revert.diff,
             }
           : undefined,
-      })
+      }
+      sessionMap.set(apiSession.id, mappedSession)
+
     }
 
     const validSessionIds = new Set(sessionMap.keys())
@@ -392,6 +398,10 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
             diff: response.data.revert.diff,
           }
         : undefined,
+    }
+
+    if (activeId && activeId !== "info" && isPermissionAutoAcceptEnabled(instanceId, activeId)) {
+      setPermissionAutoAcceptEnabled(instanceId, session.id, true)
     }
 
     setSessions((prev) => {

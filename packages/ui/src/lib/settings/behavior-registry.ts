@@ -16,7 +16,7 @@ export type BehaviorToggleSetting = {
   titleKey: string
   subtitleKey: string
   get: (preferences: Preferences) => boolean
-  set: (next: boolean) => void
+  set: (next: boolean) => void | Promise<boolean | void>
   disabled?: () => boolean
 }
 
@@ -42,6 +42,7 @@ export type BehaviorRegistryActions = {
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
+  setSubagentsInheritYoloMode: (enabled: boolean) => Promise<boolean>
   togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
@@ -315,6 +316,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
+    },
+    {
+      kind: "toggle",
+      id: "behavior.subagentsInheritYoloMode",
+      titleKey: "instanceShell.yoloMode.subagents.title",
+      subtitleKey: "instanceShell.yoloMode.subagents.description",
+      get: (p) => Boolean(p.subagentsInheritYoloMode),
+      set: (next) => actions.setSubagentsInheritYoloMode(next),
     },
   ]
 }

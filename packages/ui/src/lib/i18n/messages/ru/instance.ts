@@ -169,6 +169,12 @@ export const instanceMessages = {
   "instanceShell.yoloMode.description": "Автоматически одобряет запросы разрешений для этой сессии. По умолчанию выключен.",
   "instanceShell.yoloMode.badge": "Yolo",
   "instanceShell.yoloMode.badgeAriaLabel": "Режим Yolo включен",
+  "instanceShell.yoloMode.subagents.title": "Субагенты используют режим YOLO",
+  "instanceShell.yoloMode.subagents.description": "Разрешает запущенным субагентам наследовать режим YOLO и пропускать запросы подтверждения там, где это поддерживается.",
+  "instanceShell.yoloMode.subagents.confirm.title": "Включить режим YOLO для субагентов?",
+  "instanceShell.yoloMode.subagents.confirm.body": "Субагенты могут выполнять команды или изменять файлы без дополнительных запросов подтверждения. Включайте это только в доверенных рабочих пространствах.",
+  "instanceShell.yoloMode.subagents.confirm.cancel": "Отмена",
+  "instanceShell.yoloMode.subagents.confirm.enable": "Включить для субагентов",
 
   "instanceShell.backgroundProcesses.empty": "Нет фоновых процессов.",
   "instanceShell.backgroundProcesses.status": "Статус: {status}",

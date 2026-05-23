@@ -75,6 +75,7 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import { adoptSubagentPermissionAutoAccept } from "./permission-auto-accept"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -243,6 +244,10 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
+
+      if (!existing) {
+        adoptSubagentPermissionAutoAccept(instanceId, merged)
+      }
 
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
         shouldExpandParent = merged.parentId
@@ -492,6 +497,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
+    adoptSubagentPermissionAutoAccept(instanceId, newSession)
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
