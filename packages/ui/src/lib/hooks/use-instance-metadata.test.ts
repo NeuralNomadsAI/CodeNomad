@@ -26,6 +26,9 @@ describe("extractConfiguredPlugins", () => {
       extractConfiguredPlugins([
         [123, { invalid: true }],
         { plugin: "bad" },
+        ["missing-options"],
+        ["bad-options", "not-options"],
+        ["array-options", []],
         ["npm:good-plugin", { ok: true }],
       ]),
       ["npm:good-plugin"],
