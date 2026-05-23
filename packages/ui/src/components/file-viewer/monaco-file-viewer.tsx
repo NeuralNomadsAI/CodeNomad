@@ -10,6 +10,7 @@ interface MonacoFileViewerProps {
   path: string
   content: string
   wordWrap?: "on" | "off"
+  compactGutter?: boolean
   onSave?: (content: string) => void
   onContentChange?: (content: string) => void
 }
@@ -41,6 +42,12 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
     props.onSave(editor.getValue())
   }
 
+  const lineNumbersMinChars = (value: string) => {
+    if (!props.compactGutter) return 5
+    const lineCount = value.split(/\r\n|\r|\n/).length
+    return Math.max(3, String(lineCount).length + 1)
+  }
+
   onMount(() => {
     let cancelled = false
     void (async () => {
@@ -55,6 +62,10 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
         readOnly: false,
         automaticLayout: true,
         lineNumbers: "on",
+        lineNumbersMinChars: lineNumbersMinChars(props.content),
+        glyphMargin: false,
+        folding: !props.compactGutter,
+        lineDecorationsWidth: props.compactGutter ? 8 : 10,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         wordWrap: "off",
@@ -88,6 +99,15 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
   createEffect(() => {
     if (!ready() || !editor) return
     editor.updateOptions({ wordWrap: props.wordWrap === "on" ? "on" : "off" })
+  })
+
+  createEffect(() => {
+    if (!ready() || !editor) return
+    editor.updateOptions({
+      lineNumbersMinChars: lineNumbersMinChars(props.content),
+      folding: !props.compactGutter,
+      lineDecorationsWidth: props.compactGutter ? 8 : 10,
+    })
   })
 
   createEffect(() => {

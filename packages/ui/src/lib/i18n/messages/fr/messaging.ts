@@ -149,6 +149,7 @@ export const messagingMessages = {
   "promptInput.hints.commands": "Commandes",
   "promptInput.history.previousAriaLabel": "Prompt précédent",
   "promptInput.history.nextAriaLabel": "Prompt suivant",
+  "promptInput.resizeHandle.title": "Faites glisser pour redimensionner la hauteur de saisie",
   "promptInput.overlay.newLine": "Nouvelle ligne",
   "promptInput.overlay.send": "Envoyer",
   "promptInput.overlay.filesAgents": "Fichiers/agents",

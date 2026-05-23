@@ -101,14 +101,8 @@ interface RightPanelProps {
 
 const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("changes"))
-  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>([
-    "yolo-mode",
-    "plan",
-    "background-processes",
-    "mcp",
-    "lsp",
-    "plugins",
-  ])
+  const defaultStatusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
+  const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null)
 
   const [browserPath, setBrowserPath] = createSignal(".")
@@ -737,14 +731,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     }
     setRightPanelTab("changes")
   }
-
-  const statusSectionIds = ["yolo-mode", "session-changes", "plan", "background-processes", "mcp", "lsp", "plugins"]
-
-  createEffect(() => {
-    const currentExpanded = new Set(rightPanelExpandedItems())
-    if (statusSectionIds.every((id) => currentExpanded.has(id))) return
-    setRightPanelExpandedItems(statusSectionIds)
-  })
 
   const handleAccordionChange = (values: string[]) => {
     setRightPanelExpandedItems(values)
