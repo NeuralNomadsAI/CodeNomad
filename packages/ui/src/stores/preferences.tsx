@@ -11,7 +11,7 @@ import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { showConfirmDialog } from "./alerts"
 import { tGlobal } from "../lib/i18n"
-import { createSubagentYoloConfirmDialogArgs } from "./yolo-confirmation"
+import { confirmSubagentsInheritYoloModeChange, createSubagentYoloConfirmDialogArgs } from "./yolo-confirmation"
 
 const log = getLogger("actions")
 
@@ -466,12 +466,12 @@ export async function confirmEnableSubagentsInheritYoloMode(
 }
 
 async function setSubagentsInheritYoloMode(enabled: boolean): Promise<boolean> {
-  if (preferences().subagentsInheritYoloMode === enabled) return true
-
-  if (enabled) {
-    const confirmed = await confirmEnableSubagentsInheritYoloMode()
-    if (!confirmed) return false
-  }
+  const confirmed = await confirmSubagentsInheritYoloModeChange(
+    preferences().subagentsInheritYoloMode,
+    enabled,
+    confirmEnableSubagentsInheritYoloMode,
+  )
+  if (!confirmed) return false
 
   updateUiSettings({ subagentsInheritYoloMode: enabled })
   return true

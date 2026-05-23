@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { createSubagentYoloConfirmDialogArgs } from "./yolo-confirmation.ts"
+import { confirmSubagentsInheritYoloModeChange, createSubagentYoloConfirmDialogArgs } from "./yolo-confirmation.ts"
 
 describe("subagent YOLO preference confirmation", () => {
   it("requires the explicit subagent YOLO confirmation before enabling", async () => {
@@ -25,5 +25,27 @@ describe("subagent YOLO preference confirmation", () => {
 
     assert.equal(called, true)
     assert.equal(confirmed, true)
+  })
+
+  it("keeps the preference disabled when enabling is not confirmed", async () => {
+    let confirmed = false
+    const shouldUpdate = await confirmSubagentsInheritYoloModeChange(false, true, async () => {
+      confirmed = true
+      return false
+    })
+
+    assert.equal(confirmed, true)
+    assert.equal(shouldUpdate, false)
+  })
+
+  it("does not require confirmation when disabling", async () => {
+    let confirmed = false
+    const shouldUpdate = await confirmSubagentsInheritYoloModeChange(true, false, async () => {
+      confirmed = true
+      return true
+    })
+
+    assert.equal(confirmed, false)
+    assert.equal(shouldUpdate, true)
   })
 })

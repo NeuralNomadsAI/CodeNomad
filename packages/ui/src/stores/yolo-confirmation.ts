@@ -15,3 +15,13 @@ export function createSubagentYoloConfirmDialogArgs(
     },
   ]
 }
+
+export async function confirmSubagentsInheritYoloModeChange(
+  currentEnabled: boolean,
+  nextEnabled: boolean,
+  confirmEnable: () => Promise<boolean>,
+): Promise<boolean> {
+  if (currentEnabled === nextEnabled) return true
+  if (!nextEnabled) return true
+  return confirmEnable()
+}

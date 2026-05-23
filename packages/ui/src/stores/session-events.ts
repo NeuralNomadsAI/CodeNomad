@@ -76,6 +76,7 @@ import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 import { adoptSubagentPermissionAutoAccept } from "./permission-auto-accept"
+import { createSessionFromSessionUpdateInfo, mapSessionRevert } from "./session-event-adapters"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -462,27 +463,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const existingSession = instanceSessions.get(info.id)
 
   if (!existingSession) {
-    const newSession = {
-      id: info.id,
-      instanceId,
-      title: info.title || tGlobal("sessionList.session.untitled"),
-      parentId: info.parentID || null,
-      agent: "",
-      model: {
-        providerId: "",
-        modelId: "",
-      },
-      status: "idle",
-      retry: null,
-      idleSince: null,
-      version: info.version || "0",
-      time: info.time
-        ? { ...info.time }
-        : {
-            created: Date.now(),
-            updated: Date.now(),
-          },
-    } as Session
+    const newSession = createSessionFromSessionUpdateInfo(instanceId, info, tGlobal("sessionList.session.untitled"))
 
     let updatedInstanceSessions: Map<string, Session> | undefined
 
@@ -511,14 +492,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
       time: mergedTime,
-      revert: info.revert
-        ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
-        : existingSession.revert,
+      revert: info.revert ? mapSessionRevert(info.revert) : existingSession.revert,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined
