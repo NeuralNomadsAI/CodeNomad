@@ -1,4 +1,4 @@
-import { Show, type Accessor, type JSXElement } from "solid-js"
+import { Show, createEffect, createSignal, type Accessor, type JSXElement } from "solid-js"
 import type { PermissionRequestLike } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
@@ -13,13 +13,21 @@ export type PermissionToolBlockProps = {
   active: Accessor<boolean>
   submitting: Accessor<boolean>
   error: Accessor<string | null>
-  onRespond: (permission: PermissionRequestLike, sessionId: string, response: PermissionResponse) => void | Promise<void>
+  onRespond: (permission: PermissionRequestLike, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>
 }
 
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const { t } = useI18n()
+  const [showRejectReason, setShowRejectReason] = createSignal(false)
+  const [rejectReason, setRejectReason] = createSignal("")
+
+  createEffect(() => {
+    props.permission()?.id
+    setShowRejectReason(false)
+    setRejectReason("")
+  })
 
   const diffPayload = () => {
     const permission = props.permission()
@@ -39,11 +47,15 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
     return { diffText: diffValue, filePath: diffPathRaw } satisfies DiffPayload
   }
 
-  const respond = (response: PermissionResponse) => {
+  const respond = (response: PermissionResponse, message?: string) => {
     const permission = props.permission()
     if (!permission) return
     const sessionId = getPermissionSessionId(permission) || props.fallbackSessionId()
-    props.onRespond(permission, sessionId, response)
+    props.onRespond(permission, sessionId, response, message)
+  }
+
+  const confirmReject = () => {
+    respond("reject", rejectReason().trim() || undefined)
   }
 
   return (
@@ -76,44 +88,79 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
             <Show when={!props.active()}>
               <p class="tool-call-permission-queued-text">{t("toolCall.permission.queuedText")}</p>
             </Show>
-            <div class="tool-call-permission-actions">
-              <div class="tool-call-permission-buttons">
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={props.submitting()}
-                  onClick={() => respond("once")}
-                >
-                  {t("toolCall.permission.actions.allowOnce")}
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={props.submitting()}
-                  onClick={() => respond("always")}
-                >
-                  {t("toolCall.permission.actions.alwaysAllow")}
-                </button>
-                <button
-                  type="button"
-                  class="tool-call-permission-button"
-                  disabled={props.submitting()}
-                  onClick={() => respond("reject")}
-                >
-                  {t("toolCall.permission.actions.deny")}
-                </button>
-              </div>
-              <Show when={props.active()}>
-                <div class="tool-call-permission-shortcuts">
-                  <kbd class="kbd">Enter</kbd>
-                  <span>{t("toolCall.permission.shortcuts.allowOnce")}</span>
-                  <kbd class="kbd">A</kbd>
-                  <span>{t("toolCall.permission.shortcuts.alwaysAllow")}</span>
-                  <kbd class="kbd">D</kbd>
-                  <span>{t("toolCall.permission.shortcuts.deny")}</span>
+            <Show
+              when={showRejectReason()}
+              fallback={
+                <div class="tool-call-permission-actions">
+                  <div class="tool-call-permission-buttons">
+                    <button
+                      type="button"
+                      class="tool-call-permission-button"
+                      disabled={props.submitting()}
+                      onClick={() => respond("once")}
+                    >
+                      {t("toolCall.permission.actions.allowOnce")}
+                    </button>
+                    <button
+                      type="button"
+                      class="tool-call-permission-button"
+                      disabled={props.submitting()}
+                      onClick={() => respond("always")}
+                    >
+                      {t("toolCall.permission.actions.alwaysAllow")}
+                    </button>
+                    <button
+                      type="button"
+                      class="tool-call-permission-button"
+                      disabled={props.submitting()}
+                      onClick={() => setShowRejectReason(true)}
+                    >
+                      {t("toolCall.permission.actions.deny")}
+                    </button>
+                  </div>
+                  <Show when={props.active()}>
+                    <div class="tool-call-permission-shortcuts">
+                      <kbd class="kbd">Enter</kbd>
+                      <span>{t("toolCall.permission.shortcuts.allowOnce")}</span>
+                      <kbd class="kbd">A</kbd>
+                      <span>{t("toolCall.permission.shortcuts.alwaysAllow")}</span>
+                    </div>
+                  </Show>
                 </div>
-              </Show>
-            </div>
+              }
+            >
+              <div class="tool-call-permission-reject-reason">
+                <label class="tool-call-permission-reject-label" for={`permission-reject-reason-${permission().id}`}>
+                  {t("toolCall.permission.rejectReason.label")}
+                </label>
+                <textarea
+                  id={`permission-reject-reason-${permission().id}`}
+                  class="tool-call-permission-reject-textarea"
+                  value={rejectReason()}
+                  rows={3}
+                  placeholder={t("toolCall.permission.rejectReason.placeholder")}
+                  disabled={props.submitting()}
+                  onInput={(event) => setRejectReason(event.currentTarget.value)}
+                />
+                <p class="tool-call-permission-reject-hint">{t("toolCall.permission.rejectReason.hint")}</p>
+                <div class="tool-call-permission-buttons">
+                  <button type="button" class="tool-call-permission-button" disabled={props.submitting()} onClick={confirmReject}>
+                    {t("toolCall.permission.actions.confirmDeny")}
+                  </button>
+                  <button
+                    type="button"
+                    class="tool-call-permission-button"
+                    disabled={props.submitting()}
+                    onClick={() => {
+                      setShowRejectReason(false)
+                      setRejectReason("")
+                    }}
+                  >
+                    {t("toolCall.permission.actions.cancel")}
+                  </button>
+                </div>
+              </div>
+            </Show>
             <Show when={props.error()}>
               <div class="tool-call-permission-error">{props.error()}</div>
             </Show>

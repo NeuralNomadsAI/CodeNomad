@@ -1088,7 +1088,8 @@ async function sendPermissionResponse(
   instanceId: string,
   sessionId: string,
   requestId: string,
-  reply: PermissionReply
+  reply: PermissionReply,
+  message?: string,
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
@@ -1105,6 +1106,7 @@ async function sendPermissionResponse(
       client.permission.reply({
         requestID: requestId,
         reply,
+        ...(message ? { message } : {}),
       }),
       "permission.reply",
     )
