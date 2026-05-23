@@ -75,7 +75,6 @@ export const toolCallMessages = {
   "toolCall.permission.actions.cancel": "取消",
   "toolCall.permission.shortcuts.allowOnce": "仅允许一次",
   "toolCall.permission.shortcuts.alwaysAllow": "始终允许",
-  "toolCall.permission.shortcuts.deny": "拒绝",
   "toolCall.permission.rejectReason.label": "为什么拒绝此权限？",
   "toolCall.permission.rejectReason.placeholder": "告诉 CodeNomad 应该如何调整...",
   "toolCall.permission.rejectReason.hint": "代理会看到这条反馈，并可调整下一步操作。",

@@ -12,6 +12,7 @@ import {
 } from "../stores/instances"
 import { ensureSessionParentExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -421,6 +422,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                         class="tool-call-permission-reject-textarea"
                                         value={rejectReason()}
                                         rows={3}
+                                        maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
                                         placeholder={t("permissionApproval.rejectReason.placeholder")}
                                         disabled={permissionSubmitting().has(item.id)}
                                         onInput={(event) => setRejectReason(event.currentTarget.value)}

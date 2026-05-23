@@ -75,7 +75,6 @@ export const toolCallMessages = {
   "toolCall.permission.actions.cancel": "בטל",
   "toolCall.permission.shortcuts.allowOnce": "אפשר פעם אחת",
   "toolCall.permission.shortcuts.alwaysAllow": "אפשר תמיד",
-  "toolCall.permission.shortcuts.deny": "דחה",
   "toolCall.permission.rejectReason.label": "למה לדחות את האישור הזה?",
   "toolCall.permission.rejectReason.placeholder": "ספר ל-CodeNomad מה לעשות אחרת...",
   "toolCall.permission.rejectReason.hint": "הסוכן יראה את המשוב הזה ויוכל להתאים את הפעולה הבאה שלו.",

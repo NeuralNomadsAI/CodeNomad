@@ -3,6 +3,7 @@ import type { PermissionRequestLike } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
 import { useI18n } from "../../lib/i18n"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./permission-constants"
 import type { DiffPayload, DiffRenderOptions } from "./types"
 import { getRelativePath } from "./utils"
 
@@ -138,6 +139,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                   class="tool-call-permission-reject-textarea"
                   value={rejectReason()}
                   rows={3}
+                  maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
                   placeholder={t("toolCall.permission.rejectReason.placeholder")}
                   disabled={props.submitting()}
                   onInput={(event) => setRejectReason(event.currentTarget.value)}

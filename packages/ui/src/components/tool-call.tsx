@@ -244,6 +244,7 @@ function ToolCallDetails(props: {
     const activeKey = activePermissionKey()
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
+      if (isTextInputFocused()) return
       const permission = permissionDetails()
       if (!permission || !props.isPermissionActive()) return
       if (event.key === "Enter") {

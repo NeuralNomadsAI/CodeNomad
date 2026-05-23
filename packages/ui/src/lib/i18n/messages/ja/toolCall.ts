@@ -75,7 +75,6 @@ export const toolCallMessages = {
   "toolCall.permission.actions.cancel": "キャンセル",
   "toolCall.permission.shortcuts.allowOnce": "一度だけ許可",
   "toolCall.permission.shortcuts.alwaysAllow": "常に許可",
-  "toolCall.permission.shortcuts.deny": "拒否",
   "toolCall.permission.rejectReason.label": "この許可を拒否する理由は？",
   "toolCall.permission.rejectReason.placeholder": "CodeNomad に別の対応を伝えてください...",
   "toolCall.permission.rejectReason.hint": "エージェントはこのフィードバックを見て、次の操作を調整できます。",

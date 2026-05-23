@@ -75,7 +75,6 @@ export const toolCallMessages = {
   "toolCall.permission.actions.cancel": "Cancel",
   "toolCall.permission.shortcuts.allowOnce": "Allow once",
   "toolCall.permission.shortcuts.alwaysAllow": "Always allow",
-  "toolCall.permission.shortcuts.deny": "Deny",
   "toolCall.permission.rejectReason.label": "Why deny this permission?",
   "toolCall.permission.rejectReason.placeholder": "Tell CodeNomad what to do differently...",
   "toolCall.permission.rejectReason.hint": "The agent will see this feedback and can adjust its next action.",
