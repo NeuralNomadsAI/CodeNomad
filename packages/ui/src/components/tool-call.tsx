@@ -186,6 +186,7 @@ function ToolCallDetails(props: {
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
+  const [permissionRejectReasonOpen, setPermissionRejectReasonOpen] = createSignal(false)
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -245,6 +246,7 @@ function ToolCallDetails(props: {
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
       if (isTextInputFocused()) return
+      if (permissionRejectReasonOpen()) return
       const permission = permissionDetails()
       if (!permission || !props.isPermissionActive()) return
       if (event.key === "Enter") {
@@ -481,6 +483,7 @@ function ToolCallDetails(props: {
       error={permissionError}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
+      onRejectReasonOpenChange={setPermissionRejectReasonOpen}
       onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
     />
   )

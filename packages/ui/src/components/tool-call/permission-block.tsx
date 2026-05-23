@@ -15,6 +15,7 @@ export type PermissionToolBlockProps = {
   submitting: Accessor<boolean>
   error: Accessor<string | null>
   onRespond: (permission: PermissionRequestLike, sessionId: string, response: PermissionResponse, message?: string) => void | Promise<void>
+  onRejectReasonOpenChange?: (open: boolean) => void
   renderDiff: (payload: DiffPayload, options?: DiffRenderOptions) => JSXElement | null
   fallbackSessionId: Accessor<string>
 }
@@ -24,9 +25,14 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const [showRejectReason, setShowRejectReason] = createSignal(false)
   const [rejectReason, setRejectReason] = createSignal("")
 
+  const setRejectReasonOpen = (open: boolean) => {
+    setShowRejectReason(open)
+    props.onRejectReasonOpenChange?.(open)
+  }
+
   createEffect(() => {
     props.permission()?.id
-    setShowRejectReason(false)
+    setRejectReasonOpen(false)
     setRejectReason("")
   })
 
@@ -114,7 +120,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                       type="button"
                       class="tool-call-permission-button"
                       disabled={props.submitting()}
-                      onClick={() => setShowRejectReason(true)}
+                      onClick={() => setRejectReasonOpen(true)}
                     >
                       {t("toolCall.permission.actions.deny")}
                     </button>
@@ -154,7 +160,7 @@ export function PermissionToolBlock(props: PermissionToolBlockProps) {
                     class="tool-call-permission-button"
                     disabled={props.submitting()}
                     onClick={() => {
-                      setShowRejectReason(false)
+                      setRejectReasonOpen(false)
                       setRejectReason("")
                     }}
                   >
