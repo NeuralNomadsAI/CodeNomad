@@ -739,6 +739,10 @@ jobs:
           set -euo pipefail
           SEARCH_ROOT="packages/tauri-app/target"
           ARTIFACT_DIR="packages/tauri-app/release-tauri"
+          VERSION_TO_USE="${VERSION:-}"
+          if [ -z "$VERSION_TO_USE" ]; then
+            VERSION_TO_USE=$(node -p "require('./packages/tauri-app/package.json').version")
+          fi
           rm -rf "$ARTIFACT_DIR"
           mkdir -p "$ARTIFACT_DIR"
           shopt -s nullglob globstar
@@ -758,11 +762,11 @@ jobs:
             exit 1
           fi
 
-          cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.AppImage"
-          cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.deb"
-          cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.rpm"
-          cp "$flatpak" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.flatpak"
-          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION}.zip" "$fallback_bin"
+          cp "$appimage" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.AppImage"
+          cp "$deb" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.deb"
+          cp "$rpm" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.rpm"
+          cp "$flatpak" "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.flatpak"
+          zip -j "$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.zip" "$fallback_bin"
 
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
