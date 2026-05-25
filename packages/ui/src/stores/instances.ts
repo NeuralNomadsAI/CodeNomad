@@ -43,10 +43,8 @@ import {
   drainAutoAcceptPermissions,
   isPermissionAutoAcceptEnabled,
   registerPermissionAutoAcceptPermissionDrainer,
-  registerPermissionAutoAcceptScope,
   syncInheritedPermissionAutoAcceptForChildren,
   togglePermissionAutoAccept,
-  unregisterPermissionAutoAcceptScope,
 } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
@@ -142,7 +140,6 @@ function ensureActiveInstanceSelected(): void {
 }
 
 function upsertWorkspace(descriptor: WorkspaceDescriptor) {
-  registerPermissionAutoAcceptScope(descriptor.id, descriptor.path)
   const mapped = workspaceDescriptorToInstance(descriptor)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
@@ -536,7 +533,6 @@ function removeInstance(id: string) {
   removeLogContainer(id)
   clearCommands(id)
   clearPermissionQueue(id)
-  unregisterPermissionAutoAcceptScope(id)
   clearRepliedPermissions(id)
   clearQuestionQueue(id)
   clearInstanceMetadata(id)

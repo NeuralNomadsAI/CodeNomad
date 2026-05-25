@@ -2,24 +2,11 @@ import { createSignal } from "solid-js"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
-import { storage } from "../lib/storage"
 import {
   isYoloEligibleSubagentSession,
   shouldSubagentInheritPermissionAutoAcceptValue as shouldSubagentInheritPermissionAutoAcceptRule,
 } from "./permission-auto-accept-rules"
-import {
-  createPermissionAutoAcceptServerPersistence,
-  makePermissionAutoAcceptScope,
-  makePermissionAutoAcceptStateKey,
-  mergeUnmigratedPermissionAutoAcceptState,
-  migrateLegacyPermissionAutoAcceptState,
-  readPersistedPermissionAutoAcceptState,
-  serializePermissionAutoAcceptState,
-} from "./permission-auto-accept-persistence"
 import type { Session } from "../types/session"
-
-const STORAGE_KEY = "codenomad:permission-auto-accept:v1"
-const PERSISTED_STATE_OWNER = "ui"
 
 const log = getLogger("api")
 
@@ -29,7 +16,6 @@ type AutoAcceptSession = Pick<Session, "id" | "parentId" | "revert">
 type SessionProvider = () => Map<string, Map<string, AutoAcceptSession>>
 type SessionPermissionDrainer = (instanceId: string, sessionId: string) => void
 
-const scopeByInstanceId = new Map<string, string>()
 let sessionProvider: SessionProvider | null = null
 let drainSessionPermissions: SessionPermissionDrainer = () => {}
 
@@ -41,113 +27,16 @@ export function registerPermissionAutoAcceptPermissionDrainer(drainer: SessionPe
   drainSessionPermissions = drainer
 }
 
-export function registerPermissionAutoAcceptScope(instanceId: string, workspacePath: string) {
-  if (!instanceId || !workspacePath) return
-  const scope = makePermissionAutoAcceptScope(workspacePath)
-  scopeByInstanceId.set(instanceId, scope)
-
-  setAutoAcceptState((prev) => {
-    const next = migrateLegacyPermissionAutoAcceptState(prev, instanceId, scope)
-    if (!next) return prev
-    persist(next)
-    persistToServer(next, prev)
-    return next
-  })
-  syncAllInheritedPermissionAutoAccept()
-}
-
-export function unregisterPermissionAutoAcceptScope(instanceId: string) {
-  scopeByInstanceId.delete(instanceId)
-}
-
-function getPermissionAutoAcceptScope(instanceId: string) {
-  return scopeByInstanceId.get(instanceId) ?? null
-}
-
-function migrateKnownPermissionAutoAcceptScopes(state: Map<string, boolean>) {
-  let current = state
-  let changed = false
-  for (const [instanceId, scope] of scopeByInstanceId) {
-    const next = migrateLegacyPermissionAutoAcceptState(current, instanceId, scope)
-    if (!next) continue
-    current = next
-    changed = true
-  }
-  return changed ? current : state
-}
-
 function hasPermissionAutoAcceptState(instanceId: string, sessionId: string) {
-  const scope = getPermissionAutoAcceptScope(instanceId)
   const state = autoAcceptState()
-  const key = scope ? makePermissionAutoAcceptStateKey(scope, sessionId) : makeRuntimeKey(instanceId, sessionId)
-  return state.get(key) ?? false
+  return state.get(makeRuntimeKey(instanceId, sessionId)) ?? false
 }
 
 function makeRuntimeKey(instanceId: string, sessionId: string) {
   return `${instanceId}:${sessionId}`
 }
 
-function readInitialState() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return new Map<string, boolean>()
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return new Map<string, boolean>()
-    const parsed = JSON.parse(raw) as Record<string, boolean>
-    return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => entry[1] === true))
-  } catch {
-    return new Map<string, boolean>()
-  }
-}
-
-function persist(next: Map<string, boolean>) {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serializePermissionAutoAcceptState(next)))
-  } catch {
-    // ignore persistence failures
-  }
-}
-
-const serverPersistence = createPermissionAutoAcceptServerPersistence({
-  owner: PERSISTED_STATE_OWNER,
-  patchStateOwner: (owner, patch) => storage.patchStateOwner(owner, patch),
-  applyPersistedBucket: applyPersistedPermissionAutoAcceptState,
-  logError: (message, error) => log.error(message, error),
-})
-
-function persistToServer(next: Map<string, boolean>, previous = new Map<string, boolean>()) {
-  serverPersistence.persistToServer(next, previous)
-}
-
-const [autoAcceptState, setAutoAcceptState] = createSignal(readInitialState())
-
-function applyPersistedPermissionAutoAcceptState(bucket: Record<string, unknown>) {
-  const persisted = readPersistedPermissionAutoAcceptState(bucket)
-  if (!persisted) {
-    const current = autoAcceptState()
-    if (current.size > 0) persistToServer(current)
-    return
-  }
-
-  const merged = mergeUnmigratedPermissionAutoAcceptState(persisted, autoAcceptState())
-  const migrated = migrateKnownPermissionAutoAcceptScopes(merged)
-  setAutoAcceptState(migrated)
-  persist(migrated)
-  syncAllInheritedPermissionAutoAccept()
-  if (migrated !== merged) persistToServer(migrated, persisted)
-}
-
-storage.onStateOwnerChanged(PERSISTED_STATE_OWNER, (bucket) => {
-  const persisted = readPersistedPermissionAutoAcceptState(bucket)
-  if (!serverPersistence.shouldApplyPersistedState(persisted)) return
-  applyPersistedPermissionAutoAcceptState(bucket)
-})
+const [autoAcceptState, setAutoAcceptState] = createSignal(new Map<string, boolean>())
 
 const inFlight = new Set<string>()
 const inheritedParentBySession = new Map<string, string>()
@@ -180,8 +69,7 @@ function setPermissionAutoAcceptEnabledInternal(
     manuallyDisabledInheritedSessions.delete(inheritanceKey)
   }
 
-  const scope = getPermissionAutoAcceptScope(instanceId)
-  const key = scope ? makePermissionAutoAcceptStateKey(scope, sessionId) : makeRuntimeKey(instanceId, sessionId)
+  const key = makeRuntimeKey(instanceId, sessionId)
   setAutoAcceptState((prev) => {
     const currentlyEnabled = prev.get(key) === true
     if (currentlyEnabled === enabled) return prev
@@ -192,8 +80,6 @@ function setPermissionAutoAcceptEnabledInternal(
     } else {
       next.delete(key)
     }
-    persist(next)
-    if (scope) persistToServer(next, prev)
     return next
   })
   if (!enabled) {

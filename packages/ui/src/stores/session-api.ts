@@ -43,10 +43,6 @@ import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
 import {
-  isPermissionAutoAcceptEnabled,
-  setPermissionAutoAcceptEnabled,
-} from "./permission-auto-accept"
-import {
   getOrCreateWorktreeClient,
   getRootClient,
   getWorktreeSlugForSession,
@@ -398,10 +394,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
             diff: response.data.revert.diff,
           }
         : undefined,
-    }
-
-    if (activeId && activeId !== "info" && isPermissionAutoAcceptEnabled(instanceId, activeId)) {
-      setPermissionAutoAcceptEnabled(instanceId, session.id, true)
     }
 
     setSessions((prev) => {
