@@ -25,6 +25,7 @@ export interface PromptInputProps {
   // Phone/tablet layouts should keep the expanded prompt more compact.
   compactLayout?: boolean
   onSend: (prompt: string, attachments: Attachment[]) => Promise<void>
+  onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean
   escapeInDebounce?: boolean
