@@ -21,12 +21,14 @@ let resolveFamilyRoot: FamilyRootResolver = (_instanceId, sessionId) => sessionI
 
 export function resolvePermissionAutoAcceptFamilyRoot(sessionId: string, getSession: SessionLookup): string {
   let currentId = sessionId
+  let lastKnownId = sessionId
   const seen = new Set<string>()
 
   while (currentId && !seen.has(currentId)) {
     seen.add(currentId)
     const session = getSession(currentId)
-    if (!session) return currentId
+    if (!session) return lastKnownId
+    lastKnownId = session.id
     if (session.revert) return session.id
     if (!session.parentId) return session.id
     currentId = session.parentId
