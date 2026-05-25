@@ -182,4 +182,5 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permissionDenied": "Microphone access was denied by macOS.",
   "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
   "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
+  "promptInput.resizeHandle.title": "Drag to resize input height",
 } as const
