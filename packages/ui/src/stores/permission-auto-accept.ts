@@ -2,84 +2,92 @@ import { createSignal } from "solid-js"
 import type { PermissionReply, PermissionRequestLike } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { getLogger } from "../lib/logger"
-import {
-  isYoloEligibleSubagentSession,
-  shouldSubagentInheritPermissionAutoAcceptValue as shouldSubagentInheritPermissionAutoAcceptRule,
-} from "./permission-auto-accept-rules"
-import type { Session } from "../types/session"
+
+const STORAGE_KEY = "codenomad:permission-auto-accept:v1"
 
 const log = getLogger("api")
 
 type AutoAcceptResponder = (instanceId: string, sessionId: string, requestId: string, reply: PermissionReply) => Promise<void>
 type PendingPermissionChecker = (instanceId: string, requestId: string) => boolean
-type AutoAcceptSession = Pick<Session, "id" | "parentId" | "revert">
-type SessionProvider = () => Map<string, Map<string, AutoAcceptSession>>
-type SessionPermissionDrainer = (instanceId: string, sessionId: string) => void
-
-let sessionProvider: SessionProvider | null = null
-let drainSessionPermissions: SessionPermissionDrainer = () => {}
-
-export function registerPermissionAutoAcceptSessionProvider(provider: SessionProvider) {
-  sessionProvider = provider
+type PermissionAutoAcceptSession = {
+  id: string
+  parentId?: string | null
+  revert?: unknown
 }
+type SessionLookup = (sessionId: string) => PermissionAutoAcceptSession | undefined
+type FamilyRootResolver = (instanceId: string, sessionId: string) => string
 
-export function registerPermissionAutoAcceptPermissionDrainer(drainer: SessionPermissionDrainer) {
-  drainSessionPermissions = drainer
-}
+let resolveFamilyRoot: FamilyRootResolver = (_instanceId, sessionId) => sessionId
 
-function hasPermissionAutoAcceptState(instanceId: string, sessionId: string) {
-  const state = autoAcceptState()
-  return state.get(makeRuntimeKey(instanceId, sessionId)) ?? false
-}
+export function resolvePermissionAutoAcceptFamilyRoot(sessionId: string, getSession: SessionLookup): string {
+  let currentId = sessionId
+  const seen = new Set<string>()
 
-function makeRuntimeKey(instanceId: string, sessionId: string) {
-  return `${instanceId}:${sessionId}`
-}
-
-const [autoAcceptState, setAutoAcceptState] = createSignal(new Map<string, boolean>())
-
-const inFlight = new Set<string>()
-const inheritedParentBySession = new Map<string, string>()
-const manuallyDisabledInheritedSessions = new Set<string>()
-
-export function isPermissionAutoAcceptEnabled(instanceId: string, sessionId: string) {
-  return hasPermissionAutoAcceptState(instanceId, sessionId)
-}
-
-function getInheritanceKey(instanceId: string, sessionId: string) {
-  return makeRuntimeKey(instanceId, sessionId)
-}
-
-function setPermissionAutoAcceptEnabledInternal(
-  instanceId: string,
-  sessionId: string,
-  enabled: boolean,
-  options: { inheritedFromParentId?: string | null; manual?: boolean } = {},
-) {
-  const inheritanceKey = getInheritanceKey(instanceId, sessionId)
-  if (enabled) {
-    if (options.inheritedFromParentId) {
-      inheritedParentBySession.set(inheritanceKey, options.inheritedFromParentId)
-      manuallyDisabledInheritedSessions.delete(inheritanceKey)
-    }
-  } else if (options.manual !== false && inheritedParentBySession.has(inheritanceKey)) {
-    manuallyDisabledInheritedSessions.add(inheritanceKey)
-  } else if (options.manual === false) {
-    inheritedParentBySession.delete(inheritanceKey)
-    manuallyDisabledInheritedSessions.delete(inheritanceKey)
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId)
+    const session = getSession(currentId)
+    if (!session) return currentId
+    if (session.revert) return session.id
+    if (!session.parentId) return session.id
+    currentId = session.parentId
   }
 
-  const key = makeRuntimeKey(instanceId, sessionId)
-  setAutoAcceptState((prev) => {
-    const currentlyEnabled = prev.get(key) === true
-    if (currentlyEnabled === enabled) return prev
+  return currentId || sessionId
+}
 
+export function setPermissionAutoAcceptFamilyRootResolver(resolver: FamilyRootResolver) {
+  resolveFamilyRoot = resolver
+}
+
+function makeKey(instanceId: string, sessionId: string) {
+  return `${instanceId}:${resolveFamilyRoot(instanceId, sessionId)}`
+}
+
+function readInitialState() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return new Map<string, boolean>()
+  }
+
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return new Map<string, boolean>()
+    const parsed = JSON.parse(raw) as Record<string, boolean>
+    return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => entry[1] === true))
+  } catch {
+    return new Map<string, boolean>()
+  }
+}
+
+function persist(next: Map<string, boolean>) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(next)))
+  } catch {
+    // ignore persistence failures
+  }
+}
+
+const [autoAcceptState, setAutoAcceptState] = createSignal(readInitialState())
+
+const inFlight = new Set<string>()
+
+export function isPermissionAutoAcceptEnabled(instanceId: string, sessionId: string) {
+  return autoAcceptState().get(makeKey(instanceId, sessionId)) ?? false
+}
+
+export function setPermissionAutoAcceptEnabled(instanceId: string, sessionId: string, enabled: boolean) {
+  const key = makeKey(instanceId, sessionId)
+  setAutoAcceptState((prev) => {
     const next = new Map(prev)
     if (enabled) {
       next.set(key, true)
     } else {
       next.delete(key)
     }
+    persist(next)
     return next
   })
   if (!enabled) {
@@ -87,76 +95,12 @@ function setPermissionAutoAcceptEnabledInternal(
   }
 }
 
-export function setPermissionAutoAcceptEnabled(instanceId: string, sessionId: string, enabled: boolean) {
-  setPermissionAutoAcceptEnabledInternal(instanceId, sessionId, enabled)
-}
-
 export function togglePermissionAutoAccept(instanceId: string, sessionId: string) {
   setPermissionAutoAcceptEnabled(instanceId, sessionId, !isPermissionAutoAcceptEnabled(instanceId, sessionId))
 }
 
 function makeRequestKey(instanceId: string, sessionId: string, requestId: string) {
-  return `${makeRuntimeKey(instanceId, sessionId)}:${requestId}`
-}
-
-export function shouldSubagentInheritPermissionAutoAccept(
-  instanceId: string,
-  session: Pick<Session, "parentId" | "revert">,
-) {
-  return shouldSubagentInheritPermissionAutoAcceptRule(
-    session,
-    Boolean(session.parentId && isPermissionAutoAcceptEnabled(instanceId, session.parentId)),
-  )
-}
-
-export function adoptSubagentPermissionAutoAccept(instanceId: string, session: Pick<Session, "id" | "parentId" | "revert">) {
-  if (!shouldSubagentInheritPermissionAutoAccept(instanceId, session)) return false
-  setPermissionAutoAcceptEnabledInternal(instanceId, session.id, true, { inheritedFromParentId: session.parentId })
-  return true
-}
-
-export function syncInheritedPermissionAutoAcceptForChildren(
-  instanceId: string,
-  parentSessionId: string,
-  sessions?: Iterable<AutoAcceptSession>,
-  drainPermissions: SessionPermissionDrainer = drainSessionPermissions,
-) {
-  const instanceSessions = sessions ?? sessionProvider?.().get(instanceId)?.values()
-  if (!instanceSessions) return
-
-  const parentEnabled = isPermissionAutoAcceptEnabled(instanceId, parentSessionId)
-  const sessionList = Array.isArray(instanceSessions) ? instanceSessions : Array.from(instanceSessions)
-
-  for (const session of sessionList) {
-    if (session.parentId !== parentSessionId || !isYoloEligibleSubagentSession(session)) continue
-
-    const inheritanceKey = getInheritanceKey(instanceId, session.id)
-    if (parentEnabled) {
-      if (manuallyDisabledInheritedSessions.has(inheritanceKey)) continue
-
-      const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, session.id)
-      setPermissionAutoAcceptEnabledInternal(instanceId, session.id, true, {
-        inheritedFromParentId: parentSessionId,
-        manual: false,
-      })
-      if (!wasEnabled) drainPermissions(instanceId, session.id)
-      continue
-    }
-
-    setPermissionAutoAcceptEnabledInternal(instanceId, session.id, false, { manual: false })
-    syncInheritedPermissionAutoAcceptForChildren(instanceId, session.id, sessionList, drainPermissions)
-  }
-}
-
-export function syncAllInheritedPermissionAutoAccept() {
-  const allSessions = sessionProvider?.()
-  if (!allSessions) return
-
-  for (const [instanceId, instanceSessions] of allSessions) {
-    for (const session of instanceSessions.values()) {
-      syncInheritedPermissionAutoAcceptForChildren(instanceId, session.id, instanceSessions.values())
-    }
-  }
+  return `${makeKey(instanceId, sessionId)}:${requestId}`
 }
 
 export function clearAutoAcceptPermission(instanceId: string, sessionId: string, requestId: string) {
@@ -165,7 +109,7 @@ export function clearAutoAcceptPermission(instanceId: string, sessionId: string,
 }
 
 export function clearAutoAcceptSession(instanceId: string, sessionId: string) {
-  const prefix = `${makeRuntimeKey(instanceId, sessionId)}:`
+  const prefix = `${makeKey(instanceId, sessionId)}:`
   for (const requestKey of Array.from(inFlight)) {
     if (requestKey.startsWith(prefix)) {
       inFlight.delete(requestKey)

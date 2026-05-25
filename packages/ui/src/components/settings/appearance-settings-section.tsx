@@ -118,13 +118,8 @@ export const AppearanceSettingsSection: Component = () => {
             onChange={(opt) => {
               if (!opt) return
               const next = opt.value === "true"
-              const previous = Boolean(readSettingValue(setting))
               setOverride(setting.id, next)
-              void Promise.resolve(setting.set(next))
-                .then((result) => {
-                  if (result === false) setOverride(setting.id, previous)
-                })
-                .catch(() => setOverride(setting.id, previous))
+              setting.set(next)
             }}
             options={options()}
             optionValue="value"

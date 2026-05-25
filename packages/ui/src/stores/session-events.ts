@@ -39,7 +39,6 @@ import {
   hasRepliedPermission,
   addQuestionToQueue,
   removeQuestionFromQueue,
-  drainAutoAcceptPermissionsForSession,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -76,8 +75,6 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import type { InstanceMessageStore } from "./message-v2/instance-store"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
-import { adoptSubagentPermissionAutoAccept } from "./permission-auto-accept"
-import { adoptSubagentPermissionAutoAcceptAndDrain, createSessionFromSessionUpdateInfo, mapSessionRevert } from "./session-event-adapters"
 
 const log = getLogger("sse")
 const pendingSessionFetches = new Map<string, Promise<void>>()
@@ -224,7 +221,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandParent: string | null = null
-    let newSessionForAutoAccept: Session | null = null
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -248,8 +244,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
 
-      if (!existing) newSessionForAutoAccept = merged
-
       if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
         shouldExpandParent = merged.parentId
       }
@@ -257,15 +251,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-
-    if (newSessionForAutoAccept) {
-      adoptSubagentPermissionAutoAcceptAndDrain(
-        instanceId,
-        newSessionForAutoAccept,
-        adoptSubagentPermissionAutoAccept,
-        drainAutoAcceptPermissionsForSession,
-      )
-    }
 
     if (shouldExpandParent) {
       ensureSessionParentExpanded(instanceId, shouldExpandParent)
@@ -472,7 +457,27 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
   const existingSession = instanceSessions.get(info.id)
 
   if (!existingSession) {
-    const newSession = createSessionFromSessionUpdateInfo(instanceId, info, tGlobal("sessionList.session.untitled"))
+    const newSession = {
+      id: info.id,
+      instanceId,
+      title: info.title || tGlobal("sessionList.session.untitled"),
+      parentId: info.parentID || null,
+      agent: "",
+      model: {
+        providerId: "",
+        modelId: "",
+      },
+      status: "idle",
+      retry: null,
+      idleSince: null,
+      version: info.version || "0",
+      time: info.time
+        ? { ...info.time }
+        : {
+            created: Date.now(),
+            updated: Date.now(),
+          },
+    } as Session
 
     let updatedInstanceSessions: Map<string, Session> | undefined
 
@@ -487,12 +492,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     setSessionRevertV2(instanceId, info.id, info.revert ?? null)
-    adoptSubagentPermissionAutoAcceptAndDrain(
-      instanceId,
-      newSession,
-      adoptSubagentPermissionAutoAccept,
-      drainAutoAcceptPermissionsForSession,
-    )
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
@@ -506,7 +505,14 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
       time: mergedTime,
-      revert: info.revert ? mapSessionRevert(info.revert) : existingSession.revert,
+      revert: info.revert
+        ? {
+            messageID: info.revert.messageID,
+            partID: info.revert.partID,
+            snapshot: info.revert.snapshot,
+            diff: info.revert.diff,
+          }
+        : existingSession.revert,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined

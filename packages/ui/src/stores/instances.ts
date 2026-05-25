@@ -28,7 +28,7 @@ import {
 } from "./worktrees"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
-import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
+import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
@@ -42,8 +42,8 @@ import {
   clearAutoAcceptPermission,
   drainAutoAcceptPermissions,
   isPermissionAutoAcceptEnabled,
-  registerPermissionAutoAcceptPermissionDrainer,
-  syncInheritedPermissionAutoAcceptForChildren,
+  resolvePermissionAutoAcceptFamilyRoot,
+  setPermissionAutoAcceptFamilyRootResolver,
   togglePermissionAutoAccept,
 } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
@@ -53,6 +53,12 @@ import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 
 const log = getLogger("api")
+
+setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return sessionId
+  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
+})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -910,23 +916,9 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
   const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
-  if (willEnable) {
-    drainAutoAcceptPermissionsForSession(instanceId, sessionId)
-  }
-  syncInheritedPermissionAutoAcceptForChildren(
-    instanceId,
-    sessionId,
-    undefined,
-    drainAutoAcceptPermissionsForSession,
-  )
+  if (!willEnable) return
+  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
 }
-
-function drainAutoAcceptPermissionsForSession(instanceId: string, sessionId: string): void {
-  const permissions = getPermissionQueue(instanceId).filter((permission) => getPermissionSessionId(permission) === sessionId)
-  drainAutoAcceptPermissions(instanceId, permissions, sendPermissionResponse, hasPendingPermission)
-}
-
-registerPermissionAutoAcceptPermissionDrainer(drainAutoAcceptPermissionsForSession)
 
 function clearPermissionQueue(instanceId: string): void {
   for (const permission of getPermissionQueue(instanceId)) {
@@ -1233,7 +1225,6 @@ export {
   markPermissionReplied,
   hasRepliedPermission,
   togglePermissionAutoAcceptForSession,
-  drainAutoAcceptPermissionsForSession,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,

@@ -16,7 +16,7 @@ export type BehaviorToggleSetting = {
   titleKey: string
   subtitleKey: string
   get: (preferences: Preferences) => boolean
-  set: (next: boolean) => void | Promise<boolean | void>
+  set: (next: boolean) => void
   disabled?: () => boolean
 }
 

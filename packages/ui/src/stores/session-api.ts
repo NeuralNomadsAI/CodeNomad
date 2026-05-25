@@ -175,7 +175,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
       }
 
-      const mappedSession: Session = {
+      sessionMap.set(apiSession.id, {
         id: apiSession.id,
         instanceId,
         title: apiSession.title || "Untitled",
@@ -197,9 +197,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
               diff: apiSession.revert.diff,
             }
           : undefined,
-      }
-      sessionMap.set(apiSession.id, mappedSession)
-
+      })
     }
 
     const validSessionIds = new Set(sessionMap.keys())
