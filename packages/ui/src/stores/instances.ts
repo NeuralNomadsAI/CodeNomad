@@ -917,12 +917,11 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
   const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
   if (!willEnable) return
-  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
+  drainAutoAcceptPermissionsForInstance(instanceId)
 }
 
-function drainAutoAcceptPermissionsForSession(instanceId: string, sessionId: string): void {
-  const permissions = getPermissionQueue(instanceId).filter((permission) => getPermissionSessionId(permission) === sessionId)
-  drainAutoAcceptPermissions(instanceId, permissions, sendPermissionResponse, hasPendingPermission)
+function drainAutoAcceptPermissionsForInstance(instanceId: string): void {
+  drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
 }
 
 function clearPermissionQueue(instanceId: string): void {
@@ -1230,7 +1229,7 @@ export {
   markPermissionReplied,
   hasRepliedPermission,
   togglePermissionAutoAcceptForSession,
-  drainAutoAcceptPermissionsForSession,
+  drainAutoAcceptPermissionsForInstance,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
