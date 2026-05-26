@@ -110,8 +110,21 @@ Then open a pull request on GitHub targeting the `dev` branch.
 | `packages/opencode-plugin` | OpenCode plugin integration |
 | `packages/cloudflare` | Cloudflare deployment adapters |
 
-> For a complete navigation guide covering all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill in your agent:  
-> `.opencode/skills/codenomad-architecture-guide/SKILL.md`
+### Key UI Files
+
+| Path | Purpose |
+|---|---|
+| `packages/ui/src/stores/session-events.ts` | SSE event handlers (idle, status, permissions, questions) |
+| `packages/ui/src/stores/session-actions.ts` | User actions (send message, abort, revert, fork) |
+| `packages/ui/src/stores/message-v2/` | Message store (v2 architecture) |
+| `packages/ui/src/stores/instances.ts` | Instance management and interruption queues |
+| `packages/ui/src/components/tool-call.tsx` | Tool call rendering |
+| `packages/ui/src/components/message-block.tsx` | Message display blocks |
+| `packages/ui/src/components/session/session-view.tsx` | Main session view |
+| `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans) |
+
+> For a comprehensive map of all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill:  
+> `.opencode/skills/codenomad-architecture-guide/SKILL.md` (available after [PR #493](https://github.com/NeuralNomadsAI/CodeNomad/pull/493) lands)
 
 ### Styling
 
