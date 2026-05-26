@@ -54,7 +54,7 @@ Or install it globally to use the `codenomad` command:
 
 ```sh
 npm install -g @neuralnomads/codenomad
-codenomad --launch
+codenomad --password <your-password> --launch
 ```
 
 ### Install Locally (per-project)
@@ -63,7 +63,7 @@ If you prefer to install CodeNomad into a project and run the local binary:
 
 ```sh
 npm install @neuralnomads/codenomad
-npx codenomad --launch
+npx codenomad --password <your-password> --launch
 ```
 
 (`npx codenomad ...` will use `./node_modules/.bin/codenomad` when present.)
@@ -150,7 +150,13 @@ Certificates are valid for about 30 days and rotate automatically on startup whe
 codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 ```
 
-> **Browser warning:** Self-signed certificates trigger a "Your connection is not private" (or similar) warning in browsers on first visit. This is expected and safe for localhost. Click **Advanced → Proceed to localhost** (Chrome/Brave) or **Accept the Risk and Continue** (Firefox). For local-only development without the warning, run with `--https=false --http=true`.
+> **Browser warning:** Self-signed certificates trigger a "Your connection is not private" warning in browsers on first visit. This is expected and safe for local development (127.0.0.1 / localhost):
+> 
+> 1. **Chrome/Brave/Edge:** Click **Advanced** → **Proceed to 127.0.0.1 (unsafe)**
+> 2. **Firefox:** Click **Advanced** → **Accept the Risk and Continue**
+> 3. **Alternative:** For local-only development without the warning, run with `--https=false --http=true`
+> 
+> **Note:** Only accept self-signed certificates for localhost/127.0.0.1 that you control. For remote hosts, use proper TLS certificates.
 
 ### Authentication
 
@@ -161,11 +167,16 @@ codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 
 #### Setting a password
 
-There are three ways to configure authentication:
+**Practical setup options:**
 
-1. **CLI flag:** `--password <your-password>`
-2. **Environment variable:** `CODENOMAD_SERVER_PASSWORD=<your-password>`
-3. **Auth file:** Create `~/.config/codenomad/auth.json` with the following structure:
+1. **Runtime password (every start):** Use `--password <your-password>` or set `CODENOMAD_SERVER_PASSWORD=<your-password>` environment variable
+2. **Persistent password (UI setup):** Launch with `--generate-token`, complete the local bootstrap flow in your browser, then set a password through the UI settings
+
+The `--password` flag and `CODENOMAD_SERVER_PASSWORD` env var are **runtime credentials** — they must be provided on every server start and are not persisted to disk.
+
+**Advanced: `auth.json` internals**
+
+The `auth.json` file (`~/.config/codenomad/auth.json`) is automatically created and managed by CodeNomad when you set a password through the UI. You generally don't need to edit this file manually. For reference, it uses the following scrypt-based schema:
 
 ```json
 {
@@ -188,7 +199,7 @@ There are three ways to configure authentication:
 }
 ```
 
-> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. For first-time CLI setup without passing a runtime password on every start, launch with `--generate-token`, complete the local bootstrap flow, then set the password in the UI. The `--password` flag and `CODENOMAD_SERVER_PASSWORD` env var are **runtime credentials** — they must be provided on every server start and are not persisted to disk.
+Manual creation of this file is not recommended unless you have a helper to generate a valid scrypt `PasswordHashRecord`.
 
 ### Progressive Web App (PWA)
 
