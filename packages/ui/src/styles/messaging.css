@@ -37,12 +37,12 @@
 /* Message state indicators */
 .message-generating {
   @apply text-sm italic py-2;
-  color: var(--accent);
+  color: var(--status-warning);
 }
 
 .message-sending {
   @apply text-xs italic mt-1;
-  color: var(--accent);
+  color: var(--status-warning);
 }
 
 .message-error {

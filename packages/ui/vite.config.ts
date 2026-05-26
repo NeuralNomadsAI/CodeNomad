@@ -61,7 +61,8 @@ export default defineConfig({
     },
     VitePWA({
       registerType: "autoUpdate",
-      injectRegister: "auto",
+      injectRegister: null,
+      selfDestroying: true,
       pwaAssets: {
         preset: "minimal-2023",
         image: "public/logo.png",
