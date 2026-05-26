@@ -2,11 +2,7 @@
 
 ## Goal
 
-Add a device-scoped Appearance setting that lets users choose between the current Default chat and a new Simple chat style. Simple should be a CSS-only presentation layer over the chat stream and prompt controls, with calmer tool calls and a materially better mobile chat experience. The only non-CSS product change should be the requested prompt action icon update: send becomes an up arrow, stop remains a stop-square control.
-
-Prototype asset: `docs/features/simple-ui/simple-ui-prototype.png`
-
-Prototype source: `docs/features/simple-ui/simple-ui-prototype.svg`
+Add a device-scoped Appearance setting that lets users choose between the current Default chat and a new Simple chat style. Simple should be a CSS-only presentation layer over the chat stream and prompt controls, with calmer tool calls and a materially better mobile chat experience.
 
 ## Current Code Map
 
@@ -70,12 +66,11 @@ Scene: a user is running CodeNomad from a phone or narrow browser window while m
 - Use existing tokens first. Only add Simple-specific tokens in `tokens.css` if repeated values are needed across more than one area.
 - Keep aggregate CSS files lean; do not paste Simple chat rules into `messaging.css`, `controls.css`, or `panels.css`.
 
-5. Update prompt action icons.
+5. Refine prompt action presentation.
 
-- In `prompt-input.tsx`, replace the send fallback `▶` with an up-arrow icon or inline SVG.
-- Keep shell mode as the terminal-style icon unless product decides shell submit should also use the up arrow.
-- Keep the stop control as a square stop icon, but refine its Simple chat CSS to be compact, tactile, and visually distinct from send.
-- Update button titles only if current i18n labels say Play instead of Send.
+- Keep existing prompt send and stop behavior unchanged.
+- Use Simple chat CSS to make prompt actions compact, tactile, and visually distinct.
+- Keep button titles and existing i18n labels unchanged unless product copy changes.
 
 6. Simple chat CSS scope.
 
@@ -85,12 +80,10 @@ Scene: a user is running CodeNomad from a phone or narrow browser window while m
 - Prompt: make the textarea feel like a bottom composer, keep attachments/history secondary, place stop and send as large square buttons in the bottom rail.
 - Mobile: use `dvh`, safe-area padding, `@media (max-width: 640px)`, and existing container width state on `.session-center-column`.
 
-## Simple Chat Prototype Notes
+## Simple Chat Design Notes
 
-- The prototype shows the intended result, not final layout code.
 - Desktop keeps existing app chrome, with simpler message rows in the working area.
 - Mobile keeps existing navigation behavior and presents a focused stream with a sticky composer.
-- The send button uses an up arrow. The stop button uses a stop square.
 
 ## Testing Plan
 
@@ -109,7 +102,7 @@ Scene: a user is running CodeNomad from a phone or narrow browser window while m
 - Some current CSS files are large, so Simple chat should live in scoped files rather than expanding existing monoliths.
 - Broad selectors could accidentally affect Default UI. Every Simple selector should be scoped under `:root[data-chat-style="simple"]` and target chat/prompt surfaces only.
 - Dark theme needs a separate visual pass because Simple chat's light-first direction should not force light mode.
-- The send icon update is a markup change, not CSS. It should be isolated to `prompt-input.tsx`.
+- CSS-only Simple chat means prompt icon changes are out of scope unless product explicitly requests a separate markup update.
 
 ## Acceptance Criteria
 
@@ -117,5 +110,3 @@ Scene: a user is running CodeNomad from a phone or narrow browser window while m
 - Default is selected for existing users and remains visually unchanged.
 - Simple chat is activated only through the new data attribute and CSS overrides.
 - Simple improves mobile chat readability and thumb reach without removing existing features.
-- Prompt send displays an up arrow; stop displays a stop square.
-- Prototype PNG exists at `docs/features/simple-ui/simple-ui-prototype.png`.
