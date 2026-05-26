@@ -2,6 +2,11 @@
 
 Thank you for your interest in contributing! This guide will help you get started.
 
+## Prerequisites
+
+- **Node.js 18+** and npm
+- **OpenCode CLI** in your `PATH` (the server connects to the OpenCode binary to manage workspaces)
+
 ## Quick Start
 
 ```bash
@@ -90,37 +95,29 @@ Then open a pull request on GitHub targeting the `dev` branch.
 **PR checklist:**
 - [ ] Branch is based on latest `upstream/dev`
 - [ ] One issue per PR (don't mix unrelated changes)
-- [ ] `npm run typecheck --workspace @codenomad/ui` passes
+- [ ] Type checking passes: `npm run typecheck` (root) or the workspace-specific script matching your change area
 - [ ] Tests pass (if applicable)
 - [ ] PR description explains the change and links the issue
 
 ## Project Structure
 
 | Package | Description |
-|---|---|
+|---|---|---|
 | `packages/server` | Core logic & CLI — workspaces, OpenCode proxy, API, auth |
 | `packages/ui` | SolidJS frontend — reactive UI components and stores |
 | `packages/electron-app` | Electron desktop shell |
 | `packages/tauri-app` | Tauri desktop shell (experimental) |
+| `packages/opencode-plugin` | OpenCode plugin integration |
+| `packages/cloudflare` | Cloudflare deployment adapters |
 
-### Key UI Files
-
-| Path | Purpose |
-|---|---|
-| `packages/ui/src/stores/session-events.ts` | SSE event handlers (idle, status, permissions, questions) |
-| `packages/ui/src/stores/session-actions.ts` | User actions (send message, abort, revert, fork) |
-| `packages/ui/src/stores/message-v2/` | Message store (v2 architecture) |
-| `packages/ui/src/stores/instances.ts` | Instance management and interruption queues |
-| `packages/ui/src/components/tool-call.tsx` | Tool call rendering |
-| `packages/ui/src/components/message-block.tsx` | Message display blocks |
-| `packages/ui/src/components/session/session-view.tsx` | Main session view |
-| `packages/ui/src/lib/i18n/messages/` | Translation files (en, es, fr, ja, ru, he, zh-Hans) |
+> For a complete navigation guide covering all six functional areas (server, UI, desktop, speech/audio, build, Cloudflare), SDK integration patterns, and feature traces, load the `codenomad-architecture-guide` skill in your agent:  
+> `.opencode/skills/codenomad-architecture-guide/SKILL.md`
 
 ### Styling
 
-- Tokens: `src/styles/tokens.css`
-- Utilities: `src/styles/utilities.css`
-- Component styles: `src/styles/components/`, `src/styles/messaging/`, `src/styles/panels/`
+- Tokens: `packages/ui/src/styles/tokens.css`
+- Utilities: `packages/ui/src/styles/utilities.css`
+- Component styles: `packages/ui/src/styles/components/`, `packages/ui/src/styles/messaging/`, `packages/ui/src/styles/panels/`
 - Keep style files under ~150 lines; split by component
 
 ### Internationalization (i18n)
