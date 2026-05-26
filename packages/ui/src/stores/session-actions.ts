@@ -219,6 +219,14 @@ async function sendMessage(
       }),
       "session.promptAsync",
     )
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "sent",
+      createdAt,
+      isEphemeral: true,
+    })
   } catch (error) {
     log.error("Failed to send prompt", error)
     const rawMsg = error instanceof Error ? error.message : String(error)

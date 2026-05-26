@@ -46,6 +46,30 @@ export default function MessageItem(props: MessageItemProps) {
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const [showSending, setShowSending] = createSignal(false)
+  const [showGenerating, setShowGenerating] = createSignal(false)
+
+  createEffect(() => {
+    if (props.record.status === "sending") {
+      setShowSending(true)
+    } else if (showSending()) {
+      const timer = setTimeout(() => setShowSending(false), 1500)
+      onCleanup(() => clearTimeout(timer))
+    } else if (!showSending() && isUser() && props.record.status !== "error" && Date.now() - props.record.createdAt < 1500) {
+      setShowSending(true)
+      const timer = setTimeout(() => setShowSending(false), 1500)
+      onCleanup(() => clearTimeout(timer))
+    }
+  })
+
+  createEffect(() => {
+    if (isGenerating()) {
+      setShowGenerating(true)
+    } else if (showGenerating()) {
+      const timer = setTimeout(() => setShowGenerating(false), 1500)
+      onCleanup(() => clearTimeout(timer))
+    }
+  })
 
   type ImagePreviewState = {
     url: string
@@ -664,7 +688,7 @@ export default function MessageItem(props: MessageItemProps) {
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
 
-        <Show when={isGenerating()}>
+        <Show when={showGenerating()}>
           <div class="message-generating">
             <span class="generating-spinner">⏳</span> {t("messageItem.status.generating")}
           </div>
@@ -763,7 +787,7 @@ export default function MessageItem(props: MessageItemProps) {
           }}
         </Show>
 
-        <Show when={props.record.status === "sending"}>
+        <Show when={showSending()}>
           <div class="message-sending">
             <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
           </div>
