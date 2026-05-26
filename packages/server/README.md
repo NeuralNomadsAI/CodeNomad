@@ -188,7 +188,7 @@ There are three ways to configure authentication:
 }
 ```
 
-> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. To do this from the CLI, start the server without `--password` once and set the password through the UI, or use the bootstrap flow with `--dangerously-skip-auth`. The `--password` flag and `CODENOMAD_SERVER_PASSWORD` env var are **runtime credentials** — they must be provided on every server start and are not persisted to disk.
+> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. For first-time CLI setup without passing a runtime password on every start, launch with `--generate-token`, complete the local bootstrap flow, then set the password in the UI. The `--password` flag and `CODENOMAD_SERVER_PASSWORD` env var are **runtime credentials** — they must be provided on every server start and are not persisted to disk.
 
 ### Progressive Web App (PWA)
 
