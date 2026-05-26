@@ -729,7 +729,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const api = listApi()
     if (!api) return
     if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
+      props.registerScrollToBottom(() => {
+        api.scrollToBottom({ immediate: true })
+      })
     }
   })
 
