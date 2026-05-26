@@ -102,7 +102,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 ## Project Structure
 
 | Package | Description |
-|---|---|---|
+|---|---|
 | `packages/server` | Core logic & CLI — workspaces, OpenCode proxy, API, auth |
 | `packages/ui` | SolidJS frontend — reactive UI components and stores |
 | `packages/electron-app` | Electron desktop shell |
