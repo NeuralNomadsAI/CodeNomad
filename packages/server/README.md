@@ -172,15 +172,23 @@ There are three ways to configure authentication:
   "version": 1,
   "username": "codenomad",
   "password": {
-    "hash": "<bcrypt-hash>",
-    "salt": "<salt>"
+    "algorithm": "scrypt",
+    "saltBase64": "<base64-salt>",
+    "hashBase64": "<base64-hash>",
+    "keyLength": 64,
+    "params": {
+      "N": 16384,
+      "r": 8,
+      "p": 1,
+      "maxmem": 33554432
+    }
   },
   "userProvided": true,
   "updatedAt": "2026-05-18T12:00:00.000Z"
 }
 ```
 
-> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. For manual setup, use `--password` or `CODENOMAD_SERVER_PASSWORD` instead — the server will hash and store the password for you on first run.
+> **Note:** The `auth.json` file is normally created automatically when you set a password through the UI. To do this from the CLI, start the server without `--password` once and set the password through the UI, or use the bootstrap flow with `--dangerously-skip-auth`. The `--password` flag and `CODENOMAD_SERVER_PASSWORD` env var are **runtime credentials** — they must be provided on every server start and are not persisted to disk.
 
 ### Progressive Web App (PWA)
 
