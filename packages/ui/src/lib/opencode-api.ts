@@ -29,7 +29,9 @@ export async function requestData<T>(
     throw new OpencodeApiError(`${label} returned no result`)
   }
   if ((result as any).error) {
-    throw new OpencodeApiError(`${label} failed`, { cause: (result as any).error })
+    const cause = (result as any).error
+    const causeMsg = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : JSON.stringify(cause)
+    throw new OpencodeApiError(`${label} failed: ${causeMsg}`, { cause })
   }
   return (result as any).data as T
 }

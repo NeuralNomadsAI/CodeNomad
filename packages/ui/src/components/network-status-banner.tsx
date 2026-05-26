@@ -33,10 +33,10 @@ export default function NetworkStatusBanner() {
       <div
         role="status"
         aria-live="polite"
-        class={`transition-all duration-300 text-center text-xs font-medium py-1 px-3 ${
+        class={`transition-all duration-300 text-center text-xs font-semibold py-1.5 px-3 ${
           isOnlineSignal()()
-            ? "bg-green-600/20 text-green-500"
-            : "bg-amber-500/20 text-amber-500"
+            ? "bg-emerald-700 text-emerald-200"
+            : "bg-amber-600 text-white"
         }`}
       >
         {isOnlineSignal()() ? t("networkStatus.backOnline") : t("networkStatus.offline")}

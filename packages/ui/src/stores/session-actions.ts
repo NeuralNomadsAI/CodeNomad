@@ -221,8 +221,14 @@ async function sendMessage(
     )
   } catch (error) {
     log.error("Failed to send prompt", error)
-    const errorMsg = error instanceof Error ? error.message : String(error)
-    debugError("actions", `sendMessage failed: ${errorMsg}`)
+    const rawMsg = error instanceof Error ? error.message : String(error)
+    const friendlyMsg =
+      rawMsg.includes("Failed to fetch") || rawMsg.includes("NetworkError") || rawMsg.includes("network")
+        ? "No network connection"
+        : rawMsg.includes("timed out")
+          ? "Request timed out"
+          : rawMsg
+    debugError("actions", `sendMessage failed: ${friendlyMsg}`)
     store.upsertMessage({
       id: messageId,
       sessionId,
@@ -508,30 +514,43 @@ async function retrySendMessage(instanceId: string, sessionId: string, messageId
 // and the message store indicates they are in error state.
 function autoRetryOnReconnect() {
   onNetworkRestored(() => {
+    // Collect unique failed messages first (deduplicate by messageId)
+    const pending = new Map<string, { instId: string; sessId: string; msgId: string }>()
     const ids = instances()
     for (const instId of ids.keys()) {
       const store = messageStoreBus.getOrCreate(instId)
       if (!store) continue
-      const retryPromises: Promise<void>[] = []
       const sessEntries = Object.entries(store.state.sessions)
       for (const [sessId] of sessEntries) {
         const msgIds = store.getSessionMessageIds(sessId)
         for (const msgId of msgIds) {
           const msg = store.getMessage(msgId)
-          if (msg && msg.status === "error" && msg.role === "user") {
-            retryPromises.push(
-              retrySendMessage(instId, sessId, msgId).catch((e) => {
-                log.error("Auto-retry failed", { instanceId: instId, sessionId: sessId, messageId: msgId, error: e })
-              }),
-            )
+          if (msg && msg.status === "error" && msg.role === "user" && !pending.has(msgId)) {
+            pending.set(msgId, { instId, sessId, msgId })
           }
         }
       }
-      if (retryPromises.length > 0) {
-        log.info(`Auto-retrying ${retryPromises.length} failed message(s)`)
-        debugInfo("actions", `Auto-retrying ${retryPromises.length} message(s) on reconnect`)
-      }
     }
+
+    if (pending.size === 0) return
+
+    const count = pending.size
+    log.info(`Auto-retrying ${count} failed message(s) after 3s delay`)
+    debugInfo("actions", `Auto-retrying ${count} message(s) on reconnect in 3s`)
+
+    // Delay to let SSE reconnect before retrying
+    setTimeout(async () => {
+      let success = 0
+      for (const { instId, sessId, msgId } of pending.values()) {
+        try {
+          await retrySendMessage(instId, sessId, msgId)
+          success++
+        } catch (e) {
+          log.error("Auto-retry failed", { instanceId: instId, sessionId: sessId, messageId: msgId, error: e })
+        }
+      }
+      debugInfo("actions", `Auto-retry done: ${success}/${count} succeeded`)
+    }, 3000)
   })
 }
 

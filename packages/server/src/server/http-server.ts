@@ -35,6 +35,7 @@ import { InstanceStore } from "../storage/instance-store"
 import { BackgroundProcessManager } from "../background-processes/manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
+import { registerDebugLogRoutes } from "./routes/debug-log"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
@@ -274,6 +275,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   registerMetaRoutes(app, { serverMeta: deps.serverMeta })
+  registerDebugLogRoutes(app)
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,

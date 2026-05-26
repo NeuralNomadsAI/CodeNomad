@@ -15,6 +15,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import { showAlertDialog } from "../stores/alerts"
 import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
+import { visible as debugVisible, toggleVisibility as toggleDebug } from "../stores/debug-log"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { DeleteHoverState } from "../types/delete-hover"
 import { partHasRenderableText } from "../types/message"
@@ -1295,6 +1296,14 @@ export default function MessageSection(props: MessageSectionProps) {
           registerState={(state) => setListState(state)}
           renderControls={(state, api) => (
             <div class="message-scroll-button-wrapper">
+              <button
+                type="button"
+                class="message-scroll-button debug-toggle-button"
+                onClick={toggleDebug}
+                title={debugVisible() ? "Close debug log" : "Open debug log"}
+              >
+                {debugVisible() ? "✕" : "⚙"}
+              </button>
               <button
                 type="button"
                 class="message-scroll-button"

@@ -2,7 +2,7 @@ import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
-import { debugInfo } from "../stores/debug-log"
+import { debugInfo, debugWarn } from "../stores/debug-log"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -22,6 +22,11 @@ class ServerEvents {
   private source: EventSource | null = null
   private retryDelay = RETRY_BASE_DELAY
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private _connected = false
+
+  get connected(): boolean {
+    return this._connected
+  }
 
   constructor() {
     this.connect()
@@ -45,14 +50,15 @@ class ServerEvents {
             ...getClientIdentity(),
             pingTs: payload.ts,
           })
-          .catch((error) => {
-            log.error("Failed to send client connection pong", error)
+          .catch(() => {
+            debugWarn("sse", "Pong failed (connection already closed)")
           })
       },
     )
     this.source.onopen = () => {
       logSse("Events stream connected")
       this.retryDelay = RETRY_BASE_DELAY
+      this._connected = true
       this.openHandlers.forEach((handler) => handler())
     }
   }
@@ -63,6 +69,7 @@ class ServerEvents {
     }
     const source = this.source
     this.source = null
+    this._connected = false
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null

@@ -1,4 +1,7 @@
-import { createSignal, createMemo } from "solid-js"
+import { createSignal } from "solid-js"
+
+const STORAGE_KEY = "codenomad:debug-log"
+const MAX_ENTRIES = 300
 
 type LogLevel = "info" | "warn" | "error" | "debug"
 
@@ -10,10 +13,33 @@ interface LogEntry {
   message: string
 }
 
-const MAX_ENTRIES = 300
-let nextId = 1
+function loadPersisted(): LogEntry[] {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null
+    if (raw) {
+      const parsed = JSON.parse(raw) as LogEntry[]
+      return Array.isArray(parsed) ? parsed : []
+    }
+  } catch { /* ignore */ }
+  return []
+}
 
-const [entries, setEntries] = createSignal<LogEntry[]>([])
+function persist(entries: LogEntry[]) {
+  try {
+    if (typeof window !== "undefined") {
+      const slice = entries.slice(-MAX_ENTRIES)
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(slice))
+    }
+  } catch { /* ignore */ }
+}
+
+let nextId = 1
+const initial = loadPersisted()
+if (initial.length > 0) {
+  nextId = Math.max(...initial.map((e) => e.id), 0) + 1
+}
+
+const [entries, setEntries] = createSignal<LogEntry[]>(initial)
 const [paused, setPaused] = createSignal(false)
 const [visible, setVisible] = createSignal(false)
 
@@ -23,15 +49,15 @@ function addEntry(level: LogLevel, source: string, message: string) {
   const entry: LogEntry = { id: nextId++, ts, level, source, message }
   setEntries((prev) => {
     const next = [...prev, entry]
-    if (next.length > MAX_ENTRIES) {
-      return next.slice(next.length - MAX_ENTRIES)
-    }
-    return next
+    const trimmed = next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next
+    persist(trimmed)
+    return trimmed
   })
 }
 
 function clearLog() {
   setEntries([])
+  persist([])
 }
 
 function toggleVisibility() {
@@ -40,6 +66,10 @@ function toggleVisibility() {
 
 function togglePause() {
   setPaused((p) => !p)
+}
+
+function exportLog(): string {
+  return JSON.stringify(entries(), null, 2)
 }
 
 export function debugLog(source: string, message: string) {
@@ -65,4 +95,5 @@ export {
   clearLog,
   toggleVisibility,
   togglePause,
+  exportLog,
 }

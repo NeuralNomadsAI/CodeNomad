@@ -246,6 +246,23 @@
   color: var(--text-secondary);
 }
 
+.debug-toggle-button {
+  @apply inline-flex items-center justify-center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-base);
+  background-color: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.debug-toggle-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
 .message-quote-popover {
   position: absolute;
   z-index: 5;

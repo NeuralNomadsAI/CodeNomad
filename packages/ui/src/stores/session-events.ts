@@ -54,6 +54,7 @@ import { ensureSessionParentExpanded, sessions, setSessions, syncInstanceSession
 import { normalizeMessagePart } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
+import { debugInfo, debugWarn, debugError } from "./debug-log"
 
 import { loadMessages } from "./session-api"
 import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
@@ -89,17 +90,20 @@ function clearCompactionTimer(instanceId: string, sessionId: string) {
   if (timer) {
     clearTimeout(timer)
     compactionTimers.delete(key)
+    debugInfo("sse", `Compaction timer cleared for session ${sessionId.slice(0, 8)}`)
   }
 }
 
 function setCompactionTimer(instanceId: string, sessionId: string) {
   const key = `${instanceId}:${sessionId}`
   clearCompactionTimer(instanceId, sessionId)
+  debugInfo("sse", `Compaction timer set (${COMPACTION_TIMEOUT_MS / 1000}s) for session ${sessionId.slice(0, 8)}`)
   compactionTimers.set(
     key,
     setTimeout(() => {
       compactionTimers.delete(key)
       log.warn(`[SSE] Compaction timeout for session ${sessionId}, recovering to "idle"`)
+      debugWarn("sse", `Compaction timeout for session ${sessionId.slice(0, 8)}, resetting to idle`)
       withSession(instanceId, sessionId, (session) => {
         if (session.status === "compacting") {
           session.status = "idle"
@@ -372,6 +376,7 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
     if (part.type === "compaction") {
+      debugInfo("sse", `Compaction started for session ${sessionId.slice(0, 8)}`)
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
       setCompactionTimer(instanceId, sessionId)
     }
@@ -642,6 +647,7 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
+  debugInfo("sse", `Session compacted: ${sessionID.slice(0, 8)}`)
   clearCompactionTimer(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
@@ -691,6 +697,7 @@ function handleSessionError(instanceId: string, event: EventSessionError): void 
     withSession(instanceId, sessionID, (session) => {
       if (session.status === "compacting") {
         log.warn(`[SSE] Compaction failed for session ${sessionID}, resetting status to "idle"`)
+        debugWarn("sse", `Compaction failed for session ${sessionID.slice(0, 8)}, resetting to idle`)
         clearCompactionTimer(instanceId, sessionID)
         session.status = "idle"
       }

@@ -37,12 +37,12 @@
 /* Message state indicators */
 .message-generating {
   @apply text-sm italic py-2;
-  color: var(--text-muted);
+  color: var(--accent);
 }
 
 .message-sending {
   @apply text-xs italic mt-1;
-  color: var(--text-muted);
+  color: var(--accent);
 }
 
 .message-error {
@@ -52,7 +52,7 @@
 
 .generating-spinner {
   @apply inline-block;
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: generating-bounce 1.2s ease-in-out infinite;
 }
 
 .message-text {
@@ -111,4 +111,9 @@
 
 .reasoning-label {
   font-weight: var(--font-weight-medium);
+}
+
+@keyframes generating-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
 }
