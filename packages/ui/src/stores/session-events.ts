@@ -352,7 +352,7 @@ function findPendingSyntheticMessageId(
     if (!record) continue
     if (record.sessionId !== sessionId) continue
     if (record.role !== role) continue
-    if (record.status !== "sending") continue
+    if (record.status !== "sending" && record.status !== "sent") continue
     if (!record.isEphemeral) continue
     return record.id
   }
@@ -480,12 +480,37 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
   }
 }
 
+const DELTA_FLUSH_INTERVAL = 50
+
+const pendingDeltas = new Map<string, { instanceId: string; messageId: string; partId: string; field: string; delta: string }>()
+let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+function enqueueDelta(instanceId: string, messageId: string, partId: string, field: string, delta: string) {
+  const key = `${instanceId}:${messageId}:${partId}:${field}`
+  const existing = pendingDeltas.get(key)
+  const accumulated = existing ? existing.delta + delta : delta
+  pendingDeltas.set(key, { instanceId, messageId, partId, field, delta: accumulated })
+  if (deltaFlushTimer === null) {
+    deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_INTERVAL)
+  }
+}
+
+function flushDeltas() {
+  deltaFlushTimer = null
+  if (pendingDeltas.size === 0) return
+  const batch = Array.from(pendingDeltas.values())
+  pendingDeltas.clear()
+  for (const { instanceId, messageId, partId, field, delta } of batch) {
+    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  }
+}
+
 function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
   const props = event.properties
   if (!props) return
   const { messageID, partID, field, delta } = props
   if (!messageID || !partID || !field || typeof delta !== "string") return
-  applyPartDeltaV2(instanceId, { messageId: messageID, partId: partID, field, delta })
+  enqueueDelta(instanceId, messageID, partID, field, delta)
 }
 
 function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
