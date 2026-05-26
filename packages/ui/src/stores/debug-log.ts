@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 
 const STORAGE_KEY = "codenomad:debug-log"
 const MAX_ENTRIES = 300
+const PERSIST_DEBOUNCE_MS = 1000
 
 type LogLevel = "info" | "warn" | "error" | "debug"
 
@@ -24,7 +25,32 @@ function loadPersisted(): LogEntry[] {
   return []
 }
 
-function persist(entries: LogEntry[]) {
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+let pendingEntries: LogEntry[] | null = null
+
+function schedulePersist(entries: LogEntry[]) {
+  pendingEntries = entries
+  if (persistTimer !== null) return
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    if (pendingEntries) {
+      try {
+        if (typeof window !== "undefined") {
+          const slice = pendingEntries.slice(-MAX_ENTRIES)
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(slice))
+        }
+      } catch { /* ignore */ }
+      pendingEntries = null
+    }
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+function persistNow(entries: LogEntry[]) {
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
+  pendingEntries = null
   try {
     if (typeof window !== "undefined") {
       const slice = entries.slice(-MAX_ENTRIES)
@@ -50,14 +76,14 @@ function addEntry(level: LogLevel, source: string, message: string) {
   setEntries((prev) => {
     const next = [...prev, entry]
     const trimmed = next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next
-    persist(trimmed)
+    schedulePersist(trimmed)
     return trimmed
   })
 }
 
 function clearLog() {
   setEntries([])
-  persist([])
+  persistNow([])
 }
 
 function toggleVisibility() {
