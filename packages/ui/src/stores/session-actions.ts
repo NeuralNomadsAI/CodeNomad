@@ -219,20 +219,6 @@ async function sendMessage(
       }),
       "session.promptAsync",
     )
-    // Only update status if the message still exists with the client ID.
-    // If replaceMessageIdV2 already ran (SSE message.updated arrived first),
-    // the client ID was deleted and replaced with the server ID, so we
-    // shouldn't create a duplicate orphan record.
-    if (store.getMessage(messageId)) {
-      store.upsertMessage({
-        id: messageId,
-        sessionId,
-        role: "user",
-        status: "sent",
-        createdAt,
-        isEphemeral: true,
-      })
-    }
   } catch (error) {
     log.error("Failed to send prompt", error)
     const rawMsg = error instanceof Error ? error.message : String(error)

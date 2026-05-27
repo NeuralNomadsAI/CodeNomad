@@ -352,7 +352,7 @@ function findPendingSyntheticMessageId(
     if (!record) continue
     if (record.sessionId !== sessionId) continue
     if (record.role !== role) continue
-    if (record.status !== "sending" && record.status !== "sent") continue
+    if (record.status !== "sending") continue
     if (!record.isEphemeral) continue
     return record.id
   }
