@@ -12,6 +12,7 @@ import {
 } from "../stores/instances"
 import { ensureSessionExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
+import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -136,6 +137,8 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   const [loadingSession, setLoadingSession] = createSignal<string | null>(null)
   const [permissionSubmitting, setPermissionSubmitting] = createSignal<Set<string>>(new Set())
   const [permissionError, setPermissionError] = createSignal<Map<string, string>>(new Map())
+  const [rejectingPermissionId, setRejectingPermissionId] = createSignal<string | null>(null)
+  const [rejectReason, setRejectReason] = createSignal("")
 
   const setPermissionBusy = (permissionId: string, busy: boolean) => {
     setPermissionSubmitting((prev) => {
@@ -155,7 +158,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     })
   }
 
-  async function handlePermissionDecision(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+  async function handlePermissionDecision(permission: PermissionRequestLike, response: "once" | "always" | "reject", message?: string) {
     const permissionId = permission?.id
     if (!permissionId) return
 
@@ -166,7 +169,11 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
 
     try {
       const sessionId = getPermissionSessionId(permission) || ""
-      await sendPermissionResponse(props.instanceId, sessionId, permissionId, response)
+      await sendPermissionResponse(props.instanceId, sessionId, permissionId, response, message)
+      if (rejectingPermissionId() === permissionId) {
+        setRejectingPermissionId(null)
+        setRejectReason("")
+      }
     } catch (error) {
       setPermissionItemError(
         permissionId,
@@ -370,34 +377,86 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                   <code>{primaryTitle()}</code>
                                 </div>
                                 <Show when={item.kind === "permission"}>
-                                  <div class="tool-call-permission-actions">
-                                    <div class="tool-call-permission-buttons">
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
+                                  <Show
+                                    when={rejectingPermissionId() === item.id}
+                                    fallback={
+                                      <div class="tool-call-permission-actions">
+                                        <div class="tool-call-permission-buttons">
+                                          <button
+                                            type="button"
+                                            class="tool-call-permission-button"
+                                            disabled={permissionSubmitting().has(item.id)}
+                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "once")}
+                                          >
+                                            {t("permissionApproval.actions.allowOnce")}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            class="tool-call-permission-button"
+                                            disabled={permissionSubmitting().has(item.id)}
+                                            onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "always")}
+                                          >
+                                            {t("permissionApproval.actions.alwaysAllow")}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            class="tool-call-permission-button"
+                                            disabled={permissionSubmitting().has(item.id)}
+                                            onClick={() => {
+                                              setRejectingPermissionId(item.id)
+                                              setRejectReason("")
+                                            }}
+                                          >
+                                            {t("permissionApproval.actions.deny")}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    }
+                                  >
+                                    <div class="tool-call-permission-reject-reason">
+                                      <label class="tool-call-permission-reject-label" for={`permission-center-reject-reason-${item.id}`}>
+                                        {t("permissionApproval.rejectReason.label")}
+                                      </label>
+                                      <textarea
+                                        id={`permission-center-reject-reason-${item.id}`}
+                                        class="tool-call-permission-reject-textarea"
+                                        value={rejectReason()}
+                                        rows={3}
+                                        maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
+                                        placeholder={t("permissionApproval.rejectReason.placeholder")}
                                         disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "once")}
-                                      >
-                                        {t("permissionApproval.actions.allowOnce")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "always")}
-                                      >
-                                        {t("permissionApproval.actions.alwaysAllow")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequestLike, "reject")}
-                                      >
-                                        {t("permissionApproval.actions.deny")}
-                                      </button>
+                                        onInput={(event) => setRejectReason(event.currentTarget.value)}
+                                      />
+                                      <p class="tool-call-permission-reject-hint">{t("permissionApproval.rejectReason.hint")}</p>
+                                      <div class="tool-call-permission-buttons">
+                                        <button
+                                          type="button"
+                                          class="tool-call-permission-button"
+                                          disabled={permissionSubmitting().has(item.id)}
+                                          onClick={() =>
+                                            void handlePermissionDecision(
+                                              item.payload as PermissionRequestLike,
+                                              "reject",
+                                              rejectReason().trim() || undefined,
+                                            )
+                                          }
+                                        >
+                                          {t("permissionApproval.actions.confirmDeny")}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="tool-call-permission-button"
+                                          disabled={permissionSubmitting().has(item.id)}
+                                          onClick={() => {
+                                            setRejectingPermissionId(null)
+                                            setRejectReason("")
+                                          }}
+                                        >
+                                          {t("permissionApproval.actions.cancel")}
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
+                                  </Show>
                                   <Show when={permissionError().get(item.id)}>
                                     {(err) => <div class="tool-call-permission-error">{err()}</div>}
                                   </Show>
