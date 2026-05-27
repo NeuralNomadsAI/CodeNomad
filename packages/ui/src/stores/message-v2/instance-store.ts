@@ -2,6 +2,7 @@ import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
+import { debugInfo } from "../debug-log"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import type { PermissionRequestLike } from "../../types/permission"
 import { mergePermissionRequest } from "../../types/permission"
@@ -485,6 +486,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       if (ids.includes(messageId)) {
         return ids
       }
+      const msg = state.messages[messageId]
+      const role = msg?.role ?? "?"
+      debugInfo("ordering", `insert: role=${role} msgId=${messageId.slice(0,8)} position=${ids.length} currentIds=${ids.length}`)
       return [...ids, messageId]
     })
   }
