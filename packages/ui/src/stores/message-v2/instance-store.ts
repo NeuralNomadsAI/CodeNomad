@@ -483,12 +483,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function insertMessageIntoSession(sessionId: string, messageId: string) {
     ensureSessionEntry(sessionId)
     setState("sessions", sessionId, "messageIds", (ids = []) => {
-      if (ids.includes(messageId)) {
+      const alreadyExists = ids.includes(messageId)
+      if (alreadyExists) {
+        debugInfo("ordering", `insert SKIP: msgId=${messageId} already in array`)
         return ids
       }
       const msg = state.messages[messageId]
       const role = msg?.role ?? "?"
-      debugInfo("ordering", `insert: role=${role} msgId=${messageId.slice(0,8)} position=${ids.length} currentIds=${ids.length}`)
+      debugInfo("ordering", `insert: role=${role} msgId=${messageId} position=${ids.length} currentIds=${ids.length}`)
       return [...ids, messageId]
     })
   }
