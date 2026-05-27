@@ -840,7 +840,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return title || t("sessionList.session.untitled")
   })
   const showHeaderLeftSlot = createMemo(() => !leftPinned())
-  const showHeaderSessionTitle = createMemo(() => showHeaderLeftSlot() && Boolean(activeSessionTitle()))
+  const showHeaderSessionTitle = createMemo(() => !compactHeaderLayout() && showHeaderLeftSlot() && Boolean(activeSessionTitle()))
   const headerToolbarHorizontalInset = createMemo(() => (isPhoneLayout() ? 16 : 24))
   const headerLeftSlotWidth = createMemo(() => Math.max(0, sessionSidebarWidth() - headerToolbarHorizontalInset()))
   const headerLeftSlotStyle = createMemo(() =>
