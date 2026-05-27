@@ -384,6 +384,12 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
       upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
     }
   
+    // Clear any pending deltas for this part before applying the full part update.
+    // The part update contains the complete state from the server, so accumulated
+    // deltas would be stale and cause duplication if flushed later.
+    if (part.id) {
+      clearPendingDeltasForPart(instanceId, messageId, part.id)
+    }
     applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
     handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
 
@@ -465,6 +471,18 @@ function enqueueDelta(instanceId: string, messageId: string, partId: string, fie
   pendingDeltas.set(key, { instanceId, messageId, partId, field, delta: accumulated })
   if (deltaFlushTimer === null) {
     deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_INTERVAL)
+  }
+}
+
+function clearPendingDeltasForPart(instanceId: string, messageId: string, partId: string) {
+  const keysToDelete: string[] = []
+  for (const key of pendingDeltas.keys()) {
+    if (key.startsWith(`${instanceId}:${messageId}:${partId}:`)) {
+      keysToDelete.push(key)
+    }
+  }
+  for (const key of keysToDelete) {
+    pendingDeltas.delete(key)
   }
 }
 
