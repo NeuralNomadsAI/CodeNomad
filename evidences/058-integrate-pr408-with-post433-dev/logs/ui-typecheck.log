@@ -1,0 +1,5 @@
+Command: npm run typecheck --workspace @codenomad/ui
+Result: PASS
+
+> @codenomad/ui@0.16.0 typecheck
+> tsc --noEmit -p tsconfig.json

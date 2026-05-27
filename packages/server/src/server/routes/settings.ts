@@ -18,6 +18,7 @@ import { probeBinaryVersion } from "../../workspaces/spawn"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
+import { resolveExecutionProfile } from "../../settings/binaries"
 
 interface RouteDeps {
   settings: SettingsService
@@ -190,48 +191,7 @@ function buildExecutionProfilePreview(
   options: { settings: SettingsService; requestBaseUrl: string },
 ): ExecutionProfilePreviewResponse {
   const workspacePath = input.workspacePath?.trim() || (process.platform === "win32" ? "C:/workspace" : "/workspace")
-  const execution =
-    input.profile.kind === "local"
-      ? {
-          kind: "local" as const,
-          path: input.profile.binaryPath,
-          label: input.profile.name,
-        }
-      : input.profile.kind === "wsl"
-        ? {
-            kind: "wsl" as const,
-            path: input.profile.binaryPath,
-            wslDistro: input.profile.distro,
-            label: input.profile.name,
-          }
-        : input.profile.kind === "docker"
-          ? {
-              kind: "docker" as const,
-              label: input.profile.name,
-              image: input.profile.image,
-              workspaceMountPath: input.profile.workspaceMountPath,
-              configMountPath: input.profile.configMountPath,
-              command: input.profile.command,
-              extraDockerArgs: input.profile.extraDockerArgs,
-            }
-          : input.profile.kind === "command"
-            ? {
-                kind: "command" as const,
-                label: input.profile.name,
-                executable: input.profile.executable,
-                args: input.profile.args,
-                cwdMode: input.profile.cwdMode,
-              }
-            : {
-                kind: "ssh" as const,
-                label: input.profile.name,
-                host: input.profile.host,
-                port: input.profile.port,
-                username: input.profile.username,
-                remotePath: input.profile.remotePath,
-                binaryPath: input.profile.binaryPath,
-                args: input.profile.args,
-              }
+  const execution = resolveExecutionProfile(input.profile)
 
   const userEnvironment = readConfiguredServerEnvironment(options.settings)
   const previewInstanceId = "preview-instance"

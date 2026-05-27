@@ -1,0 +1,8 @@
+Command: nomadworks_validate
+Result: FAIL (pre-existing repository/documentation gaps outside this task's scoped implementation)
+
+Observed blockers include:
+- invalid root `codemap.yml` links
+- widespread missing `codemap.yml` files across repository directories
+
+No new validation error was introduced by this implementation slice.

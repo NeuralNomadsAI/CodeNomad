@@ -1,5 +1,5 @@
 import { URL } from "url"
-import type { ResolvedBinary } from "../settings/binaries"
+import type { DockerLauncherContract, ResolvedBinary, SshLauncherContract } from "../settings/binaries"
 import {
   findPackagedCodeNomadPluginReference,
   rewritePackagedCodeNomadPluginReference,
@@ -29,46 +29,42 @@ interface BuildLaunchCommandParams {
 }
 
 export function buildLaunchCommand(params: BuildLaunchCommandParams): LaunchCommandSpec {
-  const openCodePort = (params.execution.kind === "docker" || params.execution.kind === "ssh") && params.reservedPort ? String(params.reservedPort) : "0"
+  const launcher = params.execution.launcher
+  const openCodePort = (launcher.transport === "docker" || launcher.transport === "ssh") && params.reservedPort ? String(params.reservedPort) : "0"
   const openCodeArgs = ["serve", "--port", openCodePort, "--print-logs", "--log-level", params.logLevel]
-  if (params.execution.kind === "docker") {
+  if (launcher.transport === "docker") {
     openCodeArgs.push("--hostname", "0.0.0.0")
   }
 
-  if (params.execution.kind === "docker") {
+  if (launcher.transport === "docker") {
     if (!params.reservedPort) {
       throw new Error("Reserved local port is required for Docker execution profiles")
     }
-    return buildDockerLaunchCommand(params.execution, params.workspacePath, params.environment, openCodeArgs, params.reservedPort)
+    return buildDockerLaunchCommand(launcher, params.workspacePath, params.environment, openCodeArgs, params.reservedPort)
   }
 
-  if (params.execution.kind === "command") {
+  if (launcher.transport === "host") {
     return {
-      command: params.execution.executable,
-      args: [...(params.execution.args ?? []), ...openCodeArgs],
-      cwd: params.execution.cwdMode === "inherit" ? undefined : params.workspacePath,
+      command: launcher.command,
+      args: [...(launcher.args ?? []), ...openCodeArgs],
+      cwd: launcher.cwdMode === "inherit" ? undefined : params.workspacePath,
       environment: params.environment,
+      wslDistro: launcher.wslDistro,
     }
   }
 
-  if (params.execution.kind === "ssh") {
+  if (launcher.transport === "ssh") {
     if (!params.reservedPort || !params.callbackPort) {
       throw new Error("Reserved local and callback ports are required for SSH execution profiles")
     }
-    return buildSshLaunchCommand(params.execution, params.reservedPort, params.callbackPort, params.environment, openCodeArgs)
+    return buildSshLaunchCommand(launcher, params.reservedPort, params.callbackPort, params.environment, openCodeArgs)
   }
 
-  return {
-    command: params.execution.path,
-    args: openCodeArgs,
-    cwd: params.workspacePath,
-    environment: params.environment,
-    wslDistro: params.execution.kind === "wsl" ? params.execution.wslDistro : undefined,
-  }
+  throw new Error(`Unsupported launcher transport: ${String((launcher as { transport?: string }).transport)}`)
 }
 
 function buildSshLaunchCommand(
-  execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+  execution: SshLauncherContract,
   forwardedPort: number,
   callbackPort: number,
   environment: Record<string, string>,
@@ -111,7 +107,7 @@ function buildSshLaunchCommand(
 }
 
 function buildSshRemoteScript(
-  execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+  execution: SshLauncherContract,
   environment: Record<string, string>,
   openCodeArgs: string[],
 ): string {
@@ -126,7 +122,7 @@ function buildSshRemoteScript(
     "exec",
     "env",
     ...assignments,
-    shellQuote(execution.binaryPath),
+    shellQuote(execution.command),
     ...(execution.args ?? []).map(shellQuote),
     ...openCodeArgs.map(shellQuote),
   ].join(" ")
@@ -159,7 +155,7 @@ export function formatCommandLine(command: string, args: string[]): string {
 }
 
 function buildDockerLaunchCommand(
-  execution: Extract<ResolvedBinary, { kind: "docker" }>,
+  execution: DockerLauncherContract,
   workspacePath: string,
   environment: Record<string, string>,
   openCodeArgs: string[],
@@ -215,7 +211,10 @@ function buildDockerLaunchCommand(
   }
 
   dockerArgs.push(execution.image)
-  dockerArgs.push(...(execution.command?.length ? execution.command : ["opencode"]))
+  dockerArgs.push(execution.command)
+  if (execution.args?.length) {
+    dockerArgs.push(...execution.args)
+  }
   dockerArgs.push(...openCodeArgs)
 
   return {

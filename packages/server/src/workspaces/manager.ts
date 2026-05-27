@@ -3,7 +3,8 @@ import { spawnSync } from "child_process"
 import { connect, createServer } from "net"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
-import type { BinaryResolver, ResolvedBinary } from "../settings/binaries"
+import type { BinaryResolver, SshLauncherContract } from "../settings/binaries"
+import { getLaunchBinaryIdentifier } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
@@ -112,9 +113,7 @@ export class WorkspaceManager {
  
     const id = `${Date.now().toString(36)}`
     const execution = this.options.binaryResolver.resolveActive(options?.executionProfileId)
-    const resolvedBinaryPath = this.resolveBinaryPath(
-      execution.kind === "command" ? execution.executable : execution.kind === "docker" ? "docker" : execution.kind === "ssh" ? "ssh" : execution.path,
-    )
+    const resolvedBinaryPath = this.resolveBinaryPath(getLaunchBinaryIdentifier(execution))
     const workspacePath = path.isAbsolute(folder) ? folder : path.resolve(this.options.rootDir, folder)
     clearWorkspaceSearchCache(workspacePath)
 
@@ -175,15 +174,15 @@ export class WorkspaceManager {
       [OPENCODE_SERVER_PASSWORD_ENV]: opencodePassword,
     }
 
-    const sshPackagedPlugin =
-      execution.kind === "ssh" ? await this.syncSshPackagedPlugin(execution, id, environment.OPENCODE_CONFIG_CONTENT) : undefined
+    const sshLauncher = execution.launcher.transport === "ssh" ? execution.launcher : undefined
+    const sshPackagedPlugin = sshLauncher ? await this.syncSshPackagedPlugin(sshLauncher, id, environment.OPENCODE_CONFIG_CONTENT) : undefined
     if (sshPackagedPlugin) {
       environment.OPENCODE_CONFIG_CONTENT = sshPackagedPlugin.configContent
     }
 
     const logLevel = (serverConfig as any)?.logLevel
-    const reservedPort = execution.kind === "docker" || execution.kind === "ssh" ? await this.getAvailablePort() : undefined
-    const callbackPort = execution.kind === "ssh" ? await this.getAvailablePort() : undefined
+    const reservedPort = execution.launcher.transport === "docker" || execution.launcher.transport === "ssh" ? await this.getAvailablePort() : undefined
+    const callbackPort = execution.launcher.transport === "ssh" ? await this.getAvailablePort() : undefined
     const launchCommand = buildLaunchCommand({
       execution,
       workspacePath,
@@ -207,8 +206,8 @@ export class WorkspaceManager {
         stdin: launchCommand.stdin,
         logLevel,
         onExit: (info) => {
-          if (execution.kind === "ssh" && sshPackagedPlugin) {
-            this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
+          if (sshLauncher && sshPackagedPlugin) {
+            this.cleanupSshPackagedPlugin(sshLauncher, sshPackagedPlugin.remotePath)
           }
           this.handleProcessExit(info.workspaceId, info)
         },
@@ -238,8 +237,8 @@ export class WorkspaceManager {
           this.options.logger.warn({ workspaceId: id, err: stopError }, "Failed to stop workspace after startup failure")
         })
       }
-      if (execution.kind === "ssh" && sshPackagedPlugin) {
-        this.cleanupSshPackagedPlugin(execution, sshPackagedPlugin.remotePath)
+      if (sshLauncher && sshPackagedPlugin) {
+        this.cleanupSshPackagedPlugin(sshLauncher, sshPackagedPlugin.remotePath)
       }
       throw error
     }
@@ -539,7 +538,7 @@ export class WorkspaceManager {
   }
 
   private async syncSshPackagedPlugin(
-    execution: Extract<ResolvedBinary, { kind: "ssh" }>,
+    execution: SshLauncherContract,
     workspaceId: string,
     configContent: string | undefined,
   ): Promise<SshPackagedPluginArtifact | undefined> {
@@ -587,7 +586,7 @@ export class WorkspaceManager {
     }
   }
 
-  private cleanupSshPackagedPlugin(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remotePluginPath: string): void {
+  private cleanupSshPackagedPlugin(execution: SshLauncherContract, remotePluginPath: string): void {
     const result = spawnSync("ssh", this.buildSshCommandArgs(execution, ["sh", "-lc", `rm -f ${shellQuote(remotePluginPath)}`]), {
       encoding: "utf8",
       timeout: 10_000,
@@ -597,7 +596,7 @@ export class WorkspaceManager {
     }
   }
 
-  private buildSshCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, remoteArgs: string[]): string[] {
+  private buildSshCommandArgs(execution: SshLauncherContract, remoteArgs: string[]): string[] {
     return [
       "-p",
       String(execution.port ?? 22),
@@ -610,7 +609,7 @@ export class WorkspaceManager {
     ]
   }
 
-  private buildScpCommandArgs(execution: Extract<ResolvedBinary, { kind: "ssh" }>, args: string[]): string[] {
+  private buildScpCommandArgs(execution: SshLauncherContract, args: string[]): string[] {
     return [
       "-P",
       String(execution.port ?? 22),
@@ -620,7 +619,7 @@ export class WorkspaceManager {
     ]
   }
 
-  private buildSshTarget(execution: Extract<ResolvedBinary, { kind: "ssh" }>): string {
+  private buildSshTarget(execution: SshLauncherContract): string {
     const host = execution.host.trim()
     if (!host || host.startsWith("-") || /\s/.test(host)) {
       throw new Error("SSH host must not be empty, start with '-', or contain whitespace")

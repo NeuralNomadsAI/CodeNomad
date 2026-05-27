@@ -32,9 +32,13 @@ describe("BinaryResolver", () => {
 
     assert.deepEqual(resolver.resolveActive(), {
       kind: "local",
-      path: "opencode-custom",
       label: "Custom OpenCode",
       version: "1.2.3",
+      launcher: {
+        transport: "host",
+        command: "opencode-custom",
+        cwdMode: "workspace",
+      },
     })
   })
 
@@ -54,11 +58,15 @@ describe("BinaryResolver", () => {
 
     assert.deepEqual(resolver.resolveActive(profile.id), {
       kind: "local",
-      path: "C:/Tools/opencode.exe",
       label: "Local Default",
       executionProfileId: "local-default",
       executionProfileName: "Local Default",
       executionProfileKind: "local",
+      launcher: {
+        transport: "host",
+        command: "C:/Tools/opencode.exe",
+        cwdMode: "workspace",
+      },
     })
   })
 
@@ -83,12 +91,16 @@ describe("BinaryResolver", () => {
 
     assert.deepEqual(resolver.resolveActive(), {
       kind: "wsl",
-      path: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
-      wslDistro: "Ubuntu",
       label: "WSL Ubuntu",
       executionProfileId: "wsl-ubuntu",
       executionProfileName: "WSL Ubuntu",
       executionProfileKind: "wsl",
+      launcher: {
+        transport: "host",
+        command: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+        cwdMode: "workspace",
+        wslDistro: "Ubuntu",
+      },
     })
   })
 
@@ -113,14 +125,17 @@ describe("BinaryResolver", () => {
     assert.deepEqual(resolver.resolveActive(profile.id), {
       kind: "docker",
       label: "Docker Sandbox",
-      image: "ghcr.io/example/opencode:latest",
-      workspaceMountPath: "/workspace",
-      configMountPath: "/root/.config/opencode",
-      command: ["opencode"],
-      extraDockerArgs: ["--init"],
       executionProfileId: "docker-sandbox",
       executionProfileName: "Docker Sandbox",
       executionProfileKind: "docker",
+      launcher: {
+        transport: "docker",
+        image: "ghcr.io/example/opencode:latest",
+        workspaceMountPath: "/workspace",
+        configMountPath: "/root/.config/opencode",
+        command: "opencode",
+        extraDockerArgs: ["--init"],
+      },
     })
   })
 
@@ -143,12 +158,15 @@ describe("BinaryResolver", () => {
     assert.deepEqual(resolver.resolveActive(profile.id), {
       kind: "command",
       label: "Custom Wrapper",
-      executable: "node",
-      args: ["scripts/opencode-wrapper.mjs"],
-      cwdMode: "inherit",
       executionProfileId: "custom-wrapper",
       executionProfileName: "Custom Wrapper",
       executionProfileKind: "command",
+      launcher: {
+        transport: "host",
+        command: "node",
+        args: ["scripts/opencode-wrapper.mjs"],
+        cwdMode: "inherit",
+      },
     })
   })
 
@@ -174,15 +192,45 @@ describe("BinaryResolver", () => {
     assert.deepEqual(resolver.resolveActive(profile.id), {
       kind: "ssh",
       label: "SSH Linux",
-      host: "vm.example.com",
-      port: 2222,
-      username: "ubuntu",
-      remotePath: "/srv/project",
-      binaryPath: "opencode",
-      args: ["--experimental"],
       executionProfileId: "ssh-linux",
       executionProfileName: "SSH Linux",
       executionProfileKind: "ssh",
+      launcher: {
+        transport: "ssh",
+        host: "vm.example.com",
+        port: 2222,
+        username: "ubuntu",
+        remotePath: "/srv/project",
+        command: "opencode",
+        args: ["--experimental"],
+      },
+    })
+  })
+
+  it("splits docker entry commands into generic launcher command plus base args", () => {
+    const profile: ExecutionProfile = {
+      id: "docker-custom-entrypoint",
+      name: "Docker Custom Entrypoint",
+      kind: "docker",
+      image: "ghcr.io/example/opencode:latest",
+      workspaceMountPath: "/workspace",
+      configMountPath: "/root/.config/opencode",
+      command: ["node", "/app/wrapper.mjs"],
+    }
+
+    const resolver = new BinaryResolver(
+      createSettings({
+        server: { executionProfiles: [profile] },
+      }) as any,
+    )
+
+    assert.deepEqual(resolver.resolveActive(profile.id).launcher, {
+      transport: "docker",
+      image: "ghcr.io/example/opencode:latest",
+      workspaceMountPath: "/workspace",
+      configMountPath: "/root/.config/opencode",
+      command: "node",
+      args: ["/app/wrapper.mjs"],
     })
   })
 

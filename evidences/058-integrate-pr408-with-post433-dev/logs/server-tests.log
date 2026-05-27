@@ -1,0 +1,13 @@
+Command: node --import tsx --test packages/server/src/opencode-plugin.test.ts packages/server/src/workspaces/execution-launch.test.ts packages/server/src/workspaces/__tests__/spawn.test.ts packages/server/src/settings/binaries.test.ts
+Result: PASS
+
+- tests: 36
+- suites: 6
+- pass: 36
+- fail: 0
+- duration_ms: 336.3703
+
+Coverage notes:
+- `BinaryResolver` now verifies launcher-contract compilation for local, WSL, docker, command, and SSH profiles.
+- `execution-launch` verifies shared launcher execution for host, docker, WSL preview, and SSH paths.
+- `spawn` regression coverage preserves WSL plugin/path rewriting behavior.

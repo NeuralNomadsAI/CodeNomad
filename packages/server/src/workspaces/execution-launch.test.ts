@@ -9,9 +9,12 @@ describe("buildLaunchCommand", () => {
     const execution: ResolvedBinary = {
       kind: "command",
       label: "Wrapper",
-      executable: "node",
-      args: ["scripts/opencode-wrapper.mjs"],
-      cwdMode: "inherit",
+      launcher: {
+        transport: "host",
+        command: "node",
+        args: ["scripts/opencode-wrapper.mjs"],
+        cwdMode: "inherit",
+      },
     }
 
     const result = buildLaunchCommand({
@@ -31,11 +34,14 @@ describe("buildLaunchCommand", () => {
     const execution: ResolvedBinary = {
       kind: "docker",
       label: "Docker Sandbox",
-      image: "ghcr.io/example/opencode:latest",
-      workspaceMountPath: "/workspace",
-      configMountPath: "/root/.config/opencode",
-      command: ["opencode"],
-      extraDockerArgs: ["--init"],
+      launcher: {
+        transport: "docker",
+        image: "ghcr.io/example/opencode:latest",
+        workspaceMountPath: "/workspace",
+        configMountPath: "/root/.config/opencode",
+        command: "opencode",
+        extraDockerArgs: ["--init"],
+      },
     }
 
     const result = buildLaunchCommand({
@@ -70,13 +76,42 @@ describe("buildLaunchCommand", () => {
     assert.deepEqual(result.args.slice(-8), ["serve", "--port", "17600", "--print-logs", "--log-level", "INFO", "--hostname", "0.0.0.0"])
   })
 
+  it("keeps custom docker entrypoints in front of shared OpenCode args", () => {
+    const execution: ResolvedBinary = {
+      kind: "docker",
+      label: "Docker Wrapper",
+      launcher: {
+        transport: "docker",
+        image: "ghcr.io/example/opencode:latest",
+        workspaceMountPath: "/workspace",
+        configMountPath: "/root/.config/opencode",
+        command: "node",
+        args: ["/app/wrapper.mjs"],
+      },
+    }
+
+    const result = buildLaunchCommand({
+      execution,
+      workspacePath: "D:/CodeNomad",
+      environment: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [] }) },
+      logLevel: "INFO",
+      reservedPort: 17600,
+    })
+
+    assert.deepEqual(result.args.slice(-10), ["node", "/app/wrapper.mjs", "serve", "--port", "17600", "--print-logs", "--log-level", "INFO", "--hostname", "0.0.0.0"])
+  })
+
   it("requires a reserved local port for Docker execution profiles", () => {
     const execution: ResolvedBinary = {
       kind: "docker",
       label: "Docker Sandbox",
-      image: "ghcr.io/example/opencode:latest",
-      workspaceMountPath: "/workspace",
-      configMountPath: "/root/.config/opencode",
+      launcher: {
+        transport: "docker",
+        image: "ghcr.io/example/opencode:latest",
+        workspaceMountPath: "/workspace",
+        configMountPath: "/root/.config/opencode",
+        command: "opencode",
+      },
     }
 
     assert.throws(
@@ -94,11 +129,14 @@ describe("buildLaunchCommand", () => {
     const execution: ResolvedBinary = {
       kind: "ssh",
       label: "SSH Linux",
-      host: "vm.example.com",
-      port: 2222,
-      username: "ubuntu",
-      remotePath: "/srv/project",
-      binaryPath: "opencode",
+      launcher: {
+        transport: "ssh",
+        host: "vm.example.com",
+        port: 2222,
+        username: "ubuntu",
+        remotePath: "/srv/project",
+        command: "opencode",
+      },
     }
 
     const result = buildLaunchCommand({
@@ -129,9 +167,12 @@ describe("buildLaunchCommand", () => {
     const execution: ResolvedBinary = {
       kind: "ssh",
       label: "SSH Linux",
-      host: "vm.example.com",
-      remotePath: "/srv/project",
-      binaryPath: "opencode",
+      launcher: {
+        transport: "ssh",
+        host: "vm.example.com",
+        remotePath: "/srv/project",
+        command: "opencode",
+      },
     }
 
     assert.throws(
@@ -156,7 +197,12 @@ describe("buildLaunchCommand", () => {
       const execution: ResolvedBinary = {
         kind: "wsl",
         label: "Ubuntu",
-        path: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+        launcher: {
+          transport: "host",
+          command: String.raw`\\wsl.localhost\Ubuntu\home\dev\.opencode\bin\opencode`,
+          cwdMode: "workspace",
+          wslDistro: "Ubuntu",
+        },
       }
 
       const result = buildLaunchPreview({

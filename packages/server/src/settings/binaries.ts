@@ -16,6 +16,36 @@ export interface OpenCodeBinaryEntry {
   label?: string
 }
 
+export interface HostLauncherContract {
+  transport: "host"
+  command: string
+  args?: string[]
+  cwdMode?: "workspace" | "inherit"
+  wslDistro?: string
+}
+
+export interface DockerLauncherContract {
+  transport: "docker"
+  image: string
+  workspaceMountPath: string
+  configMountPath: string
+  command: string
+  args?: string[]
+  extraDockerArgs?: string[]
+}
+
+export interface SshLauncherContract {
+  transport: "ssh"
+  host: string
+  port?: number
+  username?: string
+  remotePath: string
+  command: string
+  args?: string[]
+}
+
+export type ExecutionLauncherContract = HostLauncherContract | DockerLauncherContract | SshLauncherContract
+
 interface ResolvedExecutionBase {
   label: string
   version?: string
@@ -24,39 +54,15 @@ interface ResolvedExecutionBase {
   executionProfileKind?: ExecutionProfileKind
 }
 
-export interface ResolvedHostExecution extends ResolvedExecutionBase {
-  kind: "local" | "wsl"
-  path: string
-  wslDistro?: string
+export interface ResolvedBinary extends ResolvedExecutionBase {
+  kind: ExecutionProfileKind
+  launcher: ExecutionLauncherContract
 }
 
-export interface ResolvedDockerExecution extends ResolvedExecutionBase {
-  kind: "docker"
-  image: string
-  workspaceMountPath: string
-  configMountPath: string
-  command?: string[]
-  extraDockerArgs?: string[]
-}
-
-export interface ResolvedCommandExecution extends ResolvedExecutionBase {
-  kind: "command"
-  executable: string
-  args?: string[]
-  cwdMode?: "workspace" | "inherit"
-}
-
-export interface ResolvedSshExecution extends ResolvedExecutionBase {
+export interface ResolvedSshExecution extends ResolvedBinary {
   kind: "ssh"
-  host: string
-  port?: number
-  username?: string
-  remotePath: string
-  binaryPath: string
-  args?: string[]
+  launcher: SshLauncherContract
 }
-
-export type ResolvedBinary = ResolvedHostExecution | ResolvedDockerExecution | ResolvedCommandExecution | ResolvedSshExecution
 
 function prettyLabel(p: string): string {
   const parts = p.split(/[\\/]/)
@@ -92,6 +98,84 @@ function readDefaultExecutionProfileId(settings: SettingsService): string | unde
   const server = settings.getOwner("config", "server")
   const value = (server as any)?.defaultExecutionProfileId
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function buildResolvedProfile(profile: ExecutionProfile): ResolvedBinary {
+  const shared = {
+    label: profile.name,
+    executionProfileId: profile.id,
+    executionProfileName: profile.name,
+    executionProfileKind: profile.kind,
+  }
+
+  if (profile.kind === "local") {
+    return {
+      ...shared,
+      kind: "local",
+      launcher: {
+        transport: "host",
+        command: profile.binaryPath,
+        cwdMode: "workspace",
+      },
+    }
+  }
+
+  if (profile.kind === "wsl") {
+    return {
+      ...shared,
+      kind: "wsl",
+      launcher: {
+        transport: "host",
+        command: profile.binaryPath,
+        cwdMode: "workspace",
+        wslDistro: profile.distro,
+      },
+    }
+  }
+
+  if (profile.kind === "docker") {
+    const [command = "opencode", ...args] = profile.command?.length ? profile.command : ["opencode"]
+    return {
+      ...shared,
+      kind: "docker",
+      launcher: {
+        transport: "docker",
+        image: profile.image,
+        workspaceMountPath: profile.workspaceMountPath,
+        configMountPath: profile.configMountPath,
+        command,
+        ...(args.length > 0 ? { args } : {}),
+        ...(profile.extraDockerArgs?.length ? { extraDockerArgs: profile.extraDockerArgs } : {}),
+      },
+    }
+  }
+
+  if (profile.kind === "command") {
+    return {
+      ...shared,
+      kind: "command",
+      launcher: {
+        transport: "host",
+        command: profile.executable,
+        args: profile.args,
+        cwdMode: profile.cwdMode,
+      },
+    }
+  }
+
+  return {
+    ...shared,
+    kind: "ssh",
+    launcher: {
+      transport: "ssh",
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      remotePath: profile.remotePath,
+      command: profile.binaryPath,
+      args: profile.args,
+    },
+  }
 }
 
 export class BinaryResolver {
@@ -132,88 +216,32 @@ export class BinaryResolver {
     const entry = binaries.find((b) => b.path === path)
     return {
       kind: "local",
-      path,
       label: entry?.label ?? prettyLabel(path),
       version: entry?.version,
+      launcher: {
+        transport: "host",
+        command: path,
+        cwdMode: "workspace",
+      },
     }
   }
 
   private resolveProfile(profile: ExecutionProfile): ResolvedBinary {
-    const shared = {
-      label: profile.name,
-      executionProfileId: profile.id,
-      executionProfileName: profile.name,
-      executionProfileKind: profile.kind,
-    }
-
-    if (profile.kind === "local") {
-      return this.resolveLocalProfile(profile, shared)
-    }
-
-    if (profile.kind === "wsl") {
-      return this.resolveWslProfile(profile, shared)
-    }
-
-    if (profile.kind === "docker") {
-      return this.resolveDockerProfile(profile, shared)
-    }
-
-    if (profile.kind === "command") {
-      return this.resolveCommandProfile(profile, shared)
-    }
-
-    return this.resolveSshProfile(profile, shared)
+    return buildResolvedProfile(profile)
   }
+}
 
-  private resolveLocalProfile(profile: LocalExecutionProfile, shared: Omit<ResolvedHostExecution, "kind" | "path">): ResolvedHostExecution {
-    return {
-      ...shared,
-      kind: "local",
-      path: profile.binaryPath,
-    }
-  }
+export function resolveExecutionProfile(profile: ExecutionProfile): ResolvedBinary {
+  return buildResolvedProfile(profile)
+}
 
-  private resolveWslProfile(profile: WslExecutionProfile, shared: Omit<ResolvedHostExecution, "kind" | "path">): ResolvedHostExecution {
-    return {
-      ...shared,
-      kind: "wsl",
-      path: profile.binaryPath,
-      wslDistro: profile.distro,
-    }
-  }
-
-  private resolveDockerProfile(profile: DockerExecutionProfile, shared: Omit<ResolvedDockerExecution, "kind" | "image" | "workspaceMountPath" | "configMountPath">): ResolvedDockerExecution {
-    return {
-      ...shared,
-      kind: "docker",
-      image: profile.image,
-      workspaceMountPath: profile.workspaceMountPath,
-      configMountPath: profile.configMountPath,
-      command: profile.command,
-      extraDockerArgs: profile.extraDockerArgs,
-    }
-  }
-
-  private resolveCommandProfile(profile: CommandExecutionProfile, shared: Omit<ResolvedCommandExecution, "kind" | "executable">): ResolvedCommandExecution {
-    return {
-      ...shared,
-      kind: "command",
-      executable: profile.executable,
-      args: profile.args,
-      cwdMode: profile.cwdMode,
-    }
-  }
-
-  private resolveSshProfile(profile: SshExecutionProfile, shared: Omit<ResolvedSshExecution, "kind" | "host" | "remotePath" | "binaryPath">): ResolvedSshExecution {
-    return {
-      ...shared,
-      kind: "ssh",
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
-      remotePath: profile.remotePath,
-      binaryPath: profile.binaryPath,
-      args: profile.args,
-    }
+export function getLaunchBinaryIdentifier(resolved: ResolvedBinary): string {
+  switch (resolved.launcher.transport) {
+    case "host":
+      return resolved.launcher.command
+    case "docker":
+      return "docker"
+    case "ssh":
+      return "ssh"
   }
 }
