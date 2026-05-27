@@ -28,6 +28,8 @@ import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import PermissionApprovalModal from "../permission-approval-modal"
 import SessionView from "../session/session-view"
+import MessageSection from "../message-section"
+import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import { sseManager } from "../../lib/sse-manager"
@@ -35,14 +37,22 @@ import { getLogger } from "../../lib/logger"
 import { serverApi } from "../../lib/api-client"
 import { loadBackgroundProcesses } from "../../stores/background-processes"
 import { BackgroundProcessOutputDialog } from "../background-process-output-dialog"
+import PromptInput from "../prompt-input"
 import { useI18n } from "../../lib/i18n"
-import { getPermissionQueue, getPermissionQueueLength, getQuestionQueueLength, sendPermissionResponse } from "../../stores/instances"
+import { getPermissionQueueLength, getQuestionQueueLength } from "../../stores/instances"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
-import { getRetrySeconds, getSessionRetry, getSessionStatus } from "../../stores/session-status"
-import { Maximize2, ShieldAlert } from "lucide-solid"
+import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
+import { Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
+import type { PromptInputApi } from "../prompt-input/types"
+import type { Attachment } from "../../types/attachment"
+import { setAgentModelPreference, useConfig } from "../../stores/preferences"
+import { showPromptDialog } from "../../stores/alerts"
+import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
+import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -57,15 +67,18 @@ import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { getPermissionSessionId } from "../../types/permission"
-import {
-  canAutoRespondPermission,
-  finishAutoRespondPermission,
-  getPermissionAutoAcceptInFlightVersion,
-  isPermissionAutoAcceptEnabled,
-} from "../../stores/permission-auto-accept"
+import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 
 const log = getLogger("session")
+const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
+type SessionCenterWidthStep = "narrow" | "medium" | "wide"
+
+function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
+  if (width < 768) return "narrow"
+  if (width < 1280) return "medium"
+  return "wide"
+}
 
 interface InstanceShellProps {
   instance: Instance
@@ -89,6 +102,7 @@ interface InstanceShellProps {
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const { t, locale } = useI18n()
+  const { preferences } = useConfig()
   const isRTL = () => locale() === "he"
 
   const [sessionSidebarWidth, setSessionSidebarWidth] = createSignal(DEFAULT_SESSION_SIDEBAR_WIDTH)
@@ -100,11 +114,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [rightDrawerContentEl, setRightDrawerContentEl] = createSignal<HTMLElement | null>(null)
   const [leftToggleButtonEl, setLeftToggleButtonEl] = createSignal<HTMLElement | null>(null)
   const [rightToggleButtonEl, setRightToggleButtonEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
+  const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
 
   const [selectedBackgroundProcess, setSelectedBackgroundProcess] = createSignal<BackgroundProcess | null>(null)
   const [showBackgroundOutput, setShowBackgroundOutput] = createSignal(false)
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   const [now, setNow] = createSignal(Date.now())
+  const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
+  const [draftAgent, setDraftAgent] = createSignal("")
+  const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
+  const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
+  const [draftPromptInputApi, setDraftPromptInputApi] = createSignal<PromptInputApi | null>(null)
 
   // Worktree selector manages its own dialogs.
   const [showSessionSearch, setShowSessionSearch] = createSignal(false)
@@ -173,6 +194,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     unpinRight: unpinRightDrawer,
     closeLeft: closeLeftDrawer,
     closeRight: closeRightDrawer,
+    closeFloatingDrawersIfAny,
     leftAppBarButtonLabel,
     rightAppBarButtonLabel,
     leftAppBarButtonIcon,
@@ -180,6 +202,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  // When the user switches away from this instance (e.g., taps a different
+  // instance/project tab while a floating drawer is open on phone), close any
+  // open floating drawers so the previous instance's drawer doesn't remain
+  // visually or interactively open when its tab regains focus later.
+  let wasActiveInstance = Boolean(props.isActiveInstance)
+  createEffect(() => {
+    const isActive = Boolean(props.isActiveInstance)
+    if (wasActiveInstance && !isActive) {
+      closeFloatingDrawersIfAny()
+    }
+    wasActiveInstance = isActive
+  })
+
+  onMount(() => {
+    if (typeof document === "undefined") return
+
+    const handleFloatingDrawerPointerDown = (event: PointerEvent) => {
+      if (!props.isActiveInstance) return
+
+      const hasFloatingDrawerOpen = (!leftPinned() && leftOpen()) || (!rightPinned() && rightOpen())
+      if (!hasFloatingDrawerOpen) return
+
+      const target = event.target
+      if (!(target instanceof Node)) return
+
+      const leftContent = leftDrawerContentEl()
+      const rightContent = rightDrawerContentEl()
+      const leftPaper = leftContent?.closest(".MuiDrawer-paper")
+      const rightPaper = rightContent?.closest(".MuiDrawer-paper")
+      if (leftPaper?.contains(target) || rightPaper?.contains(target)) return
+
+      if (!leftPinned() && leftOpen()) setLeftOpen(false)
+      if (!rightPinned() && rightOpen()) setRightOpen(false)
+    }
+
+    document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
+  })
 
   createEffect(() => {
     const instanceId = props.instance.id
@@ -244,6 +305,25 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => window.clearInterval(timer))
   })
 
+  createEffect(() => {
+    const element = sessionCenterEl()
+    if (!element || typeof ResizeObserver === "undefined") return
+
+    const updateWidthStep = (width: number) => {
+      setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+    }
+
+    updateWidthStep(element.getBoundingClientRect().width)
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? element.getBoundingClientRect().width
+      updateWidthStep(width)
+    })
+    observer.observe(element)
+
+    onCleanup(() => observer.disconnect())
+  })
+
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
   const connectionStatusClass = () => {
     const status = connectionStatus()
@@ -266,26 +346,69 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return permissions + questions > 0
   })
 
-  const permissionQueue = createMemo(() => getPermissionQueue(props.instance.id))
-
-  createEffect(() => {
-    getPermissionAutoAcceptInFlightVersion()
-
-    for (const permission of permissionQueue()) {
-      const sessionId = getPermissionSessionId(permission)
-      if (!sessionId) continue
-      if (!permission?.id) continue
-      if (!canAutoRespondPermission(props.instance.id, sessionId, permission.id)) continue
-
-      void sendPermissionResponse(props.instance.id, sessionId, permission.id, "once")
-        .catch((error) => {
-          log.error("Failed to auto-accept permission", error)
-        })
-        .finally(() => {
-          finishAutoRespondPermission(props.instance.id, sessionId, permission.id)
-        })
-    }
+  const activePromptInputApi = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return null
+    return sessionPromptApis()[sessionId] ?? null
   })
+
+  const activeSessionPreview = createMemo(() => {
+    const sessionId = activeSessionIdForInstance()
+    return sessionId ? sessionPreviews().get(sessionId) ?? null : null
+  })
+
+  const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
+    setSessionPromptApis((current) => ({
+      ...current,
+      [sessionId]: api,
+    }))
+  }
+
+  async function handleOpenPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const url = await showPromptDialog(t("sessionPreview.open.prompt"), {
+      title: t("sessionPreview.open.title"),
+      inputLabel: t("sessionPreview.open.label"),
+      inputPlaceholder: t("sessionPreview.open.placeholder"),
+      confirmLabel: t("sessionPreview.open.confirm"),
+      cancelLabel: t("sessionPreview.open.cancel"),
+    })
+    const normalized = url?.trim()
+    if (!normalized) return
+    await openSessionPreview(sessionId, normalized)
+  }
+
+  function handleShowPreview() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+    showSessionPreview(sessionId)
+  }
+
+  function handlePreviewButtonClick() {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info") return
+
+    const preview = activeSessionPreview()
+    if (preview?.mode === "preview") {
+      showSessionChat(sessionId)
+      return
+    }
+
+    if (preview) {
+      showSessionPreview(sessionId)
+      return
+    }
+    void handleOpenPreview()
+  }
+
+  const previewToggleLabel = createMemo(() => {
+    const preview = activeSessionPreview()
+    return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+  })
+
+  const PreviewToggleIcon = createMemo(() => activeSessionPreview()?.mode === "preview" ? MessageSquareText : Eye)
 
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
@@ -314,6 +437,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const status = getSessionStatus(props.instance.id, activeSessionId)
     const retry = getSessionRetry(props.instance.id, activeSessionId)
+    const showStatus = shouldShowSessionStatus(
+      props.instance.id,
+      activeSessionId,
+      now(),
+      preferences().keepUnseenSubagentIdleStatus,
+    )
+    if (!showStatus) {
+      return null
+    }
     const text = retry
       ? (() => {
           const seconds = getRetrySeconds(retry.next, now())
@@ -325,8 +457,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           ? t("sessionList.status.compacting")
           : t("sessionList.status.idle")
 
+    const baseClassName = `session-${retry ? "retrying" : status}`
+    const fadeClassName = getSessionIdleFadeClass(props.instance.id, activeSessionId)
+
     return {
-      className: `session-${retry ? "retrying" : status}`,
+      className: fadeClassName ? `${baseClassName} ${fadeClassName}` : baseClassName,
       text,
       showAlertIcon: false,
       title: retry
@@ -342,7 +477,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const pill = activeSessionStatusPill()
     if (!pill) return null
     return (
-      <span class={`status-indicator session-status session-status-list ${pill.className}`} title={pill.title}>
+      <span
+        class={`status-indicator session-status session-status-list ${pill.className} notranslate`}
+        title={pill.title}
+        translate="no"
+      >
         {pill.showAlertIcon ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
         {pill.text}
       </span>
@@ -377,6 +516,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
+  }
+
+  const handleChatSearchClick = () => {
+    if (typeof window === "undefined") return
+    window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
   }
 
   const openBackgroundOutput = (process: BackgroundProcess) => {
@@ -470,6 +614,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             threads={sessionThreads}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            draftAgent={draftAgent}
+            draftModel={draftModel}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
             keyboardShortcuts={keyboardShortcuts}
@@ -480,6 +626,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onNewSession={props.onNewSession}
             onSidebarAgentChange={props.handleSidebarAgentChange}
             onSidebarModelChange={props.handleSidebarModelChange}
+            onDraftAgentChange={handleDraftAgentChange}
+            onDraftModelChange={handleDraftModelChange}
             onPinLeftDrawer={pinLeftDrawer}
             onUnpinLeftDrawer={unpinLeftDrawer}
             onCloseLeftDrawer={closeLeftDrawer}
@@ -499,7 +647,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // The tab bar sits outside the floating drawer. Let its controls
+          // receive the gesture; click-away handling above still closes the
+          // drawer when the target is not inside the drawer content.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${sessionSidebarWidth()}px`,
             boxSizing: "border-box",
             borderInlineEnd: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -512,8 +665,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
 
+          // Keep backdrop dismissal for the area below the tab bar without
+          // covering the tab bar itself.
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -532,6 +690,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           threads={sessionThreads}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          draftAgent={draftAgent}
+          draftModel={draftModel}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
           keyboardShortcuts={keyboardShortcuts}
@@ -542,6 +702,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onNewSession={props.onNewSession}
           onSidebarAgentChange={props.handleSidebarAgentChange}
           onSidebarModelChange={props.handleSidebarModelChange}
+          onDraftAgentChange={handleDraftAgentChange}
+          onDraftModelChange={handleDraftModelChange}
           onPinLeftDrawer={pinLeftDrawer}
           onUnpinLeftDrawer={unpinLeftDrawer}
           onCloseLeftDrawer={closeLeftDrawer}
@@ -594,6 +756,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onCloseRightDrawer={closeRightDrawer}
             onPinRightDrawer={pinRightDrawer}
             onUnpinRightDrawer={unpinRightDrawer}
+            promptInputApi={activePromptInputApi}
             setContentEl={setRightDrawerContentEl}
           />
         </Box>
@@ -610,7 +773,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
         sx={{
           zIndex: 60,
+          // See the matching override on the left drawer for rationale.
+          pointerEvents: "none",
           "& .MuiDrawer-paper": {
+            pointerEvents: "auto",
             width: isPhoneLayout() ? "100vw" : `${rightDrawerWidth()}px`,
             boxSizing: "border-box",
             borderInlineStart: isPhoneLayout() ? "none" : "1px solid var(--border-base)",
@@ -623,7 +789,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             height: floatingHeight(),
           },
           "& .MuiBackdrop-root": {
+            pointerEvents: "auto",
             backgroundColor: "transparent",
+            top: floatingTopPx(),
+            height: floatingHeight(),
           },
         }}
       >
@@ -656,6 +825,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onCloseRightDrawer={closeRightDrawer}
           onPinRightDrawer={pinRightDrawer}
           onUnpinRightDrawer={unpinRightDrawer}
+          promptInputApi={activePromptInputApi}
           setContentEl={setRightDrawerContentEl}
         />
       </Drawer>
@@ -663,9 +833,74 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const hasSessions = createMemo(() => activeSessions().size > 0)
-
   const showingInfoView = createMemo(() => activeSessionIdForInstance() === "info")
+
+  const isLaunching = createMemo(() => props.instance.status === "starting")
+
+  createEffect(() => {
+    const agent = draftAgent()
+    providers().get(props.instance.id)
+    if (!agent || draftModelManuallySelected()) return
+
+    let cancelled = false
+    void getDefaultModel(props.instance.id, agent).then((model) => {
+      if (!cancelled) setDraftModel(model)
+    }).catch((error) => log.warn("Failed to resolve draft model", error))
+
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
+  async function handleDraftAgentChange(agent: string) {
+    setDraftAgent(agent)
+    setDraftModelManuallySelected(false)
+    const model = await getDefaultModel(props.instance.id, agent)
+    setDraftModel(model)
+  }
+
+  async function handleDraftModelChange(model: { providerId: string; modelId: string }) {
+    setDraftModel(model)
+    setDraftModelManuallySelected(true)
+  }
+
+  const draftAttachments = createMemo(() => getAttachments(props.instance.id, NO_SESSION_DRAFT_SESSION_ID))
+
+  function registerDraftPromptInputApi(api: PromptInputApi) {
+    setDraftPromptInputApi(api)
+    return () => {
+      setDraftPromptInputApi((current) => (current === api ? null : current))
+    }
+  }
+
+  async function createAndActivateDraftSession() {
+    const agent = draftAgent()
+    const model = draftModel()
+    if (agent && model.providerId && model.modelId) {
+      await setAgentModelPreference(props.instance.id, agent, model)
+    }
+    const session = await createSession(props.instance.id, agent || undefined)
+    if (model.providerId && model.modelId) {
+      await updateSessionModel(props.instance.id, session.id, model)
+    }
+    setActiveParentSession(props.instance.id, session.id)
+    return session
+  }
+
+  async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
+    const session = await createAndActivateDraftSession()
+    await sendMessage(props.instance.id, session.id, prompt, attachments)
+  }
+
+  async function handleFirstPromptCommand(commandName: string, args: string) {
+    const session = await createAndActivateDraftSession()
+    await executeCustomCommand(props.instance.id, session.id, commandName, args)
+  }
+
+  async function handleFirstPromptShell(command: string) {
+    const session = await createAndActivateDraftSession()
+    await runShellCommand(props.instance.id, session.id, command)
+  }
 
   const sessionLayout = (
     <div
@@ -677,7 +912,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     >
       {renderLeftPanel()}
 
-      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}>
+      <Box
+        class="session-center-column"
+        ref={setSessionCenterEl}
+        data-session-center-width={sessionCenterWidthStep()}
+        sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
+      >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
             <Toolbar variant="dense" class="session-toolbar flex flex-wrap items-center gap-2 py-0 min-h-[40px]">
@@ -704,6 +944,29 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     </div>
 
                     <div class="flex flex-wrap items-center justify-center gap-1">
+                      <Show when={!showingInfoView()}>
+                        <IconButton
+                          color="inherit"
+                          onClick={handleChatSearchClick}
+                          aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                          title={t("instanceShell.chatSearch.openAriaLabel")}
+                          size="small"
+                        >
+                          <Search class="w-5 h-5" aria-hidden="true" />
+                        </IconButton>
+                        <IconButton
+                          color="inherit"
+                          onClick={handlePreviewButtonClick}
+                          aria-label={previewToggleLabel()}
+                          title={previewToggleLabel()}
+                          size="small"
+                        >
+                          {(() => {
+                            const Icon = PreviewToggleIcon()
+                            return <Icon class="w-5 h-5" aria-hidden="true" />
+                          })()}
+                        </IconButton>
+                      </Show>
                       <button
                         type="button"
                         class="connection-status-button command-palette-button"
@@ -814,7 +1077,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </span>
 
                 <div class="ms-auto flex items-center gap-3">
-                  <div class="connection-status-meta flex items-center gap-3">
+                <div class="connection-status-meta flex items-center gap-3">
+                    <Show when={!showingInfoView()}>
+                      <IconButton
+                        color="inherit"
+                        onClick={handleChatSearchClick}
+                        aria-label={t("instanceShell.chatSearch.openAriaLabel")}
+                        title={t("instanceShell.chatSearch.openAriaLabel")}
+                        size="small"
+                      >
+                        <Search class="w-5 h-5" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        color="inherit"
+                        onClick={handlePreviewButtonClick}
+                        aria-label={previewToggleLabel()}
+                        title={previewToggleLabel()}
+                        size="small"
+                      >
+                        {(() => {
+                          const Icon = PreviewToggleIcon()
+                          return <Icon class="w-5 h-5" aria-hidden="true" />
+                        })()}
+                      </IconButton>
+                    </Show>
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">
                         <span class="status-dot" />
@@ -864,11 +1150,45 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
-                  <div class="flex items-center justify-center h-full">
-                    <div class="text-center text-gray-500 dark:text-gray-400">
-                      <p class="mb-2">{t("instanceShell.empty.title")}</p>
-                      <p class="text-sm">{t("instanceShell.empty.description")}</p>
-                    </div>
+                  <div class="session-view">
+                    <MessageSection
+                      instanceId={props.instance.id}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      loading={false}
+                      emptyStateVariant="no-session"
+                      isActive={props.isActiveInstance}
+                      showSidebarToggle={showEmbeddedSidebarToggle()}
+                      onSidebarToggle={() => setLeftOpen(true)}
+                      forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                    />
+
+                    <Show when={draftAttachments().length > 0}>
+                      <PromptAttachmentsBar
+                        attachments={draftAttachments()}
+                        onRemoveAttachment={(attachmentId) => {
+                          const api = draftPromptInputApi()
+                          if (api) {
+                            api.removeAttachment(attachmentId)
+                            return
+                          }
+                          removeAttachment(props.instance.id, NO_SESSION_DRAFT_SESSION_ID, attachmentId)
+                        }}
+                        onExpandTextAttachment={(attachmentId) => draftPromptInputApi()?.expandTextAttachment(attachmentId)}
+                      />
+                    </Show>
+
+                    <PromptInput
+                      instanceId={props.instance.id}
+                      instanceFolder={props.instance.folder}
+                      sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                      isActive={props.isActiveInstance}
+                      compactLayout={compactPromptLayout()}
+                      onSend={handleFirstPromptSend}
+                      onCommand={handleFirstPromptCommand}
+                      onRunShell={handleFirstPromptShell}
+                      escapeInDebounce={props.escapeInDebounce}
+                      registerPromptInputApi={registerDraftPromptInputApi}
+                    />
                   </div>
                 }
               >
@@ -892,6 +1212,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           escapeInDebounce={props.escapeInDebounce}
                           isPhoneLayout={isPhoneLayout()}
                           compactPromptLayout={compactPromptLayout()}
+                          registerSessionPromptApi={registerSessionPromptApi}
                           showSidebarToggle={showEmbeddedSidebarToggle()}
                           onSidebarToggle={() => setLeftOpen(true)}
                           forceCompactStatusLayout={showEmbeddedSidebarToggle()}
@@ -921,7 +1242,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         class="instance-shell2 flex flex-col flex-1 min-h-0"
         data-instance-id={props.instance.id}
       >
-        <Show when={hasSessions()} fallback={<InstanceWelcomeView instance={props.instance} />}>
+        <Show when={!isLaunching()} fallback={<InstanceWelcomeView instance={props.instance} />}>
           {sessionLayout}
         </Show>
       </div>

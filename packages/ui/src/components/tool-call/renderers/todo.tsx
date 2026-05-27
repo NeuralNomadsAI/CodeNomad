@@ -3,6 +3,7 @@ import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ToolRenderer } from "../types"
 import { readToolStatePayload } from "../utils"
 import { useI18n, tGlobal } from "../../../lib/i18n"
+import { getTodoToolSearchText } from "../search-text"
 
 export type TodoViewStatus = "pending" | "in_progress" | "completed" | "cancelled"
 
@@ -123,6 +124,7 @@ export function getTodoTitle(state?: ToolState): string {
 
 export const todoRenderer: ToolRenderer = {
   tools: ["todowrite", "todoread"],
+  getSearchText: getTodoToolSearchText,
   getAction: () => tGlobal("toolCall.renderer.action.planning"),
   getTitle({ toolState }) {
     return getTodoTitle(toolState())

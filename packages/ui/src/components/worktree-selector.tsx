@@ -26,6 +26,14 @@ type WorktreeOption =
   | { kind: "action"; key: "__create__"; label: string }
   | { kind: "worktree"; key: string; slug: string; directory: string; raw: WorktreeDescriptor }
 
+type DeleteErrorKind = "localChanges" | "inUse" | "notFound" | "permissionDenied" | "unknown"
+
+type DeleteErrorDetails = {
+  summary: string
+  causeLabel: string
+  nextStep: string
+}
+
 function preventSelectPress(event: PointerEvent | MouseEvent) {
   // Prevent Select.Item from treating this as a selection.
   // We intentionally prevent default to stop Kobalte's internal press handling.
@@ -64,6 +72,57 @@ function relativePath(fromDir: string, toDir: string): string {
   return relParts.join("/") || "."
 }
 
+function extractDeleteErrorMessage(input: string): string {
+  const trimmed = (input ?? "").trim()
+  if (!trimmed) return ""
+
+  try {
+    const parsed = JSON.parse(trimmed) as { error?: unknown }
+    if (typeof parsed?.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim()
+    }
+  } catch {
+    // Fall back to the raw string when the backend returned plain text.
+  }
+
+  return trimmed
+}
+
+function classifyDeleteError(message: string): DeleteErrorKind {
+  const normalized = message.toLowerCase()
+
+  if (
+    normalized.includes("modified or untracked files") ||
+    normalized.includes("contains modified") ||
+    normalized.includes("contains untracked") ||
+    normalized.includes("use --force to delete it")
+  ) {
+    return "localChanges"
+  }
+
+  if (
+    normalized.includes("in use") ||
+    normalized.includes("resource busy") ||
+    normalized.includes("device or resource busy") ||
+    normalized.includes("ebusy") ||
+    normalized.includes("file is being used") ||
+    normalized.includes("process cannot access the file") ||
+    normalized.includes("directory not empty")
+  ) {
+    return "inUse"
+  }
+
+  if (normalized.includes("not found") || normalized.includes("no such file") || normalized.includes("cannot find")) {
+    return "notFound"
+  }
+
+  if (normalized.includes("permission denied") || normalized.includes("access is denied") || normalized.includes("eperm")) {
+    return "permissionDenied"
+  }
+
+  return "unknown"
+}
+
 interface WorktreeSelectorProps {
   instanceId: string
   sessionId: string
@@ -80,6 +139,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const [deleteTarget, setDeleteTarget] = createSignal<WorktreeOption & { kind: "worktree" } | null>(null)
   const [forceDelete, setForceDelete] = createSignal(false)
   const [isDeleting, setIsDeleting] = createSignal(false)
+  const [deleteError, setDeleteError] = createSignal<string | null>(null)
 
   const session = createMemo(() => sessions().get(props.instanceId)?.get(props.sessionId))
   const isChildSession = createMemo(() => Boolean(session()?.parentId))
@@ -114,8 +174,14 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const openDeleteDialog = (opt: WorktreeOption & { kind: "worktree" }) => {
     if (opt.slug === "root") return
     setForceDelete(false)
+    setDeleteError(null)
     setDeleteTarget(opt)
     setDeleteOpen(true)
+  }
+
+  const closeDeleteDialog = () => {
+    setDeleteOpen(false)
+    setDeleteError(null)
   }
 
   const repoRoot = createMemo(() => {
@@ -138,6 +204,89 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       showToastNotification({ message: "Failed to copy path", variant: "error" })
     }
   }
+
+  const sanitizeDeleteError = (input: string) => {
+    let sanitized = (input ?? "").trim()
+    if (!sanitized) {
+      return t("instanceShell.worktree.delete.error.fallback")
+    }
+
+    sanitized = sanitized.replace(/[A-Za-z]:[\\/][^\r\n"']+/g, "[path]")
+    sanitized = sanitized.replace(/\\Users\\[^\\/\r\n]+/gi, "\\Users\\[user]")
+    sanitized = sanitized.replace(/\/Users\/[^/\r\n]+/g, "/Users/[user]")
+    sanitized = sanitized.replace(/\/home\/[^/\r\n]+/g, "/home/[user]")
+    sanitized = sanitized.replace(/([A-Za-z]:[\\/])?Users[\\/][^\\/\r\n]+/gi, "$1Users/[user]")
+    return sanitized
+  }
+
+  const handleCopyDeleteError = async (mode: "raw" | "sanitized") => {
+    const raw = deleteError()
+    if (!raw) return
+    const text = mode === "sanitized" ? sanitizeDeleteError(raw) : raw
+
+    try {
+      const ok = await copyToClipboard(text)
+      showToastNotification({
+        message: ok
+          ? t(mode === "sanitized" ? "instanceShell.worktree.delete.error.copySanitizedSuccess" : "instanceShell.worktree.delete.error.copySuccess")
+          : t("instanceShell.worktree.delete.error.copyFailure"),
+        variant: ok ? "success" : "error",
+      })
+    } catch (error) {
+      log.error("Failed to copy delete worktree error", error)
+      showToastNotification({
+        message: t("instanceShell.worktree.delete.error.copyFailure"),
+        variant: "error",
+      })
+    }
+  }
+
+  const deleteErrorDetails = createMemo<DeleteErrorDetails | null>(() => {
+    const raw = deleteError()
+    if (!raw) return null
+
+    const parsed = extractDeleteErrorMessage(raw)
+    const kind = classifyDeleteError(parsed)
+
+    switch (kind) {
+      case "localChanges":
+        return {
+          summary: t("instanceShell.worktree.delete.error.summary.localChanges"),
+          causeLabel: t("instanceShell.worktree.delete.error.cause.localChanges"),
+          nextStep: t("instanceShell.worktree.delete.error.nextStep.localChanges"),
+        }
+      case "inUse":
+        return {
+          summary: t("instanceShell.worktree.delete.error.summary.inUse"),
+          causeLabel: t("instanceShell.worktree.delete.error.cause.inUse"),
+          nextStep: t("instanceShell.worktree.delete.error.nextStep.inUse"),
+        }
+      case "notFound":
+        return {
+          summary: t("instanceShell.worktree.delete.error.summary.notFound"),
+          causeLabel: t("instanceShell.worktree.delete.error.cause.notFound"),
+          nextStep: t("instanceShell.worktree.delete.error.nextStep.notFound"),
+        }
+      case "permissionDenied":
+        return {
+          summary: t("instanceShell.worktree.delete.error.summary.permissionDenied"),
+          causeLabel: t("instanceShell.worktree.delete.error.cause.permissionDenied"),
+          nextStep: t("instanceShell.worktree.delete.error.nextStep.permissionDenied"),
+        }
+      default:
+        return {
+          summary: t("instanceShell.worktree.delete.error.summary.unknown"),
+          causeLabel: t("instanceShell.worktree.delete.error.cause.unknown"),
+          nextStep: t("instanceShell.worktree.delete.error.nextStep.unknown"),
+        }
+    }
+  })
+
+  const displayDeleteError = createMemo(() => {
+    const raw = deleteError()
+    if (!raw) return null
+    return extractDeleteErrorMessage(raw)
+  })
 
   const handleChange = async (value: WorktreeOption | null) => {
     if (worktreesUnavailable()) return
@@ -343,22 +492,23 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         </Dialog.Portal>
       </Dialog>
 
-      <Dialog open={deleteOpen()} onOpenChange={(open) => !open && setDeleteOpen(false)}>
+      <Dialog open={deleteOpen()} onOpenChange={(open) => !open && closeDeleteDialog()}>
         <Dialog.Portal>
           <Dialog.Overlay class="modal-overlay" />
-          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-5">
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4">
+            <Dialog.Content class="modal-surface w-[clamp(640px,45vw,960px)] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-2rem)] overflow-y-auto p-4 flex flex-col gap-3">
               <div>
                 <Dialog.Title class="text-xl font-semibold text-primary">Delete worktree</Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-2">Removes the git worktree checkout directory for this branch.</Dialog.Description>
+                <Dialog.Description class="text-sm text-secondary mt-1">Deletes this branch worktree and its local folder.</Dialog.Description>
               </div>
 
               <Show when={deleteTarget()}>
                 {(target) => (
-                  <div class="rounded-lg border border-base bg-surface-secondary p-4">
-                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Worktree</p>
-                    <p class="text-sm font-mono text-primary break-all">{target().slug}</p>
-                    <p class="text-[11px] text-secondary mt-2 break-all font-mono">{target().directory}</p>
+                  <div class="rounded-lg border border-base bg-surface-secondary px-3 py-2">
+                    <p class="text-sm text-primary">
+                      Worktree <span class="font-semibold font-mono">&quot;{target().slug}&quot;</span>
+                    </p>
+                    <p class="text-[11px] text-secondary break-all font-mono leading-5">{target().directory}</p>
                   </div>
                 )}
               </Show>
@@ -377,7 +527,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 <button
                   type="button"
                   class="selector-button selector-button-secondary"
-                  onClick={() => setDeleteOpen(false)}
+                  onClick={closeDeleteDialog}
                   disabled={isDeleting()}
                 >
                   Cancel
@@ -389,12 +539,13 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   onClick={() => {
                     const target = deleteTarget()
                     if (!target) {
-                      setDeleteOpen(false)
+                      closeDeleteDialog()
                       return
                     }
 
                     void (async () => {
                       setIsDeleting(true)
+                      setDeleteError(null)
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
                       await reloadWorktrees(props.instanceId)
                       await reloadWorktreeMap(props.instanceId)
@@ -403,15 +554,12 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                         await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")
                       }
 
-                      setDeleteOpen(false)
+                      closeDeleteDialog()
                       showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })
                     })()
                       .catch((error) => {
                         log.warn("Failed to delete worktree", error)
-                        showToastNotification({
-                          message: error instanceof Error ? error.message : "Failed to delete worktree",
-                          variant: "error",
-                        })
+                        setDeleteError(error instanceof Error ? error.message : t("instanceShell.worktree.delete.error.fallback"))
                       })
                       .finally(() => {
                         setIsDeleting(false)
@@ -421,6 +569,56 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   {isDeleting() ? "Deleting..." : "Delete"}
                 </button>
               </div>
+
+              <Show when={displayDeleteError()}>
+                {(message) => (
+                  <div class="rounded-lg border border-danger bg-danger/10 p-3 flex flex-col gap-2">
+                    <div class="flex flex-col gap-1">
+                      <p class="text-xs font-medium text-danger uppercase tracking-wide">
+                        {t("instanceShell.worktree.delete.error.title")}
+                      </p>
+                      <Show when={deleteErrorDetails()}>
+                        {(details) => (
+                          <>
+                            <p class="text-sm text-primary font-medium">{details().summary}</p>
+                            <p class="text-sm text-secondary">
+                              <span class="font-medium text-primary">{t("instanceShell.worktree.delete.error.causeLabel")}</span>{" "}
+                              {details().causeLabel}
+                            </p>
+                            <p class="text-sm text-secondary">
+                              <span class="font-medium text-primary">{t("instanceShell.worktree.delete.error.nextStepLabel")}</span>{" "}
+                              {details().nextStep}
+                            </p>
+                          </>
+                        )}
+                      </Show>
+                    </div>
+
+                    <pre class="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all rounded border border-danger/30 bg-surface-primary px-3 py-2 text-xs text-primary select-text leading-5">{message()}</pre>
+
+                    <div class="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        class="selector-button selector-button-secondary"
+                        onClick={() => {
+                          void handleCopyDeleteError("raw")
+                        }}
+                      >
+                        {t("instanceShell.worktree.delete.error.copyRaw")}
+                      </button>
+                      <button
+                        type="button"
+                        class="selector-button selector-button-secondary"
+                        onClick={() => {
+                          void handleCopyDeleteError("sanitized")
+                        }}
+                      >
+                        {t("instanceShell.worktree.delete.error.copySanitized")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Show>
             </Dialog.Content>
           </div>
         </Dialog.Portal>

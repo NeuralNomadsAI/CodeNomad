@@ -3,7 +3,7 @@ import type { NativeDialogOptions } from "../native-functions"
 import { getLogger } from "../../logger"
 const log = getLogger("actions")
 
-export async function openTauriNativeDialog(options: NativeDialogOptions): Promise<string | null> {
+export async function openTauriNativeDialog(options: NativeDialogOptions): Promise<string | string[] | null> {
   if (typeof window === "undefined") {
     return null
   }
@@ -13,7 +13,7 @@ export async function openTauriNativeDialog(options: NativeDialogOptions): Promi
       title: options.title,
       defaultPath: options.defaultPath,
       directory: options.mode === "directory",
-      multiple: false,
+      multiple: Boolean(options.multiple),
       filters: options.filters?.map((filter) => ({
         name: filter.name ?? "Files",
         extensions: filter.extensions,
@@ -25,10 +25,10 @@ export async function openTauriNativeDialog(options: NativeDialogOptions): Promi
     }
 
     if (Array.isArray(response)) {
-      return response[0] ?? null
+      return options.multiple ? response : response[0] ?? null
     }
 
-    return response
+    return options.multiple ? [response] : response
   } catch (error) {
     log.error("[native] tauri dialog failed", error)
     return null

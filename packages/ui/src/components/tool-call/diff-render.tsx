@@ -129,9 +129,7 @@ export function createDiffContentRenderer(params: {
     const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
 
     const handleDiffRendered = () => {
-      if (!disableScrollTracking) {
-        params.handleScrollRendered()
-      }
+      params.handleScrollRendered()
       params.onContentRendered?.()
     }
 

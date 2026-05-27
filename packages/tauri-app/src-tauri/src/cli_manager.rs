@@ -1,3 +1,4 @@
+use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -5,9 +6,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::env;
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(windows)]
+use std::mem::{size_of, zeroed};
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -20,10 +25,94 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
 
 #[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsJobObject {
+    // The desktop wrapper may observe only a short-lived Node wrapper PID while the real
+    // server and workspace descendants continue running below it. KILL_ON_JOB_CLOSE gives
+    // Tauri an OS-owned handle for the whole subtree instead of relying on a single PID.
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+impl WindowsJobObject {
+    fn create() -> anyhow::Result<Self> {
+        let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(anyhow::anyhow!(
+                "CreateJobObjectW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(anyhow::anyhow!("SetInformationJobObject failed: {}", err));
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign_child(&self, child: &Child) -> anyhow::Result<()> {
+        let process_handle = child.as_raw_handle() as HANDLE;
+        let ok = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
+        if ok == 0 {
+            return Err(anyhow::anyhow!(
+                "AssignProcessToJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJobObject {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe {
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe impl Send for WindowsJobObject {}
+
+#[cfg(windows)]
+unsafe impl Sync for WindowsJobObject {}
 
 fn log_line(message: &str) {
     println!("[tauri-cli] {message}");
@@ -363,6 +452,8 @@ impl Default for CliStatus {
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    #[cfg(windows)]
+    job: Arc<Mutex<Option<WindowsJobObject>>>,
     ready: Arc<AtomicBool>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
 }
@@ -372,6 +463,8 @@ impl CliProcessManager {
         Self {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            #[cfg(windows)]
+            job: Arc::new(Mutex::new(None)),
             ready: Arc::new(AtomicBool::new(false)),
             bootstrap_token: Arc::new(Mutex::new(None)),
         }
@@ -394,6 +487,8 @@ impl CliProcessManager {
 
         let status_arc = self.status.clone();
         let child_arc = self.child.clone();
+        #[cfg(windows)]
+        let job_arc = self.job.clone();
         let ready_flag = self.ready.clone();
         let token_arc = self.bootstrap_token.clone();
         thread::spawn(move || {
@@ -401,6 +496,8 @@ impl CliProcessManager {
                 app.clone(),
                 status_arc.clone(),
                 child_arc,
+                #[cfg(windows)]
+                job_arc,
                 ready_flag,
                 token_arc,
                 dev,
@@ -420,11 +517,12 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
+        #[cfg(windows)]
+        let _job = self.job.lock().take();
+
         let mut child_opt = self.child.lock();
         if let Some(mut child) = child_opt.take() {
             log_line(&format!("stopping CLI pid={}", child.id()));
-            #[cfg(windows)]
-            let mut forced_tree_shutdown = false;
             #[cfg(unix)]
             unsafe {
                 let pid = child.id() as i32;
@@ -446,18 +544,16 @@ impl CliProcessManager {
                     Ok(Some(_)) => break,
                     Ok(None) => {
                         #[cfg(windows)]
-                        if !forced_tree_shutdown
-                            && start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS)
-                        {
+                        if start.elapsed() > Duration::from_millis(CLI_WINDOWS_FORCE_GRACE_MS) {
                             log_line(&format!(
                                 "regular Windows shutdown still running after {}ms; escalating pid={}",
                                 CLI_WINDOWS_FORCE_GRACE_MS,
                                 child.id()
                             ));
-                            forced_tree_shutdown = true;
                             if !kill_process_tree_windows(child.id(), true) {
                                 let _ = child.kill();
                             }
+                            break;
                         }
 
                         if start.elapsed() > Duration::from_secs(CLI_STOP_GRACE_SECS) {
@@ -476,11 +572,7 @@ impl CliProcessManager {
                             }
                             #[cfg(windows)]
                             {
-                                if !forced_tree_shutdown
-                                    && !kill_process_tree_windows(child.id(), true)
-                                {
-                                    let _ = child.kill();
-                                } else if forced_tree_shutdown {
+                                if !kill_process_tree_windows(child.id(), true) {
                                     let _ = child.kill();
                                 }
                             }
@@ -491,6 +583,9 @@ impl CliProcessManager {
                     Err(_) => break,
                 }
             }
+        } else {
+            #[cfg(windows)]
+            log_line("tracked CLI process already exited; dropping Windows job object to reap descendants");
         }
 
         let mut status = self.status.lock();
@@ -511,6 +606,7 @@ impl CliProcessManager {
         app: AppHandle,
         status: Arc<Mutex<CliStatus>>,
         child_holder: Arc<Mutex<Option<Child>>>,
+        #[cfg(windows)] job_holder: Arc<Mutex<Option<WindowsJobObject>>>,
         ready: Arc<AtomicBool>,
         bootstrap_token: Arc<Mutex<Option<String>>>,
         dev: bool,
@@ -536,24 +632,27 @@ impl CliProcessManager {
 
         let use_user_shell = supports_user_shell();
 
+        if !use_user_shell && which::which(&resolution.node_binary).is_err() {
+            return Err(anyhow::anyhow!(
+                "Node binary '{}' not found. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                resolution.node_binary
+            ));
+        }
+
         let command_info = if use_user_shell {
             log_line("spawning via user shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
         } else {
-            log_line("spawning directly with node");
+            log_line(if resolution.runner == Runner::Tsx {
+                "spawning directly with node + tsx"
+            } else {
+                "spawning directly with node"
+            });
             ShellCommandType::Direct(DirectCommand {
                 program: resolution.node_binary.clone(),
                 args: resolution.runner_args(&args),
             })
         };
-
-        if !use_user_shell {
-            if which::which(&resolution.node_binary).is_err() {
-                return Err(anyhow::anyhow!(
-                    "Node binary not found. Make sure Node.js is installed."
-                ));
-            }
-        }
 
         let child = match &command_info {
             ShellCommandType::UserShell(cmd) => {
@@ -592,6 +691,22 @@ impl CliProcessManager {
 
         let pid = child.id();
         log_line(&format!("spawned pid={pid}"));
+        #[cfg(windows)]
+        match WindowsJobObject::create().and_then(|job| {
+            job.assign_child(&child)?;
+            Ok(job)
+        }) {
+            Ok(job) => {
+                log_line(&format!("attached pid={pid} to Windows job object"));
+                *job_holder.lock() = Some(job);
+            }
+            Err(err) => {
+                log_line(&format!(
+                    "failed to attach pid={pid} to Windows job object; falling back to taskkill-only cleanup: {err}"
+                ));
+            }
+        }
+
         {
             let mut locked = status.lock();
             locked.pid = Some(pid);
@@ -665,6 +780,8 @@ impl CliProcessManager {
         let status_clone = status.clone();
         let ready_clone = ready.clone();
         let child_holder_clone = child_holder.clone();
+        #[cfg(windows)]
+        let job_holder_clone = job_holder.clone();
         thread::spawn(move || {
             let timeout = Duration::from_secs(60);
             thread::sleep(timeout);
@@ -719,6 +836,10 @@ impl CliProcessManager {
                             // Drop the handle after the process exits so other callers
                             // don't attempt to stop/kill a finished process.
                             *guard = None;
+                            #[cfg(windows)]
+                            {
+                                let _ = job_holder_clone.lock().take();
+                            }
                             Some(status)
                         }
                         None => None,
@@ -776,7 +897,8 @@ impl CliProcessManager {
         auth_cookie_name: &str,
     ) {
         let mut buffer = String::new();
-        let local_url_regex = Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
+        let local_url_regex =
+            Regex::new(r"^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").ok();
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
@@ -803,6 +925,17 @@ impl CliProcessManager {
                             continue;
                         }
 
+                        if let Some(node_binary) = line.strip_prefix(MISSING_NODE_PREFIX) {
+                            let mut locked = status.lock();
+                            if locked.error.is_none() {
+                                locked.error = Some(format!(
+                                    "Node binary '{}' not found in the desktop shell environment. CodeNomad desktop currently requires Node.js installed on the system, or set NODE_BINARY to a valid runtime path.",
+                                    node_binary.trim()
+                                ));
+                            }
+                            continue;
+                        }
+
                         if let Some(url) = local_url_regex
                             .as_ref()
                             .and_then(|re| re.captures(line).and_then(|c| c.get(1)))
@@ -818,7 +951,6 @@ impl CliProcessManager {
                             );
                             continue;
                         }
-
                     }
                 }
                 Err(_) => break,
@@ -916,6 +1048,7 @@ struct CliEntry {
     runner: Runner,
     runner_path: Option<String>,
     node_binary: String,
+    node_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -926,9 +1059,8 @@ enum Runner {
 
 impl CliEntry {
     fn resolve(app: &AppHandle, dev: bool) -> anyhow::Result<Self> {
-        let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
-
         if dev {
+            let node_binary = std::env::var("NODE_BINARY").unwrap_or_else(|_| "node".to_string());
             if let Some(tsx_path) = resolve_tsx(app) {
                 if let Some(entry) = resolve_dev_entry(app) {
                     return Ok(Self {
@@ -936,22 +1068,24 @@ impl CliEntry {
                         runner: Runner::Tsx,
                         runner_path: Some(tsx_path),
                         node_binary,
+                        node_args: Vec::new(),
                     });
                 }
             }
         }
 
-        if let Some(entry) = resolve_dist_entry(app) {
+        if let Some(entry) = resolve_prod_entry(app) {
             return Ok(Self {
                 entry,
                 runner: Runner::Node,
                 runner_path: None,
-                node_binary,
+                node_binary: resolve_bundled_node_binary()?,
+                node_args: vec!["--experimental-specifier-resolution=node".to_string()],
             });
         }
 
         Err(anyhow::anyhow!(
-            "Unable to locate CodeNomad CLI build (dist/bin.js). Please build @neuralnomads/codenomad."
+            "Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Please rebuild the desktop bundle."
         ))
     }
 
@@ -963,10 +1097,12 @@ impl CliEntry {
             "--auth-cookie-name".to_string(),
             auth_cookie_name.to_string(),
             "--generate-token".to_string(),
+            "--unrestricted-root".to_string(),
         ];
 
         if dev {
-            // Dev: plain HTTP + Vite dev server proxy.
+            // Dev: keep loopback HTTP for the Vite proxy, but also enable HTTPS so
+            // remote proxy sessions can still spin up secure local windows.
             let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
@@ -983,7 +1119,7 @@ impl CliEntry {
                 .unwrap_or_else(|| "info".to_string());
 
             args.push("--https".to_string());
-            args.push("false".to_string());
+            args.push("true".to_string());
             args.push("--http".to_string());
             args.push("true".to_string());
             args.push("--http-port".to_string());
@@ -1004,6 +1140,9 @@ impl CliEntry {
 
     fn runner_args(&self, cli_args: &[String]) -> Vec<String> {
         let mut args = VecDeque::new();
+        for arg in &self.node_args {
+            args.push_back(arg.clone());
+        }
         if self.runner == Runner::Tsx {
             if let Some(path) = &self.runner_path {
                 args.push_back(path.clone());
@@ -1021,15 +1160,23 @@ fn resolve_tsx(_app: &AppHandle) -> Option<String> {
     let cwd = std::env::current_dir().ok();
     let workspace = workspace_root();
     let mut candidates = vec![
-        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("node_modules/tsx/dist/cli.cjs")),
         cwd.as_ref().map(|p| p.join("node_modules/tsx/dist/cli.js")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
-        cwd.as_ref().map(|p| p.join("../node_modules/tsx/dist/cli.js")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
-        cwd.as_ref().map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../node_modules/tsx/dist/cli.js")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.mjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.cjs")),
+        cwd.as_ref()
+            .map(|p| p.join("../../node_modules/tsx/dist/cli.js")),
         workspace
             .as_ref()
             .map(|p| p.join("node_modules/tsx/dist/cli.mjs")),
@@ -1067,48 +1214,30 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
     first_existing(candidates)
 }
 
-fn resolve_dist_entry(_app: &AppHandle) -> Option<String> {
-    let base = workspace_root();
-    let mut candidates: Vec<Option<PathBuf>> = vec![
-        base.as_ref().map(|p| p.join("packages/server/dist/bin.js")),
-        base.as_ref()
-            .map(|p| p.join("packages/server/dist/index.js")),
-        base.as_ref().map(|p| p.join("server/dist/bin.js")),
-        base.as_ref().map(|p| p.join("server/dist/index.js")),
-    ];
+fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
+    let mut candidates = Vec::new();
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(Some(dir.join("resources/server/dist/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/index.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(dir.join("resources/server/dist/server/index.js")));
 
             let resources = dir.join("../Resources");
             candidates.push(Some(resources.join("server/dist/bin.js")));
-            candidates.push(Some(resources.join("server/dist/index.js")));
-            candidates.push(Some(resources.join("server/dist/server/bin.js")));
-            candidates.push(Some(resources.join("server/dist/server/index.js")));
             candidates.push(Some(resources.join("resources/server/dist/bin.js")));
-            candidates.push(Some(resources.join("resources/server/dist/index.js")));
-            candidates.push(Some(resources.join("resources/server/dist/server/bin.js")));
-            candidates.push(Some(
-                resources.join("resources/server/dist/server/index.js"),
-            ));
 
             let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
             for root in linux_resource_roots {
                 candidates.push(Some(root.join("server/dist/bin.js")));
-                candidates.push(Some(root.join("server/dist/index.js")));
-                candidates.push(Some(root.join("server/dist/server/bin.js")));
-                candidates.push(Some(root.join("server/dist/server/index.js")));
                 candidates.push(Some(root.join("resources/server/dist/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/index.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/server/index.js")));
             }
         }
     }
+
+    let base = workspace_root();
+    candidates.push(
+        base.as_ref()
+            .map(|p| p.join("packages/server/dist/bin.js")),
+    );
 
     first_existing(candidates)
 }
@@ -1123,8 +1252,16 @@ fn build_shell_command_string(
     for arg in entry.runner_args(cli_args) {
         quoted.push(shell_escape(&arg));
     }
-    let command = format!("ELECTRON_RUN_AS_NODE=1 exec {}", quoted.join(" "));
-    let args = build_shell_args(&shell, &command);
+    let command = format!(
+        "if [ -x {} ] || command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
+        shell_escape(&entry.node_binary),
+        shell_escape(&entry.node_binary),
+        quoted.join(" "),
+        MISSING_NODE_PREFIX,
+        shell_escape(&entry.node_binary),
+    );
+    let wrapped_command = wrap_command_for_shell(&command, &shell);
+    let args = build_shell_args(&shell, &wrapped_command);
     log_line(&format!("user shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
 }
@@ -1140,6 +1277,30 @@ fn default_shell() -> String {
     } else {
         "/bin/bash".to_string()
     }
+}
+
+fn wrap_command_for_shell(command: &str, shell: &str) -> String {
+    let shell_name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_lowercase();
+
+    if shell_name.contains("bash") {
+        return format!(
+            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    if shell_name.contains("zsh") {
+        return format!(
+            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {}",
+            command
+        );
+    }
+
+    command.to_string()
 }
 
 fn shell_escape(input: &str) -> String {
@@ -1163,8 +1324,11 @@ fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
 
-    let _ = shell_name;
-    vec!["-l".into(), "-c".into(), command.into()]
+    if shell_name.contains("zsh") || shell_name.contains("bash") {
+        vec!["-i".into(), "-l".into(), "-c".into(), command.into()]
+    } else {
+        vec!["-l".into(), "-c".into(), command.into()]
+    }
 }
 
 fn first_existing(paths: Vec<Option<PathBuf>>) -> Option<String> {

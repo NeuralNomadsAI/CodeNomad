@@ -3,18 +3,32 @@ import type {
   BackgroundProcessListResponse,
   BackgroundProcessOutputResponse,
   BinaryValidationResult,
+  ConfigFileContentRequest,
+  ConfigFileContentResponse,
+  ConfigFileListResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
+  FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   SideCar,
+  PreviewSession,
   ServerMeta,
+  RemoteProxySessionCreateRequest,
+  RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
   VoiceModeStateResponse,
+  WorkspaceCloneRequest,
+  WorkspaceCloneResponse,
+  WorktreeGitCommitRequest,
+  WorktreeGitCommitResponse,
+  WorktreeGitDiffRequest,
+  WorktreeGitMutationResponse,
+  WorktreeGitPathsRequest,
   WorkspaceCreateRequest,
   WorkspaceDescriptor,
   WorkspaceFileResponse,
@@ -26,9 +40,12 @@ import type {
   WorktreeListResponse,
   WorktreeMap,
   WorktreeCreateRequest,
+  WorktreeGitDiffResponse,
+  WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
+import { attachEventSourceHandlers } from "./event-source-handlers"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -98,6 +115,25 @@ function logHttp(message: string, context?: Record<string, unknown>) {
   httpLogger.info(message)
 }
 
+async function readErrorMessage(response: Response): Promise<string> {
+  const text = await response.text()
+  if (!text) return `Request failed with ${response.status}`
+
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown }
+    if (typeof parsed?.error === "string" && parsed.error.trim()) {
+      return parsed.error
+    }
+    if (typeof parsed?.message === "string" && parsed.message.trim()) {
+      return parsed.message
+    }
+  } catch {
+    // Keep the original body for plain-text responses.
+  }
+
+  return text
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = API_BASE ? new URL(path, API_BASE).toString() : path
   const headers = normalizeHeaders(init?.headers)
@@ -112,7 +148,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
-      const message = await response.text()
+      const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
       throw new Error(message || `Request failed with ${response.status}`)
     }
@@ -141,7 +177,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
   const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
-    const message = await response.text()
+    const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
     throw new Error(message || `Request failed with ${response.status}`)
   }
@@ -221,6 +257,15 @@ export const serverApi = {
   deleteSidecar(id: string): Promise<void> {
     return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
+  createPreview(payload: { sessionId: string; url: string }): Promise<PreviewSession> {
+    return request<PreviewSession>("/api/previews", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deletePreview(token: string): Promise<void> {
+    return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
+  },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
   },
@@ -230,8 +275,30 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
+  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteRemoteProxySession(id: string): Promise<void> {
+    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
+  },
+  listConfigFiles(): Promise<ConfigFileListResponse> {
+    return request<ConfigFileListResponse>("/api/config-files")
+  },
+  readConfigFile(id: string): Promise<ConfigFileContentResponse> {
+    return request<ConfigFileContentResponse>(`/api/config-files/${encodeURIComponent(id)}/content`)
+  },
+  writeConfigFile(id: string, contents: string): Promise<void> {
+    const body: ConfigFileContentRequest = { contents }
+    return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    })
   },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
@@ -241,6 +308,12 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
+    return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   },
   listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
@@ -266,8 +339,11 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
     )
   },
-  readWorkspaceFile(id: string, relativePath: string): Promise<WorkspaceFileResponse> {
+  readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.encoding) {
+      params.set("encoding", options.encoding)
+    }
     return request<WorkspaceFileResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
@@ -279,6 +355,47 @@ export const serverApi = {
       {
         method: "PUT",
         body: JSON.stringify({ contents }),
+      },
+    )
+  },
+  fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
+    return request<WorktreeGitStatusResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+    )
+  },
+  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest): Promise<WorktreeGitDiffResponse> {
+    const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
+    if (requestPayload.originalPath) {
+      params.set("originalPath", requestPayload.originalPath)
+    }
+    return request<WorktreeGitDiffResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+    )
+  },
+  stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    )
+  },
+  unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    )
+  },
+  commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
+    return request<WorktreeGitCommitResponse>(
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
       },
     )
   },
@@ -357,6 +474,13 @@ export const serverApi = {
       body: JSON.stringify({ parentPath, name }),
     })
   },
+  readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
+    const params = new URLSearchParams({ path })
+    if (options?.encoding) {
+      params.set("encoding", options.encoding)
+    }
+    return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
+  },
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
@@ -432,26 +556,7 @@ export const serverApi = {
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
     const source = new EventSource(url, { withCredentials: true } as any)
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as WorkspaceEventPayload
-        onEvent(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse event", error)
-      }
-    }
-    source.onerror = () => {
-      sseLogger.warn("EventSource error, closing stream")
-      onError?.()
-    }
-    source.addEventListener("codenomad.client.ping", (event: MessageEvent) => {
-      try {
-        const payload = event.data ? (JSON.parse(event.data) as { ts?: number }) : {}
-        onPing?.(payload)
-      } catch (error) {
-        sseLogger.error("Failed to parse ping event", error)
-      }
-    })
+    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
     return source
   },
 }

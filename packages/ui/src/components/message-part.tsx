@@ -33,19 +33,7 @@ export default function MessagePart(props: MessagePartProps) {
   const shouldHideTextPart = () => {
     const part = props.part
     if (!part || part.type !== "text") return false
-
-    const isSynthetic = Boolean((part as any).synthetic)
-    if (!isSynthetic) return false
-
-    // Keep optimistic user prompts visible; hide other synthetic user helper parts.
-    if (props.messageType === "user") {
-      const primaryId = props.primaryUserTextPartId
-      if (!primaryId) return false
-      return part.id !== primaryId
-    }
-
-    // Hide synthetic assistant text.
-    return true
+    return Boolean((part as any).synthetic)
   }
 
 

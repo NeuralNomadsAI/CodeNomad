@@ -112,6 +112,21 @@ function selectSidecarTab(token: string) {
   selectAppTab(getSidecarAppTabId(token))
 }
 
+function moveAppTab(tabId: string, targetTabId: string, placement: "before" | "after") {
+  if (tabId === targetTabId) return
+
+  const tabs = appTabs()
+  const ids = tabs.map((tab) => tab.id)
+  if (!ids.includes(tabId) || !ids.includes(targetTabId)) return
+
+  const reorderedIds = ids.filter((id) => id !== tabId)
+  const targetIndex = reorderedIds.indexOf(targetTabId)
+  if (targetIndex < 0) return
+
+  reorderedIds.splice(placement === "after" ? targetIndex + 1 : targetIndex, 0, tabId)
+  setTabOrder(reorderedIds)
+}
+
 function selectNextAppTab() {
   const tabs = appTabs()
   if (tabs.length <= 1) return
@@ -163,6 +178,7 @@ export {
   getAppTabById,
   getInstanceAppTabId,
   getSidecarAppTabId,
+  moveAppTab,
   selectAppTab,
   selectAppTabByIndex,
   selectInstanceTab,

@@ -1,5 +1,5 @@
-import { createSignal, Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, XCircle } from "lucide-solid"
+import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
+import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
@@ -44,6 +44,8 @@ import { resolveTitleForTool } from "./tool-call/tool-title"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
+import { createFollowScroll } from "../lib/follow-scroll"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 
 const log = getLogger("session")
 
@@ -51,8 +53,6 @@ type ToolState = import("@opencode-ai/sdk/v2").ToolState
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 const TOOL_SCROLL_SENTINEL_MARGIN_PX = 48
-const TOOL_SCROLL_INTENT_WINDOW_MS = 600
-const TOOL_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
 
 function makeRenderCacheKey(
   toolCallId?: string | null,
@@ -81,6 +81,27 @@ interface ToolCallProps {
    */
   forceCollapsed?: boolean
  }
+
+function ToolStatusIndicator(props: { status: Accessor<string> }) {
+  const isVisible = (value: string) => props.status() === value
+
+  return (
+    <span class="tool-call-header-status" aria-hidden="true" data-status={props.status() || "pending"}>
+      <span style={{ display: isVisible("pending") ? "inline-flex" : "none" }}>
+        <Hourglass class="w-4 h-4" />
+      </span>
+      <span style={{ display: isVisible("running") ? "inline-flex" : "none" }}>
+        <Loader2 class="w-4 h-4 animate-spin" />
+      </span>
+      <span style={{ display: isVisible("completed") ? "inline-flex" : "none" }}>
+        <Check class="w-4 h-4" />
+      </span>
+      <span style={{ display: isVisible("error") ? "inline-flex" : "none" }}>
+        <XCircle class="w-4 h-4" />
+      </span>
+    </span>
+  )
+}
 
 function ToolCallDetails(props: {
   toolCallMemo: () => ToolCallPart
@@ -165,180 +186,27 @@ function ToolCallDetails(props: {
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
+  const [permissionRejectReasonOpen, setPermissionRejectReasonOpen] = createSignal(false)
 
-  const [scrollContainer, setScrollContainer] = createSignal<HTMLDivElement | undefined>()
-  const [bottomSentinel, setBottomSentinel] = createSignal<HTMLDivElement | null>(null)
-  const [autoScroll, setAutoScroll] = createSignal(true)
-  const [bottomSentinelVisible, setBottomSentinelVisible] = createSignal(true)
-
-  let scrollContainerRef: HTMLDivElement | undefined
-  let detachScrollIntentListeners: (() => void) | undefined
-
-  let pendingScrollFrame: number | null = null
-  let pendingAnchorScroll: number | null = null
-  let userScrollIntentUntil = 0
-  let lastKnownScrollTop = props.scrollTopSnapshot()
-
-  function restoreScrollPosition(forceBottom = false) {
-    const container = scrollContainerRef
-    if (!container) return
-    if (forceBottom) {
-      container.scrollTop = container.scrollHeight
-      lastKnownScrollTop = container.scrollTop
-      props.setScrollTopSnapshot(lastKnownScrollTop)
-    } else {
-      container.scrollTop = lastKnownScrollTop
-    }
-  }
-
-  const persistScrollSnapshot = (element?: HTMLElement | null) => {
-    if (!element) return
-    lastKnownScrollTop = element.scrollTop
-    props.setScrollTopSnapshot(lastKnownScrollTop)
-  }
-
-  function markUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    userScrollIntentUntil = now + TOOL_SCROLL_INTENT_WINDOW_MS
-  }
-
-  function hasUserScrollIntent() {
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    return now <= userScrollIntentUntil
-  }
-
-  function attachScrollIntentListeners(element: HTMLDivElement) {
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
-    }
-    const handlePointerIntent = () => markUserScrollIntent()
-    const handleKeyIntent = (event: KeyboardEvent) => {
-      if (TOOL_SCROLL_INTENT_KEYS.has(event.key)) {
-        markUserScrollIntent()
-      }
-    }
-    element.addEventListener("wheel", handlePointerIntent, { passive: true })
-    element.addEventListener("pointerdown", handlePointerIntent)
-    element.addEventListener("touchstart", handlePointerIntent, { passive: true })
-    element.addEventListener("keydown", handleKeyIntent)
-    detachScrollIntentListeners = () => {
-      element.removeEventListener("wheel", handlePointerIntent)
-      element.removeEventListener("pointerdown", handlePointerIntent)
-      element.removeEventListener("touchstart", handlePointerIntent)
-      element.removeEventListener("keydown", handleKeyIntent)
-    }
-  }
-
-  function scheduleAnchorScroll(immediate = false) {
-    if (!autoScroll()) return
-    const sentinel = bottomSentinel()
-    const container = scrollContainerRef
-    if (!sentinel || !container) return
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    pendingAnchorScroll = requestAnimationFrame(() => {
-      pendingAnchorScroll = null
-      const containerRect = container.getBoundingClientRect()
-      const sentinelRect = sentinel.getBoundingClientRect()
-      const delta = sentinelRect.bottom - containerRect.bottom + TOOL_SCROLL_SENTINEL_MARGIN_PX
-      if (Math.abs(delta) > 1) {
-        container.scrollBy({ top: delta, behavior: immediate ? "auto" : "smooth" })
-      }
-      lastKnownScrollTop = container.scrollTop
-      props.setScrollTopSnapshot(lastKnownScrollTop)
-    })
-  }
-
-  function handleScroll() {
-    const container = scrollContainer()
-    if (!container) return
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-    }
-    const isUserScroll = hasUserScrollIntent()
-    pendingScrollFrame = requestAnimationFrame(() => {
-      pendingScrollFrame = null
-      const atBottom = bottomSentinelVisible()
-      if (isUserScroll) {
-        if (atBottom) {
-          if (!autoScroll()) setAutoScroll(true)
-        } else if (autoScroll()) {
-          setAutoScroll(false)
-        }
-      }
-    })
-  }
-
-  const handleScrollEvent = (event: Event & { currentTarget: HTMLDivElement }) => {
-    handleScroll()
-    persistScrollSnapshot(event.currentTarget)
-  }
-
-  const handleScrollRendered = () => {
-    requestAnimationFrame(() => {
-      restoreScrollPosition(autoScroll())
-      scheduleAnchorScroll(true)
-    })
-  }
-
-  const initializeScrollContainer = (element: HTMLDivElement | null | undefined) => {
-    const next = element || undefined
-    if (next === scrollContainerRef) {
-      return
-    }
-    scrollContainerRef = next
-    setScrollContainer(scrollContainerRef)
-    if (scrollContainerRef) {
-      // Refresh our snapshot on mount (e.g. when remounting after collapse)
-      lastKnownScrollTop = props.scrollTopSnapshot()
-      restoreScrollPosition(autoScroll())
-    }
-  }
+  const followScroll = createFollowScroll({
+    getScrollTopSnapshot: props.scrollTopSnapshot,
+    setScrollTopSnapshot: props.setScrollTopSnapshot,
+    sentinelMarginPx: TOOL_SCROLL_SENTINEL_MARGIN_PX,
+    sentinelClassName: "tool-call-scroll-sentinel",
+  })
 
   const scrollHelpers: ToolScrollHelpers = {
     registerContainer: (element, options) => {
-      if (options?.disableTracking) return
-      initializeScrollContainer(element)
+      followScroll.registerContainer(element, options)
     },
-    handleScroll: handleScrollEvent,
-    renderSentinel: (options) => {
-      if (options?.disableTracking) return null
-      return <div ref={setBottomSentinel} aria-hidden="true" class="tool-call-scroll-sentinel" style={{ height: "1px" }} />
-    },
+    handleScroll: followScroll.handleScroll,
+    renderSentinel: followScroll.renderSentinel,
+    restoreAfterRender: followScroll.restoreAfterRender,
   }
 
-  createEffect(() => {
-    const container = scrollContainer()
-    if (!container) return
-    attachScrollIntentListeners(container)
-    onCleanup(() => {
-      if (detachScrollIntentListeners) {
-        detachScrollIntentListeners()
-        detachScrollIntentListeners = undefined
-      }
-    })
-  })
-
-  createEffect(() => {
-    const container = scrollContainer()
-    const sentinel = bottomSentinel()
-    if (!container || !sentinel) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.target === sentinel) {
-            setBottomSentinelVisible(entry.isIntersecting)
-          }
-        })
-      },
-      { root: container, threshold: 0, rootMargin: `0px 0px ${TOOL_SCROLL_SENTINEL_MARGIN_PX}px 0px` },
-    )
-    observer.observe(sentinel)
-    onCleanup(() => observer.disconnect())
-  })
+  const handleScrollRendered = () => {
+    scrollHelpers.restoreAfterRender()
+  }
 
   createEffect(() => {
     const permission = permissionDetails()
@@ -358,13 +226,13 @@ function ToolCallDetails(props: {
     })
   })
 
-  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject", message?: string) {
     if (!permission) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
       const sessionId = getPermissionSessionId(permission) || props.sessionId
-      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
+      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response, message)
     } catch (error) {
       log.error("Failed to send permission response", error)
       setPermissionError(error instanceof Error ? error.message : props.t("toolCall.permission.errors.unableToUpdate"))
@@ -377,6 +245,8 @@ function ToolCallDetails(props: {
     const activeKey = activePermissionKey()
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
+      if (isTextInputFocused()) return
+      if (permissionRejectReasonOpen()) return
       const permission = permissionDetails()
       if (!permission || !props.isPermissionActive()) return
       if (event.key === "Enter") {
@@ -385,9 +255,6 @@ function ToolCallDetails(props: {
       } else if (event.key === "a" || event.key === "A") {
         event.preventDefault()
         void handlePermissionResponse(permission, "always")
-      } else if (event.key === "d" || event.key === "D") {
-        event.preventDefault()
-        void handlePermissionResponse(permission, "reject")
       }
     }
     document.addEventListener("keydown", handler)
@@ -564,11 +431,13 @@ function ToolCallDetails(props: {
           partVersion={options.partVersion}
           instanceId={props.instanceId}
           sessionId={options.sessionId}
+          onContentRendered={props.onContentRendered}
           forceCollapsed={options.forceCollapsed}
         />
       )
     },
     scrollHelpers,
+    onContentRendered: props.onContentRendered,
   }
 
   let previousPartVersion: number | undefined
@@ -581,12 +450,12 @@ function ToolCallDetails(props: {
       return
     }
     previousPartVersion = version
-    scheduleAnchorScroll(true)
+    scrollHelpers.restoreAfterRender()
   })
 
   createEffect(() => {
-    if (autoScroll()) {
-      scheduleAnchorScroll(true)
+    if (followScroll.autoScroll()) {
+      scrollHelpers.restoreAfterRender()
     }
   })
 
@@ -614,7 +483,8 @@ function ToolCallDetails(props: {
       error={permissionError}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
-      onRespond={(permission, sessionId, response) => void handlePermissionResponse(permission, response)}
+      onRejectReasonOpenChange={setPermissionRejectReasonOpen}
+      onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
     />
   )
 
@@ -633,21 +503,6 @@ function ToolCallDetails(props: {
       onDismiss={() => void handleQuestionDismiss()}
     />
   )
-
-  onCleanup(() => {
-    if (pendingScrollFrame !== null) {
-      cancelAnimationFrame(pendingScrollFrame)
-      pendingScrollFrame = null
-    }
-    if (pendingAnchorScroll !== null) {
-      cancelAnimationFrame(pendingAnchorScroll)
-      pendingAnchorScroll = null
-    }
-    if (detachScrollIntentListeners) {
-      detachScrollIntentListeners()
-      detachScrollIntentListeners = undefined
-    }
-  })
 
   return (
     <div class="tool-call-details">
@@ -850,24 +705,6 @@ export default function ToolCall(props: ToolCallProps) {
       return !current
     })
   }
-
-
-  const statusIcon = () => {
-    const status = toolState()?.status || ""
-    switch (status) {
-      case "pending":
-        return <Hourglass class="w-4 h-4" />
-      case "running":
-        return <Loader2 class="w-4 h-4 animate-spin" />
-      case "completed":
-        return <Check class="w-4 h-4" />
-      case "error":
-        return <XCircle class="w-4 h-4" />
-      default:
-        return ""
-    }
-  }
-
   const statusClass = () => {
     const status = toolState()?.status || "pending"
     return `tool-call-status-${status}`
@@ -986,23 +823,62 @@ export default function ToolCall(props: ToolCallProps) {
     await copyToClipboard(text)
   }
 
+  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+    const items: ActionOverflowMenuItem[] = []
+
+    if (hasToolInput()) {
+      items.push({
+        key: "toggle-input",
+        label: isToolInputVisible() ? t("toolCall.header.hideInputTitle") : t("toolCall.header.showInputTitle"),
+        icon: <ArrowRightSquare class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: () => {
+          if (!expanded()) toggle()
+          const currentlyVisible = isToolInputVisible()
+          setToolInputVisibilityOverride(currentlyVisible ? "hidden" : "expanded")
+        },
+      })
+    }
+
+    items.push({
+      key: "copy",
+      label: t("toolCall.header.copyTitle"),
+      icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+      onSelect: async () => {
+        const text = headerText()
+        if (!text) return
+        await copyToClipboard(text)
+      },
+    })
+
+    if (canSpeakToolCall()) {
+      items.push({
+        key: "speak",
+        label: speech.buttonTitle(),
+        icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
+        onSelect: () => void speech.toggle(),
+      })
+    }
+
+    return items
+  }
+
   const status = () => toolState()?.status || ""
 
   return (
-    <div
+      <div
 
-      ref={(element) => {
+        ref={(element) => {
         setToolCallRootEl(element || undefined)
       }}
       class={`tool-call ${combinedStatusClass()}`}
       data-part-type="tool"
       data-tool-name={toolName()}
       data-instance-id={props.instanceId}
-      data-session-id={props.sessionId}
-      data-message-id={props.messageId}
-      data-part-id={toolCallIdentifier()}
-    >
-      <div class="tool-call-header">
+        data-session-id={props.sessionId}
+        data-message-id={props.messageId}
+        data-part-id={toolCallIdentifier()}
+      >
+      <div class="tool-call-header" data-action-overflow={actionMenuItems().length > 1 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -1051,9 +927,14 @@ export default function ToolCall(props: ToolCallProps) {
           />
         </Show>
 
-        <span class="tool-call-header-status" aria-hidden="true">
-          {statusIcon()}
-        </span>
+        <ActionOverflowMenu
+          items={actionMenuItems()}
+          label={t("messageItem.actions.more")}
+          triggerClass="tool-call-header-copy"
+          minItems={2}
+        />
+
+        <ToolStatusIndicator status={status} />
       </div>
 
       <Show when={expanded()}>

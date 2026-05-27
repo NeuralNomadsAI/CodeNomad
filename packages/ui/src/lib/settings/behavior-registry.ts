@@ -6,7 +6,7 @@ import type {
 } from "../../stores/preferences"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { runtimeEnv } from "../runtime-env"
+import { isWebHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -38,6 +38,7 @@ export type BehaviorRegistryActions = {
   updatePreferences?: (updates: Partial<Preferences>) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
+  toggleShowMessageTimeline: () => void
   toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
@@ -84,7 +85,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
-      disabled: () => runtimeEnv.host === "web",
+      disabled: () => isWebHost(),
     },
     {
       kind: "toggle",
@@ -121,6 +122,24 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         { value: "expanded", labelKey: "commands.common.expanded" },
         { value: "collapsed", labelKey: "commands.common.collapsed" },
       ],
+    },
+    {
+      kind: "toggle",
+      id: "behavior.messageTimeline",
+      titleKey: "settings.behavior.messageTimeline.title",
+      subtitleKey: "settings.behavior.messageTimeline.subtitle",
+      get: (p) => Boolean(p.showMessageTimeline ?? true),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ showMessageTimeline: next })
+          return
+        }
+        setBooleanByToggle(
+          () => Boolean(prefs().showMessageTimeline ?? true),
+          actions.toggleShowMessageTimeline,
+          next,
+        )
+      },
     },
     {
       kind: "toggle",
@@ -251,6 +270,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.keepUnseenSubagentIdleStatus",
+      titleKey: "settings.behavior.keepUnseenSubagentIdle.title",
+      subtitleKey: "settings.behavior.keepUnseenSubagentIdle.subtitle",
+      get: (p) => Boolean(p.keepUnseenSubagentIdleStatus),
+      set: (next) => {
+        if (updatePreferences) {
+          updatePreferences({ keepUnseenSubagentIdleStatus: next })
+        }
+      },
+    },
+    {
+      kind: "toggle",
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
       subtitleKey: "settings.behavior.promptVoiceInput.subtitle",
@@ -337,13 +368,13 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
         ),
       description: () =>
         tGlobal(
-          runtimeEnv.host === "web"
+          isWebHost()
             ? "commands.keyboardShortcutHints.description.disabledWeb"
             : "commands.keyboardShortcutHints.description",
         ),
       category: "System",
       keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
-      disabled: () => runtimeEnv.host === "web",
+      disabled: () => isWebHost(),
       action: actions.toggleKeyboardShortcutHints,
     },
     {

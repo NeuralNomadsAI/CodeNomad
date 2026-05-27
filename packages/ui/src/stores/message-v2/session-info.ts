@@ -1,6 +1,6 @@
 import type { Provider } from "../../types/session"
 import { DEFAULT_MODEL_OUTPUT_LIMIT } from "../session-models"
-import { providers, sessions, sessionInfoByInstance, setSessionInfoByInstance } from "../session-state"
+import { providers, sessions, sessionInfoByInstance, setSessionInfoByInstance, updateThreadTotalsForSession } from "../session-state"
 import { messageStoreBus } from "./bus"
 import type { SessionUsageState } from "./types"
 
@@ -116,18 +116,11 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
     // Prefer explicit input limits when provided by the API.
     // This is used by the UI "Avail" chip.
     contextAvailableTokens = modelInputLimit
-  }
-
-  if (!contextAvailableFromPrevious && contextAvailableTokens === null) {
-    if (contextWindow > 0) {
-      if (latestHasContextUsage && actualUsageTokens > 0) {
-        contextAvailableTokens = Math.max(contextWindow - (actualUsageTokens + outputBudget), 0)
-      } else {
-        contextAvailableTokens = contextWindow
-      }
-    } else {
-      contextAvailableTokens = null
-    }
+  } else if (contextWindow > 0) {
+    // When no explicit input limit, show full context window capacity.
+    contextAvailableTokens = contextWindow
+  } else {
+    contextAvailableTokens = null
   }
 
   setSessionInfoByInstance((prev) => {
@@ -147,4 +140,6 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
     next.set(instanceId, instanceInfo)
     return next
   })
+
+  updateThreadTotalsForSession(instanceId, sessionId)
 }

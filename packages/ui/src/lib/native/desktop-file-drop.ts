@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
-import { runtimeEnv } from "../runtime-env"
+import { canUseDesktopFolderDrop, isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
+import { getFilePath } from "./file-path"
 
 const log = getLogger("actions")
 
@@ -17,19 +18,6 @@ function normalizePathList(input: unknown): string[] {
   return input.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
 }
 
-function getFilePath(file: File): string | null {
-  if (typeof file.path === "string" && file.path.trim().length > 0) {
-    return file.path
-  }
-  if (runtimeEnv.host === "electron") {
-    const electronPath = (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.getPathForFile?.(file)
-    if (typeof electronPath === "string" && electronPath.trim().length > 0) {
-      return electronPath
-    }
-  }
-  return null
-}
-
 async function resolveElectronDirectoryPaths(paths: string[]): Promise<string[]> {
   const api = (window as Window & { electronAPI?: ElectronAPI }).electronAPI
   if (!api?.getDirectoryPaths || paths.length === 0) {
@@ -44,7 +32,7 @@ async function resolveElectronDirectoryPaths(paths: string[]): Promise<string[]>
 }
 
 export function supportsDesktopFolderDrop(): boolean {
-  return runtimeEnv.platform === "desktop" && runtimeEnv.host !== "web"
+  return runtimeEnv.platform === "desktop" && canUseDesktopFolderDrop()
 }
 
 export function containsFileDrop(event: DragEvent): boolean {
@@ -97,14 +85,14 @@ export async function normalizeDroppedDirectoryPaths(paths: string[]): Promise<s
   if (uniquePaths.length === 0) {
     return []
   }
-  if (runtimeEnv.host === "electron") {
+  if (isElectronHost()) {
     return resolveElectronDirectoryPaths(uniquePaths)
   }
   return uniquePaths
 }
 
 export async function listenForNativeFolderDrops(onDrop: (paths: string[]) => void): Promise<() => void> {
-  if (runtimeEnv.host !== "tauri") {
+  if (!isTauriHost()) {
     return () => {}
   }
 
@@ -126,7 +114,7 @@ export async function listenForNativeFolderDrops(onDrop: (paths: string[]) => vo
 }
 
 export async function listenForNativeFolderDropState(onState: (state: NativeFolderDropState) => void): Promise<() => void> {
-  if (runtimeEnv.host !== "tauri") {
+  if (!isTauriHost()) {
     return () => {}
   }
 

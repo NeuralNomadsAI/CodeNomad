@@ -66,11 +66,17 @@ export function registerPluginRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const payload = VoiceModeStateSchema.parse(request.body ?? {})
-    deps.voiceModeManager.setEnabled(
+    const applied = deps.voiceModeManager.setEnabled(
       request.params.id,
       { clientId: payload.clientId, connectionId: payload.connectionId },
       payload.enabled,
     )
+
+    if (payload.enabled && !applied) {
+      reply.code(409).send({ error: "Client connection not active for voice mode enable" })
+      return
+    }
+
     return { enabled: payload.enabled }
   })
 

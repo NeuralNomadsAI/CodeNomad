@@ -2,6 +2,9 @@ import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
+import { tGlobal } from "../../lib/i18n"
+import { getFilePath } from "../../lib/native/file-path"
+import { showToastNotification } from "../../lib/notifications"
 import {
   bracketedImageDisplayCounterRegex,
   findHighestAttachmentCounters,
@@ -18,6 +21,7 @@ type PromptAttachmentsOptions = {
   prompt: Accessor<string>
   setPrompt: (value: string) => void
   getTextarea: () => HTMLTextAreaElement | null
+  disabled?: Accessor<boolean>
 }
 
 type PromptAttachments = {
@@ -31,6 +35,8 @@ type PromptAttachments = {
   handleDragOver: (e: DragEvent) => void
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
+  handleFileSelection: (files: FileList | File[] | null) => void
+  handleFilePathAttachment: (path: string, contents: string, options?: { encoding?: "utf-8" | "base64" }) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
   handleExpandTextAttachment: (attachment: Attachment) => void
@@ -41,6 +47,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [isDragging, setIsDragging] = createSignal(false)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
+  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
 
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
@@ -295,7 +302,114 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   function handleDragOver(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
+    if (options.disabled?.()) {
+      setIsDragging(false)
+      return
+    }
     setIsDragging(true)
+  }
+
+  function getFilenameFromPath(path: string) {
+    const normalized = path.replace(/\\/g, "/")
+    return normalized.split("/").pop() || path
+  }
+
+  function inferMimeTypeFromPath(path: string) {
+    const extension = path.split(/[\\/]/).pop()?.toLowerCase().match(/\.([^.]+)$/)?.[1]
+    if (!extension) return "application/octet-stream"
+
+    const imageMimeTypes: Record<string, string> = {
+      apng: "image/apng",
+      avif: "image/avif",
+      gif: "image/gif",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      svg: "image/svg+xml",
+      webp: "image/webp",
+    }
+    const textMimeTypes: Record<string, string> = {
+      bashrc: "text/plain",
+      c: "text/x-c",
+      config: "text/plain",
+      cpp: "text/x-c++src",
+      cs: "text/x-csharp",
+      css: "text/css",
+      csv: "text/csv",
+      env: "text/plain",
+      gitignore: "text/plain",
+      go: "text/x-go",
+      h: "text/x-c",
+      hpp: "text/x-c++hdr",
+      html: "text/html",
+      java: "text/x-java-source",
+      js: "text/javascript",
+      json: "application/json",
+      jsx: "text/javascript",
+      log: "text/plain",
+      md: "text/markdown",
+      mjs: "text/javascript",
+      py: "text/x-python",
+      rs: "text/x-rust",
+      sh: "text/x-shellscript",
+      toml: "text/toml",
+      ts: "text/typescript",
+      tsx: "text/typescript",
+      txt: "text/plain",
+      xml: "application/xml",
+      yaml: "application/yaml",
+      yml: "application/yaml",
+    }
+
+    return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? "application/octet-stream"
+  }
+
+  function showSkippedFilesWarning(count: number) {
+    if (count <= 0) return
+    const messageKey = count === 1
+      ? "promptInput.attachFiles.skipped.one"
+      : "promptInput.attachFiles.skipped.other"
+    showToastNotification({
+      variant: "warning",
+      title: tGlobal("promptInput.attachFiles.skipped.title"),
+      message: tGlobal(messageKey, { count }),
+    })
+  }
+
+  function encodeBytesAsBase64(bytes: Uint8Array) {
+    let binary = ""
+    const chunkSize = 0x8000
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length))
+      binary += String.fromCharCode(...chunk)
+    }
+    return btoa(binary)
+  }
+
+  function decodeBase64ToBytes(value: string) {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  }
+
+  function attachFileData(path: string, filename: string, mime: string, data: Uint8Array, previewUrl?: string) {
+    const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
+    attachment.url = previewUrl ?? `data:${mime};base64,${encodeBytesAsBase64(data)}`
+    addAttachment(options.instanceId(), options.sessionId(), attachment)
+  }
+
+  function handleFilePathAttachment(path: string, contents: string, attachmentOptions?: { encoding?: "utf-8" | "base64" }) {
+    if (options.disabled?.()) return
+    if (!path || path.trim().length === 0) return
+
+    const filename = getFilenameFromPath(path)
+    const mime = inferMimeTypeFromPath(path)
+    const data = attachmentOptions?.encoding === "base64" ? decodeBase64ToBytes(contents) : new TextEncoder().encode(contents)
+    attachFileData(path, filename, mime, data)
+    options.getTextarea()?.focus()
   }
 
   function handleDragLeave(e: DragEvent) {
@@ -304,48 +418,65 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     setIsDragging(false)
   }
 
-  function handleDrop(e: DragEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-
-    const files = e.dataTransfer?.files
+  function handleFileSelection(files: FileList | File[] | null) {
+    if (options.disabled?.()) return
     if (!files || files.length === 0) return
+
+    let skippedCount = 0
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const path = (file as File & { path?: string }).path || file.name
+      const nativePath = getFilePath(file)
       const filename = file.name
-      const mime = file.type || "text/plain"
+      const mime = file.type || "application/octet-stream"
+      const canReadFileData = file.size <= MAX_READABLE_PICKED_FILE_BYTES
 
-      const createAndStoreAttachment = (previewUrl?: string) => {
-        const attachment = createFileAttachment(path, filename, mime, undefined, options.instanceFolder())
-        if (previewUrl && (mime.startsWith("image/") || mime.startsWith("text/"))) {
+      if (!nativePath && !canReadFileData) {
+        skippedCount += 1
+        continue
+      }
+
+      const path = nativePath || filename
+
+      const createAndStoreAttachment = (previewUrl?: string, data?: Uint8Array) => {
+        const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
+        if (previewUrl) {
           attachment.url = previewUrl
         }
         addAttachment(options.instanceId(), options.sessionId(), attachment)
       }
 
-      if (mime.startsWith("image/") && typeof FileReader !== "undefined") {
+      if (canReadFileData && typeof FileReader !== "undefined") {
         const reader = new FileReader()
         reader.onload = () => {
-          const result = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(result)
+          const result = reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : undefined
+          const previewUrl = result ? `data:${mime};base64,${encodeBytesAsBase64(result)}` : undefined
+          createAndStoreAttachment(previewUrl, result)
         }
-        reader.readAsDataURL(file)
-      } else if (mime.startsWith("text/") && typeof FileReader !== "undefined") {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const dataUrl = typeof reader.result === "string" ? reader.result : undefined
-          createAndStoreAttachment(dataUrl)
+        reader.onerror = () => {
+          if (nativePath) {
+            createAndStoreAttachment()
+          }
         }
-        reader.readAsDataURL(file)
+        reader.readAsArrayBuffer(file)
       } else {
         createAndStoreAttachment()
       }
     }
 
+    showSkippedFilesWarning(skippedCount)
+
     options.getTextarea()?.focus()
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    if (options.disabled?.()) return
+
+    handleFileSelection(e.dataTransfer?.files ?? null)
   }
 
   return {
@@ -358,6 +489,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handleFileSelection,
+    handleFilePathAttachment,
     handleRemoveAttachment,
     handleExpandTextAttachment,
   }

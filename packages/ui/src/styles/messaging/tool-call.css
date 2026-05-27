@@ -49,6 +49,18 @@
   cursor: not-allowed;
 }
 
+.tool-call-header-label > .action-overflow-trigger {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header-label[data-action-overflow="true"] .tool-call-header-actions {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header-label[data-action-overflow="true"] > .action-overflow-trigger {
+  display: inline-flex;
+}
+
 .tool-call-header-label .tool-call-icon {
   @apply text-base;
 }
@@ -149,6 +161,19 @@
 
 .tool-call-header-input[aria-pressed="true"] {
   color: var(--text-primary);
+}
+
+.tool-call-header > .action-overflow-trigger {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-input,
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .tool-call-header-copy:not(.action-overflow-trigger) {
+  display: none;
+}
+
+.session-center-column[data-session-center-width="narrow"] .tool-call-header[data-action-overflow="true"] > .action-overflow-trigger {
+  display: inline-flex;
 }
 
 .tool-call-header-status {
@@ -488,6 +513,40 @@
 
 .tool-call-permission-shortcuts .kbd {
   margin-inline-end: 0.25rem;
+}
+
+.tool-call-permission-reject-reason {
+  @apply flex flex-col gap-2;
+  margin-top: 0.75rem;
+}
+
+.tool-call-permission-reject-label {
+  @apply text-sm;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.tool-call-permission-reject-textarea {
+  width: 100%;
+  min-height: 5rem;
+  resize: vertical;
+  background-color: var(--surface-code);
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
+  border-radius: 0.5rem;
+  color: var(--text-primary);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.tool-call-permission-reject-textarea:focus {
+  outline: none;
+  border-color: var(--status-warning);
+}
+
+.tool-call-permission-reject-hint {
+  @apply text-xs text-muted;
+  margin: 0;
 }
 
 .tool-call-permission-queued-text {

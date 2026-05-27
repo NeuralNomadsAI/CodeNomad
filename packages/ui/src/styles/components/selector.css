@@ -216,13 +216,13 @@
 }
 
 .selector-section {
-  @apply px-3 py-2 border-b;
+  @apply px-3 py-1 border-b;
   border-color: var(--border-base);
   background-color: var(--surface-secondary);
 }
 
 .selector-section-title {
-  @apply text-xs font-medium;
+  @apply block text-[11px] font-medium truncate;
   color: var(--text-muted);
 }
 

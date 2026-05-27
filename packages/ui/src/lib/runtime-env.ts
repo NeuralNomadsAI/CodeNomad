@@ -2,10 +2,12 @@ import { getLogger } from "./logger"
 
 export type HostRuntime = "electron" | "tauri" | "web"
 export type PlatformKind = "desktop" | "mobile"
+export type WindowContextKind = "local" | "remote"
 
 export interface RuntimeEnvironment {
   host: HostRuntime
   platform: PlatformKind
+  windowContext: WindowContextKind
 }
 
 declare global {
@@ -14,6 +16,7 @@ declare global {
   }
 
   interface Window {
+    __CODENOMAD_WINDOW_CONTEXT__?: WindowContextKind
     electronAPI?: unknown
     __TAURI__?: {
       core?: TauriCoreModule
@@ -21,9 +24,39 @@ declare global {
   }
 }
 
+function detectWindowContext(): WindowContextKind {
+  if (typeof window === "undefined") {
+    return "remote"
+  }
+
+  if (window.__CODENOMAD_WINDOW_CONTEXT__ === "remote") {
+    return "remote"
+  }
+
+  if (window.__CODENOMAD_WINDOW_CONTEXT__ === "local") {
+    return "local"
+  }
+
+  const win = window as Window & { electronAPI?: unknown }
+  if (typeof win.electronAPI !== "undefined" || typeof win.__TAURI__ !== "undefined") {
+    return "local"
+  }
+
+  if (typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent)) {
+    return "local"
+  }
+
+  return "remote"
+}
+
 function detectHost(): HostRuntime {
   if (typeof window === "undefined") {
     return "web"
+  }
+
+  const explicitHost = window.__CODENOMAD_RUNTIME_HOST__
+  if (explicitHost) {
+    return explicitHost
   }
 
   const win = window as Window & { electronAPI?: unknown }
@@ -71,16 +104,24 @@ export function detectRuntimeEnvironment(): RuntimeEnvironment {
   cachedEnv = {
     host: detectHost(),
     platform: detectPlatform(),
+    windowContext: detectWindowContext(),
   }
   if (typeof window !== "undefined") {
-    log.info(`[runtime] host=${cachedEnv.host} platform=${cachedEnv.platform}`)
+    log.info(`[runtime] host=${cachedEnv.host} platform=${cachedEnv.platform} context=${cachedEnv.windowContext}`)
   }
   return cachedEnv
 }
 
 export const runtimeEnv = detectRuntimeEnvironment()
 
-export const isElectronHost = () => runtimeEnv.host === "electron"
-export const isTauriHost = () => runtimeEnv.host === "tauri"
-export const isWebHost = () => runtimeEnv.host === "web"
-export const isMobilePlatform = () => runtimeEnv.platform === "mobile"
+export const isElectronHost = () => detectHost() === "electron"
+export const isTauriHost = () => detectHost() === "tauri"
+export const isWebHost = () => detectHost() === "web"
+export const isDesktopHost = () => isElectronHost() || isTauriHost()
+export const isMobilePlatform = () => detectPlatform() === "mobile"
+export const isLocalWindow = () => detectWindowContext() === "local"
+export const isRemoteWindow = () => detectWindowContext() === "remote"
+export const canUseNativeDialogs = () => isDesktopHost() && isLocalWindow()
+export const canOpenRemoteWindows = () => isDesktopHost() && isLocalWindow()
+export const canRestartCli = () => isDesktopHost() && isLocalWindow()
+export const canUseDesktopFolderDrop = () => isDesktopHost() && isLocalWindow()

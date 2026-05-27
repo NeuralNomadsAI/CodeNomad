@@ -1,6 +1,19 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron")
 
-const electronAPI = {
+function resolveWindowContext() {
+  const prefix = "--codenomad-window-context="
+  const arg = process.argv.find((value) => typeof value === "string" && value.startsWith(prefix))
+  const context = arg ? arg.slice(prefix.length) : "local"
+  return context === "remote" ? "remote" : "local"
+}
+
+function resolveRuntimeHost(windowContext) {
+  return "electron"
+}
+
+const windowContext = resolveWindowContext()
+
+const localElectronAPI = {
   onCliStatus: (callback) => {
     ipcRenderer.on("cli:status", (_, data) => callback(data))
     return () => ipcRenderer.removeAllListeners("cli:status")
@@ -26,4 +39,15 @@ const electronAPI = {
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
 }
 
-contextBridge.exposeInMainWorld("electronAPI", electronAPI)
+const remoteElectronAPI = {
+  requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
+  setWakeLock: localElectronAPI.setWakeLock,
+  showNotification: localElectronAPI.showNotification,
+}
+
+contextBridge.exposeInMainWorld(
+  "electronAPI",
+  windowContext === "local" ? localElectronAPI : remoteElectronAPI,
+)
+contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
+contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", resolveRuntimeHost(windowContext))

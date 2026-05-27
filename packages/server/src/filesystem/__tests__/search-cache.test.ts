@@ -38,12 +38,12 @@ describe("workspace search cache", () => {
     const workspacePath = "/tmp/workspace"
 
     refreshWorkspaceCandidates(workspacePath, () => [createEntry("file-a")], 5_000)
-    const initial = getWorkspaceCandidates(workspacePath)
+    const initial = getWorkspaceCandidates(workspacePath, 5_001)
     assert.ok(initial)
     assert.equal(initial[0].name, "file-a")
 
     refreshWorkspaceCandidates(workspacePath, () => [createEntry("file-b")], 6_000)
-    const refreshed = getWorkspaceCandidates(workspacePath)
+    const refreshed = getWorkspaceCandidates(workspacePath, 6_001)
     assert.ok(refreshed)
     assert.equal(refreshed[0].name, "file-b")
   })

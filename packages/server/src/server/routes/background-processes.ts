@@ -9,6 +9,21 @@ interface RouteDeps {
 const StartSchema = z.object({
   title: z.string().trim().min(1),
   command: z.string().trim().min(1),
+  notify: z.boolean().optional(),
+  notification: z
+    .object({
+      sessionID: z.string().trim().min(1),
+      directory: z.string().trim().min(1),
+    })
+    .optional(),
+}).superRefine((value, ctx) => {
+  if (value.notify && !value.notification) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Notification metadata is required when notify is enabled",
+      path: ["notification"],
+    })
+  }
 })
 
 const OutputQuerySchema = z.object({
@@ -27,7 +42,10 @@ export function registerBackgroundProcessRoutes(app: FastifyInstance, deps: Rout
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/plugin/background-processes", async (request, reply) => {
     const payload = StartSchema.parse(request.body ?? {})
-    const process = await deps.backgroundProcessManager.start(request.params.id, payload.title, payload.command)
+    const process = await deps.backgroundProcessManager.start(request.params.id, payload.title, payload.command, {
+      notify: payload.notify,
+      notification: payload.notification,
+    })
     reply.code(201)
     return process
   })

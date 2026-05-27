@@ -7,7 +7,7 @@ import {
   normalizeDroppedDirectoryPaths,
   supportsDesktopFolderDrop,
 } from "../native/desktop-file-drop"
-import { runtimeEnv } from "../runtime-env"
+import { isTauriHost } from "../runtime-env"
 
 interface UseFolderDropOptions {
   enabled: Accessor<boolean>
@@ -94,7 +94,7 @@ export function useFolderDrop(options: UseFolderDropOptions): {
 
   const bind: FolderDropBindings = {
     onDragEnter(event) {
-      if (!isSupported || runtimeEnv.host === "tauri" || !options.enabled() || !containsFileDrop(event)) {
+      if (!isSupported || isTauriHost() || !options.enabled() || !containsFileDrop(event)) {
         return
       }
       event.preventDefault()
@@ -102,7 +102,7 @@ export function useFolderDrop(options: UseFolderDropOptions): {
       setIsActive(true)
     },
     onDragOver(event) {
-      if (!isSupported || runtimeEnv.host === "tauri" || !options.enabled() || !containsFileDrop(event)) {
+      if (!isSupported || isTauriHost() || !options.enabled() || !containsFileDrop(event)) {
         return
       }
       event.preventDefault()
@@ -112,7 +112,7 @@ export function useFolderDrop(options: UseFolderDropOptions): {
       setIsActive(true)
     },
     onDragLeave(event) {
-      if (!isSupported || runtimeEnv.host === "tauri" || !containsFileDrop(event)) {
+      if (!isSupported || isTauriHost() || !containsFileDrop(event)) {
         return
       }
       event.preventDefault()
@@ -134,7 +134,7 @@ export function useFolderDrop(options: UseFolderDropOptions): {
         return
       }
 
-      if (runtimeEnv.host === "tauri") {
+      if (isTauriHost()) {
         reset()
         return
       }

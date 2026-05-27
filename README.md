@@ -18,6 +18,7 @@ CodeNomad transforms OpenCode from a terminal tool into a **premium desktop work
 - **🎙️ Voice Input & Speech**
 - **🌳 Git Worktrees**
 - **💬 Rich Message Experience**
+- **🧩 SideCars**
 - **⌨️ Command Palette**
 - **📁 File System Browser**
 - **🔐 Authentication & Security**
@@ -46,8 +47,12 @@ Download the latest installer for your platform from [Releases](https://github.c
 Run as a local server and access via browser. Perfect for remote development.
 
 ```bash
-npx @neuralnomads/codenomad --launch
+npx @neuralnomads/codenomad --password <your-password> --launch
 ```
+
+> **Authentication required:** The server requires a password on first run. You can pass it via `--password`, the `CODENOMAD_SERVER_PASSWORD` environment variable, or create an `auth.json` file (see [Server Documentation](packages/server/README.md)).
+
+> **Self-signed certificate:** On first launch with HTTPS enabled (the default), your browser will show a "Your connection is not private" warning. This is expected — the server generates a local self-signed certificate automatically. Click **Advanced → Proceed to localhost** to continue. For local-only use without the warning, run with `--https=false --http=true`.
 
 See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and remote access.
 
@@ -56,8 +61,62 @@ See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and 
 Bleeding-edge builds from the `dev` branch:
 
 ```bash
-npx @neuralnomads/codenomad-dev --launch
+npx @neuralnomads/codenomad-dev --password <your-password> --launch
 ```
+
+---
+
+## SideCars
+
+SideCars let you open local web tools inside CodeNomad as tabs.
+
+<details>
+<summary><strong>Configuration</strong></summary>
+
+- **Name**: Display name used in CodeNomad
+- **Port**: Local HTTP or HTTPS service running on `127.0.0.1:<port>`
+- **Base path**: Mounted under `/sidecars/:id`
+- **Prefix mode**:
+  - **Preserve prefix** forwards the full `/sidecars/:id/...` path upstream
+  - **Strip prefix** removes `/sidecars/:id` before forwarding the request upstream
+
+</details>
+
+<details>
+<summary><strong>VSCode (OpenVSCode Server)</strong></summary>
+
+Run with Docker:
+
+```bash
+docker run -it --init -p 8000:3000 -v "${HOME}:${HOME}:cached" -e HOME=${HOME} gitpod/openvscode-server --server-base-path /sidecars/vscode
+```
+
+Add SideCar as:
+
+- **Name**: `VSCode`
+- **Port**: `http://127.0.0.1:8000`
+- **Base path**: `/sidecars/vscode`
+- **Prefix mode**: `Preserve prefix`
+
+</details>
+
+<details>
+<summary><strong>Terminal (ttyd)</strong></summary>
+
+Run with:
+
+```bash
+ttyd --writable zsh
+```
+
+Add SideCar as:
+
+- **Name**: `Terminal`
+- **Port**: `http://127.0.0.1:7681`
+- **Base path**: `/sidecars/terminal`
+- **Prefix mode**: `Strip prefix`
+
+</details>
 
 ---
 

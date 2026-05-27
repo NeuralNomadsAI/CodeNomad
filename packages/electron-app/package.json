@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad-electron-app",
-  "version": "0.13.3",
+  "version": "0.16.0",
   "description": "CodeNomad - AI coding assistant",
   "license": "MIT",
   "author": {
@@ -35,16 +35,12 @@
     "build:linux-arm64": "node scripts/build.js linux-arm64",
     "build:linux-rpm": "node scripts/build.js linux-rpm",
     "build:all": "node scripts/build.js all",
-    "prepackage:mac": "npm run prepare:resources",
-    "package:mac": "electron-builder --mac",
-    "prepackage:win": "npm run prepare:resources",
-    "package:win": "electron-builder --win",
-    "prepackage:linux": "npm run prepare:resources",
-    "package:linux": "electron-builder --linux"
+    "package:mac": "node scripts/build.js mac",
+    "package:win": "node scripts/build.js win",
+    "package:linux": "node scripts/build.js linux",
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources electron/resources --loading dist/renderer"
   },
   "dependencies": {
-    "@neuralnomads/codenomad": "file:../server",
-    "@codenomad/ui": "file:../ui",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
@@ -62,14 +58,17 @@
     "vite-plugin-solid": "^2.10.0"
   },
   "build": {
-    "appId": "ai.opencode.client",
+    "appId": "ai.neuralnomads.codenomad.client",
     "productName": "CodeNomad",
     "directories": {
       "output": "release",
       "buildResources": "electron/resources"
     },
     "files": [
-      "dist/**/*",
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/renderer/loading.html",
+      "dist/renderer/assets/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -82,8 +81,8 @@
         ]
       },
       {
-        "from": "../server/dist/opencode-config",
-        "to": "opencode-config"
+        "from": "../server/dist/opencode-plugin",
+        "to": "opencode-plugin"
       }
     ],
     "mac": {
@@ -96,14 +95,10 @@
       "category": "public.app-category.developer-tools",
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-macos-${arch}-${version}.${ext}",
       "icon": "electron/resources/icon.icns"
     },
     "dmg": {
@@ -123,14 +118,10 @@
     "win": {
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-windows-${arch}-${version}.${ext}",
       "icon": "electron/resources/icon.ico"
     },
     "nsis": {
@@ -142,14 +133,13 @@
     "linux": {
       "target": [
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
+        },
+        {
+          "target": "AppImage"
         }
       ],
-      "artifactName": "CodeNomad-${version}-${os}-${arch}.${ext}",
+      "artifactName": "CodeNomad-Electron-linux-${arch}-${version}.${ext}",
       "category": "Development",
       "icon": "electron/resources/icon.png"
     }

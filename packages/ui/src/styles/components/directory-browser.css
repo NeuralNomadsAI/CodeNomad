@@ -51,20 +51,18 @@
 }
 
 .directory-browser-current {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label new-folder"
+    "path open";
   gap: var(--space-md);
+  align-items: center;
   width: 100%;
 }
 
-.directory-browser-current-meta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-}
-
 .directory-browser-current-label {
+  grid-area: label;
   font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -72,21 +70,60 @@
 }
 
 .directory-browser-current-path {
+  grid-area: path;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-base);
   color: var(--text-primary);
+  width: 100%;
 }
 
-.directory-browser-current-select {
+.directory-browser-new-folder {
+  grid-area: new-folder;
   width: auto;
 }
 
-.directory-browser-current-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.directory-browser-open-path {
+  grid-area: open;
+  width: auto;
+  flex-shrink: 0;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .directory-browser-current {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "label label"
+      "path path"
+      "new-folder open";
+    gap: var(--space-sm);
+  }
+
+  .directory-browser-new-folder,
+  .directory-browser-open-path {
+    width: 100%;
+  }
+
+  .directory-browser-open-path {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 380px) {
+  .directory-browser-current {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "label"
+      "path"
+      "new-folder"
+      "open";
+  }
+
+  .directory-browser-new-folder,
+  .directory-browser-open-path {
+    width: 100%;
+  }
 }
 
 .directory-browser-close {

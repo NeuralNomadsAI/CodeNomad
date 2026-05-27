@@ -115,23 +115,22 @@ const ChangesTab: Component<ChangesTabProps> = (props) => {
             }
           >
             {(file) => (
-              <Suspense
-                fallback={
-                  <div class="file-viewer-empty">
-                    <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
-                  </div>
-                }
-              >
-                <LazyMonacoDiffViewer
-                  scopeKey={scopeKey()}
-                  path={String(file().file || "")}
-                  before={String((file() as any).before || "")}
-                  after={String((file() as any).after || "")}
-                  viewMode={props.diffViewMode()}
-                  contextMode={props.diffContextMode()}
-                  wordWrap={props.diffWordWrapMode()}
-                />
-              </Suspense>
+<Suspense
+                  fallback={
+                    <div class="file-viewer-empty">
+                      <span class="file-viewer-empty-text">{props.t("instanceInfo.loading")}</span>
+                    </div>
+                  }
+                >
+                  <LazyMonacoDiffViewer
+                    scopeKey={scopeKey()}
+                    path={String(file().file || "")}
+                    patch={String((file() as any).patch || "")}
+                    viewMode={props.diffViewMode()}
+                    contextMode={props.diffContextMode()}
+                    wordWrap={props.diffWordWrapMode()}
+                  />
+                </Suspense>
             )}
           </Show>
         </div>
