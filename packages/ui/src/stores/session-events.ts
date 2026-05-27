@@ -375,8 +375,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
     const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
     if (!sessionId || !messageId) return
-    
-    debugInfo("ordering", `part.updated: role=${resolveMessageRole(messageInfo)} msgId=${messageId.slice(0,8)} partType=${part.type}`)
     if (part.type === "compaction") {
       debugInfo("sse", `Compaction started for session ${sessionId.slice(0, 8)}`)
       ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
@@ -436,8 +434,6 @@ function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | Mes
     const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
     const messageId = typeof info.id === "string" ? info.id : undefined
     if (!sessionId || !messageId) return
-    
-    debugInfo("ordering", `msg.updated: role=${info.role} msgId=${messageId.slice(0,8)}`)
 
     const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
     const nextUpdated =
