@@ -186,6 +186,7 @@ function ToolCallDetails(props: {
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
+  const [permissionRejectReasonOpen, setPermissionRejectReasonOpen] = createSignal(false)
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -225,13 +226,13 @@ function ToolCallDetails(props: {
     })
   })
 
-  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject") {
+  async function handlePermissionResponse(permission: PermissionRequestLike, response: "once" | "always" | "reject", message?: string) {
     if (!permission) return
     setPermissionSubmitting(true)
     setPermissionError(null)
     try {
       const sessionId = getPermissionSessionId(permission) || props.sessionId
-      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response)
+      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response, message)
     } catch (error) {
       log.error("Failed to send permission response", error)
       setPermissionError(error instanceof Error ? error.message : props.t("toolCall.permission.errors.unableToUpdate"))
@@ -244,6 +245,8 @@ function ToolCallDetails(props: {
     const activeKey = activePermissionKey()
     if (!activeKey) return
     const handler = (event: KeyboardEvent) => {
+      if (isTextInputFocused()) return
+      if (permissionRejectReasonOpen()) return
       const permission = permissionDetails()
       if (!permission || !props.isPermissionActive()) return
       if (event.key === "Enter") {
@@ -252,9 +255,6 @@ function ToolCallDetails(props: {
       } else if (event.key === "a" || event.key === "A") {
         event.preventDefault()
         void handlePermissionResponse(permission, "always")
-      } else if (event.key === "d" || event.key === "D") {
-        event.preventDefault()
-        void handlePermissionResponse(permission, "reject")
       }
     }
     document.addEventListener("keydown", handler)
@@ -483,7 +483,8 @@ function ToolCallDetails(props: {
       error={permissionError}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
-      onRespond={(permission, sessionId, response) => void handlePermissionResponse(permission, response)}
+      onRejectReasonOpenChange={setPermissionRejectReasonOpen}
+      onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
     />
   )
 
