@@ -2,11 +2,11 @@
 name: codenomad-architecture-guide
 description: |
   Comprehensive architecture and SDK navigation guide for the CodeNomad codebase.
-  
+
   **When to use:** Load this skill when you need to navigate the CodeNomad monorepo, understand cross-package dependencies, work with the OpenCode SDK V2, or ensure you don't miss related code when implementing features or fixing bugs. This skill covers the 6 functional areas (ServerBackend, UserInterface, DesktopClient, SpeechAndAudio, BuildAndPackaging, CloudflareDeployment), OpenCode SDK V2 integration patterns, critical schema behaviors, and feature traces with decision branches.
-  
+
   **Trigger contexts:** Working on CodeNomad features, debugging cross-area issues, integrating OpenCode SDK APIs, adding UI components, implementing server routes, or navigating the monorepo structure.
-  
+
   **Permission required:** Agent must explicitly request or be granted permission to load this skill.
 ---
 
@@ -93,6 +93,8 @@ This skill provides navigation and patterns, not definitive schemas.
 | Add hardcoded strings without i18n | Add to English + all 7 locales | `packages/ui/src/lib/i18n/messages/` |
 | Modify server route without checking UI API client | Trace full feature flow | `references/feature-traces.md` |
 | Change API type without checking UI type matches | Check UI types mirror server types | `packages/ui/src/types/` vs `packages/server/src/api-types.ts` |
+| Add bilingual/non-English implementation comments | Use **English-only** for all code comments and documentation | pascalandr PR #278 review |
+| Write documentation in non-English languages | All docs and comments must be English-only | pascalandr PR #278 review |
 
 ## 5. Platform Integration Checklist
 
@@ -121,6 +123,7 @@ Before submitting changes:
 - [ ] Cross-area check: If modifying server routes, check UI stores and API clients
 - [ ] Check anti-patterns: Review "Common Mistakes" section above
 - [ ] API compatibility: If changing `api-types.ts`, check UI type matches
+- [ ] Comment language: All implementation comments must be **English-only** (no CJK or other languages)
 
 ## 7. Escape Hatch + Update Criteria
 
