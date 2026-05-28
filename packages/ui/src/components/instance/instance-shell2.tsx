@@ -902,7 +902,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     await runShellCommand(props.instance.id, session.id, command)
   }
 
-  /** 返回最後一個對話 / Return to the last conversation */
+  /** Return to the last conversation */
   const handleBackToConversation = () => {
     const sessionIds = cachedSessionIds()
     if (sessionIds.length > 0) {
