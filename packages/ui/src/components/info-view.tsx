@@ -35,7 +35,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
     if (scrollRef && savedState) {
       scrollRef.scrollTop = savedState.scrollTop
     }
-    // 初始化滾動按鈕可見性 / Initialize scroll button visibility
+    // Initialize scroll button visibility
     updateScrollButtons()
   })
 
@@ -54,29 +54,15 @@ const InfoView: Component<InfoViewProps> = (props) => {
     }
   })
 
-  // 監聽日誌變化並更新滾動按鈕 / Listen for log changes and update scroll buttons
+  // Listen for log changes and update scroll buttons
   createEffect(() => {
-    logs()  // 追蹤 logs 變化
+    logs()
     updateScrollButtons()
   })
 
-  /** 更新滾動按鈕顯示狀態 / Update scroll button visibility */
-  const updateScrollButtons = () => {
-    if (!scrollRef) return
+  /** Update scroll button visibility */
 
-    const scrollTop = scrollRef.scrollTop
-    const scrollHeight = scrollRef.scrollHeight
-    const clientHeight = scrollRef.clientHeight
-    const hasItems = logs().length > 0
-
-    const atBottom = scrollHeight - (scrollTop + clientHeight) <= 50
-    const atTop = scrollTop <= 50
-
-    setShowScrollBottomButton(hasItems && !atBottom)
-    setShowScrollTopButton(hasItems && !atTop)
-  }
-
-  /** 滾動至頂部 / Scroll to top */
+  /** Scroll to top */
   const scrollToTop = () => {
     if (scrollRef) {
       scrollRef.scrollTop = 0
@@ -125,7 +111,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
     }
   }
 
-  /** 是否顯示浮動滾動按鈕 / Whether to show floating scroll buttons */
+  /** Whether to show floating scroll buttons */
   const showScrollButtons = createMemo(() => {
     return streamingEnabled() && (showScrollTopButton() || showScrollBottomButton())
   })
@@ -146,7 +132,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
                   <button
                     type="button"
                     class="button-tertiary"
-                    onClick={onBack}
+                    onClick={() => onBack()}
                     title={t("infoView.logs.actions.back")}
                   >
                     <ArrowLeft class="w-4 h-4" />
@@ -213,7 +199,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
             </Show>
           </div>
 
-          {/* 浮動滾動按鈕 / Floating scroll buttons */}
+          {/* Floating scroll buttons */}
           <Show when={showScrollButtons()}>
             <div class="message-scroll-button-wrapper">
               <Show when={showScrollTopButton()}>

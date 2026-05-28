@@ -1,8 +1,6 @@
 /**
- * Toast 歷史記錄面板
  * Toast History Panel
  *
- * 顯示所有 Toast 通知的歷史記錄
  * Displays history of all toast notifications
  */
 import {
@@ -30,15 +28,15 @@ import { isTauriHost } from "../lib/runtime-env"
 // ==================== Types ====================
 
 interface ToastHistoryPanelProps {
-  /** 關閉回調 / Close callback */
+  /** Close callback */
   onClose: () => void;
-  /** 開啟設定回調（可選）/ Open settings callback (optional) */
+  /** Open settings callback (optional) */
   onOpenSettings?: () => void;
 }
 
 // ==================== Constants ====================
 
-/** 篩選器選項 / Filter options */
+/** Filter options */
 const FILTER_OPTIONS: { value: ToastVariant | "all"; labelKey: string }[] = [
   { value: "all", labelKey: "toastHistory.filter.all" },
   { value: "info", labelKey: "toastHistory.filter.info" },
@@ -47,7 +45,7 @@ const FILTER_OPTIONS: { value: ToastVariant | "all"; labelKey: string }[] = [
   { value: "error", labelKey: "toastHistory.filter.error" },
 ]
 
-/** Variant 指示點 CSS 類名映射 / Variant indicator CSS class mapping */
+/** Variant indicator CSS class mapping */
 const VARIANT_INDICATOR_CLASS: Record<ToastVariant, string> = {
   info: "toast-history-indicator-info",
   success: "toast-history-indicator-success",
@@ -58,11 +56,10 @@ const VARIANT_INDICATOR_CLASS: Record<ToastVariant, string> = {
 // ==================== Utilities ====================
 
 /**
- * 格式化時間顯示
  * Format time display
  *
- * @param timestamp - 時間戳 / Timestamp
- * @returns 格式化後的字串 / Formatted string
+ * @param timestamp - Timestamp
+ * @returns Formatted time string
  */
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -70,11 +67,10 @@ function formatTime(timestamp: number): string {
 }
 
 /**
- * 獲取日期分組鍵
  * Get date group key
  *
- * @param timestamp - 時間戳 / Timestamp
- * @returns 分組鍵 / Group key
+ * @param timestamp - Timestamp
+ * @returns Group key
  */
 function getDateGroup(timestamp: number): string {
   const date = new Date(timestamp);
@@ -82,7 +78,7 @@ function getDateGroup(timestamp: number): string {
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  // 比較日期（忽略時間）
+  // Compare dates ignoring time
   const isSameDay = (d1: Date, d2: Date) =>
     d1.getFullYear() === d2.getFullYear() &&
     d1.getMonth() === d2.getMonth() &&
@@ -98,12 +94,50 @@ function getDateGroup(timestamp: number): string {
 }
 
 /**
- * 計算是否為新的一天開始
+ * Check if item starts a new day group
+ *
+ * @param current - Current item
+ * @param previous - Previous item
+ * @returns Whether it is a new day
+ */
+function isNewDayGroup(current: IToastHistoryItem, previous: IToastHistoryItem | undefined): boolean {
+  if (!previous) return true;
+  return getDateGroup(current.createdAt) !== getDateGroup(previous.createdAt);
+}
+
+/**
+ * Get date group key
+ *
+ * @param timestamp - Timestamp
+ * @returns Group key
+ */
+function getDateGroup(timestamp: number): string {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  // Compare dates ignoring time
+  const isSameDay = (d1: Date, d2: Date) =>
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate();
+
+  if (isSameDay(date, today)) {
+    return "today";
+  } else if (isSameDay(date, yesterday)) {
+    return "yesterday";
+  } else {
+    return "earlier";
+  }
+}
+
+/**
  * Check if it's start of a new day group
  *
- * @param current - 當前項目 / Current item
- * @param previous - 上一個項目 / Previous item
- * @returns 是否是新的一天 / Whether it's a new day
+ * @param current - Current item
+ * @param previous - Previous item
+ * @returns Whether it's a new day
  */
 function isNewDayGroup(current: IToastHistoryItem, previous: IToastHistoryItem | undefined): boolean {
   if (!previous) return true;
@@ -115,11 +149,11 @@ function isNewDayGroup(current: IToastHistoryItem, previous: IToastHistoryItem |
 const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
   const { t } = useI18n();
 
-  // 狀態 / State
+  // State
   const [historyItems, setHistoryItems] = createSignal<IToastHistoryItem[]>([]);
   const [activeFilter, setActiveFilter] = createSignal<ToastVariant | "all">("all");
 
-  // 過濾後的歷史記錄 / Filtered history
+  // Filtered history
   const filteredItems = createMemo(() => {
     const filter = activeFilter();
     if (filter === "all") {
@@ -128,7 +162,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     return historyItems().filter((item) => item.variant === filter);
   });
 
-  // 分組後的歷史記錄 / Grouped history
+  // Grouped history
   const groupedItems = createMemo(() => {
     const groups: { key: string; labelKey: string; items: IToastHistoryItem[] }[] = [];
     let currentGroup: (typeof groups)[0] | null = null;
@@ -151,16 +185,16 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     return groups;
   });
 
-  // 是否完全沒有歷史記錄 / Whether there are no history items at all
+  // Whether there are no history items at all
   const isEmpty = createMemo(() => historyItems().length === 0);
 
-  // 篩選結果是否為空（有歷史但無匹配）/ Whether filtered results are empty (has history but no matches)
+  // Whether filtered results are empty (has history but no matches)
   const isFilterEmpty = createMemo(() => !isEmpty() && filteredItems().length === 0);
 
-  // 是否有未讀 / Has unread
+  // Has unread
   const hasUnread = createMemo(() => historyItems().some((item) => !item.read));
 
-  // 訂閱歷史變化 / Subscribe to history changes
+  // Subscribe to history changes
   createEffect(() => {
     const unsubscribe = subscribeToastHistory((items) => {
       setHistoryItems(items);
@@ -171,7 +205,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     });
   });
 
-  // ESC 鍵關閉 / Close on ESC
+  // Close on ESC
   createEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -185,36 +219,36 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     });
   });
 
-  // 處理項目點擊 / Handle item click
+  // Handle item click
   const handleItemClick = (item: IToastHistoryItem) => {
-    // 標記為已讀 / Mark as read
+    // Mark as read
     if (!item.read) {
       markToastHistoryAsRead(item.id);
     }
 
-    // 如果有操作連結，打開連結 / Open action link if exists
+    // Open action link if exists
     if (item.action?.href) {
       void handleOpenAction(item.action.href);
     }
   };
 
-  // 處理刪除 / Handle delete
+  // Handle delete
   const handleDelete = (event: MouseEvent, itemId: string) => {
     event.stopPropagation();
     deleteToastHistoryItem(itemId);
   };
 
-  // 處理清除全部 / Handle clear all
+  // Handle clear all
   const handleClearAll = () => {
     clearToastHistory();
   };
 
-  // 處理標記全部已讀 / Handle mark all as read
+  // Handle mark all as read
   const handleMarkAllAsRead = () => {
     markAllToastHistoryAsRead();
   };
 
-  // 打開外部連結 / Open external link
+  // Open external link
   async function handleOpenAction(href: string): Promise<void> {
     if (isTauriHost()) {
       try {
@@ -229,7 +263,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     window.open(href, "_blank", "noopener,noreferrer");
   }
 
-  // 阻止點擊事件冒泡 / Stop click propagation
+  // Stop click propagation from backdrop to panel
   const handleBackdropClick = (event: MouseEvent) => {
     if (event.target === event.currentTarget) {
       props.onClose();
@@ -354,12 +388,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                   <ul role="list" class="flex flex-col gap-[var(--space-xs)] list-none p-0 m-0">
                      <For each={group.items}>
                        {(item, index) => (
-                         <>
-                           <Show when={index() > 0 && isNewDayGroup(item, group.items[index() - 1])}>
-                             {/* 分隔線 / Divider */}
-                           </Show>
-                           {/* 通知歷史項目 - 語意化列表項目 / Toast history item - Semantic list item */}
-                           {/* 使用 li 元素確保正確的 ARIA 語意 / Uses li element for proper ARIA semantics */}
+                          <>
+                            {/* Toast history item - Semantic list item with proper ARIA semantics */}
                            <li
                              tabIndex={0}
                              class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] rounded-[var(--radius-lg)] border-none bg-surface-secondary relative w-full text-start font-inherit text-inherit cursor-pointer"
