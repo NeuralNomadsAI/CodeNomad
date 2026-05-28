@@ -91,7 +91,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
 
-  /** 是否顯示 Toast 歷史面板 / Whether to show toast history panel */
+  /** Whether to show toast history panel */
   const [showToastHistory, setShowToastHistory] = createSignal(false)
 
   const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
@@ -101,7 +101,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     return notificationsEnabled() ? Bell : BellOff
   })
 
-  /** 未讀通知數量（響應式信號）/ Unread notification count (reactive signal) */
+  /** Unread notification count (reactive signal) */
   const unreadCount = getUnreadToastCountSignal()
 
   const notificationTitle = createMemo(() => {
@@ -178,7 +178,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 <Settings class="w-4 h-4" />
               </button>
 
-              {/* 通知按鈕 / Notification Button */}
+              {/* Notification Button */}
               <div class="relative">
                 <button
                   class={`new-tab-button ${!notificationsSupported() ? "opacity-50" : ""}`}
@@ -188,7 +188,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 >
                   <Dynamic component={notificationIcon()} class="w-4 h-4" />
                 </button>
-                {/* 未讀標記 / Unread badge */}
+                {/* Unread badge */}
                 <Show when={unreadCount() > 0}>
                   <span
                     class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
@@ -214,7 +214,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
         </div>
       </div>
 
-      {/* Toast 歷史面板 / Toast History Panel */}
+      {/* Toast History Panel */}
       <Show when={showToastHistory()}>
         <ToastHistoryPanel
           onClose={() => setShowToastHistory(false)}

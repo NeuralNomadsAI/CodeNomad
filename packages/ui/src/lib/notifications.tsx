@@ -26,23 +26,22 @@ export type ToastPayload = {
 // ==================== Toast History Types ====================
 
 /**
- * Toast 歷史記錄項目
  * Toast history record item
  */
 export interface IToastHistoryItem {
-  /** 唯一識別碼 / Unique identifier */
+  /** Unique identifier */
   id: string;
-  /** 通知標題（可選）/ Notification title (optional) */
+  /** Notification title (optional) */
   title?: string;
-  /** 通知訊息 / Notification message */
+  /** Notification message */
   message: string;
-  /** 變體類型 / Variant type */
+  /** Variant type */
   variant: ToastVariant;
-  /** 創建時間戳 / Creation timestamp */
+  /** Creation timestamp */
   createdAt: number;
-  /** 是否已讀（點擊過）/ Read state (clicked) */
+  /** Read state (clicked) */
   read: boolean;
-  /** 操作連結（可選）/ Action link (optional) */
+  /** Action link (optional) */
   action?: {
     label: string;
     href: string;
@@ -50,50 +49,46 @@ export interface IToastHistoryItem {
 }
 
 /**
- * Toast 歷史篩選條件
  * Toast history filter options
  */
 export interface IToastHistoryFilter {
-  /** 按變體類型篩選 / Filter by variant type */
+  /** Filter by variant type */
   variant?: ToastVariant;
-  /** 最大返回數量 / Maximum number of results */
+  /** Maximum number of results */
   limit?: number;
-  /** 只返回未讀 / Only return unread */
+  /** Only return unread */
   unreadOnly?: boolean;
 }
 
-/** 歷史記錄變化回調函式 / History change callback type */
+/** History change callback type */
 type ToastHistoryCallback = (items: IToastHistoryItem[]) => void;
 
 // ==================== Toast History Store ====================
 
-/** 最大歷史記錄數量 / Maximum history records */
+/** Maximum history records */
 const MAX_HISTORY_ITEMS = 50;
 
-/** 歷史記錄（模組級別私有狀態）/ History records (module-level private state) */
+/** History records (module-level private state) */
 let _historyItems: IToastHistoryItem[] = [];
 
-/** 訂閱者列表 / Subscribers list */
+/** Subscribers list */
 const _subscribers = new Set<ToastHistoryCallback>();
 
-/** 未讀數量響應式信號 / Reactive signal for unread count */
+/** Reactive signal for unread count */
 const [_unreadCount, _setUnreadCount] = createSignal(0);
 
 /**
- * 獲取未讀數量的響應式信號
  * Get reactive signal for unread count
  *
- * 用於組件中直接訪問，以確保響應性
  * Used in components for direct access to ensure reactivity
  *
- * @returns 未讀數量信號 / Unread count signal
+ * @returns Unread count signal
  */
 export function getUnreadToastCountSignal() {
   return _unreadCount;
 }
 
 /**
- * 更新未讀計數信號
  * Update unread count signal
  */
 function _updateUnreadCount(): void {
@@ -101,7 +96,6 @@ function _updateUnreadCount(): void {
 }
 
 /**
- * 通知所有訂閱者
  * Notify all subscribers
  */
 function _notifySubscribers(): void {
@@ -116,7 +110,6 @@ function _notifySubscribers(): void {
 }
 
 /**
- * 生成唯一 ID
  * Generate unique ID
  */
 function _generateId(): string {
@@ -124,15 +117,13 @@ function _generateId(): string {
 }
 
 /**
- * 修剪歷史記錄至最大數量
  * Trim history to max items
  *
- * 注意：陣列是 newest-first 排列（unshift），所以 slice(0, N) 保留最新的 N 筆
  * Note: Array is newest-first (unshift), so slice(0, N) keeps newest N items
  */
 function _trimHistory(): void {
   if (_historyItems.length > MAX_HISTORY_ITEMS) {
-    // 保留最新的記錄（取前 MAX_HISTORY_ITEMS 筆，即最新的）
+    // Keep only the newest entries
     _historyItems = _historyItems.slice(0, MAX_HISTORY_ITEMS);
   }
 }
@@ -140,11 +131,10 @@ function _trimHistory(): void {
 // ==================== Toast History API ====================
 
 /**
- * 添加 Toast 到歷史記錄
  * Add toast to history
  *
- * @param item - 歷史記錄項目（不含 id, createdAt, read）/ History item (without id, createdAt, read)
- * @returns 生成的通知 ID / Generated notification ID
+ * @param item - History item (without id, createdAt, read)
+ * @returns Generated notification ID
  */
 export function addToToastHistory(
   item: Omit<IToastHistoryItem, "id" | "createdAt" | "read">
@@ -156,23 +146,22 @@ export function addToToastHistory(
     read: false,
   };
 
-  // 添加到開頭（最新在前）
+  // Prepend to beginning (newest first)
   _historyItems.unshift(historyItem);
 
-  // 修剪至最大數量
+  // Trim to max items
   _trimHistory();
 
-  // 更新未讀計數
+  // Update unread count
   _updateUnreadCount();
 
-  // 通知訂閱者
+  // Notify subscribers
   _notifySubscribers();
 
   return historyItem.id;
 }
 
 /**
- * 清除所有歷史記錄
  * Clear all history
  */
 export function clearToastHistory(): void {
@@ -182,10 +171,9 @@ export function clearToastHistory(): void {
 }
 
 /**
- * 標記為已讀
  * Mark as read
  *
- * @param id - 記錄 ID / Record ID
+ * @param id - Record ID
  */
 export function markToastHistoryAsRead(id: string): void {
   const item = _historyItems.find((i) => i.id === id);
@@ -197,7 +185,6 @@ export function markToastHistoryAsRead(id: string): void {
 }
 
 /**
- * 標記所有為已讀
  * Mark all as read
  */
 export function markAllToastHistoryAsRead(): void {
@@ -215,10 +202,9 @@ export function markAllToastHistoryAsRead(): void {
 }
 
 /**
- * 刪除單項記錄
  * Delete single record
  *
- * @param id - 記錄 ID / Record ID
+ * @param id - Record ID
  */
 export function deleteToastHistoryItem(id: string): void {
   const index = _historyItems.findIndex((i) => i.id === id);
@@ -230,26 +216,26 @@ export function deleteToastHistoryItem(id: string): void {
 }
 
 /**
- * 獲取歷史記錄
+ * Get history records
  * Get history records
  *
- * @param filter - 篩選條件（可選）/ Filter condition (optional)
- * @returns 歷史記錄陣列 / History records array
+ * @param filter - Filter condition (optional)
+ * @returns History records array
  */
 export function getToastHistory(filter?: IToastHistoryFilter): IToastHistoryItem[] {
   let items = [..._historyItems];
 
-  // 按 variant 篩選
+  // Filter by variant
   if (filter?.variant) {
     items = items.filter((item) => item.variant === filter.variant);
   }
 
-  // 只返回未讀
+  // Filter: unread only
   if (filter?.unreadOnly) {
     items = items.filter((item) => !item.read);
   }
 
-  // 限制數量
+  // Limit count
   if (filter?.limit && filter.limit > 0) {
     items = items.slice(0, filter.limit);
   }
@@ -258,29 +244,27 @@ export function getToastHistory(filter?: IToastHistoryFilter): IToastHistoryItem
 }
 
 /**
- * 獲取未讀數量
  * Get unread count
  *
- * @returns 未讀通知數量 / Unread notification count
+ * @returns Unread notification count
  */
 export function getUnreadToastCount(): number {
   return _historyItems.filter((item) => !item.read).length;
 }
 
 /**
- * 訂閱歷史記錄變化
  * Subscribe to history changes
  *
- * @param callback - 回調函式 / Callback function
- * @returns 取消訂閱函式 / Unsubscribe function
+ * @param callback - Callback function
+ * @returns Unsubscribe function
  */
 export function subscribeToastHistory(callback: ToastHistoryCallback): () => void {
   _subscribers.add(callback);
 
-  // 立即觸發一次，回調當前狀態
+  // Immediately invoke with current state
   callback([..._historyItems]);
 
-  // 返回取消訂閱函式
+  // Return unsubscribe function
   return () => {
     _subscribers.delete(callback);
   };
@@ -353,20 +337,18 @@ const variantAccent: Record<
 // ==================== Toast Notification ====================
 
 /**
- * 顯示 Toast 通知
  * Show toast notification
  *
- * 同時會將通知添加到歷史記錄中
  * Also adds the notification to history
  *
- * @param payload - Toast 負載 / Toast payload
- * @returns Toast 控制句柄 / Toast handle
+ * @param payload - Toast payload
+ * @returns Toast handle
  */
 export function showToastNotification(payload: ToastPayload): ToastHandle {
   const accent = variantAccent[payload.variant]
   const duration = payload.duration ?? 10000
 
-  // 添加到歷史記錄（不阻塞 UI）
+  // Add to history (non-blocking)
   addToToastHistory({
     title: payload.title,
     message: payload.message,
@@ -427,13 +409,12 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
 // ==================== Variant Utilities ====================
 
 /**
- * 獲取 Variant 顯示名稱
  * Get variant display name
  *
- * @param variant - 變體類型 / Variant type
- * @returns 顯示名稱 / Display name
+ * @param variant - Variant type
+ * @returns Display name
  *
- * @note 目前未使用，保留供未來擴展 / Currently unused, kept for future extension
+ * @note Currently unused, kept for future extension
  */
 function getToastVariantLabel(variant: ToastVariant): string {
   const labels: Record<ToastVariant, string> = {
@@ -446,14 +427,13 @@ function getToastVariantLabel(variant: ToastVariant): string {
 }
 
 /**
- * 獲取 Variant 的 CSS 類名
  * Get variant CSS class names
  *
- * @param variant - 變體類型 / Variant type
- * @param type - 獲取的類型 / Type of class to get
- * @returns CSS 類名 / CSS class name
+ * @param variant - Variant type
+ * @param type - Type of class to get
+ * @returns CSS class name
  *
- * @note 目前未使用，保留供未來擴展 / Currently unused, kept for future extension
+ * @note Currently unused, kept for future extension
  */
 function getToastVariantClasses(
   variant: ToastVariant,
