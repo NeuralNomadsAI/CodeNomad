@@ -105,45 +105,6 @@ function isNewDayGroup(current: IToastHistoryItem, previous: IToastHistoryItem |
   return getDateGroup(current.createdAt) !== getDateGroup(previous.createdAt);
 }
 
-/**
- * Get date group key
- *
- * @param timestamp - Timestamp
- * @returns Group key
- */
-function getDateGroup(timestamp: number): string {
-  const date = new Date(timestamp);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  // Compare dates ignoring time
-  const isSameDay = (d1: Date, d2: Date) =>
-    d1.getFullYear() === d2.getFullYear() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getDate() === d2.getDate();
-
-  if (isSameDay(date, today)) {
-    return "today";
-  } else if (isSameDay(date, yesterday)) {
-    return "yesterday";
-  } else {
-    return "earlier";
-  }
-}
-
-/**
- * Check if it's start of a new day group
- *
- * @param current - Current item
- * @param previous - Previous item
- * @returns Whether it's a new day
- */
-function isNewDayGroup(current: IToastHistoryItem, previous: IToastHistoryItem | undefined): boolean {
-  if (!previous) return true;
-  return getDateGroup(current.createdAt) !== getDateGroup(previous.createdAt);
-}
-
 // ==================== Component ====================
 
 const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {

@@ -61,6 +61,20 @@ const InfoView: Component<InfoViewProps> = (props) => {
   })
 
   /** Update scroll button visibility */
+  const updateScrollButtons = () => {
+    if (!scrollRef) return
+
+    const scrollTop = scrollRef.scrollTop
+    const scrollHeight = scrollRef.scrollHeight
+    const clientHeight = scrollRef.clientHeight
+    const hasItems = logs().length > 0
+
+    const atBottom = scrollHeight - (scrollTop + clientHeight) <= 50
+    const atTop = scrollTop <= 50
+
+    setShowScrollBottomButton(hasItems && !atBottom)
+    setShowScrollTopButton(hasItems && !atTop)
+  }
 
   /** Scroll to top */
   const scrollToTop = () => {
@@ -132,7 +146,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
                   <button
                     type="button"
                     class="button-tertiary"
-                    onClick={() => onBack()}
+                    onClick={onBack}
                     title={t("infoView.logs.actions.back")}
                   >
                     <ArrowLeft class="w-4 h-4" />
