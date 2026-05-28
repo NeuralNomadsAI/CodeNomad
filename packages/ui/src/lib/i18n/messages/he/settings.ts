@@ -323,6 +323,7 @@ export const settingsMessages = {
   // Toast History Panel
   "toastHistory.title": "היסטוריית התראות",
   "toastHistory.empty": "אין התראות",
+  "toastHistory.empty.filter": "אין התראות התואמות לסינון זה",
   "toastHistory.clearAll": "נקה הכל",
   "toastHistory.markAllRead": "סמן הכל כנקרא",
   "toastHistory.filter.label": "סינון התראות",

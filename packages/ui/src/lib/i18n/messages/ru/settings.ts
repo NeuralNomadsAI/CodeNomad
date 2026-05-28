@@ -323,6 +323,7 @@ export const settingsMessages = {
   // Toast History Panel
   "toastHistory.title": "История уведомлений",
   "toastHistory.empty": "Нет уведомлений",
+  "toastHistory.empty.filter": "Нет уведомлений, соответствующих этому фильтру",
   "toastHistory.clearAll": "Очистить всё",
   "toastHistory.markAllRead": "Отметить всё прочитанным",
   "toastHistory.filter.label": "Фильтр уведомлений",

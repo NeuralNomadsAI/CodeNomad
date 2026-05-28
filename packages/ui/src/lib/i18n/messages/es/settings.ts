@@ -323,6 +323,7 @@ export const settingsMessages = {
   // Toast History Panel
   "toastHistory.title": "Historial de notificaciones",
   "toastHistory.empty": "Sin notificaciones",
+  "toastHistory.empty.filter": "No hay notificaciones que coincidan con este filtro",
   "toastHistory.clearAll": "Borrar todo",
   "toastHistory.markAllRead": "Marcar todo como leído",
   "toastHistory.filter.label": "Filtrar notificaciones",

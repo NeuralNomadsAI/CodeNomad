@@ -323,6 +323,7 @@ export const settingsMessages = {
   // Toast History Panel
   "toastHistory.title": "通知历史",
   "toastHistory.empty": "暂无通知",
+  "toastHistory.empty.filter": "没有符合此筛选条件的通知",
   "toastHistory.clearAll": "清除全部",
   "toastHistory.markAllRead": "全部已读",
   "toastHistory.filter.label": "筛选通知",

@@ -323,6 +323,7 @@ export const settingsMessages = {
   // Toast History Panel
   "toastHistory.title": "通知履歴",
   "toastHistory.empty": "通知はありません",
+  "toastHistory.empty.filter": "このフィルターに一致する通知はありません",
   "toastHistory.clearAll": "すべてクリア",
   "toastHistory.markAllRead": "すべて既読",
   "toastHistory.filter.label": "通知をフィルター",

@@ -151,8 +151,11 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     return groups;
   });
 
-  // 是否為空狀態 / Empty state
-  const isEmpty = createMemo(() => filteredItems().length === 0);
+  // 是否完全沒有歷史記錄 / Whether there are no history items at all
+  const isEmpty = createMemo(() => historyItems().length === 0);
+
+  // 篩選結果是否為空（有歷史但無匹配）/ Whether filtered results are empty (has history but no matches)
+  const isFilterEmpty = createMemo(() => !isEmpty() && filteredItems().length === 0);
 
   // 是否有未讀 / Has unread
   const hasUnread = createMemo(() => historyItems().some((item) => !item.read));
@@ -335,6 +338,15 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
               </div>
             }
           >
+            <Show
+              when={!isFilterEmpty()}
+              fallback={
+                <div class="flex flex-col items-center justify-center p-[var(--space-xl)] text-secondary text-center">
+                  <Bell class="w-12 h-12 opacity-50 mb-[var(--space-md)]" aria-hidden="true" />
+                  <p class="m-0 text-[var(--font-size-sm)]">{t("toastHistory.empty.filter")}</p>
+                </div>
+              }
+            >
             <For each={groupedItems()}>
               {(group) => (
                 <div class="p-[var(--space-sm)]">
@@ -409,7 +421,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                    </ul>
                  </div>
               )}
-            </For>
+             </For>
+            </Show>
           </Show>
         </div>
       </div>
