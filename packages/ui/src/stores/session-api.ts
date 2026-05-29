@@ -153,12 +153,14 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
     const sessionMap = new Map<string, Session>()
 
     if (!response.data || !Array.isArray(response.data)) {
-      setInstanceSessionHasMore(instanceId, false)
+      if (limit) setInstanceSessionHasMore(instanceId, false)
       return
     }
 
-    const hasMore = limit ? response.data.length >= limit : false
-    setInstanceSessionHasMore(instanceId, hasMore)
+    if (limit) {
+      const hasMore = response.data.length >= limit
+      setInstanceSessionHasMore(instanceId, hasMore)
+    }
 
     let statusById: Record<string, any> = {}
     try {
@@ -297,32 +299,43 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
       for (const apiSession of searchResults) {
         const existingSession = instanceSessions.get(apiSession.id)
-        instanceSessions.set(apiSession.id, {
-          id: apiSession.id,
-          instanceId,
-          title: apiSession.title || "Untitled",
-          parentId: apiSession.parentID || null,
-          agent: existingSession?.agent ?? "",
-          model: existingSession?.model ?? { providerId: "", modelId: "" },
-          status: existingSession?.status ?? "idle",
-          retry: existingSession?.retry ?? null,
-          idleSince: existingSession?.idleSince ?? null,
-          version: apiSession.version,
-          time: { ...apiSession.time },
-          revert: apiSession.revert
-            ? {
-                messageID: apiSession.revert.messageID,
-                partID: apiSession.revert.partID,
-                snapshot: apiSession.revert.snapshot,
-                diff: apiSession.revert.diff,
-              }
-            : undefined,
-        })
+        instanceSessions.set(apiSession.id, toClientSession(instanceId, apiSession, existingSession))
       }
 
       next.set(instanceId, instanceSessions)
       return next
     })
+
+    // Fetch any missing parents so child results are rendered correctly
+    const currentSessions = sessions().get(instanceId)
+    const missingParentIds = new Set<string>()
+    for (const apiSession of searchResults) {
+      const parentId = apiSession.parentID
+      if (parentId && !currentSessions?.has(parentId)) {
+        missingParentIds.add(parentId)
+      }
+    }
+
+    if (missingParentIds.size > 0) {
+      const parentFetches = Array.from(missingParentIds).map(async (parentId) => {
+        try {
+          const parentResponse = await rootClient.session.get({ sessionID: parentId })
+          if (parentResponse.data) {
+            setSessions((prev) => {
+              const next = new Map(prev)
+              const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+              const existingSession = instanceSessions.get(parentId)
+              instanceSessions.set(parentId, toClientSession(instanceId, parentResponse.data, existingSession))
+              next.set(instanceId, instanceSessions)
+              return next
+            })
+          }
+        } catch (error) {
+          log.warn("Failed to fetch missing parent session:", { parentId, error })
+        }
+      })
+      await Promise.all(parentFetches)
+    }
 
     syncInstanceSessionIndicator(instanceId)
     setInstanceSessionHasMore(instanceId, false)

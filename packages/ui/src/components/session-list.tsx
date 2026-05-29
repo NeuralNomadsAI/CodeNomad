@@ -128,28 +128,21 @@ const SessionList: Component<SessionListProps> = (props) => {
       return
     }
 
-    // Check if client-side filtering already yields results
-    const hasClientResults = props.threads.some((thread) => {
-      if (sessionMatchesQuery(thread.parent.id, query)) return true
-      return thread.children.some((child) => sessionMatchesQuery(child.id, query))
-    })
-
-    if (hasClientResults) {
-      // Client-side filtering is sufficient — results appear instantly
-      setWasSearching(false)
-      return
-    }
-
-    // No client-side results — need server-side search
+    // Always run server search in background for workspace-complete results.
+    // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
     setWasSearching(true)
     setIsSearchFetching(true)
+    const queryAtDispatch = query
     searchDebounceTimer = setTimeout(() => {
-      void searchSessions(props.instanceId, query)
+      void searchSessions(props.instanceId, queryAtDispatch)
         .catch((error) => {
           log.error("Failed to search sessions:", error)
         })
         .finally(() => {
-          setIsSearchFetching(false)
+          // Only clear loading if this was the latest query
+          if (normalizedQuery() === queryAtDispatch) {
+            setIsSearchFetching(false)
+          }
         })
     }, 150)
 
