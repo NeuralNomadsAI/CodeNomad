@@ -146,7 +146,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
                   <button
                     type="button"
                     class="button-tertiary"
-                    onClick={onBack}
+                    onClick={() => onBack()()}
                     title={t("infoView.logs.actions.back")}
                   >
                     <ArrowLeft class="w-4 h-4" />
