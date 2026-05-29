@@ -128,6 +128,19 @@ const SessionList: Component<SessionListProps> = (props) => {
       return
     }
 
+    // Check if client-side filtering already yields results
+    const hasClientResults = props.threads.some((thread) => {
+      if (sessionMatchesQuery(thread.parent.id, query)) return true
+      return thread.children.some((child) => sessionMatchesQuery(child.id, query))
+    })
+
+    if (hasClientResults) {
+      // Client-side filtering is sufficient — results appear instantly
+      setWasSearching(false)
+      return
+    }
+
+    // No client-side results — need server-side search
     setWasSearching(true)
     setIsSearchFetching(true)
     searchDebounceTimer = setTimeout(() => {
@@ -138,7 +151,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         .finally(() => {
           setIsSearchFetching(false)
         })
-    }, 300)
+    }, 150)
 
     onCleanup(() => {
       if (searchDebounceTimer) {
