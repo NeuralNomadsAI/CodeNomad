@@ -33,6 +33,11 @@ import {
   cleanupBlankSessions,
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
+  getSessionFetchLimit,
+  setInstanceSessionFetchLimit,
+  setInstanceSessionHasMore,
+  resetSessionPagination,
+  incrementSessionFetchLimit,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
@@ -117,7 +122,7 @@ interface SessionForkResponse {
   }
 }
 
-async function fetchSessions(instanceId: string): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { limit?: number; search?: string }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -134,18 +139,26 @@ async function fetchSessions(instanceId: string): Promise<void> {
   try {
     const projectResponse = await rootClient.project.current()
     const projectId = projectResponse.data?.id
-    const sessionListOptions = instance.folder ? { directory: instance.folder } : undefined
+    const limit = options?.limit
+    const search = options?.search
 
-    log.info("session.list", { instanceId, projectId, directory: sessionListOptions?.directory })
-    const response = sessionListOptions
-      ? await rootClient.session.list(sessionListOptions)
-      : await rootClient.session.list()
+    const sessionListOptions: { directory?: string; limit?: number; search?: string } = {}
+    if (instance.folder) sessionListOptions.directory = instance.folder
+    if (limit) sessionListOptions.limit = limit
+    if (search) sessionListOptions.search = search
+
+    log.info("session.list", { instanceId, projectId, limit, search, directory: sessionListOptions.directory })
+    const response = await rootClient.session.list(sessionListOptions)
 
     const sessionMap = new Map<string, Session>()
 
     if (!response.data || !Array.isArray(response.data)) {
+      setInstanceSessionHasMore(instanceId, false)
       return
     }
+
+    const hasMore = limit ? response.data.length >= limit : false
+    setInstanceSessionHasMore(instanceId, hasMore)
 
     let statusById: Record<string, any> = {}
     try {
@@ -242,6 +255,80 @@ async function fetchSessions(instanceId: string): Promise<void> {
       next.fetchingSessions.set(instanceId, false)
       return next
     })
+  }
+}
+
+async function loadMoreSessions(instanceId: string): Promise<void> {
+  const nextLimit = incrementSessionFetchLimit(instanceId)
+  await fetchSessions(instanceId, { limit: nextLimit })
+}
+
+async function searchSessions(instanceId: string, query: string): Promise<void> {
+  if (!query.trim()) {
+    const limit = getSessionFetchLimit(instanceId)
+    await fetchSessions(instanceId, { limit })
+    return
+  }
+
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const rootClient = getRootClient(instanceId)
+
+  try {
+    log.info("session.search", { instanceId, query, directory: instance.folder })
+    const response = await rootClient.session.list({
+      search: query.trim(),
+      limit: 50,
+      directory: instance.folder,
+    })
+    const searchResults = response.data ?? []
+
+    if (searchResults.length === 0) {
+      setInstanceSessionHasMore(instanceId, false)
+      return
+    }
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+
+      for (const apiSession of searchResults) {
+        const existingSession = instanceSessions.get(apiSession.id)
+        instanceSessions.set(apiSession.id, {
+          id: apiSession.id,
+          instanceId,
+          title: apiSession.title || "Untitled",
+          parentId: apiSession.parentID || null,
+          agent: existingSession?.agent ?? "",
+          model: existingSession?.model ?? { providerId: "", modelId: "" },
+          status: existingSession?.status ?? "idle",
+          retry: existingSession?.retry ?? null,
+          idleSince: existingSession?.idleSince ?? null,
+          version: apiSession.version,
+          time: { ...apiSession.time },
+          revert: apiSession.revert
+            ? {
+                messageID: apiSession.revert.messageID,
+                partID: apiSession.revert.partID,
+                snapshot: apiSession.revert.snapshot,
+                diff: apiSession.revert.diff,
+              }
+            : undefined,
+        })
+      }
+
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    syncInstanceSessionIndicator(instanceId)
+    setInstanceSessionHasMore(instanceId, false)
+  } catch (error) {
+    log.error("Failed to search sessions:", error)
+    throw error
   }
 }
 
@@ -911,6 +998,8 @@ export {
   fetchProviders,
 
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   loadMessages,

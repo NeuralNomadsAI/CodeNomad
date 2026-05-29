@@ -37,6 +37,9 @@ import {
   setSessionParentExpanded,
   setSessionStatus,
   toggleSessionParentExpanded,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  resetSessionPagination,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -46,6 +49,8 @@ import {
   fetchAgents,
   fetchProviders,
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   loadMessages,
@@ -111,6 +116,8 @@ export {
   fetchAgents,
   fetchProviders,
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   getActiveParentSession,
@@ -145,5 +152,8 @@ export {
   toggleSessionParentExpanded,
   updateSessionAgent,
   updateSessionModel,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  resetSessionPagination,
 }
 export type { SessionInfo }

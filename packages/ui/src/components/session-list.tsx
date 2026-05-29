@@ -20,6 +20,12 @@ import {
   sessions as sessionStateSessions,
   setActiveSessionFromList,
   toggleSessionParentExpanded,
+  loadMoreSessions,
+  searchSessions,
+  getSessionHasMore,
+  resetSessionPagination,
+  fetchSessions,
+  getSessionFetchLimit,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
@@ -63,6 +69,82 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (typeof window === "undefined") return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     onCleanup(() => window.clearInterval(timer))
+  })
+
+  const [isSearchFetching, setIsSearchFetching] = createSignal(false)
+  const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
+  const [wasSearching, setWasSearching] = createSignal(false)
+
+  const hasMore = createMemo(() => {
+    if (normalizedQuery()) return false
+    return getSessionHasMore(props.instanceId)
+  })
+
+  const isFetchingSessions = createMemo(() => {
+    return loading().fetchingSessions.get(props.instanceId) ?? false
+  })
+
+  createEffect(() => {
+    const el = sentinelEl()
+    if (!el || !hasMore() || isFetchingSessions()) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+          void loadMoreSessions(props.instanceId).catch((error) => {
+            log.error("Failed to load more sessions:", error)
+          })
+        }
+      },
+      { root: el.parentElement ?? null, rootMargin: "0px 0px 200px 0px" }
+    )
+
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  createEffect(() => {
+    const query = normalizedQuery()
+    if (!props.enableFilterBar) {
+      setWasSearching(false)
+      return
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+    }
+
+    if (!query) {
+      // Only reset pagination if we were previously searching (user cleared the query)
+      if (wasSearching()) {
+        setWasSearching(false)
+        const limit = getSessionFetchLimit(props.instanceId)
+        void fetchSessions(props.instanceId, { limit }).catch((error) => {
+          log.error("Failed to reset sessions after search clear:", error)
+        })
+      }
+      return
+    }
+
+    setWasSearching(true)
+    setIsSearchFetching(true)
+    searchDebounceTimer = setTimeout(() => {
+      void searchSessions(props.instanceId, query)
+        .catch((error) => {
+          log.error("Failed to search sessions:", error)
+        })
+        .finally(() => {
+          setIsSearchFetching(false)
+        })
+    }, 300)
+
+    onCleanup(() => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer)
+      }
+    })
   })
 
   const normalizeSessionLabel = (sessionId: string) => {
@@ -795,10 +877,22 @@ const SessionList: Component<SessionListProps> = (props) => {
                    </>
                  )
                }}
-            </For>
-          </div>
-        </Show>
-      </div>
+             </For>
+
+             <Show when={hasMore() || isFetchingSessions()}>
+               <div
+                 ref={(el) => setSentinelEl(el)}
+                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                 data-session-sentinel
+               >
+                 <Show when={isFetchingSessions()}>
+                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
+                 </Show>
+               </div>
+             </Show>
+           </div>
+         </Show>
+       </div>
 
       <Show when={props.showFooter !== false}>
         <div class="session-list-footer p-3 border-t border-base">

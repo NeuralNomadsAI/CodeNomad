@@ -62,6 +62,55 @@ type InstanceIndicatorCounts = {
 
 const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
 
+const SESSION_PAGE_SIZE = 50
+
+const [sessionFetchLimit, setSessionFetchLimit] = createSignal<Map<string, number>>(new Map())
+const [sessionHasMore, setSessionHasMore] = createSignal<Map<string, boolean>>(new Map())
+
+function getSessionFetchLimit(instanceId: string): number {
+  return sessionFetchLimit().get(instanceId) ?? SESSION_PAGE_SIZE
+}
+
+function setInstanceSessionFetchLimit(instanceId: string, limit: number): void {
+  setSessionFetchLimit((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, limit)
+    return next
+  })
+}
+
+function getSessionHasMore(instanceId: string): boolean {
+  return sessionHasMore().get(instanceId) ?? true
+}
+
+function setInstanceSessionHasMore(instanceId: string, hasMore: boolean): void {
+  setSessionHasMore((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, hasMore)
+    return next
+  })
+}
+
+function resetSessionPagination(instanceId: string): void {
+  setSessionFetchLimit((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, SESSION_PAGE_SIZE)
+    return next
+  })
+  setSessionHasMore((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, true)
+    return next
+  })
+}
+
+function incrementSessionFetchLimit(instanceId: string): number {
+  const current = getSessionFetchLimit(instanceId)
+  const nextLimit = current + SESSION_PAGE_SIZE
+  setInstanceSessionFetchLimit(instanceId, nextLimit)
+  return nextLimit
+}
+
 function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingQuestion) {
     return "permission"
@@ -837,4 +886,13 @@ export {
   getSessionInfo,
   isBlankSession,
   cleanupBlankSessions,
+  SESSION_PAGE_SIZE,
+  sessionFetchLimit,
+  sessionHasMore,
+  getSessionFetchLimit,
+  setInstanceSessionFetchLimit,
+  getSessionHasMore,
+  setInstanceSessionHasMore,
+  resetSessionPagination,
+  incrementSessionFetchLimit,
 }
