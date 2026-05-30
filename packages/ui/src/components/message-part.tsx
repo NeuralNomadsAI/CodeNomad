@@ -1,10 +1,13 @@
 import { For, Match, Show, Suspense, Switch, createMemo, createSignal, lazy } from "solid-js"
+import { ChevronsDownUp, ChevronsUpDown, Copy } from "lucide-solid"
 import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
 import { useI18n } from "../lib/i18n"
 import { splitPromptDisplaySections, type PromptDisplayMetadata } from "../lib/prompt-display-metadata"
+import { copyToClipboard } from "../lib/clipboard"
+import { getPastedTextLineCount } from "../lib/pasted-text-display"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -139,21 +142,59 @@ export default function MessagePart(props: MessagePartProps) {
 
   function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
     const [hasExpanded, setHasExpanded] = createSignal(false)
+    const [isOpen, setIsOpen] = createSignal(false)
+    const [copied, setCopied] = createSignal(false)
+    const lineCount = () => getPastedTextLineCount(disclosureProps.text)
+    const lineCountLabel = () =>
+      lineCount() === 1
+        ? t("messagePart.pastedText.lines.one", { count: String(lineCount()) })
+        : t("messagePart.pastedText.lines.other", { count: String(lineCount()) })
+    const copyLabel = () => (copied() ? t("codeBlockInline.actions.copied") : t("codeBlockInline.actions.copy"))
+
+    const handleCopy = async (event: MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const success = await copyToClipboard(disclosureProps.text)
+      setCopied(success)
+      setTimeout(() => setCopied(false), 2000)
+    }
 
     return (
       <details
-        class="rounded-md border border-base bg-surface-secondary px-3 py-2"
+        class="rounded-md border border-base bg-transparent"
         onToggle={(event) => {
-          if ((event.currentTarget as HTMLDetailsElement).open) {
+          const nextOpen = (event.currentTarget as HTMLDetailsElement).open
+          setIsOpen(nextOpen)
+          if (nextOpen) {
             setHasExpanded(true)
           }
         }}
       >
-        <summary class="cursor-pointer select-none text-xs font-medium text-secondary">
-          {t("messagePart.pastedText.summary")}
+        <summary class="flex items-center justify-between gap-3 cursor-pointer list-none rounded-md bg-surface-secondary px-3 py-1.5 select-none text-xs font-medium text-secondary [&::-webkit-details-marker]:hidden">
+          <span class="min-w-0 flex flex-1 items-center gap-2">
+            <span>{t("messagePart.pastedText.summary")}</span>
+            <span class="text-[11px] text-secondary/80">{lineCountLabel()}</span>
+          </span>
+          <span class="inline-flex items-center gap-1.5">
+            <span class="inline-flex h-6 w-6 items-center justify-center text-secondary/80" aria-hidden="true">
+              <Show when={isOpen()} fallback={<ChevronsUpDown class="h-3.5 w-3.5" aria-hidden="true" />}>
+                <ChevronsDownUp class="h-3.5 w-3.5" aria-hidden="true" />
+              </Show>
+            </span>
+            <button
+              type="button"
+              class="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-surface-tertiary"
+              onClick={(event) => void handleCopy(event)}
+              aria-label={t("messagePart.pastedText.copyAriaLabel")}
+              title={t("messagePart.pastedText.copyAriaLabel")}
+            >
+              <Copy class="h-3.5 w-3.5" aria-hidden="true" />
+              <span class="sr-only">{copyLabel()}</span>
+            </button>
+          </span>
         </summary>
         <Show when={hasExpanded()}>
-          <div class="pt-2">
+          <div class="bg-transparent px-3 pb-3 pt-2">
             <Markdown
               part={createSegmentTextPart(disclosureProps.text, disclosureProps.index)}
               instanceId={props.instanceId}
