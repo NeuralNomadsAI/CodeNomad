@@ -1,7 +1,8 @@
-import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { Copy, Pencil, Plus, Star, Trash2 } from "lucide-solid"
 import type { ExecutionProfile, ExecutionProfilePreviewResponse, ExecutionProfileTestResponse } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
+import { copyToClipboard } from "../../lib/clipboard"
 import { useConfig } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 
@@ -44,6 +45,10 @@ function formatPreviewEnvironment(environment: Record<string, string>): string {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n")
+}
+
+function formatPreviewArgs(args: string[]): string {
+  return args.length > 0 ? args.join("\n") : ""
 }
 
 function duplicateProfile(profile: ExecutionProfile, nameSuffix: string): ExecutionProfile {
@@ -90,6 +95,8 @@ export const ExecutionProfilesSettingsSection: Component = () => {
   const [testError, setTestError] = createSignal<string | null>(null)
   const [previewResult, setPreviewResult] = createSignal<ExecutionProfilePreviewResponse | null>(null)
   const [testResult, setTestResult] = createSignal<ExecutionProfileTestResponse | null>(null)
+  const [copyFeedback, setCopyFeedback] = createSignal<"success" | "error" | null>(null)
+  let copyFeedbackReset: ReturnType<typeof setTimeout> | undefined
 
   const kindOptions = createMemo(() => [
     { value: "local" as const, label: t("settings.opencode.executionProfiles.kind.local") },
@@ -121,7 +128,55 @@ export const ExecutionProfilesSettingsSection: Component = () => {
     setTestError(null)
     setPreviewResult(null)
     setTestResult(null)
+    setCopyFeedback(null)
   })
+
+  onCleanup(() => {
+    if (copyFeedbackReset) {
+      clearTimeout(copyFeedbackReset)
+    }
+  })
+
+  const previewTransportLabel = createMemo(() => t(`settings.opencode.executionProfiles.kind.${kind()}`))
+
+  function setCopyFeedbackState(state: "success" | "error") {
+    setCopyFeedback(state)
+    if (copyFeedbackReset) {
+      clearTimeout(copyFeedbackReset)
+    }
+    copyFeedbackReset = setTimeout(() => setCopyFeedback(null), 2500)
+  }
+
+  async function handleCopyPreview(mode: "commandLine" | "environment" | "full") {
+    const result = previewResult()
+    if (!result) {
+      return
+    }
+
+    const payload =
+      mode === "commandLine"
+        ? result.commandLine
+        : mode === "environment"
+          ? formatPreviewEnvironment(result.environment)
+          : [
+              `${t("settings.opencode.executionProfiles.preview.transport")}: ${previewTransportLabel()}`,
+              `${t("settings.opencode.executionProfiles.preview.launcher")}: ${result.command}`,
+              `${t("settings.opencode.executionProfiles.preview.args")}:`,
+              formatPreviewArgs(result.args) || t("settings.opencode.executionProfiles.preview.none"),
+              "",
+              `${t("settings.opencode.executionProfiles.preview.commandLine")}:`,
+              result.commandLine,
+              "",
+              `${t("settings.opencode.executionProfiles.preview.cwd")}:`,
+              result.cwd ?? t("settings.opencode.executionProfiles.preview.cwd.inherit"),
+              "",
+              `${t("settings.opencode.executionProfiles.preview.environment")}:`,
+              formatPreviewEnvironment(result.environment),
+            ].join("\n")
+
+    const copied = await copyToClipboard(payload)
+    setCopyFeedbackState(copied ? "success" : "error")
+  }
 
   function resetForm(profile?: ExecutionProfile) {
     setEditingId(profile?.id ?? null)
@@ -514,9 +569,6 @@ export const ExecutionProfilesSettingsSection: Component = () => {
             <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing() || testing()} onClick={() => void handleTest()}>
               <span>{testing() ? t("settings.opencode.executionProfiles.form.testing") : t("settings.opencode.executionProfiles.form.test")}</span>
             </button>
-            <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing() || testing()} onClick={() => void handlePreview()}>
-              <span>{previewing() ? t("settings.opencode.executionProfiles.form.previewing") : t("settings.opencode.executionProfiles.form.preview")}</span>
-            </button>
             <button type="button" class="selector-button selector-button-primary" disabled={saving() || previewing() || testing()} onClick={() => void handleSave()}>
               <Show when={saving()} fallback={<Plus class="w-4 h-4" />}>
                 <Plus class="w-4 h-4" />
@@ -542,31 +594,87 @@ export const ExecutionProfilesSettingsSection: Component = () => {
             )}
           </Show>
 
-          <Show when={previewResult()}>
-            {(result) => (
-              <div class="settings-form-group mt-4">
-                <div class="settings-form-label">{t("settings.opencode.executionProfiles.preview.title")}</div>
-                <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.preview.subtitle")}</div>
-
-                <div class="mt-3 rounded-lg border border-base bg-surface-secondary p-3 flex flex-col gap-3">
-                  <div>
-                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.commandLine")}</div>
-                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().commandLine}</pre>
-                  </div>
-
-                  <div>
-                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.cwd")}</div>
-                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().cwd ?? t("settings.opencode.executionProfiles.preview.cwd.inherit")}</pre>
-                  </div>
-
-                  <div>
-                    <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.environment")}</div>
-                    <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{formatPreviewEnvironment(result().environment)}</pre>
-                  </div>
+          <details class="mt-4 rounded-lg border border-base bg-surface-secondary">
+            <summary class="cursor-pointer list-none p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="settings-form-label">{t("settings.opencode.executionProfiles.preview.advancedTitle")}</div>
+                  <div class="settings-toggle-caption mt-1">{t("settings.opencode.executionProfiles.preview.advancedSubtitle")}</div>
                 </div>
+                <span class="text-xs text-secondary">{t("settings.opencode.executionProfiles.preview.advancedBadge")}</span>
               </div>
-            )}
-          </Show>
+            </summary>
+
+            <div class="border-t border-base px-4 pb-4 pt-3 flex flex-col gap-4">
+              <div class="text-sm text-secondary">{t("settings.opencode.executionProfiles.preview.hint")}</div>
+
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="selector-button selector-button-secondary" disabled={saving() || previewing() || testing()} onClick={() => void handlePreview()}>
+                  <span>{previewing() ? t("settings.opencode.executionProfiles.form.previewing") : t("settings.opencode.executionProfiles.form.preview")}</span>
+                </button>
+                <button type="button" class="selector-button selector-button-secondary" disabled={!previewResult()} onClick={() => void handleCopyPreview("commandLine")}>
+                  <Copy class="w-4 h-4" />
+                  <span>{t("settings.opencode.executionProfiles.preview.copyCommandLine")}</span>
+                </button>
+                <button type="button" class="selector-button selector-button-secondary" disabled={!previewResult()} onClick={() => void handleCopyPreview("environment")}>
+                  <Copy class="w-4 h-4" />
+                  <span>{t("settings.opencode.executionProfiles.preview.copyEnvironment")}</span>
+                </button>
+                <button type="button" class="selector-button selector-button-secondary" disabled={!previewResult()} onClick={() => void handleCopyPreview("full")}>
+                  <Copy class="w-4 h-4" />
+                  <span>{t("settings.opencode.executionProfiles.preview.copyAll")}</span>
+                </button>
+              </div>
+
+              <Show when={copyFeedback() === "success"}>
+                <div class="text-sm text-success">{t("settings.opencode.executionProfiles.preview.copySuccess")}</div>
+              </Show>
+              <Show when={copyFeedback() === "error"}>
+                <div class="settings-error-message">{t("settings.opencode.executionProfiles.preview.copyFailed")}</div>
+              </Show>
+
+              <Show when={previewResult()} fallback={<div class="text-sm text-secondary">{t("settings.opencode.executionProfiles.preview.empty")}</div>}>
+                {(result) => (
+                  <div class="settings-form-group">
+                    <div class="settings-form-label">{t("settings.opencode.executionProfiles.preview.title")}</div>
+                    <div class="settings-toggle-caption">{t("settings.opencode.executionProfiles.preview.subtitle")}</div>
+
+                    <div class="mt-3 rounded-lg border border-base bg-surface-secondary p-3 flex flex-col gap-3">
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.transport")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{previewTransportLabel()}</pre>
+                      </div>
+
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.launcher")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().command}</pre>
+                      </div>
+
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.args")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{formatPreviewArgs(result().args) || t("settings.opencode.executionProfiles.preview.none")}</pre>
+                      </div>
+
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.commandLine")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().commandLine}</pre>
+                      </div>
+
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.cwd")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{result().cwd ?? t("settings.opencode.executionProfiles.preview.cwd.inherit")}</pre>
+                      </div>
+
+                      <div>
+                        <div class="text-xs font-medium uppercase tracking-wide text-secondary">{t("settings.opencode.executionProfiles.preview.environment")}</div>
+                        <pre class="mt-2 text-xs whitespace-pre-wrap break-all text-primary bg-surface-primary border border-base rounded-md p-4 font-mono">{formatPreviewEnvironment(result().environment)}</pre>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Show>
+            </div>
+          </details>
         </div>
       </div>
 
