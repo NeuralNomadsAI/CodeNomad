@@ -4,10 +4,10 @@ import { describe, it } from "node:test"
 import { formatElapsedClock, getMessageDurationMs, inferReasoningDurationMs } from "./message-timing.ts"
 
 describe("message timing helpers", () => {
-  it("formats elapsed durations as clock values with seconds suffixes", () => {
-    assert.equal(formatElapsedClock(900), "0:01s")
-    assert.equal(formatElapsedClock(65_000), "1:05s")
-    assert.equal(formatElapsedClock(3_725_000), "1:02:05s")
+  it("formats elapsed durations as clock values without unit suffixes", () => {
+    assert.equal(formatElapsedClock(900), "0:01")
+    assert.equal(formatElapsedClock(65_000), "1:05")
+    assert.equal(formatElapsedClock(3_725_000), "1:02:05")
   })
 
   it("uses message created/completed times for assistant durations", () => {
