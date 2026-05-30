@@ -1787,6 +1787,9 @@ function ReasoningCard(props: ReasoningCardProps) {
               </Show>
 
               <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
+              <Show when={durationLabel()}>
+                {(value) => <span class="message-reasoning-duration">{value()}</span>}
+              </Show>
             </span>
           </span>
         </button>
@@ -1859,9 +1862,6 @@ function ReasoningCard(props: ReasoningCardProps) {
 
           <div class="message-reasoning-timing">
             <span class="message-reasoning-time">{timestamp()}</span>
-            <Show when={durationLabel()}>
-              {(value) => <span class="message-reasoning-duration">{value()}</span>}
-            </Show>
           </div>
         </div>
       </div>

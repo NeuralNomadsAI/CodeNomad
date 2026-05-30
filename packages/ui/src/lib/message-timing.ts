@@ -5,11 +5,7 @@ function getPositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
-function getExplicitDuration(source: unknown): number | undefined {
-  return getPositiveNumber((source as any)?.duration) ?? getPositiveNumber((source as any)?.time?.duration)
-}
-
-function getTimeValue(source: unknown, key: "created" | "updated" | "end" | "start"): number | undefined {
+function getTimeValue(source: unknown, key: "created" | "updated" | "completed" | "end" | "start"): number | undefined {
   return getPositiveNumber((source as any)?.time?.[key])
 }
 
@@ -23,18 +19,13 @@ export function getMessageStartedAt(messageInfo?: MessageInfo, fallback?: number
 }
 
 export function getMessageCompletedAt(messageInfo?: MessageInfo, _status?: MessageStatus): number | undefined {
-  return getTimeValue(messageInfo, "end")
+  return getTimeValue(messageInfo, "completed")
 }
 
-// Only show timings that OpenCode explicitly provides on the message itself.
-// Avoid client-side inference from local timestamps, stream ordering, or update events.
+// Match OpenChamber's explicit OpenCode message timing model:
+// message duration is defined by time.created -> time.completed.
 export function getMessageDurationMs(messageInfo?: MessageInfo, _status?: MessageStatus, _fallbackStartedAt?: number): number | undefined {
-  const explicitDuration = getExplicitDuration(messageInfo)
-  if (explicitDuration) {
-    return explicitDuration
-  }
-
-  return getDurationBetween(getTimeValue(messageInfo, "created"), getTimeValue(messageInfo, "end"))
+  return getDurationBetween(getTimeValue(messageInfo, "created"), getMessageCompletedAt(messageInfo))
 }
 
 export function getPartStartedAt(part?: ClientPart): number | undefined {
@@ -42,12 +33,7 @@ export function getPartStartedAt(part?: ClientPart): number | undefined {
 }
 
 export function getPartDurationMs(part?: ClientPart): number | undefined {
-  const explicitDuration = getExplicitDuration(part)
-  if (explicitDuration) {
-    return explicitDuration
-  }
-
-  return getDurationBetween(getPartStartedAt(part), getTimeValue(part, "end"))
+  return getDurationBetween(getTimeValue(part, "start"), getTimeValue(part, "end"))
 }
 
 export function inferReasoningDurationMs(
@@ -72,8 +58,8 @@ export function formatElapsedClock(durationMs?: number): string {
   const pad = (value: number) => String(value).padStart(2, "0")
 
   if (hours > 0) {
-    return `${hours}:${pad(minutes)}:${pad(seconds)}`
+    return `${hours}:${pad(minutes)}:${pad(seconds)}s`
   }
 
-  return `${minutes}:${pad(seconds)}`
+  return `${minutes}:${pad(seconds)}s`
 }

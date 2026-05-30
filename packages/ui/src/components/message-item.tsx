@@ -493,6 +493,9 @@ export default function MessageItem(props: MessageItemProps) {
               <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"}>
                 {speakerLabel()}
               </span>
+              <Show when={totalDurationLabel()}>
+                {(value) => <span class="message-duration">{value()}</span>}
+              </Show>
             </div>
 
             <Show when={metaText() && showMetaInline()}>
@@ -646,9 +649,6 @@ export default function MessageItem(props: MessageItemProps) {
             </Show>
             <div class="message-meta-timing">
               <time class="message-timestamp" dateTime={timestampIso()}>{timestamp()}</time>
-              <Show when={totalDurationLabel()}>
-                {(value) => <span class="message-duration">{value()}</span>}
-              </Show>
             </div>
           </div>
         </div>
