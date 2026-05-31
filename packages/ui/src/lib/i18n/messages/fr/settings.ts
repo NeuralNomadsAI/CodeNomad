@@ -320,6 +320,27 @@ export const settingsMessages = {
   "sidecars.path": "Path",
   "sidecars.go": "Go",
 
+  // Toast History Panel
+  "toastHistory.title": "Historique des notifications",
+  "toastHistory.empty": "Aucune notification",
+  "toastHistory.empty.filter": "Aucune notification ne correspond à ce filtre",
+  "toastHistory.clearAll": "Tout effacer",
+  "toastHistory.markAllRead": "Tout marquer comme lu",
+  "toastHistory.filter.label": "Filtrer les notifications",
+  "toastHistory.filter.all": "Tout",
+  "toastHistory.filter.info": "Info",
+  "toastHistory.filter.success": "Succès",
+  "toastHistory.filter.warning": "Avertissement",
+  "toastHistory.filter.error": "Erreur",
+  "toastHistory.today": "Aujourd'hui",
+  "toastHistory.yesterday": "Hier",
+  "toastHistory.earlier": "Plus tôt",
+  "toastHistory.unread": "{count} non lu(s)",
+  "toastHistory.viewSettings": "Paramètres",
+  "toastHistory.close": "Fermer",
+  "toastHistory.deleteItem": "Supprimer la notification",
+
+  // Info Section
   "settings.section.info.title": "About",
   "settings.section.info.subtitle": "View version, runtime, and gather diagnostic information.",
   "settings.info.version.server": "Server version",
