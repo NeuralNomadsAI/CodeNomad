@@ -14,7 +14,6 @@
 - Enforce single responsibility; split large files when concerns diverge (state, actions, API, events, etc.).
 - Prefer composable primitives (signals, hooks, utilities) over deep inheritance or implicit global state.
 - When adding platform integrations (SSE, IPC, SDK), isolate them in thin adapters that surface typed events/actions.
-- **English-only comments:** All implementation comments, JSDoc, and inline documentation must be written in English only. Do not use Chinese, Japanese, or other languages in implementation comments. i18n message files (`.ts` values) are the only exception — they contain translated user-facing strings.
 
 ## Multi-Language Support (i18n)
 
@@ -48,9 +47,6 @@ Behavior for agents:
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
-
-## Skill Usage
-- Load `.opencode/skills/codenomad-architecture-guide/SKILL.md` via the `skill` tool when navigating the monorepo, debugging cross-area issues, implementing features, or fixing bugs. The skill provides architecture overviews, package maps, navigation guides, SDK patterns, and anti-patterns.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.
