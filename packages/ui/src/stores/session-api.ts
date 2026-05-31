@@ -46,6 +46,7 @@ import {
   getOrCreateWorktreeClient,
   getRootClient,
   getWorktreeSlugForSession,
+  migrateLegacyWorktreeMapToSessionMetadata,
   removeParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
@@ -235,6 +236,9 @@ async function fetchSessions(instanceId: string): Promise<void> {
       .map((session) => session.id)
 
     await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
+    void migrateLegacyWorktreeMapToSessionMetadata(instanceId, { pruneMissingSessions: true }).catch((error) => {
+      log.warn("Failed to migrate legacy worktree map", { instanceId, error })
+    })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
     throw error
