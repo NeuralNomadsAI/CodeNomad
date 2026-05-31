@@ -28,6 +28,7 @@ async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<voi
   }
 
   const entries = [
+    ".codenomad/background_processes/",
     ".codenomad/worktrees/",
     ".codenomad/worktreeMap.json",
   ]
