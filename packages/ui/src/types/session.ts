@@ -4,7 +4,7 @@ import type {
   Provider as SDKProvider,
   Model as SDKModel,
 } from "@opencode-ai/sdk"
-import type { SessionStatus as SDKSessionStatus, FileDiff } from "@opencode-ai/sdk/v2/client"
+import type { SessionStatus as SDKSessionStatus, SnapshotFileDiff } from "@opencode-ai/sdk/v2/client"
 
 // Export SDK types for external use
 export type { 
@@ -76,7 +76,8 @@ export interface Session
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
-  diff?: FileDiff[] // Session-level file diffs (hydrated via session.diff)
+  metadata?: Record<string, unknown> // Session metadata persisted by OpenCode
+  diff?: SnapshotFileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 
 // Adapter function to convert SDK Session to client Session
