@@ -5,7 +5,14 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import {
+  activeInterruption,
+  hasRepliedQuestion,
+  QuestionExpiredError,
+  sendPermissionResponse,
+  sendQuestionReject,
+  sendQuestionReply,
+} from "../stores/instances"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequestLike } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
@@ -275,8 +282,16 @@ function ToolCallDetails(props: {
   }
 
   async function handleQuestionSubmit() {
+    // Synchronous double-submit guard BEFORE any await: Enter + button (or a
+    // rapid re-submit) must never fire two `question.reply` calls.
+    if (questionSubmitting()) return
     const request = questionDetails()
     if (!request || !props.isQuestionActive()) {
+      return
+    }
+    // Second defense: a stale request already replied locally (e.g. an SSE
+    // `question.replied` raced ahead) is a no-op.
+    if (hasRepliedQuestion(props.instanceId, request.id)) {
       return
     }
     const answers = (questionDraftAnswers()[request.id] ?? []).map((x) => (Array.isArray(x) ? x : []))
@@ -295,16 +310,24 @@ function ToolCallDetails(props: {
       const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
       await sendQuestionReply(props.instanceId, sessionId, request.id, normalized)
     } catch (error) {
-      log.error("Failed to send question reply", error)
-      setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToReply"))
+      if (error instanceof QuestionExpiredError) {
+        setQuestionError(props.t("toolCall.question.errors.expired"))
+      } else {
+        log.error("Failed to send question reply", error)
+        setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToReply"))
+      }
     } finally {
       setQuestionSubmitting(false)
     }
   }
 
   async function handleQuestionDismiss() {
+    if (questionSubmitting()) return
     const request = questionDetails()
     if (!request || !props.isQuestionActive()) {
+      return
+    }
+    if (hasRepliedQuestion(props.instanceId, request.id)) {
       return
     }
     setQuestionSubmitting(true)
@@ -313,8 +336,12 @@ function ToolCallDetails(props: {
       const sessionId = (request as any).sessionID ?? (request as any).sessionId ?? props.sessionId
       await sendQuestionReject(props.instanceId, sessionId, request.id)
     } catch (error) {
-      log.error("Failed to reject question", error)
-      setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToDismiss"))
+      if (error instanceof QuestionExpiredError) {
+        setQuestionError(props.t("toolCall.question.errors.expired"))
+      } else {
+        log.error("Failed to reject question", error)
+        setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToDismiss"))
+      }
     } finally {
       setQuestionSubmitting(false)
     }

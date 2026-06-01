@@ -37,6 +37,8 @@ import {
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
+  markQuestionReplied,
+  hasRepliedQuestion,
   addQuestionToQueue,
   removeQuestionFromQueue,
   drainAutoAcceptPermissionsForInstance,
@@ -752,7 +754,13 @@ function handleQuestionAsked(instanceId: string, event: { type: string; properti
   const request = event?.properties as QuestionRequest | undefined
   if (!request) return
 
-  log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
+  const requestId = getQuestionId(request)
+  if (requestId && hasRepliedQuestion(instanceId, requestId)) {
+    log.info(`[SSE] Ignoring stale question request after local reply: ${requestId}`)
+    return
+  }
+
+  log.info(`[SSE] Question asked: ${requestId}`)
   addQuestionToQueue(instanceId, request)
   upsertQuestionV2(instanceId, request)
 
@@ -773,6 +781,13 @@ function handleQuestionAnswered(
   const properties = event?.properties as EventQuestionReplied["properties"] | EventQuestionRejected["properties"] | undefined
   const requestId = getRequestIdFromQuestionReply(properties)
   if (!requestId) return
+
+  // Removal is already idempotent; the ledger mark keeps stale `question.asked`
+  // re-deliveries from re-surfacing this request after it was answered remotely.
+  if (hasRepliedQuestion(instanceId, requestId)) {
+    log.info(`[SSE] Question already replied locally: ${requestId}`)
+  }
+  markQuestionReplied(instanceId, requestId)
 
   log.info(`[SSE] Question answered: ${requestId}`)
   removeQuestionFromQueue(instanceId, requestId)

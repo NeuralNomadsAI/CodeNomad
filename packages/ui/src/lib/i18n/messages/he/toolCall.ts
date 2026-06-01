@@ -123,6 +123,7 @@ export const toolCallMessages = {
   "toolCall.question.validation.answerAll": "אנא ענה על כל השאלות לפני השליחה.",
   "toolCall.question.errors.unableToReply": "לא ניתן לשלוח תשובה",
   "toolCall.question.errors.unableToDismiss": "לא ניתן לסגור",
+  "toolCall.question.errors.expired": "תוקף ההודעה הזו פג. שלחו את התשובה כהודעה רגילה במקום.",
 
   "toolCall.task.action.delegating": "מאציל...",
   "toolCall.task.sections.prompt": "פקודה",

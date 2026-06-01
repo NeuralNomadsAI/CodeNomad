@@ -123,6 +123,7 @@ export const toolCallMessages = {
   "toolCall.question.validation.answerAll": "请先回答所有问题再提交。",
   "toolCall.question.errors.unableToReply": "无法回复",
   "toolCall.question.errors.unableToDismiss": "无法忽略",
+  "toolCall.question.errors.expired": "此提示已过期。请改为以消息形式发送你的回答。",
 
   "toolCall.task.action.delegating": "正在委派...",
   "toolCall.task.sections.prompt": "Prompt",

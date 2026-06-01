@@ -123,6 +123,7 @@ export const toolCallMessages = {
   "toolCall.question.validation.answerAll": "Ответьте на все вопросы перед отправкой.",
   "toolCall.question.errors.unableToReply": "Не удалось ответить",
   "toolCall.question.errors.unableToDismiss": "Не удалось скрыть",
+  "toolCall.question.errors.expired": "Срок действия этого запроса истёк. Отправьте ответ обычным сообщением.",
 
   "toolCall.task.action.delegating": "Делегирование…",
   "toolCall.task.sections.prompt": "Prompt",

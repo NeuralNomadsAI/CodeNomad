@@ -6,7 +6,7 @@ import { getPermissionCreatedAt, getPermissionSessionId, mergePermissionRequest 
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { getQuestionSessionId } from "../types/question"
 import { requestData } from "../lib/opencode-api"
-import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
+import { buildInstanceBaseUrl, sdkManager, type OpencodeClient } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -38,6 +38,12 @@ import {
   markPermissionReplied,
   pruneRepliedPermissions,
 } from "./permission-replies"
+import {
+  clearRepliedQuestions,
+  hasRepliedQuestion,
+  markQuestionReplied,
+  pruneRepliedQuestions,
+} from "./question-replies"
 import {
   clearAutoAcceptPermission,
   drainAutoAcceptPermissions,
@@ -244,12 +250,19 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
   if (!instance?.client) return
 
   try {
+    const syncStartedAt = Date.now()
     const remote = await requestData<QuestionRequest[]>(
       instance.client.question.list(),
       "question.list",
     )
 
-    const remoteIds = new Set(remote.map((item) => item.id))
+    const remotePendingIds = new Set(remote.map((item) => item.id))
+    pruneRepliedQuestions(instanceId, remotePendingIds, syncStartedAt)
+
+    // Never re-surface a question that was already answered locally; a stale
+    // server snapshot during reconnect would otherwise re-add it to the queue.
+    const pendingRemote = remote.filter((item) => !hasRepliedQuestion(instanceId, item.id))
+    const remoteIds = new Set(pendingRemote.map((item) => item.id))
     const local = getQuestionQueue(instanceId)
 
     // Remove any stale local requests missing from server.
@@ -261,7 +274,7 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
     }
 
     // Upsert all server-side pending questions.
-    for (const request of remote) {
+    for (const request of pendingRemote) {
       ensureQuestionEnqueuedAt(request)
       addQuestionToQueue(instanceId, request)
       upsertQuestionV2(instanceId, request)
@@ -541,6 +554,7 @@ function removeInstance(id: string) {
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
   clearQuestionQueue(id)
+  clearRepliedQuestions(id)
   clearInstanceMetadata(id)
 
   if (activeInstanceId() === id) {
@@ -1043,6 +1057,58 @@ function setActiveQuestionIdForInstance(instanceId: string, requestId: string): 
   setActiveInterruptionForInstance(instanceId, { kind: "question", id: requestId })
 }
 
+/**
+ * Thrown when a question reply/reject targets a request the backend no longer
+ * tracks (e.g. after a reconnect/restart gap). Callers should surface a
+ * non-fatal "this prompt expired — answer as a message" UX path rather than
+ * POSTing to a fallback target and triggering opencode's
+ * `reply for unknown request` warning.
+ */
+class QuestionExpiredError extends Error {
+  readonly requestId: string
+  constructor(requestId: string) {
+    super(`Question request expired: ${requestId}`)
+    this.name = "QuestionExpiredError"
+    this.requestId = requestId
+  }
+}
+
+/**
+ * Reconcile-before-POST: resolves the worktree client that still tracks the
+ * question request. Returns the owning client, or null when the request is
+ * absent from every candidate client's `question.list()` (i.e. expired).
+ *
+ * AC-6 (minimal scope): when the stored slug is missing, the session-based
+ * fallback is consulted via `question.list()` to confirm ownership instead of
+ * blindly POSTing to the previous `"root"` fallback. Full multi-worktree
+ * enumeration is intentionally out of scope here.
+ */
+async function resolveQuestionReplyClient(
+  instanceId: string,
+  sessionId: string,
+  requestId: string,
+): Promise<OpencodeClient | null> {
+  const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
+  const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
+  // De-duplicate candidate slugs while preserving the stored slug's priority.
+  const candidateSlugs = Array.from(new Set([stored, fallback, "root"].filter((slug): slug is string => !!slug)))
+
+  for (const slug of candidateSlugs) {
+    const client = getOrCreateWorktreeClient(instanceId, slug)
+    try {
+      const remote = await requestData<QuestionRequest[]>(client.question.list(), "question.list")
+      if (remote.some((item) => item.id === requestId)) {
+        return client
+      }
+    } catch (error) {
+      // A failed list lookup is non-authoritative; keep checking other clients.
+      log.warn("Failed to reconcile question worktree", { instanceId, requestId, slug, error })
+    }
+  }
+
+  return null
+}
+
 async function sendQuestionReply(
   instanceId: string,
   sessionId: string,
@@ -1054,11 +1120,24 @@ async function sendQuestionReply(
     throw new Error("Instance not ready")
   }
 
+  // Idempotency guard: if we already replied locally, this is a stale re-submit
+  // (double-submit race or reconnect re-delivery). No-op instead of POSTing.
+  if (hasRepliedQuestion(instanceId, requestId)) {
+    log.info("Ignoring duplicate question reply after local reply", { instanceId, requestId })
+    removeQuestionFromQueue(instanceId, requestId)
+    return
+  }
+
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    // Reconcile-before-POST: only POST when the request is still pending on a
+    // resolvable client. Otherwise surface the expired-prompt UX path.
+    const client = await resolveQuestionReplyClient(instanceId, sessionId, requestId)
+    if (!client) {
+      log.info("Question request no longer pending; treating as expired", { instanceId, requestId })
+      markQuestionReplied(instanceId, requestId)
+      removeQuestionFromQueue(instanceId, requestId)
+      throw new QuestionExpiredError(requestId)
+    }
 
     await requestData(
       client.question.reply({
@@ -1068,8 +1147,12 @@ async function sendQuestionReply(
       "question.reply",
     )
 
+    markQuestionReplied(instanceId, requestId)
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
+    if (error instanceof QuestionExpiredError) {
+      throw error
+    }
     log.error("Failed to send question reply", error)
     throw error
   }
@@ -1081,11 +1164,20 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
     throw new Error("Instance not ready")
   }
 
+  if (hasRepliedQuestion(instanceId, requestId)) {
+    log.info("Ignoring duplicate question reject after local reply", { instanceId, requestId })
+    removeQuestionFromQueue(instanceId, requestId)
+    return
+  }
+
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = await resolveQuestionReplyClient(instanceId, sessionId, requestId)
+    if (!client) {
+      log.info("Question request no longer pending; treating as expired", { instanceId, requestId })
+      markQuestionReplied(instanceId, requestId)
+      removeQuestionFromQueue(instanceId, requestId)
+      throw new QuestionExpiredError(requestId)
+    }
 
     await requestData(
       client.question.reject({
@@ -1094,8 +1186,12 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
       "question.reject",
     )
 
+    markQuestionReplied(instanceId, requestId)
     removeQuestionFromQueue(instanceId, requestId)
   } catch (error) {
+    if (error instanceof QuestionExpiredError) {
+      throw error
+    }
     log.error("Failed to send question reject", error)
     throw error
   }
@@ -1244,8 +1340,11 @@ export {
   addQuestionToQueue,
   removeQuestionFromQueue,
   clearQuestionQueue,
+  markQuestionReplied,
+  hasRepliedQuestion,
   sendQuestionReply,
   sendQuestionReject,
+  QuestionExpiredError,
   setActiveQuestionIdForInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,

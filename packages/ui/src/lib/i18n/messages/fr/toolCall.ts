@@ -123,6 +123,7 @@ export const toolCallMessages = {
   "toolCall.question.validation.answerAll": "Veuillez répondre à toutes les questions avant d'envoyer.",
   "toolCall.question.errors.unableToReply": "Impossible de répondre",
   "toolCall.question.errors.unableToDismiss": "Impossible d'ignorer",
+  "toolCall.question.errors.expired": "Cette invite a expiré. Envoyez plutôt votre réponse sous forme de message.",
 
   "toolCall.task.action.delegating": "Délégation...",
   "toolCall.task.sections.prompt": "Prompt",

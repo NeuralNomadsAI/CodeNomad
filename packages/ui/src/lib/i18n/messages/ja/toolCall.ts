@@ -123,6 +123,7 @@ export const toolCallMessages = {
   "toolCall.question.validation.answerAll": "送信する前にすべての質問に回答してください。",
   "toolCall.question.errors.unableToReply": "回答できません",
   "toolCall.question.errors.unableToDismiss": "閉じられません",
+  "toolCall.question.errors.expired": "このプロンプトは期限切れです。代わりにメッセージとして回答を送信してください。",
 
   "toolCall.task.action.delegating": "委任中...",
   "toolCall.task.sections.prompt": "プロンプト",

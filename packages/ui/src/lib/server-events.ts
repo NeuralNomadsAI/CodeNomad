@@ -27,6 +27,11 @@ class ServerEvents {
   }
 
   private connect() {
+    // EventSource is only available in browser-like runtimes. In SSR/tests the
+    // global is absent; skip connecting rather than throwing at module load.
+    if (typeof EventSource === "undefined") {
+      return
+    }
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
