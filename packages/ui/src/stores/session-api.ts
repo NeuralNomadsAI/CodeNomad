@@ -49,7 +49,6 @@ import {
   migrateLegacyWorktreeMapToSessionMetadata,
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
-  removeParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
 
