@@ -478,6 +478,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       retry: null,
       idleSince: null,
       version: info.version || "0",
+      metadata: (info as any).metadata,
       time: info.time
         ? { ...info.time }
         : {
@@ -523,6 +524,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
+      metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
       revert: info.revert
         ? {

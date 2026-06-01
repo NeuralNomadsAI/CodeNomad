@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { FileDiff } from "@opencode-ai/sdk/v2/client"
+import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -46,7 +46,9 @@ import {
   getOrCreateWorktreeClient,
   getRootClient,
   getWorktreeSlugForSession,
-  removeParentSessionMapping,
+  migrateLegacyWorktreeMapToSessionMetadata,
+  pruneStaleLegacyWorktreeMapEntries,
+  removeLegacyParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
 
@@ -74,7 +76,7 @@ async function loadSessionDiff(instanceId: string, sessionId: string, force = fa
     const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
     try {
-      const diffs = await requestData<FileDiff[]>(
+      const diffs = await requestData<SnapshotFileDiff[]>(
         client.session.diff({ sessionID: sessionId }),
         "session.diff",
       )
@@ -105,6 +107,7 @@ interface SessionForkResponse {
     providerID?: string
     modelID?: string
   }
+  metadata?: Record<string, unknown>
   time?: {
     created?: number
     updated?: number
@@ -189,6 +192,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         time: {
           ...apiSession.time,
         },
+        metadata: apiSession.metadata ?? existingSession?.metadata,
         revert: apiSession.revert
           ? {
               messageID: apiSession.revert.messageID,
@@ -233,6 +237,12 @@ async function fetchSessions(instanceId: string): Promise<void> {
       .map((session) => session.id)
 
     await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
+    void (async () => {
+      await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
+      await pruneStaleLegacyWorktreeMapEntries(instanceId)
+    })().catch((error) => {
+      log.warn("Failed to finish legacy worktree map migration", { instanceId, error })
+    })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
     throw error
@@ -260,6 +270,7 @@ function toClientSession(instanceId: string, apiSession: any, existingSession?: 
     time: {
       ...apiSession.time,
     },
+    metadata: apiSession.metadata ?? existingSession?.metadata,
     revert: apiSession.revert
       ? {
           messageID: apiSession.revert.messageID,
@@ -384,6 +395,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       time: {
         ...response.data.time,
       },
+      metadata: response.data.metadata,
       revert: response.data.revert
         ? {
             messageID: response.data.revert.messageID,
@@ -439,7 +451,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     }
 
     // Persist mapping for this *parent* session (best-effort).
-    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug).catch((error) => {
+    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug, { currentSlug: worktreeSlug }).catch((error) => {
       log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
     })
 
@@ -485,13 +497,14 @@ async function forkSession(
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
-     model: {
-       providerId: info.model?.providerID || "",
-       modelId: info.model?.modelID || "",
-     },
-     status: "idle",
-     idleSince: null,
-     version: "0",
+    model: {
+      providerId: info.model?.providerID || "",
+      modelId: info.model?.modelID || "",
+    },
+    status: "idle",
+    idleSince: null,
+    version: "0",
+    metadata: info.metadata,
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {
@@ -612,7 +625,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
     // Clean up mapping for deleted parent sessions.
     if (deletingSession?.parentId === null) {
-      await removeParentSessionMapping(instanceId, sessionId).catch(() => undefined)
+      await removeLegacyParentSessionMapping(instanceId, sessionId).catch(() => undefined)
     }
   } catch (error) {
     log.error("Failed to delete session:", error)
