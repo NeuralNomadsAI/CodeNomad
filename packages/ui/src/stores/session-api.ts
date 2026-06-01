@@ -47,6 +47,8 @@ import {
   getRootClient,
   getWorktreeSlugForSession,
   migrateLegacyWorktreeMapToSessionMetadata,
+  pruneStaleLegacyWorktreeMapEntries,
+  removeLegacyParentSessionMapping,
   removeParentSessionMapping,
   setWorktreeSlugForParentSession,
 } from "./worktrees"
@@ -236,8 +238,11 @@ async function fetchSessions(instanceId: string): Promise<void> {
       .map((session) => session.id)
 
     await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
-    void migrateLegacyWorktreeMapToSessionMetadata(instanceId, { pruneMissingSessions: true }).catch((error) => {
-      log.warn("Failed to migrate legacy worktree map", { instanceId, error })
+    void (async () => {
+      await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
+      await pruneStaleLegacyWorktreeMapEntries(instanceId)
+    })().catch((error) => {
+      log.warn("Failed to finish legacy worktree map migration", { instanceId, error })
     })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
@@ -447,7 +452,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     }
 
     // Persist mapping for this *parent* session (best-effort).
-    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug).catch((error) => {
+    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug, { currentSlug: worktreeSlug }).catch((error) => {
       log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
     })
 
@@ -621,7 +626,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
     // Clean up mapping for deleted parent sessions.
     if (deletingSession?.parentId === null) {
-      await removeParentSessionMapping(instanceId, sessionId).catch(() => undefined)
+      await removeLegacyParentSessionMapping(instanceId, sessionId).catch(() => undefined)
     }
   } catch (error) {
     log.error("Failed to delete session:", error)

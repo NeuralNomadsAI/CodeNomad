@@ -294,11 +294,18 @@ function getWorktreeSlugForSession(instanceId: string, sessionId: string): strin
   return getWorktreeSlugForParentSession(instanceId, parentId)
 }
 
-async function setWorktreeSlugForParentSession(instanceId: string, parentSessionId: string, slug: string): Promise<void> {
+async function setWorktreeSlugForParentSession(
+  instanceId: string,
+  parentSessionId: string,
+  slug: string,
+  options: { currentSlug?: string } = {},
+): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
-  const currentSlug = getWorktreeSlugForParentSession(instanceId, parentSessionId)
+  const currentSlug = options.currentSlug
+    ? normalizeWorktreeSlug(instanceId, options.currentSlug)
+    : getWorktreeSlugForParentSession(instanceId, parentSessionId)
   const client = getOrCreateWorktreeClient(instanceId, currentSlug)
   await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, normalizedSlug)
   await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
@@ -329,7 +336,7 @@ async function removeLegacyParentSessionMapping(instanceId: string, parentSessio
   })
 }
 
-async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string, options: { pruneMissingSessions?: boolean } = {}): Promise<void> {
+async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string): Promise<void> {
   if (!instanceId) return
   const existing = mapMigrations.get(instanceId)
   if (existing) return existing
@@ -341,12 +348,7 @@ async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string, opt
 
     for (const [parentSessionId, legacySlug] of entries) {
       const parentSession = sessions().get(instanceId)?.get(parentSessionId)
-      if (!parentSession) {
-        if (options.pruneMissingSessions) {
-          await removeLegacyParentSessionMapping(instanceId, parentSessionId)
-        }
-        continue
-      }
+      if (!parentSession) continue
       if (getCodeNomadSessionMetadata(instanceId, parentSessionId).worktreeSlug) {
         await removeLegacyParentSessionMapping(instanceId, parentSessionId)
         continue
@@ -363,6 +365,23 @@ async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string, opt
 
   mapMigrations.set(instanceId, task)
   return task
+}
+
+async function pruneStaleLegacyWorktreeMapEntries(instanceId: string): Promise<void> {
+  if (!instanceId) return
+  const migration = mapMigrations.get(instanceId)
+  if (migration) await migration.catch(() => undefined)
+
+  const map = getWorktreeMap(instanceId)
+  const entries = Object.entries(map.parentSessionWorktreeSlug ?? {})
+  if (entries.length === 0) return
+
+  const instanceSessions = sessions().get(instanceId) ?? new Map()
+  for (const [parentSessionId] of entries) {
+    if (!instanceSessions.has(parentSessionId)) {
+      await removeLegacyParentSessionMapping(instanceId, parentSessionId)
+    }
+  }
 }
 
 function getWorktreeSlugForDirectory(instanceId: string, directory: string | undefined): string | null {
@@ -431,6 +450,8 @@ export {
   setWorktreeSlugForParentSession,
   removeParentSessionMapping,
   migrateLegacyWorktreeMapToSessionMetadata,
+  pruneStaleLegacyWorktreeMapEntries,
+  removeLegacyParentSessionMapping,
   getWorktreeSlugForDirectory,
   buildWorktreeProxyPath,
   buildWorktreeProxyPathWithDirectoryOverride,
