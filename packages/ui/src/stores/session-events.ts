@@ -59,7 +59,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
 import { loadMessages } from "./session-api"
-import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
+import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession, refreshWorktreesOnIdle } from "./worktrees"
 import {
   applyPartUpdateV2,
   applyPartDeltaV2,
@@ -594,6 +594,12 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+
+  // The opencode agent may have run `git worktree add` during this turn. Trigger
+  // a debounced worktree refresh (+ constrained auto-switch) so the files view
+  // picks up agent-created worktrees instead of staying bound to a stale cache.
+  refreshWorktreesOnIdle(instanceId, sessionId)
+
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 

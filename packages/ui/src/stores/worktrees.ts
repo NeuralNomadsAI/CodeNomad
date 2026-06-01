@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { WorktreeDescriptor, WorktreeMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { sdkManager, type OpencodeClient } from "../lib/sdk-manager"
-import { sessions } from "./session-state"
+import { activeSessionId, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
 
@@ -13,8 +13,18 @@ const [worktreeMapByInstance, setWorktreeMapByInstance] = createSignal<Map<strin
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
 const worktreeLoads = new Map<string, Promise<void>>()
+const reloadLoads = new Map<string, Promise<void>>()
 const mapLoads = new Map<string, Promise<void>>()
 const mapMigrations = new Map<string, Promise<void>>()
+
+// Per-instance trailing debounce state for refresh-on-idle (AC-2/AC-3).
+const IDLE_REFRESH_DEBOUNCE_MS = 600
+type IdleRefreshState = {
+  timer: ReturnType<typeof setTimeout>
+  parentSessionId: string
+  sessionId: string
+}
+const idleRefreshTimers = new Map<string, IdleRefreshState>()
 
 function normalizeMap(input?: WorktreeMap | null): WorktreeMap {
   if (!input || typeof input !== "object") {
@@ -79,7 +89,12 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
 
 async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
-  await serverApi
+  // In-flight guard: coalesce concurrent reloads (and overlap with
+  // rehydrateInstance's reload) onto a single fetch per instance (AC-3).
+  const existing = reloadLoads.get(instanceId)
+  if (existing) return existing
+
+  const task = serverApi
     .fetchWorktrees(instanceId)
     .then((response) => {
       setWorktreesByInstance((prev) => {
@@ -101,6 +116,84 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
     .catch((error) => {
       log.warn("Failed to reload worktrees", { instanceId, error })
     })
+    .finally(() => {
+      reloadLoads.delete(instanceId)
+    })
+
+  reloadLoads.set(instanceId, task)
+  return task
+}
+
+/**
+ * Debounced refresh-on-idle entry point (AC-2/AC-3/AC-4).
+ *
+ * Wired into the existing `handleSessionIdle` path. Because the opencode agent
+ * can run `git worktree add` mid-session and there is no `worktrees.changed`
+ * event, `session.idle` is the only practical trigger for picking up the new
+ * worktree.
+ *
+ * Per-instance trailing debounce keyed by `instanceId` (idle storms coalesce
+ * into a single enumeration). When the debounce fires we snapshot the slug set,
+ * reload, diff, and apply the constrained auto-switch rule.
+ */
+function refreshWorktreesOnIdle(instanceId: string, sessionId: string): void {
+  if (!instanceId || !sessionId) return
+
+  const parentSessionId = getParentSessionId(instanceId, sessionId)
+
+  const pending = idleRefreshTimers.get(instanceId)
+  if (pending) {
+    // Dedupe idle storms on the PARENT session id: keep the latest trailing
+    // schedule but never let overlapping idles from the same parent stack up.
+    clearTimeout(pending.timer)
+  }
+
+  const timer = setTimeout(() => {
+    idleRefreshTimers.delete(instanceId)
+    void runIdleWorktreeRefresh(instanceId, sessionId, parentSessionId).catch((error) => {
+      log.warn("Failed to refresh worktrees on idle", { instanceId, sessionId, error })
+    })
+  }, IDLE_REFRESH_DEBOUNCE_MS)
+
+  idleRefreshTimers.set(instanceId, { timer, parentSessionId, sessionId })
+}
+
+async function runIdleWorktreeRefresh(
+  instanceId: string,
+  sessionId: string,
+  parentSessionId: string,
+): Promise<void> {
+  // Capture the pre-detection state needed for the auto-switch guard BEFORE we
+  // reload, so a concurrent manual switch is detectable.
+  const before = new Set(getWorktrees(instanceId).map((wt) => wt.slug))
+  const parentSlugBefore = getWorktreeSlugForParentSession(instanceId, parentSessionId)
+
+  await reloadWorktrees(instanceId)
+
+  const after = getWorktrees(instanceId).map((wt) => wt.slug)
+  const added = after.filter((slug) => !before.has(slug))
+
+  // added.length === 0 -> refresh only. added.length > 1 (ambiguous) -> refresh
+  // only, NO auto-switch (AC-4 step 6).
+  if (added.length !== 1) return
+
+  const newSlug = added[0]
+
+  // Guard (AC-4 step 5): only switch when the idle session is the one the user
+  // is actively viewing, and the parent session's slug has not been changed
+  // out from under us (no manual switch since we snapshotted).
+  if (activeSessionId().get(instanceId) !== sessionId) return
+  if (getWorktreeSlugForParentSession(instanceId, parentSessionId) !== parentSlugBefore) return
+
+  await setWorktreeSlugForParentSession(instanceId, parentSessionId, newSlug, {
+    currentSlug: parentSlugBefore,
+  })
+
+  log.info("Auto-switched session to agent-created worktree", {
+    instanceId,
+    parentSessionId,
+    slug: newSlug,
+  })
 }
 
 function getGitRepoStatus(instanceId: string): boolean | null {
@@ -438,6 +531,7 @@ export {
   gitRepoStatusByInstance,
   ensureWorktreesLoaded,
   reloadWorktrees,
+  refreshWorktreesOnIdle,
   reloadWorktreeMap,
   ensureWorktreeMapLoaded,
   getGitRepoStatus,
