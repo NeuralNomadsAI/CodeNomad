@@ -17,7 +17,6 @@ import {
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
-  getSessionFetchLimit,
   resetSessionPagination,
 } from "./sessions"
 import {
@@ -283,8 +282,7 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
       await ensureWorktreeMapLoaded(instanceId)
     }
     resetSessionPagination(instanceId)
-    const limit = getSessionFetchLimit(instanceId)
-    await fetchSessions(instanceId, { limit })
+    await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
     await ensureInstanceConfigLoaded(instanceId)

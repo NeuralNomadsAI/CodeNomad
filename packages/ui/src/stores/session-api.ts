@@ -33,11 +33,14 @@ import {
   cleanupBlankSessions,
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
-  getSessionFetchLimit,
-  setInstanceSessionFetchLimit,
-  setInstanceSessionHasMore,
-  resetSessionPagination,
-  incrementSessionFetchLimit,
+  SESSION_PAGE_SIZE,
+  getSessionNextStart,
+  setSessionPage,
+  prependSessionListId,
+  removeSessionListId,
+  beginSessionSearch,
+  isLatestSessionSearch,
+  setSessionSearchResults,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
@@ -122,7 +125,7 @@ interface SessionForkResponse {
   }
 }
 
-async function fetchSessions(instanceId: string, options?: { limit?: number; search?: string }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { start?: number; limit?: number }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -139,28 +142,27 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
   try {
     const projectResponse = await rootClient.project.current()
     const projectId = projectResponse.data?.id
-    const limit = options?.limit
-    const search = options?.search
+    const start = options?.start ?? 0
+    const limit = options?.limit ?? SESSION_PAGE_SIZE
 
-    const sessionListOptions: { directory?: string; limit?: number; search?: string } = {}
+    const sessionListOptions: { directory?: string; roots?: boolean; start?: number; limit?: number } = {
+      roots: true,
+      start,
+      limit,
+    }
     if (instance.folder) sessionListOptions.directory = instance.folder
-    if (limit) sessionListOptions.limit = limit
-    if (search) sessionListOptions.search = search
 
-    log.info("session.list", { instanceId, projectId, limit, search, directory: sessionListOptions.directory })
+    log.info("session.list", { instanceId, projectId, start, limit, directory: sessionListOptions.directory })
     const response = await rootClient.session.list(sessionListOptions)
 
     const sessionMap = new Map<string, Session>()
 
     if (!response.data || !Array.isArray(response.data)) {
-      if (limit) setInstanceSessionHasMore(instanceId, false)
+      setSessionPage(instanceId, [], start, false)
       return
     }
 
-    if (limit) {
-      const hasMore = response.data.length >= limit
-      setInstanceSessionHasMore(instanceId, hasMore)
-    }
+    const hasMore = response.data.length >= limit
 
     let statusById: Record<string, any> = {}
     try {
@@ -219,11 +221,17 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
 
     setSessions((prev) => {
       const next = new Map(prev)
-      next.set(instanceId, sessionMap)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+      for (const session of sessionMap.values()) {
+        instanceSessions.set(session.id, session)
+      }
+      next.set(instanceId, instanceSessions)
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, sessionMap)
+    setSessionPage(instanceId, Array.from(validSessionIds), start, hasMore)
+
+    syncInstanceSessionIndicator(instanceId)
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -231,7 +239,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
       if (loadedSet) {
         const filtered = new Set<string>()
         for (const id of loadedSet) {
-          if (validSessionIds.has(id)) {
+          if (sessions().get(instanceId)?.has(id)) {
             filtered.add(id)
           }
         }
@@ -241,7 +249,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
     })
 
 
-    pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
+    pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
 
     const parentIds = Array.from(sessionMap.values())
       .filter((session) => session.parentId === null)
@@ -261,16 +269,12 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; sea
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
-  const nextLimit = incrementSessionFetchLimit(instanceId)
-  await fetchSessions(instanceId, { limit: nextLimit })
+  await fetchSessions(instanceId, { start: getSessionNextStart(instanceId), limit: SESSION_PAGE_SIZE })
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
-  if (!query.trim()) {
-    const limit = getSessionFetchLimit(instanceId)
-    await fetchSessions(instanceId, { limit })
-    return
-  }
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return
 
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -278,18 +282,21 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 
   const rootClient = getRootClient(instanceId)
+  const requestId = beginSessionSearch(instanceId, trimmedQuery)
 
   try {
-    log.info("session.search", { instanceId, query, directory: instance.folder })
+    log.info("session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
     const response = await rootClient.session.list({
-      search: query.trim(),
-      limit: 50,
+      search: trimmedQuery,
+      limit: SESSION_PAGE_SIZE,
       directory: instance.folder,
     })
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+
     const searchResults = response.data ?? []
 
     if (searchResults.length === 0) {
-      setInstanceSessionHasMore(instanceId, false)
+      setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
       return
     }
 
@@ -337,10 +344,13 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       await Promise.all(parentFetches)
     }
 
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+
     syncInstanceSessionIndicator(instanceId)
-    setInstanceSessionHasMore(instanceId, false)
+    setSessionSearchResults(instanceId, trimmedQuery, searchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
+    setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
     throw error
   }
 }
@@ -503,6 +513,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     })
 
     syncInstanceSessionIndicator(instanceId)
+    prependSessionListId(instanceId, session.id)
 
     const instanceProviders = providers().get(instanceId) || []
     const initialProvider = instanceProviders.find((p) => p.id === session.model.providerId)
@@ -680,6 +691,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     })
 
     syncInstanceSessionIndicator(instanceId)
+    removeSessionListId(instanceId, sessionId)
 
     clearSessionDraftPrompt(instanceId, sessionId)
 

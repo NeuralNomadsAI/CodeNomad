@@ -23,9 +23,10 @@ import {
   loadMoreSessions,
   searchSessions,
   getSessionHasMore,
-  resetSessionPagination,
-  fetchSessions,
-  getSessionFetchLimit,
+  clearSessionSearch,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
+  isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession } from "../stores/worktrees"
 import { getLogger } from "../lib/logger"
@@ -71,9 +72,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     onCleanup(() => window.clearInterval(timer))
   })
 
-  const [isSearchFetching, setIsSearchFetching] = createSignal(false)
   const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
-  const [wasSearching, setWasSearching] = createSignal(false)
 
   const hasMore = createMemo(() => {
     if (normalizedQuery()) return false
@@ -108,7 +107,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   createEffect(() => {
     const query = normalizedQuery()
     if (!props.enableFilterBar) {
-      setWasSearching(false)
+      clearSessionSearch(props.instanceId)
       return
     }
 
@@ -117,32 +116,17 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     if (!query) {
-      // Only reset pagination if we were previously searching (user cleared the query)
-      if (wasSearching()) {
-        setWasSearching(false)
-        const limit = getSessionFetchLimit(props.instanceId)
-        void fetchSessions(props.instanceId, { limit }).catch((error) => {
-          log.error("Failed to reset sessions after search clear:", error)
-        })
-      }
+      clearSessionSearch(props.instanceId)
       return
     }
 
     // Always run server search in background for workspace-complete results.
     // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
-    setWasSearching(true)
-    setIsSearchFetching(true)
     const queryAtDispatch = query
     searchDebounceTimer = setTimeout(() => {
       void searchSessions(props.instanceId, queryAtDispatch)
         .catch((error) => {
           log.error("Failed to search sessions:", error)
-        })
-        .finally(() => {
-          // Only clear loading if this was the latest query
-          if (normalizedQuery() === queryAtDispatch) {
-            setIsSearchFetching(false)
-          }
         })
     }, 150)
 
@@ -169,6 +153,12 @@ const SessionList: Component<SessionListProps> = (props) => {
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
     if (!query) return props.threads
+
+    const searchQuery = getSessionSearchQuery(props.instanceId)
+    const searchLoading = isSessionSearchLoading(props.instanceId)
+    if (searchQuery === query && !searchLoading) {
+      return getSessionSearchThreads(props.instanceId)
+    }
 
     const next: SessionThread[] = []
     for (const thread of props.threads) {
