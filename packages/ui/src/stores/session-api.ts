@@ -424,16 +424,67 @@ async function fetchSessionChildren(instanceId: string, parentSessionId: string)
 
     const currentSessions = sessions().get(instanceId)
     const children = apiChildren.map((apiSession) => toClientSession(instanceId, apiSession, currentSessions?.get(apiSession.id)))
+    const returnedChildIds = new Set(children.map((child) => child.id))
+    let staleChildIds: string[] = []
 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId))
+      staleChildIds = []
+
+      for (const session of instanceSessions.values()) {
+        if (session.parentId === parentSessionId && !returnedChildIds.has(session.id)) {
+          staleChildIds.push(session.id)
+        }
+      }
+
+      for (const staleChildId of staleChildIds) {
+        instanceSessions.delete(staleChildId)
+      }
+
       for (const child of children) {
         instanceSessions.set(child.id, child)
       }
       next.set(instanceId, instanceSessions)
       return next
     })
+
+    if (staleChildIds.length > 0) {
+      const staleChildIdSet = new Set(staleChildIds)
+
+      setMessagesLoaded((prev) => {
+        const loadedSet = prev.get(instanceId)
+        if (!loadedSet) return prev
+        const updated = new Set(loadedSet)
+        let changed = false
+        for (const staleChildId of staleChildIdSet) {
+          changed = updated.delete(staleChildId) || changed
+        }
+        if (!changed) return prev
+        const next = new Map(prev)
+        next.set(instanceId, updated)
+        return next
+      })
+
+      setSessionInfoByInstance((prev) => {
+        const instanceInfo = prev.get(instanceId)
+        if (!instanceInfo) return prev
+        const updated = new Map(instanceInfo)
+        let changed = false
+        for (const staleChildId of staleChildIdSet) {
+          changed = updated.delete(staleChildId) || changed
+        }
+        if (!changed) return prev
+        const next = new Map(prev)
+        next.set(instanceId, updated)
+        return next
+      })
+
+      for (const staleChildId of staleChildIds) {
+        messageStoreBus.getOrCreate(instanceId).clearSession(staleChildId)
+        clearCacheForSession(instanceId, staleChildId)
+      }
+    }
 
     syncInstanceSessionIndicator(instanceId)
     updateThreadTotalsForParent(instanceId, parentSessionId)
