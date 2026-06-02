@@ -1,10 +1,10 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor, WorktreeMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { sdkManager, type OpencodeClient } from "../lib/sdk-manager"
 import { sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import { getCodeNomadSessionMetadata, setSessionWorktreeSlugWithClient } from "./session-metadata"
+import { getRootClient } from "./opencode-client"
 
 const log = getLogger("api")
 
@@ -115,7 +115,11 @@ async function createWorktree(instanceId: string, slug: string): Promise<{ slug:
   if (!trimmed) {
     throw new Error("Worktree name is required")
   }
-  return await serverApi.createWorktree(instanceId, { slug: trimmed })
+  const worktree = await serverApi.createWorktree(instanceId, { slug: trimmed })
+  await import("./opencode-workspaces").then(({ reloadOpenCodeWorkspaces }) => reloadOpenCodeWorkspaces(instanceId)).catch((error) => {
+    log.warn("Failed to sync OpenCode workspaces after worktree creation", { instanceId, slug: trimmed, error })
+  })
+  return worktree
 }
 
 async function deleteWorktree(instanceId: string, slug: string, options?: { force?: boolean }): Promise<void> {
@@ -129,7 +133,13 @@ async function deleteWorktree(instanceId: string, slug: string, options?: { forc
   await moveSessionsFromDeletedWorktree(instanceId, trimmed).catch((error) => {
     log.warn("Failed to move sessions from deleted worktree", { instanceId, slug: trimmed, error })
   })
+  await import("./opencode-workspaces").then(({ removeOpenCodeWorkspaceForWorktree }) => removeOpenCodeWorkspaceForWorktree(instanceId, trimmed)).catch((error) => {
+    log.warn("Failed to remove OpenCode workspace for deleted worktree", { instanceId, slug: trimmed, error })
+  })
   await serverApi.deleteWorktree(instanceId, trimmed, options)
+  await import("./opencode-workspaces").then(({ reloadOpenCodeWorkspaces }) => reloadOpenCodeWorkspaces(instanceId)).catch((error) => {
+    log.warn("Failed to sync OpenCode workspaces after worktree deletion", { instanceId, slug: trimmed, error })
+  })
 }
 
 async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string): Promise<void> {
@@ -142,7 +152,7 @@ async function moveSessionsFromDeletedWorktree(instanceId: string, slug: string)
     .map((session) => session.id)
 
   for (const parentSessionId of parentSessionIds) {
-    const client = getOrCreateWorktreeClient(instanceId, slug)
+    const client = getRootClient(instanceId)
     await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, "root")
     await removeLegacyParentSessionMapping(instanceId, parentSessionId)
   }
@@ -298,15 +308,12 @@ async function setWorktreeSlugForParentSession(
   instanceId: string,
   parentSessionId: string,
   slug: string,
-  options: { currentSlug?: string } = {},
+  _options: { currentSlug?: string } = {},
 ): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
-  const currentSlug = options.currentSlug
-    ? normalizeWorktreeSlug(instanceId, options.currentSlug)
-    : getWorktreeSlugForParentSession(instanceId, parentSessionId)
-  const client = getOrCreateWorktreeClient(instanceId, currentSlug)
+  const client = getRootClient(instanceId)
   await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, normalizedSlug)
   await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
 }
@@ -314,8 +321,7 @@ async function setWorktreeSlugForParentSession(
 async function removeParentSessionMapping(instanceId: string, parentSessionId: string): Promise<void> {
   await ensureWorktreeMapLoaded(instanceId)
   const current = getWorktreeMap(instanceId)
-  const currentSlug = getWorktreeSlugForParentSession(instanceId, parentSessionId)
-  const client = getOrCreateWorktreeClient(instanceId, currentSlug)
+  const client = getRootClient(instanceId)
   await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, "root")
   await removeLegacyParentSessionMapping(instanceId, parentSessionId, current)
 }
@@ -355,7 +361,7 @@ async function migrateLegacyWorktreeMapToSessionMetadata(instanceId: string): Pr
       }
 
       const normalizedSlug = normalizeWorktreeSlug(instanceId, legacySlug || "root")
-      const client = getOrCreateWorktreeClient(instanceId, normalizedSlug)
+      const client = getRootClient(instanceId)
       await setSessionWorktreeSlugWithClient(client, instanceId, parentSessionId, normalizedSlug)
       await removeLegacyParentSessionMapping(instanceId, parentSessionId)
     }
@@ -391,47 +397,6 @@ function getWorktreeSlugForDirectory(instanceId: string, directory: string | und
   return match?.slug ?? null
 }
 
-function buildWorktreeProxyPath(instanceId: string, slug: string): string {
-  const normalizedSlug = normalizeWorktreeSlug(instanceId, slug || "root")
-  return `/workspaces/${encodeURIComponent(instanceId)}/worktrees/${encodeURIComponent(normalizedSlug)}/instance`
-}
-
-function encodeBase64UrlUtf8(input: string): string {
-  const bytes = new TextEncoder().encode(input)
-  // Convert bytes -> base64 (btoa expects a binary string)
-  let binary = ""
-  const chunkSize = 0x8000
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize)
-    binary += String.fromCharCode(...chunk)
-  }
-  const base64 = btoa(binary)
-  // base64 -> base64url (strip padding)
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
-}
-
-function buildWorktreeProxyPathWithDirectoryOverride(instanceId: string, slug: string, directory: string): string {
-  const base = buildWorktreeProxyPath(instanceId, slug)
-  const encoded = encodeBase64UrlUtf8(directory)
-  return `${base}/__dir/${encoded}`
-}
-
-function getOrCreateWorktreeClient(instanceId: string, slug: string): OpencodeClient {
-  const normalized = normalizeWorktreeSlug(instanceId, slug || "root")
-  const proxyPath = buildWorktreeProxyPath(instanceId, normalized)
-  return sdkManager.createClient(instanceId, proxyPath, normalized)
-}
-
-function getOrCreateWorktreeClientWithDirectoryOverride(instanceId: string, slug: string, directory: string): OpencodeClient {
-  const normalized = normalizeWorktreeSlug(instanceId, slug || "root")
-  const proxyPath = buildWorktreeProxyPathWithDirectoryOverride(instanceId, normalized, directory)
-  return sdkManager.createClient(instanceId, proxyPath, normalized)
-}
-
-function getRootClient(instanceId: string): OpencodeClient {
-  return getOrCreateWorktreeClient(instanceId, "root")
-}
-
 export {
   worktreesByInstance,
   worktreeMapByInstance,
@@ -453,11 +418,6 @@ export {
   pruneStaleLegacyWorktreeMapEntries,
   removeLegacyParentSessionMapping,
   getWorktreeSlugForDirectory,
-  buildWorktreeProxyPath,
-  buildWorktreeProxyPathWithDirectoryOverride,
-  getOrCreateWorktreeClient,
-  getOrCreateWorktreeClientWithDirectoryOverride,
-  getRootClient,
   createWorktree,
   deleteWorktree,
 }
