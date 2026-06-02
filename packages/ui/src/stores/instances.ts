@@ -17,6 +17,7 @@ import {
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
+  resetSessionPagination,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
@@ -280,6 +281,7 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
       await ensureWorktreesLoaded(instanceId)
       await ensureWorktreeMapLoaded(instanceId)
     }
+    resetSessionPagination(instanceId)
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
