@@ -39,6 +39,7 @@ import {
   prependSessionListId,
   removeSessionListId,
   beginSessionSearch,
+  clearSessionSearch,
   isLatestSessionSearch,
   setSessionSearchResults,
 } from "./session-state"
@@ -346,11 +347,24 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
+    const hydratedSessions = sessions().get(instanceId)
+    const hasUnrenderableChildResult = searchResults.some((session) => {
+      const parentId = session.parentID
+      return Boolean(parentId && !hydratedSessions?.has(parentId))
+    })
+
+    if (hasUnrenderableChildResult) {
+      clearSessionSearch(instanceId)
+      return
+    }
+
     syncInstanceSessionIndicator(instanceId)
     setSessionSearchResults(instanceId, trimmedQuery, searchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
-    setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
+    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
+      clearSessionSearch(instanceId)
+    }
     throw error
   }
 }
