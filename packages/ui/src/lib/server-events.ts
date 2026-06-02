@@ -2,6 +2,7 @@ import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
+import { retryWithBackoff } from "./retry-utils"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -39,14 +40,19 @@ class ServerEvents {
       (event) => this.dispatch(event),
       () => this.scheduleReconnect(),
       (payload) => {
-        void serverApi
-          .sendClientConnectionPong({
-            ...getClientIdentity(),
-            pingTs: payload.ts,
-          })
-          .catch((error) => {
-            log.error("Failed to send client connection pong", error)
-          })
+        const identity = getClientIdentity()
+        const pongPayload = { ...identity, pingTs: payload.ts }
+
+        void retryWithBackoff(
+          () => serverApi.sendClientConnectionPong(pongPayload),
+          {
+            maxAttempts: 3,
+            initialDelayMs: 100,
+            maxDelayMs: 2000,
+          },
+        ).catch((error) => {
+          log.error("Failed to send client connection pong after retries", error)
+        })
       },
     )
     this.source.onopen = () => {
