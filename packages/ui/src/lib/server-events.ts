@@ -2,7 +2,7 @@ import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/
 import { serverApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
-import { retryWithBackoff } from "./retry-utils"
+import { retryWithBackoff, isRetryableError } from "./retry-utils"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -49,9 +49,11 @@ class ServerEvents {
             maxAttempts: 3,
             initialDelayMs: 100,
             maxDelayMs: 2000,
+            timeoutMs: 10000,
+            shouldRetry: (error) => isRetryableError(error),
           },
-        ).catch((error) => {
-          log.error("Failed to send client connection pong after retries", error)
+        ).catch(() => {
+          log.warn("Pong failed after retries (connection already closed)")
         })
       },
     )

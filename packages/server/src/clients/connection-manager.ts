@@ -1,7 +1,8 @@
 import type { Logger } from "../logger"
+import { createSseMonitor } from "./sse-monitor"
 
-const STALE_CONNECTION_TIMEOUT_MS = 45000
-const STALE_SWEEP_INTERVAL_MS = 5000
+const STALE_CONNECTION_TIMEOUT_MS = 120000
+const STALE_SWEEP_INTERVAL_MS = 10000
 
 export interface ClientConnectionRef {
   clientId: string
@@ -28,6 +29,7 @@ export class ClientConnectionManager {
   private readonly connections = new Map<string, RegisteredConnection>()
   private readonly subscribers = new Set<(event: ConnectionChangeEvent) => void>()
   private readonly sweepTimer: NodeJS.Timeout
+  private readonly monitor = createSseMonitor()
 
   constructor(private readonly logger: Logger) {
     this.sweepTimer = setInterval(() => this.sweepStaleConnections(), STALE_SWEEP_INTERVAL_MS)
@@ -66,6 +68,7 @@ export class ClientConnectionManager {
     }
     this.connections.set(key, connection)
     this.logger.debug({ clientId: input.clientId, connectionId: input.connectionId }, "Client connected")
+    this.monitor.logConnection(input.clientId, input.connectionId)
     this.notify({ type: "connected", connection })
     return () => this.disconnect(key, "closed")
   }
@@ -75,10 +78,13 @@ export class ClientConnectionManager {
     const connection = this.connections.get(key)
     if (!connection) {
       this.logger.debug({ clientId: input.clientId, connectionId: input.connectionId }, "Ignoring pong for unknown client connection")
+      this.monitor.logPongFailure(input.clientId, input.connectionId, "connection not found")
       return false
     }
 
+    const latency = Date.now() - connection.lastSeenAt
     connection.lastSeenAt = Date.now()
+    this.monitor.logPongSuccess(input.clientId, input.connectionId, latency)
     return true
   }
 
@@ -90,7 +96,9 @@ export class ClientConnectionManager {
     const cutoff = Date.now() - STALE_CONNECTION_TIMEOUT_MS
     for (const connection of Array.from(this.connections.values())) {
       if (connection.lastSeenAt > cutoff) continue
+      const age = Date.now() - connection.lastSeenAt
       this.logger.debug({ clientId: connection.clientId, connectionId: connection.connectionId }, "Client connection timed out")
+      this.monitor.logStaleConnection(connection.clientId, connection.connectionId, age)
       this.disconnect(connection.key, "timeout")
     }
   }
@@ -100,6 +108,7 @@ export class ClientConnectionManager {
     if (!connection) return
     this.connections.delete(key)
     this.logger.debug({ clientId: connection.clientId, connectionId: connection.connectionId, reason }, "Client disconnected")
+    this.monitor.logDisconnection(connection.clientId, connection.connectionId, reason)
 
     if (invokeClose) {
       try {
