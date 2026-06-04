@@ -108,11 +108,12 @@ const MAX_LOG_ENTRIES = 1000
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instance {
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
     folder: descriptor.path,
+    projectName: descriptor.name ?? projectName ?? existing?.projectName,
     port: descriptor.port ?? existing?.port ?? 0,
     pid: descriptor.pid ?? existing?.pid ?? 0,
     proxyPath: descriptor.proxyPath,
@@ -142,8 +143,8 @@ function ensureActiveInstanceSelected(): void {
   }
 }
 
-function upsertWorkspace(descriptor: WorkspaceDescriptor) {
-  const mapped = workspaceDescriptorToInstance(descriptor)
+function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -554,10 +555,10 @@ function removeInstance(id: string) {
   syncHasInstancesFlag()
 }
 
-async function createInstance(folder: string, _binaryPath?: string): Promise<string> {
+async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder })
-    upsertWorkspace(workspace)
+    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
+    upsertWorkspace(workspace, projectName)
     setActiveInstanceId(workspace.id)
     return workspace.id
   } catch (error) {

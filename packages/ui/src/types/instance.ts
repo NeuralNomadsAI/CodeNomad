@@ -33,6 +33,7 @@ export interface InstanceMetadata {
 export interface Instance {
   id: string
   folder: string
+  projectName?: string
   port: number
   pid: number
   proxyPath: string

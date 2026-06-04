@@ -1,10 +1,11 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, Languages, ChevronDown, X, Globe, Loader2, GitBranch, Pencil } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
+import ProjectRenameDialog from "./project-rename-dialog"
 import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -38,6 +39,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const {
     recentFolders,
     removeRecentFolder,
+    renameRecentFolderProject,
     preferences,
     updatePreferences,
     serverSettings,
@@ -53,6 +55,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [isCloneDialogOpen, setIsCloneDialogOpen] = createSignal(false)
   const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
+  const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ path: string; name: string; label: string } | null>(null)
+  const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   const [cloneRepositoryUrl, setCloneRepositoryUrl] = createSignal("")
   const [cloneDestinationPath, setCloneDestinationPath] = createSignal("")
   const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
@@ -514,6 +518,34 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     }
   }
 
+  function getProjectDisplayName(path: string, projectName?: string): string {
+    const trimmedName = projectName?.trim()
+    return trimmedName || splitFolderPath(path).baseName
+  }
+
+  function openProjectRename(path: string, projectName?: string, e?: Event) {
+    if (isLoading()) return
+    e?.stopPropagation()
+    const defaultName = getProjectDisplayName(path, projectName)
+    setRenameProjectTarget({ path, name: defaultName, label: defaultName })
+  }
+
+  function closeProjectRenameDialog() {
+    setRenameProjectTarget(null)
+  }
+
+  async function handleProjectRenameSubmit(nextName: string) {
+    const target = renameProjectTarget()
+    if (!target || !nextName.trim()) return
+    setIsRenamingProject(true)
+    try {
+      await renameRecentFolderProject(target.path, nextName)
+      setRenameProjectTarget(null)
+    } finally {
+      setIsRenamingProject(false)
+    }
+  }
+
 
   function getDisplayPath(path: string): string {
     if (!path) return path
@@ -914,7 +946,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       <div class="flex items-center gap-2 mb-1">
                                         <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
                                         <span class="text-sm font-medium truncate text-primary">
-                                          {splitFolderPath(folder.path).baseName}
+                                          {getProjectDisplayName(folder.path, folder.projectName)}
                                         </span>
                                         <Show when={existingInstance()}>
                                           <span class="rounded-full border border-base px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary">
@@ -933,6 +965,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       <kbd class="kbd">↵</kbd>
                                     </Show>
                                   </div>
+                                </button>
+                                <button
+                                  onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
+                                  disabled={isLoading()}
+                                  class="p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100 rounded"
+                                  title={t("folderSelection.recent.rename")}
+                                >
+                                  <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
                                 </button>
                                 <button
                                   onClick={(e) => handleRemove(folder.path, e)}
@@ -1087,6 +1127,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         initialPath={folders()[0]?.path}
         onClose={() => setIsFolderBrowserOpen(false)}
         onSelect={handleBrowserSelect}
+      />
+
+      <ProjectRenameDialog
+        open={Boolean(renameProjectTarget())}
+        currentName={renameProjectTarget()?.name ?? ""}
+        projectLabel={renameProjectTarget()?.label}
+        isSubmitting={isRenamingProject()}
+        onRename={handleProjectRenameSubmit}
+        onClose={closeProjectRenameDialog}
       />
 
       <DirectoryBrowserDialog
