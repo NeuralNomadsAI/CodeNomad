@@ -8,7 +8,8 @@ import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import { getOrCreateWorktreeClient, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 
@@ -846,10 +847,10 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   }
   let messages: any[] = []
     try {
-      const worktreeSlug = getWorktreeSlugForSession(instanceId, session.id)
-      const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+      const client = getRootClient(instanceId)
+      const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
       messages = await requestData<any[]>(
-        client.session.messages({ sessionID: session.id }),
+        client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
         "session.messages",
       )
     } catch (error) {

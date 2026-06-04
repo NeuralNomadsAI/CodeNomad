@@ -51,20 +51,19 @@ import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import {
-  getOrCreateWorktreeClient,
-  getRootClient,
-  getWorktreeSlugForSession,
-  migrateLegacyWorktreeMapToSessionMetadata,
-  pruneStaleLegacyWorktreeMapEntries,
-  removeLegacyParentSessionMapping,
-  setWorktreeSlugForParentSession,
-} from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
 const pendingSessionChildrenFetches = new Map<string, Promise<Session[]>>()
+
+async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
+  return workspace ? { workspace } : {}
+}
 
 async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
   if (!instanceId || !sessionId) return
@@ -81,12 +80,11 @@ async function loadSessionDiff(instanceId: string, sessionId: string, force = fa
     const instance = instances().get(instanceId)
     if (!instance?.client) return
 
-    const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
 
     try {
       const diffs = await requestData<SnapshotFileDiff[]>(
-        client.session.diff({ sessionID: sessionId }),
+        client.session.diff({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
         "session.diff",
       )
 
@@ -422,12 +420,11 @@ async function fetchSessionChildren(instanceId: string, parentSessionId: string)
       throw new Error("Instance not ready")
     }
 
-    const worktreeSlug = getWorktreeSlugForSession(instanceId, parentSessionId)
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
 
     log.info(`[HTTP] GET /session/{sessionID}/children for instance ${instanceId}`, { sessionId: parentSessionId })
     const apiChildren = await requestData<any[]>(
-      client.session.children({ sessionID: parentSessionId }),
+      client.session.children({ sessionID: parentSessionId, ...(await getSessionWorkspacePayload(instanceId, parentSessionId)) }),
       "session.children",
     )
 
@@ -531,7 +528,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // If no session is active (fresh instance), fall back to root.
   const activeId = activeSessionId().get(instanceId)
   const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
@@ -654,11 +651,11 @@ async function forkSession(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sourceSessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const request: { sessionID: string; messageID?: string } = {
     sessionID: sourceSessionId,
+    ...(await getSessionWorkspacePayload(instanceId, sourceSessionId)),
     messageID: options?.messageId,
   }
 
@@ -739,8 +736,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const deletingSession = sessions().get(instanceId)?.get(sessionId)
 
@@ -754,7 +750,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(client.session.delete({ sessionID: sessionId }), "session.delete")
+    await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -925,8 +921,7 @@ async function loadMessages(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -951,7 +946,7 @@ async function loadMessages(
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId }),
+      client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
       "session.messages",
     )
 
