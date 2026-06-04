@@ -40,6 +40,7 @@ const PreferencesSchema = z
 const RecentFolderSchema = z.object({
   path: z.string(),
   lastAccessed: z.number().nonnegative(),
+  projectName: z.string().optional(),
 })
 
 const OpenCodeBinarySchema = z.object({
