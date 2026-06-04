@@ -19,7 +19,7 @@ import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
 import { canOpenRemoteWindows, isTauriHost } from "../lib/runtime-env"
 import { openRemoteServerWindow } from "../lib/native/remote-window"
-import { getExistingInstanceForFolder } from "../stores/instances"
+import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -540,6 +540,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     setIsRenamingProject(true)
     try {
       await renameRecentFolderProject(target.path, nextName)
+      updateProjectNameForFolder(target.path, nextName)
       setRenameProjectTarget(null)
     } finally {
       setIsRenamingProject(false)

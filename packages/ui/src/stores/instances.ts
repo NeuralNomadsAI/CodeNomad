@@ -591,6 +591,18 @@ function getExistingInstanceForFolder(folder: string): Instance | null {
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
 }
 
+function updateProjectNameForFolder(folder: string, projectName: string): void {
+  const name = projectName.trim()
+  if (!folder || !name) return
+  const target = normalizeInstanceFolderPath(folder)
+  for (const instance of instances().values()) {
+    if (instance.status === "stopped") continue
+    if (normalizeInstanceFolderPath(instance.folder) === target) {
+      updateInstance(instance.id, { projectName: name })
+    }
+  }
+}
+
 async function stopInstance(id: string) {
   const instance = instances().get(id)
   if (!instance) return
@@ -1188,6 +1200,7 @@ export {
   removeInstance,
   createInstance,
   getExistingInstanceForFolder,
+  updateProjectNameForFolder,
   stopInstance,
   getActiveInstance,
   addLog,
