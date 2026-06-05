@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { FileDiff } from "@opencode-ai/sdk/v2/client"
+import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -74,7 +74,7 @@ async function loadSessionDiff(instanceId: string, sessionId: string, force = fa
     const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
 
     try {
-      const diffs = await requestData<FileDiff[]>(
+      const diffs = await requestData<SnapshotFileDiff[]>(
         client.session.diff({ sessionID: sessionId }),
         "session.diff",
       )

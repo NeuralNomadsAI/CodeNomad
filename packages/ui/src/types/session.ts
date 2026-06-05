@@ -3,8 +3,9 @@ import type {
   Agent as SDKAgent,
   Provider as SDKProvider,
   Model as SDKModel,
-} from "@opencode-ai/sdk"
-import type { SessionStatus as SDKSessionStatus, FileDiff } from "@opencode-ai/sdk/v2/client"
+  SessionStatus as SDKSessionStatus,
+  SnapshotFileDiff,
+} from "@opencode-ai/sdk/v2"
 
 // Export SDK types for external use
 export type { 
@@ -12,7 +13,7 @@ export type {
   Agent as SDKAgent, 
   Provider as SDKProvider,
   Model as SDKModel
-} from "@opencode-ai/sdk"
+} from "@opencode-ai/sdk/v2"
 
 export type SessionStatus = "idle" | "working" | "compacting"
 
@@ -62,7 +63,7 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
 
 // Our client-specific Session interface extending SDK Session
 export interface Session
-  extends Omit<import("@opencode-ai/sdk").Session, "projectID" | "directory" | "parentID"> {
+  extends Omit<SDKSession, "projectID" | "directory" | "parentID" | "slug" | "model"> {
   instanceId: string // Client-specific field
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
@@ -76,12 +77,12 @@ export interface Session
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
-  diff?: FileDiff[] // Session-level file diffs (hydrated via session.diff)
+  diff?: SnapshotFileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 
 // Adapter function to convert SDK Session to client Session
 export function createClientSession(
-  sdkSession: import("@opencode-ai/sdk").Session,
+  sdkSession: SDKSession,
   instanceId: string,
   agent: string = "",
   model: { providerId: string; modelId: string } = { providerId: "", modelId: "" },
