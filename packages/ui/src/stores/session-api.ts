@@ -159,7 +159,7 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
 }
 
 function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
-  return ((response as any).items ?? response.data ?? []) as SessionV2Info[]
+  return response.data
 }
 
 async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
