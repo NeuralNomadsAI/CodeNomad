@@ -47,6 +47,7 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "Rechercher des sessions…",
   "sessionList.filter.ariaLabel": "Rechercher des sessions",
+  "sessionList.loading.more": "Chargement de plus de sessions…",
   "sessionList.selection.selectAllLabel": "Tout sélectionner",
   "sessionList.selection.selectAllAriaLabel": "Sélectionner toutes les sessions",
   "sessionList.selection.clearLabel": "Effacer",

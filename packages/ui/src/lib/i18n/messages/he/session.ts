@@ -47,6 +47,7 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "חפש סשנים…",
   "sessionList.filter.ariaLabel": "חפש סשנים",
+  "sessionList.loading.more": "טוען עוד סשנים…",
   "sessionList.selection.selectAllLabel": "בחר הכל",
   "sessionList.selection.selectAllAriaLabel": "בחר את כל הסשנים",
   "sessionList.selection.clearLabel": "נקה",

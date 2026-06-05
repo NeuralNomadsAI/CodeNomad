@@ -14,6 +14,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.title": "Carpetas recientes",
   "folderSelection.recent.subtitle.one": "{count} carpeta disponible",
   "folderSelection.recent.subtitle.other": "{count} carpetas disponibles",
+  "folderSelection.recent.rename": "Renombrar workspace",
   "folderSelection.recent.remove": "Eliminar de recientes",
   "folderSelection.recent.openBadge": "Abierta",
   "folderSelection.recent.alreadyOpenTitle": "Proyecto ya abierto",
@@ -95,4 +96,13 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.cancelLabel": "Cancelar",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad necesita que el certificado local sea de confianza antes de poder abrir ventanas remotas HTTPS autofirmadas.",
   "folderSelection.sidecars.button": "Open SideCar",
+
+  "projectRenameDialog.title": "Renombrar workspace",
+  "projectRenameDialog.description.withLabel": "Actualiza el nombre del workspace para \"{label}\".",
+  "projectRenameDialog.description.default": "Define un nombre de workspace para esta carpeta.",
+  "projectRenameDialog.input.label": "Nombre del workspace",
+  "projectRenameDialog.input.placeholder": "Introduce el nombre del workspace",
+  "projectRenameDialog.actions.cancel": "Cancelar",
+  "projectRenameDialog.actions.rename": "Renombrar",
+  "projectRenameDialog.actions.renaming": "Renombrando...",
 } as const

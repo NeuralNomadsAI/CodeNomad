@@ -637,7 +637,6 @@ export class BackgroundProcessManager {
     const targetUrl = `http://127.0.0.1:${port}/session/${encodeURIComponent(notify.sessionID)}/prompt_async`
     const headers: Record<string, string> = {
       "content-type": "application/json",
-      "x-opencode-directory": /[^\x00-\x7F]/.test(notify.directory) ? encodeURIComponent(notify.directory) : notify.directory,
     }
 
     const authorization = this.deps.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
