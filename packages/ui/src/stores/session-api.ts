@@ -33,6 +33,15 @@ import {
   cleanupBlankSessions,
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
+  SESSION_PAGE_SIZE,
+  getSessionNextStart,
+  setSessionPage,
+  prependSessionListId,
+  removeSessionListId,
+  beginSessionSearch,
+  clearSessionSearch,
+  isLatestSessionSearch,
+  setSessionSearchResults,
 } from "./session-state"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeMessagePart } from "./message-v2/normalizers"
@@ -42,18 +51,19 @@ import { messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { requestData } from "../lib/opencode-api"
-import {
-  getOrCreateWorktreeClient,
-  getRootClient,
-  getWorktreeSlugForSession,
-  removeParentSessionMapping,
-  setWorktreeSlugForParentSession,
-} from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
+import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
 const pendingSessionChildrenFetches = new Map<string, Promise<Session[]>>()
+
+async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
+  const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
+  return workspace ? { workspace } : {}
+}
 
 async function loadSessionDiff(instanceId: string, sessionId: string, force = false): Promise<void> {
   if (!instanceId || !sessionId) return
@@ -70,12 +80,11 @@ async function loadSessionDiff(instanceId: string, sessionId: string, force = fa
     const instance = instances().get(instanceId)
     if (!instance?.client) return
 
-    const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
 
     try {
       const diffs = await requestData<SnapshotFileDiff[]>(
-        client.session.diff({ sessionID: sessionId }),
+        client.session.diff({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
         "session.diff",
       )
 
@@ -105,6 +114,7 @@ interface SessionForkResponse {
     providerID?: string
     modelID?: string
   }
+  metadata?: Record<string, unknown>
   time?: {
     created?: number
     updated?: number
@@ -117,7 +127,7 @@ interface SessionForkResponse {
   }
 }
 
-async function fetchSessions(instanceId: string): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { start?: number; limit?: number }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -134,18 +144,27 @@ async function fetchSessions(instanceId: string): Promise<void> {
   try {
     const projectResponse = await rootClient.project.current()
     const projectId = projectResponse.data?.id
-    const sessionListOptions = instance.folder ? { directory: instance.folder } : undefined
+    const start = options?.start ?? 0
+    const limit = options?.limit ?? SESSION_PAGE_SIZE
 
-    log.info("session.list", { instanceId, projectId, directory: sessionListOptions?.directory })
-    const response = sessionListOptions
-      ? await rootClient.session.list(sessionListOptions)
-      : await rootClient.session.list()
+    const sessionListOptions: { directory?: string; roots?: boolean; start?: number; limit?: number } = {
+      roots: true,
+      start,
+      limit,
+    }
+    if (instance.folder) sessionListOptions.directory = instance.folder
+
+    log.info("session.list", { instanceId, projectId, start, limit, directory: sessionListOptions.directory })
+    const response = await rootClient.session.list(sessionListOptions)
 
     const sessionMap = new Map<string, Session>()
 
     if (!response.data || !Array.isArray(response.data)) {
+      setSessionPage(instanceId, [], start, false)
       return
     }
+
+    const hasMore = response.data.length >= limit
 
     let statusById: Record<string, any> = {}
     try {
@@ -189,6 +208,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
         time: {
           ...apiSession.time,
         },
+        metadata: apiSession.metadata ?? existingSession?.metadata,
         revert: apiSession.revert
           ? {
               messageID: apiSession.revert.messageID,
@@ -204,11 +224,17 @@ async function fetchSessions(instanceId: string): Promise<void> {
 
     setSessions((prev) => {
       const next = new Map(prev)
-      next.set(instanceId, sessionMap)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+      for (const session of sessionMap.values()) {
+        instanceSessions.set(session.id, session)
+      }
+      next.set(instanceId, instanceSessions)
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, sessionMap)
+    setSessionPage(instanceId, Array.from(validSessionIds), start, hasMore)
+
+    syncInstanceSessionIndicator(instanceId)
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -216,7 +242,7 @@ async function fetchSessions(instanceId: string): Promise<void> {
       if (loadedSet) {
         const filtered = new Set<string>()
         for (const id of loadedSet) {
-          if (validSessionIds.has(id)) {
+          if (sessions().get(instanceId)?.has(id)) {
             filtered.add(id)
           }
         }
@@ -226,13 +252,19 @@ async function fetchSessions(instanceId: string): Promise<void> {
     })
 
 
-    pruneDraftPrompts(instanceId, new Set(sessionMap.keys()))
+    pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
 
     const parentIds = Array.from(sessionMap.values())
       .filter((session) => session.parentId === null)
       .map((session) => session.id)
 
     await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
+    void (async () => {
+      await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
+      await pruneStaleLegacyWorktreeMapEntries(instanceId)
+    })().catch((error) => {
+      log.warn("Failed to finish legacy worktree map migration", { instanceId, error })
+    })
   } catch (error) {
     log.error("Failed to fetch sessions:", error)
     throw error
@@ -242,6 +274,106 @@ async function fetchSessions(instanceId: string): Promise<void> {
       next.fetchingSessions.set(instanceId, false)
       return next
     })
+  }
+}
+
+async function loadMoreSessions(instanceId: string): Promise<void> {
+  await fetchSessions(instanceId, { start: getSessionNextStart(instanceId), limit: SESSION_PAGE_SIZE })
+}
+
+async function searchSessions(instanceId: string, query: string): Promise<void> {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) return
+
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const rootClient = getRootClient(instanceId)
+  const requestId = beginSessionSearch(instanceId, trimmedQuery)
+
+  try {
+    log.info("session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
+    const response = await rootClient.session.list({
+      search: trimmedQuery,
+      limit: SESSION_PAGE_SIZE,
+      directory: instance.folder,
+    })
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+
+    const searchResults = response.data ?? []
+
+    if (searchResults.length === 0) {
+      setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
+      return
+    }
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+
+      for (const apiSession of searchResults) {
+        const existingSession = instanceSessions.get(apiSession.id)
+        instanceSessions.set(apiSession.id, toClientSession(instanceId, apiSession, existingSession))
+      }
+
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    // Fetch any missing parents so child results are rendered correctly
+    const currentSessions = sessions().get(instanceId)
+    const missingParentIds = new Set<string>()
+    for (const apiSession of searchResults) {
+      const parentId = apiSession.parentID
+      if (parentId && !currentSessions?.has(parentId)) {
+        missingParentIds.add(parentId)
+      }
+    }
+
+    if (missingParentIds.size > 0) {
+      const parentFetches = Array.from(missingParentIds).map(async (parentId) => {
+        try {
+          const parentResponse = await rootClient.session.get({ sessionID: parentId })
+          if (parentResponse.data) {
+            setSessions((prev) => {
+              const next = new Map(prev)
+              const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+              const existingSession = instanceSessions.get(parentId)
+              instanceSessions.set(parentId, toClientSession(instanceId, parentResponse.data, existingSession))
+              next.set(instanceId, instanceSessions)
+              return next
+            })
+          }
+        } catch (error) {
+          log.warn("Failed to fetch missing parent session:", { parentId, error })
+        }
+      })
+      await Promise.all(parentFetches)
+    }
+
+    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+
+    const hydratedSessions = sessions().get(instanceId)
+    const hasUnrenderableChildResult = searchResults.some((session) => {
+      const parentId = session.parentID
+      return Boolean(parentId && !hydratedSessions?.has(parentId))
+    })
+
+    if (hasUnrenderableChildResult) {
+      clearSessionSearch(instanceId)
+      return
+    }
+
+    syncInstanceSessionIndicator(instanceId)
+    setSessionSearchResults(instanceId, trimmedQuery, searchResults.map((session) => session.id), requestId)
+  } catch (error) {
+    log.error("Failed to search sessions:", error)
+    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
+      clearSessionSearch(instanceId)
+    }
+    throw error
   }
 }
 
@@ -260,6 +392,7 @@ function toClientSession(instanceId: string, apiSession: any, existingSession?: 
     time: {
       ...apiSession.time,
     },
+    metadata: apiSession.metadata ?? existingSession?.metadata,
     revert: apiSession.revert
       ? {
           messageID: apiSession.revert.messageID,
@@ -287,12 +420,11 @@ async function fetchSessionChildren(instanceId: string, parentSessionId: string)
       throw new Error("Instance not ready")
     }
 
-    const worktreeSlug = getWorktreeSlugForSession(instanceId, parentSessionId)
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
 
     log.info(`[HTTP] GET /session/{sessionID}/children for instance ${instanceId}`, { sessionId: parentSessionId })
     const apiChildren = await requestData<any[]>(
-      client.session.children({ sessionID: parentSessionId }),
+      client.session.children({ sessionID: parentSessionId, ...(await getSessionWorkspacePayload(instanceId, parentSessionId)) }),
       "session.children",
     )
 
@@ -300,16 +432,67 @@ async function fetchSessionChildren(instanceId: string, parentSessionId: string)
 
     const currentSessions = sessions().get(instanceId)
     const children = apiChildren.map((apiSession) => toClientSession(instanceId, apiSession, currentSessions?.get(apiSession.id)))
+    const returnedChildIds = new Set(children.map((child) => child.id))
+    let staleChildIds: string[] = []
 
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId))
+      staleChildIds = []
+
+      for (const session of instanceSessions.values()) {
+        if (session.parentId === parentSessionId && !returnedChildIds.has(session.id)) {
+          staleChildIds.push(session.id)
+        }
+      }
+
+      for (const staleChildId of staleChildIds) {
+        instanceSessions.delete(staleChildId)
+      }
+
       for (const child of children) {
         instanceSessions.set(child.id, child)
       }
       next.set(instanceId, instanceSessions)
       return next
     })
+
+    if (staleChildIds.length > 0) {
+      const staleChildIdSet = new Set(staleChildIds)
+
+      setMessagesLoaded((prev) => {
+        const loadedSet = prev.get(instanceId)
+        if (!loadedSet) return prev
+        const updated = new Set(loadedSet)
+        let changed = false
+        for (const staleChildId of staleChildIdSet) {
+          changed = updated.delete(staleChildId) || changed
+        }
+        if (!changed) return prev
+        const next = new Map(prev)
+        next.set(instanceId, updated)
+        return next
+      })
+
+      setSessionInfoByInstance((prev) => {
+        const instanceInfo = prev.get(instanceId)
+        if (!instanceInfo) return prev
+        const updated = new Map(instanceInfo)
+        let changed = false
+        for (const staleChildId of staleChildIdSet) {
+          changed = updated.delete(staleChildId) || changed
+        }
+        if (!changed) return prev
+        const next = new Map(prev)
+        next.set(instanceId, updated)
+        return next
+      })
+
+      for (const staleChildId of staleChildIds) {
+        messageStoreBus.getOrCreate(instanceId).clearSession(staleChildId)
+        clearCacheForSession(instanceId, staleChildId)
+      }
+    }
 
     syncInstanceSessionIndicator(instanceId)
     updateThreadTotalsForParent(instanceId, parentSessionId)
@@ -345,7 +528,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // If no session is active (fresh instance), fall back to root.
   const activeId = activeSessionId().get(instanceId)
   const worktreeSlug = activeId && activeId !== "info" ? getWorktreeSlugForSession(instanceId, activeId) : "root"
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
@@ -384,6 +567,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       time: {
         ...response.data.time,
       },
+      metadata: response.data.metadata,
       revert: response.data.revert
         ? {
             messageID: response.data.revert.messageID,
@@ -403,6 +587,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     })
 
     syncInstanceSessionIndicator(instanceId)
+    prependSessionListId(instanceId, session.id)
 
     const instanceProviders = providers().get(instanceId) || []
     const initialProvider = instanceProviders.find((p) => p.id === session.model.providerId)
@@ -439,7 +624,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     }
 
     // Persist mapping for this *parent* session (best-effort).
-    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug).catch((error) => {
+    await setWorktreeSlugForParentSession(instanceId, session.id, worktreeSlug, { currentSlug: worktreeSlug }).catch((error) => {
       log.warn("Failed to persist session worktree mapping", { instanceId, sessionId: session.id, worktreeSlug, error })
     })
 
@@ -466,11 +651,11 @@ async function forkSession(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sourceSessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const request: { sessionID: string; messageID?: string } = {
     sessionID: sourceSessionId,
+    ...(await getSessionWorkspacePayload(instanceId, sourceSessionId)),
     messageID: options?.messageId,
   }
 
@@ -485,13 +670,14 @@ async function forkSession(
     title: info.title || "Forked Session",
     parentId: info.parentID || null,
     agent: info.agent || "",
-     model: {
-       providerId: info.model?.providerID || "",
-       modelId: info.model?.modelID || "",
-     },
-     status: "idle",
-     idleSince: null,
-     version: "0",
+    model: {
+      providerId: info.model?.providerID || "",
+      modelId: info.model?.modelID || "",
+    },
+    status: "idle",
+    idleSince: null,
+    version: "0",
+    metadata: info.metadata,
     time: info.time ? { ...info.time } : { created: Date.now(), updated: Date.now() },
     revert: info.revert
       ? {
@@ -550,8 +736,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const deletingSession = sessions().get(instanceId)?.get(sessionId)
 
@@ -565,7 +750,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
   try {
     log.info(`[HTTP] DELETE /session.delete for instance ${instanceId}`, { sessionId })
-    await requestData(client.session.delete({ sessionID: sessionId }), "session.delete")
+    await requestData(client.session.delete({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }), "session.delete")
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -580,6 +765,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     })
 
     syncInstanceSessionIndicator(instanceId)
+    removeSessionListId(instanceId, sessionId)
 
     clearSessionDraftPrompt(instanceId, sessionId)
 
@@ -612,7 +798,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
     // Clean up mapping for deleted parent sessions.
     if (deletingSession?.parentId === null) {
-      await removeParentSessionMapping(instanceId, sessionId).catch(() => undefined)
+      await removeLegacyParentSessionMapping(instanceId, sessionId).catch(() => undefined)
     }
   } catch (error) {
     log.error("Failed to delete session:", error)
@@ -735,8 +921,7 @@ async function loadMessages(
     throw new Error("Instance not ready")
   }
 
-  const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+  const client = getRootClient(instanceId)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -761,7 +946,7 @@ async function loadMessages(
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     const apiMessages = await requestData<any[]>(
-      client.session.messages({ sessionID: sessionId }),
+      client.session.messages({ sessionID: sessionId, ...(await getSessionWorkspacePayload(instanceId, sessionId)) }),
       "session.messages",
     )
 
@@ -911,6 +1096,8 @@ export {
   fetchProviders,
 
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   loadMessages,

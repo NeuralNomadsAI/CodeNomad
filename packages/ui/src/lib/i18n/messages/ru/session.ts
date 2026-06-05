@@ -47,6 +47,7 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "Поиск сессий…",
   "sessionList.filter.ariaLabel": "Поиск сессий",
+  "sessionList.loading.more": "Загрузка дополнительных сессий…",
   "sessionList.selection.selectAllLabel": "Выбрать все",
   "sessionList.selection.selectAllAriaLabel": "Выбрать все сессии",
   "sessionList.selection.clearLabel": "Очистить",

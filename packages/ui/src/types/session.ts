@@ -77,6 +77,7 @@ export interface Session
   status: SessionStatus // Single source of truth for session status
   retry?: SessionRetryState | null // Retry metadata for transient backoff states
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
+  metadata?: Record<string, unknown> // Session metadata persisted by OpenCode
   diff?: SnapshotFileDiff[] // Session-level file diffs (hydrated via session.diff)
 }
 

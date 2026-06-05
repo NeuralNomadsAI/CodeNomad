@@ -1,0 +1,176 @@
+export const commandMessages = {
+  "commandPalette.title": "Befehlspalette",
+  "commandPalette.description": "Befehle suchen und ausführen",
+  "commandPalette.searchPlaceholder": "Befehl eingeben oder suchen...",
+  "commandPalette.empty": "Keine Befehle für \"{query}\" gefunden",
+  "commandPalette.category.customCommands": "Benutzerdefinierte Befehle",
+  "commandPalette.category.instance": "Instanz",
+  "commandPalette.category.session": "Sitzung",
+  "commandPalette.category.agentModel": "Agent & Modell",
+  "commandPalette.category.inputFocus": "Eingabe & Fokus",
+  "commandPalette.category.system": "System",
+  "commandPalette.category.other": "Andere",
+
+  "commands.newInstance.label": "Neue Instanz",
+  "commands.newInstance.description": "Ordnerauswahl öffnen, um eine neue Instanz zu erstellen",
+  "commands.newInstance.keywords": "ordner, projekt, arbeitsbereich",
+
+  "commands.closeInstance.label": "Tab schließen",
+  "commands.closeInstance.description": "Den aktuellen obersten Tab schließen",
+  "commands.closeInstance.keywords": "stoppen, beenden, schließen, tab",
+
+  "commands.nextInstance.label": "Nächster Tab",
+  "commands.nextInstance.description": "Zum nächsten obersten Tab wechseln",
+  "commands.nextInstance.keywords": "wechseln, navigieren, tab",
+
+  "commands.previousInstance.label": "Vorheriger Tab",
+  "commands.previousInstance.description": "Zum vorherigen obersten Tab wechseln",
+  "commands.previousInstance.keywords": "wechseln, navigieren, tab",
+
+  "commands.newSession.label": "Neue Sitzung",
+  "commands.newSession.description": "Eine neue Hauptsitzung erstellen",
+  "commands.newSession.keywords": "erstellen, starten",
+
+  "commands.closeSession.label": "Sitzung schließen",
+  "commands.closeSession.description": "Aktuelle Hauptsitzung schließen",
+  "commands.closeSession.keywords": "schließen, stoppen",
+
+  "commands.scrubSessions.label": "Sitzungen bereinigen",
+  "commands.scrubSessions.description": "Leere Sitzungen, Unteragenten-Sitzungen, die ihre Hauptaufgabe abgeschlossen haben, und überflüssige verzweigte Sitzungen entfernen.",
+  "commands.scrubSessions.keywords": "bereinigen, leer, sitzungen, entfernen, löschen",
+
+  "commands.instanceInfo.label": "Instanz-Info",
+  "commands.instanceInfo.description": "Instanzübersicht für Protokolle und Status öffnen",
+  "commands.instanceInfo.keywords": "info, protokolle, konsole, ausgabe",
+
+  "commands.nextSession.label": "Nächste Sitzung",
+  "commands.nextSession.description": "Zum nächsten Sitzungs-Tab wechseln",
+  "commands.nextSession.keywords": "wechseln, navigieren",
+
+  "commands.previousSession.label": "Vorherige Sitzung",
+  "commands.previousSession.description": "Zum vorherigen Sitzungs-Tab wechseln",
+  "commands.previousSession.keywords": "wechseln, navigieren",
+
+  "commands.compactSession.label": "Sitzung komprimieren",
+  "commands.compactSession.description": "Die aktuelle Sitzung zusammenfassen und komprimieren",
+  "commands.compactSession.keywords": "zusammenfassen, komprimieren",
+  "commands.compactSession.errorFallback": "Sitzung konnte nicht komprimiert werden",
+  "commands.compactSession.alert.title": "Komprimierung fehlgeschlagen",
+  "commands.compactSession.alert.message": "Komprimierung fehlgeschlagen: {message}",
+
+  "commands.undoLastMessage.label": "Letzte Nachricht rückgängig machen",
+  "commands.undoLastMessage.description": "Die letzte Nachricht rückgängig machen",
+  "commands.undoLastMessage.keywords": "rückgängig, wiederherstellen",
+  "commands.undoLastMessage.none.title": "Keine Aktionen zum Rückgängigmachen",
+  "commands.undoLastMessage.none.message": "Nichts zum Rückgängigmachen",
+  "commands.undoLastMessage.failed.title": "Rückgängigmachen fehlgeschlagen",
+  "commands.undoLastMessage.failed.message": "Nachricht konnte nicht rückgängig gemacht werden",
+
+  "commands.openModelSelector.label": "Modellauswahl öffnen",
+  "commands.openModelSelector.description": "Ein anderes Modell wählen",
+  "commands.openModelSelector.keywords": "modell, llm, ai",
+
+  "commands.selectModelVariant.label": "Modellvariante auswählen",
+  "commands.selectModelVariant.description": "Den Denkaufwand für das aktuelle Modell wählen",
+  "commands.selectModelVariant.keywords": "variante, denken, schlussfolgern, aufwand",
+
+  "commands.openAgentSelector.label": "Agentenauswahl öffnen",
+  "commands.openAgentSelector.description": "Einen anderen Agenten wählen",
+  "commands.openAgentSelector.keywords": "agent, modus",
+
+  "commands.clearInput.label": "Eingabe löschen",
+  "commands.clearInput.description": "Den Textbereich des Prompts löschen",
+  "commands.clearInput.keywords": "löschen, zurücksetzen",
+
+  "commands.promptSubmitShortcut.label.default": "Enter: Neue Zeile, Cmd/Ctrl+Enter: Prompt absenden",
+  "commands.promptSubmitShortcut.label.swapped": "Enter: Prompt absenden, Cmd/Ctrl+Enter: Neue Zeile",
+  "commands.promptSubmitShortcut.description": "Verhalten von Enter und Cmd/Ctrl+Enter bei der Prompt-Eingabe vertauschen",
+  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, senden, neuezeile, tastenkombination, prompt",
+
+  "commands.thinkingBlocks.label.show": "Denken anzeigen",
+  "commands.thinkingBlocks.label.hide": "Denken ausblenden",
+  "commands.thinkingBlocks.description": "AI-Denkabschnitte anzeigen oder ausblenden",
+  "commands.thinkingBlocks.keywords": "denken, schlussfolgern, umschalten, anzeigen, ausblenden",
+
+  "commands.timelineToolCalls.label.show": "Timeline-Tool-Aufrufe anzeigen",
+  "commands.timelineToolCalls.label.hide": "Timeline-Tool-Aufrufe ausblenden",
+  "commands.timelineToolCalls.description": "Tool-Aufruf-Einträge in der Nachrichten-Timeline umschalten",
+  "commands.timelineToolCalls.keywords": "timeline, tool, umschalten",
+
+  "commands.keyboardShortcutHints.label.show": "Tastenkombinations-Hinweise anzeigen",
+  "commands.keyboardShortcutHints.label.hide": "Tastenkombinations-Hinweise ausblenden",
+  "commands.keyboardShortcutHints.description": "Tastenkombinations-Hinweise in der Benutzeroberfläche anzeigen oder ausblenden",
+  "commands.keyboardShortcutHints.description.disabledWeb": "In der Web-UI deaktiviert (Hinweise sind immer ausgeblendet)",
+  "commands.keyboardShortcutHints.keywords": "tastenkombination, tastatur, hinweise",
+
+  "commands.common.expanded": "Erweitert",
+  "commands.common.collapsed": "Eingeklappt",
+  "commands.common.visible": "Sichtbar",
+  "commands.common.hidden": "Ausgeblendet",
+  "commands.common.enabled": "Aktiviert",
+  "commands.common.disabled": "Deaktiviert",
+
+  "commands.thinkingBlocksDefault.label": "Denkansicht: {state}",
+  "commands.thinkingBlocksDefault.description": "AI-Denkabschnitte beim Anzeigen ein- oder ausklappen",
+  "commands.thinkingBlocksDefault.keywords": "denken, schlussfolgern, erweitern, einklappen, standard",
+
+  "commands.diffViewSplit.label": "Geteilte Diff-Ansicht verwenden",
+  "commands.diffViewSplit.description": "Tool-Aufruf-Diffs nebeneinander anzeigen",
+  "commands.diffViewSplit.keywords": "diff, geteilt, ansicht",
+
+  "commands.diffViewUnified.label": "Einheitliche Diff-Ansicht verwenden",
+  "commands.diffViewUnified.description": "Tool-Aufruf-Diffs inline anzeigen",
+  "commands.diffViewUnified.keywords": "diff, einheitlich, ansicht",
+
+  "commands.toolOutputsDefault.label": "Standard für Tool-Ausgaben · {state}",
+  "commands.toolOutputsDefault.description": "Standardmäßige Erweiterung für Tool-Ausgaben umschalten",
+  "commands.toolOutputsDefault.keywords": "tool, ausgabe, erweitern, einklappen",
+
+  "commands.diagnosticsDefault.label": "Standard für Diagnose · {state}",
+  "commands.diagnosticsDefault.description": "Standardmäßige Erweiterung für die Diagnoseausgabe umschalten",
+  "commands.diagnosticsDefault.keywords": "diagnose, erweitern, einklappen",
+
+  "commands.toolInputsVisibility.label": "Sichtbarkeit von Tool-Eingaben · {state}",
+  "commands.toolInputsVisibility.description": "Standardsichtbarkeit für Argumente von Tool-Aufrufen festlegen",
+  "commands.toolInputsVisibility.keywords": "tool, eingaben, argumente, sichtbarkeit, ausblenden, anzeigen, erweitern, einklappen",
+
+  "commands.tokenUsageDisplay.label": "Token-Verbrauchsanzeige · {state}",
+  "commands.tokenUsageDisplay.description": "Token- und Kostenstatistiken für Assistenten-Nachrichten anzeigen oder ausblenden",
+  "commands.tokenUsageDisplay.keywords": "token, verbrauch, kosten, statistik",
+
+  "commands.autoCleanupBlankSessions.label": "Automatische Bereinigung leerer Sitzungen · {state}",
+  "commands.autoCleanupBlankSessions.description": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen",
+  "commands.autoCleanupBlankSessions.keywords": "auto, bereinigen, leer, sitzungen, umschalten",
+
+  "commands.showHelp.label": "Hilfe anzeigen",
+  "commands.showHelp.description": "Tastenkombinationen und Hilfe anzeigen",
+  "commands.showHelp.keywords": "tastenkombinationen, hilfe",
+
+  "commands.custom.argumentsPrompt.message": "Argumente für /{name}",
+  "commands.custom.argumentsPrompt.title": "Benutzerdefinierter Befehl",
+  "commands.custom.argumentsPrompt.inputLabel": "Argumente",
+  "commands.custom.argumentsPrompt.inputPlaceholder": "z. B. foo bar",
+  "commands.custom.argumentsPrompt.confirmLabel": "Ausführen",
+  "commands.custom.argumentsPrompt.cancelLabel": "Abbrechen",
+  "commands.custom.argumentsPrompt.openFailed.message": "Abfrage der Argumente fehlgeschlagen.",
+  "commands.custom.argumentsPrompt.openFailed.title": "Befehlsargumente",
+  "commands.custom.entries.descriptionFallback": "Benutzerdefinierter Befehl",
+  "commands.custom.sessionRequired.message": "Wählen Sie eine Sitzung aus, bevor Sie einen benutzerdefinierten Befehl ausführen.",
+  "commands.custom.sessionRequired.title": "Sitzung erforderlich",
+  "commands.custom.runFailed.message": "Ausführen des benutzerdefinierten Befehls fehlgeschlagen. Überprüfen Sie die Konsole für Details.",
+  "commands.custom.runFailed.title": "Befehl fehlgeschlagen",
+
+  "unifiedPicker.loading.searching": "Suche...",
+  "unifiedPicker.loading.loadingWorkspace": "Arbeitsbereich wird geladen...",
+  "unifiedPicker.title.command": "Befehl auswählen",
+  "unifiedPicker.title.mention": "Agent oder Datei auswählen",
+  "unifiedPicker.empty": "Keine Ergebnisse gefunden",
+  "unifiedPicker.sections.commands": "BEFEHLE",
+  "unifiedPicker.sections.agents": "AGENTEN",
+  "unifiedPicker.sections.files": "DATEIEN",
+  "unifiedPicker.sections.workspaceRoot": "ARBEITSBEREICH-ROOT",
+  "unifiedPicker.badge.subagent": "unteragent",
+  "unifiedPicker.footer.navigate": "navigieren",
+  "unifiedPicker.footer.select": "auswählen",
+  "unifiedPicker.footer.close": "schließen",
+} as const
