@@ -17,18 +17,19 @@ import {
   fetchAgents,
   fetchProviders,
   clearInstanceDraftPrompts,
+  resetSessionPagination,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
   ensureWorktreeMapLoaded,
-  getOrCreateWorktreeClient,
-  getWorktreeSlugForSession,
   reloadWorktreeMap,
   reloadWorktrees,
 } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
-import { setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
+import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
@@ -38,7 +39,14 @@ import {
   markPermissionReplied,
   pruneRepliedPermissions,
 } from "./permission-replies"
-import { clearAutoAcceptPermission, drainAutoAcceptPermissions, isPermissionAutoAcceptEnabled, togglePermissionAutoAccept } from "./permission-auto-accept"
+import {
+  clearAutoAcceptPermission,
+  drainAutoAcceptPermissions,
+  isPermissionAutoAcceptEnabled,
+  resolvePermissionAutoAcceptFamilyRoot,
+  setPermissionAutoAcceptFamilyRootResolver,
+  togglePermissionAutoAccept,
+} from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
@@ -46,6 +54,12 @@ import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
 
 const log = getLogger("api")
+
+setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
+  const instanceSessions = sessions().get(instanceId)
+  if (!instanceSessions) return sessionId
+  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
+})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -57,12 +71,8 @@ const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boole
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequestLike[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
 const permissionSessionCounts = new Map<string, Map<string, number>>()
-// Track which worktree a permission was enqueued under (by permission request id).
-const permissionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 
 const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
-// Track which worktree a question was enqueued under (by question request id).
-const questionWorktreeSlugByInstance = new Map<string, Map<string, string>>()
 const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
 const questionSessionCounts = new Map<string, Map<string, number>>()
 const questionEnqueuedAt = new Map<string, number>()
@@ -98,11 +108,12 @@ const MAX_LOG_ENTRIES = 1000
 const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor): Instance {
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
     folder: descriptor.path,
+    projectName: descriptor.name ?? projectName ?? existing?.projectName,
     port: descriptor.port ?? existing?.port ?? 0,
     pid: descriptor.pid ?? existing?.pid ?? 0,
     proxyPath: descriptor.proxyPath,
@@ -132,8 +143,8 @@ function ensureActiveInstanceSelected(): void {
   }
 }
 
-function upsertWorkspace(descriptor: WorkspaceDescriptor) {
-  const mapped = workspaceDescriptorToInstance(descriptor)
+function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -166,7 +177,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     sdkManager.destroyClientsForInstance(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath, "root")
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -186,6 +197,7 @@ function releaseInstanceResources(instanceId: string) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
+  clearOpenCodeWorkspaceCache(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -267,6 +279,8 @@ async function hydrateInstanceData(instanceId: string, options?: { force?: boole
       await ensureWorktreesLoaded(instanceId)
       await ensureWorktreeMapLoaded(instanceId)
     }
+    await syncOpenCodeWorkspaces(instanceId)
+    resetSessionPagination(instanceId)
     await fetchSessions(instanceId)
     await fetchAgents(instanceId)
     await fetchProviders(instanceId)
@@ -541,10 +555,10 @@ function removeInstance(id: string) {
   syncHasInstancesFlag()
 }
 
-async function createInstance(folder: string, _binaryPath?: string): Promise<string> {
+async function createInstance(folder: string, _binaryPath?: string, projectName?: string): Promise<string> {
   try {
-    const workspace = await serverApi.createWorkspace({ path: folder })
-    upsertWorkspace(workspace)
+    const workspace = await serverApi.createWorkspace({ path: folder, name: projectName })
+    upsertWorkspace(workspace, projectName)
     setActiveInstanceId(workspace.id)
     return workspace.id
   } catch (error) {
@@ -575,6 +589,18 @@ function getExistingInstanceForFolder(folder: string): Instance | null {
 
   const activeId = activeInstanceId()
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
+}
+
+function updateProjectNameForFolder(folder: string, projectName: string): void {
+  const name = projectName.trim()
+  if (!folder || !name) return
+  const target = normalizeInstanceFolderPath(folder)
+  for (const instance of instances().values()) {
+    if (instance.status === "stopped") continue
+    if (normalizeInstanceFolderPath(instance.folder) === target) {
+      updateInstance(instance.id, { projectName: name })
+    }
+  }
 }
 
 async function stopInstance(id: string) {
@@ -847,14 +873,6 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequestL
     }
     setSessionPendingPermission(instanceId, sessionId, true)
 
-    // Refresh this when duplicate permission events carry better session/worktree hydration.
-    const slug = getWorktreeSlugForSession(instanceId, sessionId)
-    let byPermissionId = permissionWorktreeSlugByInstance.get(instanceId)
-    if (!byPermissionId) {
-      byPermissionId = new Map()
-      permissionWorktreeSlugByInstance.set(instanceId, byPermissionId)
-    }
-    byPermissionId.set(queuedPermission.id, slug)
   }
 
   drainAutoAcceptPermissions(instanceId, [queuedPermission], sendPermissionResponse, hasPendingPermission)
@@ -889,8 +907,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 
   const removed = removedPermission
   if (removed) {
-    // Use the id we were asked to remove (avoids type inference edge cases).
-    permissionWorktreeSlugByInstance.get(instanceId)?.delete(permissionId)
     const removedSessionId = getPermissionSessionId(removed)
     if (removedSessionId) {
       clearAutoAcceptPermission(instanceId, removedSessionId, permissionId)
@@ -904,6 +920,10 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
   const willEnable = !isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
   if (!willEnable) return
+  drainAutoAcceptPermissionsForInstance(instanceId)
+}
+
+function drainAutoAcceptPermissionsForInstance(instanceId: string): void {
   drainAutoAcceptPermissions(instanceId, getPermissionQueue(instanceId), sendPermissionResponse, hasPendingPermission)
 }
 
@@ -925,7 +945,6 @@ function clearPermissionQueue(instanceId: string): void {
     return next
   })
   clearSessionPendingCounts(instanceId)
-  permissionWorktreeSlugByInstance.delete(instanceId)
   recomputeActiveInterruption(instanceId)
 }
 
@@ -960,15 +979,6 @@ function addQuestionToQueue(instanceId: string, request: QuestionRequest): void 
     incrementQuestionSessionPendingCount(instanceId, sessionId)
     setSessionPendingQuestion(instanceId, sessionId, true)
 
-    // Record the worktree slug at the time the question is enqueued.
-    // This is used to respond in the same worktree context even from the global permission center.
-    const slug = getWorktreeSlugForSession(instanceId, sessionId)
-    let byQuestionId = questionWorktreeSlugByInstance.get(instanceId)
-    if (!byQuestionId) {
-      byQuestionId = new Map()
-      questionWorktreeSlugByInstance.set(instanceId, byQuestionId)
-    }
-    byQuestionId.set(request.id, slug)
   }
 }
 
@@ -989,7 +999,6 @@ function removeQuestionFromQueue(instanceId: string, requestId: string): void {
   })
 
   questionEnqueuedAt.delete(requestId)
-  questionWorktreeSlugByInstance.get(instanceId)?.delete(requestId)
   recomputeActiveInterruption(instanceId)
 
   if (removedSessionId) {
@@ -1002,8 +1011,6 @@ function clearQuestionQueue(instanceId: string): void {
   for (const request of getQuestionQueue(instanceId)) {
     questionEnqueuedAt.delete(request.id)
   }
-  questionWorktreeSlugByInstance.delete(instanceId)
-
   setQuestionQueues((prev) => {
     const next = new Map(prev)
     next.delete(instanceId)
@@ -1038,14 +1045,13 @@ async function sendQuestionReply(
   }
 
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
 
     await requestData(
       client.question.reply({
         requestID: requestId,
+        ...(workspace ? { workspace } : {}),
         answers,
       }),
       "question.reply",
@@ -1065,14 +1071,13 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
   }
 
   try {
-    const stored = questionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
 
     await requestData(
       client.question.reject({
         requestID: requestId,
+        ...(workspace ? { workspace } : {}),
       }),
       "question.reject",
     )
@@ -1088,7 +1093,8 @@ async function sendPermissionResponse(
   instanceId: string,
   sessionId: string,
   requestId: string,
-  reply: PermissionReply
+  reply: PermissionReply,
+  message?: string,
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
@@ -1096,15 +1102,15 @@ async function sendPermissionResponse(
   }
 
   try {
-    const stored = permissionWorktreeSlugByInstance.get(instanceId)?.get(requestId)
-    const fallback = sessionId ? getWorktreeSlugForSession(instanceId, sessionId) : "root"
-    const worktreeSlug = stored ?? fallback
-    const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
+    const client = getRootClient(instanceId)
+    const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
 
     await requestData(
       client.permission.reply({
         requestID: requestId,
+        ...(workspace ? { workspace } : {}),
         reply,
+        ...(message ? { message } : {}),
       }),
       "permission.reply",
     )
@@ -1194,6 +1200,7 @@ export {
   removeInstance,
   createInstance,
   getExistingInstanceForFolder,
+  updateProjectNameForFolder,
   stopInstance,
   getActiveInstance,
   addLog,
@@ -1212,6 +1219,7 @@ export {
   markPermissionReplied,
   hasRepliedPermission,
   togglePermissionAutoAcceptForSession,
+  drainAutoAcceptPermissionsForInstance,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
