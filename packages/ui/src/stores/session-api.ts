@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SnapshotFileDiff, SessionInfo as V2SessionInfo, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
+import type { SnapshotFileDiff, SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -27,6 +27,7 @@ import {
   setSessionInfoByInstance,
   setSessions,
   sessions,
+  getSessionRoot,
   withSession,
   loading,
   setLoading,
@@ -131,12 +132,12 @@ type V2SessionListOptions = {
   search?: string
 }
 
-function getKnownParentId(session: V2SessionInfo | Session): string | null | undefined {
+function getKnownParentId(session: SessionV2Info | Session): string | null | undefined {
   return (session as any).parentID ?? (session as Session).parentId
 }
 
-function hasMissingParentChain(session: V2SessionInfo, loaded: Map<string, V2SessionInfo | Session>): boolean {
-  let current: V2SessionInfo | Session = session
+function hasMissingParentChain(session: SessionV2Info, loaded: Map<string, SessionV2Info | Session>): boolean {
+  let current: SessionV2Info | Session = session
   const seen = new Set<string>()
 
   while (getKnownParentId(current)) {
@@ -157,9 +158,13 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
   return requestData<V2SessionsResponse>(client.v2.session.list(options), "v2.session.list")
 }
 
-async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: V2SessionInfo[], directory?: string): Promise<void> {
+function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
+  return ((response as any).items ?? response.data ?? []) as SessionV2Info[]
+}
+
+async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
-  const loaded = new Map<string, V2SessionInfo | Session>(currentSessions)
+  const loaded = new Map<string, SessionV2Info | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
 
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
@@ -170,7 +175,7 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: V2Ses
     const next = new Map(prev)
     const instanceSessions = new Map(next.get(instanceId) ?? new Map())
 
-    for (const apiSession of page.items) {
+    for (const apiSession of getV2SessionItems(page)) {
       const existingSession = instanceSessions.get(apiSession.id)
       instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       loaded.set(apiSession.id, apiSession)
@@ -219,7 +224,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
     const existingSessions = sessions().get(instanceId)
     const sessionMap = new Map<string, Session>()
 
-    for (const apiSession of response.items) {
+    for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
       const existingStatus = existingSession?.status
 
@@ -246,8 +251,6 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
       })
     }
 
-    const rootIds = response.items.filter((session) => !session.parentID).map((session) => session.id)
-
     setSessions((prev) => {
       const next = new Map(prev)
       const instanceSessions = new Map(next.get(instanceId) ?? new Map())
@@ -258,7 +261,25 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
       return next
     })
 
-    setSessionPage(instanceId, rootIds, undefined, false, options?.reset ?? true)
+    const rootIds: string[] = []
+    const missingRootSessionIds: string[] = []
+    for (const apiSession of getV2SessionItems(response)) {
+      const root = getSessionRoot(instanceId, apiSession.id)
+      if (root) {
+        if (!rootIds.includes(root.id)) rootIds.push(root.id)
+      } else if (apiSession.parentID) {
+        missingRootSessionIds.push(apiSession.id)
+      }
+    }
+
+    if (missingRootSessionIds.length > 0) {
+      log.warn("Some V2 session list items could not be attached to a loaded root", {
+        instanceId,
+        sessionIds: missingRootSessionIds,
+      })
+    }
+
+    setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
 
     syncInstanceSessionIndicator(instanceId)
 
@@ -321,7 +342,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     })
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
-    const searchResults = response.items
+    const searchResults = getV2SessionItems(response)
 
     if (searchResults.length === 0) {
       setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
@@ -367,7 +388,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 }
 
-function toClientSessionV2(instanceId: string, apiSession: V2SessionInfo, existingSession?: Session): Session {
+function toClientSessionV2(instanceId: string, apiSession: SessionV2Info, existingSession?: Session): Session {
   return {
     id: apiSession.id,
     instanceId,
