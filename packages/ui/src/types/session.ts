@@ -12,7 +12,7 @@ export type {
   Agent as SDKAgent, 
   Provider as SDKProvider,
   Model as SDKModel
-} from "@opencode-ai/sdk"
+} from "@opencode-ai/sdk/v2"
 
 export type SessionStatus = "idle" | "working" | "compacting"
 
@@ -62,7 +62,7 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
 
 // Our client-specific Session interface extending SDK Session
 export interface Session
-  extends Omit<import("@opencode-ai/sdk").Session, "projectID" | "directory" | "parentID"> {
+  extends Omit<SDKSession, "projectID" | "directory" | "parentID" | "slug" | "model"> {
   instanceId: string // Client-specific field
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
@@ -81,7 +81,7 @@ export interface Session
 
 // Adapter function to convert SDK Session to client Session
 export function createClientSession(
-  sdkSession: import("@opencode-ai/sdk").Session,
+  sdkSession: SDKSession,
   instanceId: string,
   agent: string = "",
   model: { providerId: string; modelId: string } = { providerId: "", modelId: "" },
