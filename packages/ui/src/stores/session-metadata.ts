@@ -70,7 +70,7 @@ export async function updateSessionMetadataWithClient(
   const latest = await requestData<any>(client.session.get({ sessionID: sessionId }), "session.get")
   const nextMetadata = updater(normalizeMetadata(latest?.metadata))
   const updated = await requestData<any>(
-    client.session.update({ sessionID: sessionId, metadata: nextMetadata }),
+    client.session.update({ sessionID: sessionId, metadata: nextMetadata } as any),
     "session.update",
   )
   const persistedMetadata = normalizeMetadata(updated?.metadata ?? nextMetadata)
