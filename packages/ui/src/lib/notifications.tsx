@@ -1,4 +1,5 @@
 import toast from "solid-toast"
+import { createSignal } from "solid-js"
 import { isTauriHost } from "./runtime-env"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
@@ -21,6 +22,255 @@ export type ToastPayload = {
     href: string
   }
 }
+
+// ==================== Toast History Types ====================
+
+/**
+ * Toast history record item
+ */
+export interface IToastHistoryItem {
+  /** Unique identifier */
+  id: string;
+  /** Notification title (optional) */
+  title?: string;
+  /** Notification message */
+  message: string;
+  /** Variant type */
+  variant: ToastVariant;
+  /** Creation timestamp */
+  createdAt: number;
+  /** Read state (clicked) */
+  read: boolean;
+  /** Action link (optional) */
+  action?: {
+    label: string;
+    href: string;
+  };
+}
+
+/**
+ * Toast history filter options
+ */
+export interface IToastHistoryFilter {
+  /** Filter by variant type */
+  variant?: ToastVariant;
+  /** Maximum number of results */
+  limit?: number;
+  /** Only return unread */
+  unreadOnly?: boolean;
+}
+
+/** History change callback type */
+type ToastHistoryCallback = (items: IToastHistoryItem[]) => void;
+
+// ==================== Toast History Store ====================
+
+/** Maximum history records */
+const MAX_HISTORY_ITEMS = 50;
+
+/** History records (module-level private state) */
+let _historyItems: IToastHistoryItem[] = [];
+
+/** Subscribers list */
+const _subscribers = new Set<ToastHistoryCallback>();
+
+/** Reactive signal for unread count */
+const [_unreadCount, _setUnreadCount] = createSignal(0);
+
+/**
+ * Get reactive signal for unread count
+ *
+ * Used in components for direct access to ensure reactivity
+ *
+ * @returns Unread count signal
+ */
+export function getUnreadToastCountSignal() {
+  return _unreadCount;
+}
+
+/**
+ * Update unread count signal
+ */
+function _updateUnreadCount(): void {
+  _setUnreadCount(_historyItems.filter((item) => !item.read).length);
+}
+
+/**
+ * Notify all subscribers
+ */
+function _notifySubscribers(): void {
+  const items = [..._historyItems];
+  _subscribers.forEach((callback) => {
+    try {
+      callback(items);
+    } catch (error) {
+      console.error("[notifications] subscriber error:", error);
+    }
+  });
+}
+
+/**
+ * Generate unique ID
+ */
+function _generateId(): string {
+  return `toast_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/**
+ * Trim history to max items
+ *
+ * Note: Array is newest-first (unshift), so slice(0, N) keeps newest N items
+ */
+function _trimHistory(): void {
+  if (_historyItems.length > MAX_HISTORY_ITEMS) {
+    // Keep only the newest entries
+    _historyItems = _historyItems.slice(0, MAX_HISTORY_ITEMS);
+  }
+}
+
+// ==================== Toast History API ====================
+
+/**
+ * Add toast to history
+ *
+ * @param item - History item (without id, createdAt, read)
+ * @returns Generated notification ID
+ */
+export function addToToastHistory(
+  item: Omit<IToastHistoryItem, "id" | "createdAt" | "read">
+): string {
+  const historyItem: IToastHistoryItem = {
+    ...item,
+    id: _generateId(),
+    createdAt: Date.now(),
+    read: false,
+  };
+
+  // Prepend to beginning (newest first)
+  _historyItems.unshift(historyItem);
+
+  // Trim to max items
+  _trimHistory();
+
+  // Update unread count
+  _updateUnreadCount();
+
+  // Notify subscribers
+  _notifySubscribers();
+
+  return historyItem.id;
+}
+
+/**
+ * Clear all history
+ */
+export function clearToastHistory(): void {
+  _historyItems = [];
+  _updateUnreadCount();
+  _notifySubscribers();
+}
+
+/**
+ * Mark as read
+ *
+ * @param id - Record ID
+ */
+export function markToastHistoryAsRead(id: string): void {
+  const item = _historyItems.find((i) => i.id === id);
+  if (item && !item.read) {
+    item.read = true;
+    _updateUnreadCount();
+    _notifySubscribers();
+  }
+}
+
+/**
+ * Mark all as read
+ */
+export function markAllToastHistoryAsRead(): void {
+  let changed = false;
+  _historyItems.forEach((item) => {
+    if (!item.read) {
+      item.read = true;
+      changed = true;
+    }
+  });
+  if (changed) {
+    _updateUnreadCount();
+    _notifySubscribers();
+  }
+}
+
+/**
+ * Delete single record
+ *
+ * @param id - Record ID
+ */
+export function deleteToastHistoryItem(id: string): void {
+  const index = _historyItems.findIndex((i) => i.id === id);
+  if (index !== -1) {
+    _historyItems.splice(index, 1);
+    _updateUnreadCount();
+    _notifySubscribers();
+  }
+}
+
+/**
+ * Get history records
+ * Get history records
+ *
+ * @param filter - Filter condition (optional)
+ * @returns History records array
+ */
+export function getToastHistory(filter?: IToastHistoryFilter): IToastHistoryItem[] {
+  let items = [..._historyItems];
+
+  // Filter by variant
+  if (filter?.variant) {
+    items = items.filter((item) => item.variant === filter.variant);
+  }
+
+  // Filter: unread only
+  if (filter?.unreadOnly) {
+    items = items.filter((item) => !item.read);
+  }
+
+  // Limit count
+  if (filter?.limit && filter.limit > 0) {
+    items = items.slice(0, filter.limit);
+  }
+
+  return items;
+}
+
+/**
+ * Get unread count
+ *
+ * @returns Unread notification count
+ */
+export function getUnreadToastCount(): number {
+  return _historyItems.filter((item) => !item.read).length;
+}
+
+/**
+ * Subscribe to history changes
+ *
+ * @param callback - Callback function
+ * @returns Unsubscribe function
+ */
+export function subscribeToastHistory(callback: ToastHistoryCallback): () => void {
+  _subscribers.add(callback);
+
+  // Immediately invoke with current state
+  callback([..._historyItems]);
+
+  // Return unsubscribe function
+  return () => {
+    _subscribers.delete(callback);
+  };
+}
+
+// ==================== External URL Handler ====================
 
 async function openExternalUrl(url: string): Promise<void> {
   if (typeof window === "undefined") {
@@ -46,6 +296,8 @@ async function openExternalUrl(url: string): Promise<void> {
     toast.error("Unable to open link")
   }
 }
+
+// ==================== Variant Accent Styles ====================
 
 const variantAccent: Record<
   ToastVariant,
@@ -82,9 +334,27 @@ const variantAccent: Record<
   },
 }
 
+// ==================== Toast Notification ====================
+
+/**
+ * Show toast notification
+ *
+ * Also adds the notification to history
+ *
+ * @param payload - Toast payload
+ * @returns Toast handle
+ */
 export function showToastNotification(payload: ToastPayload): ToastHandle {
   const accent = variantAccent[payload.variant]
   const duration = payload.duration ?? 10000
+
+  // Add to history (non-blocking)
+  addToToastHistory({
+    title: payload.title,
+    message: payload.message,
+    variant: payload.variant,
+    action: payload.action,
+  })
 
   const id = toast.custom(
     () => (
@@ -134,4 +404,40 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
     id,
     dismiss: () => toast.dismiss(id),
   }
+}
+
+// ==================== Variant Utilities ====================
+
+/**
+ * Get variant display name
+ *
+ * @param variant - Variant type
+ * @returns Display name
+ *
+ * @note Currently unused, kept for future extension
+ */
+function getToastVariantLabel(variant: ToastVariant): string {
+  const labels: Record<ToastVariant, string> = {
+    info: "Info",
+    success: "Success",
+    warning: "Warning",
+    error: "Error",
+  };
+  return labels[variant];
+}
+
+/**
+ * Get variant CSS class names
+ *
+ * @param variant - Variant type
+ * @param type - Type of class to get
+ * @returns CSS class name
+ *
+ * @note Currently unused, kept for future extension
+ */
+function getToastVariantClasses(
+  variant: ToastVariant,
+  type: "badge" | "container" | "headline" | "body"
+): string {
+  return variantAccent[variant][type];
 }

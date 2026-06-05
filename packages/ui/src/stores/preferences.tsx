@@ -88,6 +88,7 @@ export interface OpenCodeBinary {
 export interface RecentFolder {
   path: string
   lastAccessed: number
+  projectName?: string
 }
 
 export type ThemePreference = "light" | "dark" | "system"
@@ -253,9 +254,14 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       if (!f || typeof f !== "object") return null
       const p = (f as any).path
       const lastAccessed = (f as any).lastAccessed
+      const projectName = (f as any).projectName
       if (typeof p !== "string") return null
       const ts = typeof lastAccessed === "number" ? lastAccessed : Date.now()
-      return { path: p, lastAccessed: ts }
+      return {
+        path: p,
+        lastAccessed: ts,
+        ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
+      }
     }),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
@@ -335,8 +341,13 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
 }
 
 function buildRecentFolderList(folderPath: string, source: RecentFolder[]): RecentFolder[] {
+  const existing = source.find((f) => f.path === folderPath)
   const folders = source.filter((f) => f.path !== folderPath)
-  folders.unshift({ path: folderPath, lastAccessed: Date.now() })
+  folders.unshift({
+    path: folderPath,
+    lastAccessed: Date.now(),
+    ...(existing?.projectName ? { projectName: existing.projectName } : {}),
+  })
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
 
@@ -585,6 +596,18 @@ function removeRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
 }
 
+async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
+  const name = projectName.trim()
+  if (!folderPath || !name) return
+  const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
+  try {
+    await patchStateOwner("ui", { recentFolders: next })
+  } catch (error) {
+    log.error("Failed to rename recent folder", error)
+    throw error
+  }
+}
+
 async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
   const profile = buildRemoteServerProfile(input, remoteServers())
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
@@ -781,6 +804,7 @@ interface ConfigContextValue {
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
+  renameRecentFolderProject: typeof renameRecentFolderProject
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
   saveRemoteServerProfile: typeof saveRemoteServerProfile
@@ -837,6 +861,7 @@ const configContextValue: ConfigContextValue = {
   uiState,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   saveRemoteServerProfile,
@@ -924,6 +949,7 @@ export {
   updateSpeechSettings,
   addRecentFolder,
   removeRecentFolder,
+  renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,

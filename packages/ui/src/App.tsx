@@ -47,6 +47,7 @@ import {
   clearActiveParentSession,
   createSession,
   fetchSessions,
+  getSessionFetchLimit,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
@@ -77,6 +78,7 @@ const App: Component = () => {
   const { t } = useI18n()
   const {
     preferences,
+    recentFolders,
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
@@ -263,11 +265,22 @@ const App: Component = () => {
 
   const launchErrorMessage = () => launchError()?.message ?? ""
 
+  function getPathBasename(path: string): string {
+    const normalized = path.replace(/[\\/]+$/, "")
+    return normalized.split(/[\\/]/).pop() || path
+  }
+
+  function getProjectNameForFolder(folderPath: string): string {
+    const recent = recentFolders().find((folder) => folder.path === folderPath)
+    return recent?.projectName?.trim() || getPathBasename(folderPath)
+  }
+
   async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
     if (!folderPath) {
       return
     }
     const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
+    const projectName = getProjectNameForFolder(folderPath)
     recordWorkspaceLaunch(folderPath, selectedBinary)
     clearLaunchError()
 
@@ -281,7 +294,7 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const instanceId = await createInstance(folderPath, selectedBinary)
+      const instanceId = await createInstance(folderPath, selectedBinary, projectName)
       selectInstanceTab(instanceId)
       setShowFolderSelection(false)
 
@@ -404,7 +417,7 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      await fetchSessions(instanceId)
+      await fetchSessions(instanceId, { start: 0, limit: getSessionFetchLimit(instanceId) })
     } catch (error) {
       log.error("Failed to refresh sessions after closing", error)
     }

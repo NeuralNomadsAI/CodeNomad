@@ -946,6 +946,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     await runShellCommand(props.instance.id, session.id, command)
   }
 
+  /** Return to the last conversation */
+  const handleBackToConversation = () => {
+    const sessionIds = cachedSessionIds()
+    if (sessionIds.length > 0) {
+      handleSessionSelect(sessionIds[0])
+    }
+  }
   const sessionLayout = (
     <div
       class="session-shell-panels flex flex-1 min-h-0 overflow-x-hidden"
@@ -1248,7 +1255,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView instanceId={props.instance.id} />
+              <InfoView instanceId={props.instance.id} onBackToConversation={handleBackToConversation} />
             </div>
           </Show>
         </Box>

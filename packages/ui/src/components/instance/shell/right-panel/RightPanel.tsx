@@ -26,10 +26,11 @@ import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } f
 import {
   getDefaultWorktreeSlug,
   getGitRepoStatus,
-  getOrCreateWorktreeClient,
   getWorktreeSlugForSession,
   getWorktrees,
 } from "../../../../stores/worktrees"
+import { getRootClient } from "../../../../stores/opencode-client"
+import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { showConfirmDialog } from "../../../../stores/alerts"
@@ -396,7 +397,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return branch || null
   })
 
-  const browserClient = createMemo(() => getOrCreateWorktreeClient(props.instanceId, worktreeSlugForViewer()))
+  const browserClient = createMemo(() => getRootClient(props.instanceId))
+  const fileWorkspacePayload = async () => {
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(props.instanceId, worktreeSlugForViewer())
+    return workspace ? { workspace } : {}
+  }
 
   const {
     gitStatusEntries,
@@ -489,7 +494,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     setBrowserLoading(true)
     setBrowserError(null)
     try {
-      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized }), "file.list")
+      const nodes = await requestData<FileNode[]>(browserClient().file.list({ path: normalized, ...(await fileWorkspacePayload()) }), "file.list")
       setBrowserPath(normalized)
       setBrowserEntries(Array.isArray(nodes) ? nodes : [])
     } catch (error) {
@@ -513,7 +518,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setFilesListOpen(false)
     }
     try {
-      const content = await requestData<FileContent>(browserClient().file.read({ path }), "file.read")
+      const content = await requestData<FileContent>(browserClient().file.read({ path, ...(await fileWorkspacePayload()) }), "file.read")
       const type = (content as any)?.type
       const encoding = (content as any)?.encoding
       if (type && type !== "text") {
@@ -544,7 +549,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (originalContent !== null) {
       try {
         const currentDiskContent = await requestData<FileContent>(
-          browserClient().file.read({ path }),
+          browserClient().file.read({ path, ...(await fileWorkspacePayload()) }),
           "file.read",
         )
         const diskContent = (currentDiskContent as any)?.content
@@ -573,7 +578,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
     setBrowserSelectedSaving(true)
     try {
-      await serverApi.writeWorkspaceFile(props.instanceId, path, content)
+      await serverApi.writeWorkspaceFile(props.instanceId, path, content, { worktree: worktreeSlugForViewer() })
       setBrowserSelectedContent(content)
       setBrowserSelectedOriginalContent(content) // Update original to match saved
       setBrowserSelectedDirty(false)
@@ -697,7 +702,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       setBrowserSelectedLoading(true)
       setBrowserSelectedError(null)
       try {
-        const content = await requestData<FileContent>(browserClient().file.read({ path: selected }), "file.read")
+        const content = await requestData<FileContent>(browserClient().file.read({ path: selected, ...(await fileWorkspacePayload()) }), "file.read")
         const type = (content as any)?.type
         const encoding = (content as any)?.encoding
         if (type && type !== "text") {
