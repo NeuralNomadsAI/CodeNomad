@@ -140,7 +140,7 @@ export const toolCallMessages = {
   "toolCall.status.unknown": "अज्ञात",
 
   "toolCall.applyPatch.action.preparing": "apply_patch तयारी गर्दै...",
-  "toolCall.applyPatch.title.withFileCount.one": "{tool} (१ फाइल)",
+  "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} फाइल)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} फाइलहरू)",
   "toolCall.applyPatch.fileFallback": "फाइल {number}",
 } as const

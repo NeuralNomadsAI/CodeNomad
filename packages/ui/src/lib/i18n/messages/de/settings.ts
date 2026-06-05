@@ -273,6 +273,7 @@ export const settingsMessages = {
   "settings.speech.help": "Die Spracheingabe erscheint, wenn die Transkription konfiguriert ist. Die Wiedergabe verwendet den gewählten TTS-Modus.",
   "settings.speech.compatibility.streamingUnavailable": "Ihr Anbieter unterstützt kein Streaming-TTS. Schalten Sie auf 'Buffered' um.",
   "settings.speech.compatibility.browserStreamingUnavailable": "Ihr Browser unterstützt kein Streaming für dieses Format. Wählen Sie 'Buffered' oder ein anderes Format.",
+  "settings.speech.compatibility.runtimeNote": "Alle Formate bleiben im Streaming-Modus auswählbar. Manche Browser-Anbieter-Kombinationen können bei der Wiedergabe dennoch fehlschlagen.",
   "settings.speech.testPlayback.action": "Wiedergabe testen",
   "settings.speech.testPlayback.generating": "Beispiel wird generiert",
   "settings.speech.testPlayback.stop": "Beispiel stoppen",

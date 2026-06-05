@@ -173,6 +173,7 @@ export const messagingMessages = {
   "promptInput.conversationMode.enable.title": "कुराकानी मोड सक्षम गर्नुहोस्",
   "promptInput.conversationMode.disable.title": "कुराकानी मोड अक्षम गर्नुहोस्",
   "promptInput.conversationMode.error.title": "कुराकानी वाचन असफल भयो",
+  "promptInput.conversationMode.error.message": "सहायक जवाफहरू बोल्न जारी राख्न असमर्थ।",
   "promptInput.voiceInput.start.title": "ध्वनि इनपुट सुरु गर्नुहोस्",
   "promptInput.voiceInput.stop.title": "रेकर्डिङ रोक्नुहोस् र ट्रान्सक्राइब गर्नुहोस्",
   "promptInput.voiceInput.transcribing.title": "अडियो ट्रान्सक्राइब गर्दै",

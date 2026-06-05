@@ -273,6 +273,7 @@ export const settingsMessages = {
   "settings.speech.help": "वाचन कन्फिगर र समर्थित हुँदा प्रम्प्ट ध्वनि इनपुट देखा पर्दछ।",
   "settings.speech.compatibility.streamingUnavailable": "तपाईंको वाचन प्रदायकले स्ट्रिमिङ TTS समर्थन गर्दैन।",
   "settings.speech.compatibility.browserStreamingUnavailable": "तपाईंको ब्राउजरले यो ढाँचा स्ट्रिम गर्न सक्दैन।",
+  "settings.speech.compatibility.runtimeNote": "स्ट्रिमिङ मोडमा सबै ढाँचाहरू चयन योग्य रहन्छन्। केही ब्राउजर र प्रदायक संयोजनहरू प्लेब्याकको समयमा असफल हुन सक्छन्।",
   "settings.speech.testPlayback.action": "प्लेब्याक परीक्षण गर्नुहोस्",
   "settings.speech.testPlayback.generating": "नमूना सिर्जना गर्दै",
   "settings.speech.testPlayback.stop": "नमूना रोक्नुहोस्",
