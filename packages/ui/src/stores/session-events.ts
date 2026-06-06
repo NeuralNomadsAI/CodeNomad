@@ -57,7 +57,9 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
 import { loadMessages } from "./session-api"
-import { getOrCreateWorktreeClient, getRootClient, getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
+import { getRootClient } from "./opencode-client"
+import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
+import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
 import {
   applyPartUpdateV2,
   applyPartDeltaV2,
@@ -186,12 +188,12 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
   const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
   const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
-  const client = getOrCreateWorktreeClient(instanceId, slug)
-  const rootClient = getRootClient(instanceId)
+  const client = getRootClient(instanceId)
+  const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
 
   try {
     const info = await requestData<any>(
-      client.session.get({ sessionID: sessionId }),
+      client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
       "session.get",
     )
 
@@ -200,7 +202,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     try {
       let statuses: Record<string, any> = {}
       try {
-        statuses = await requestData<Record<string, any>>(rootClient.session.status(), "session.status")
+        statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
       } catch {
         statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
       }
@@ -478,6 +480,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       retry: null,
       idleSince: null,
       version: info.version || "0",
+      metadata: (info as any).metadata,
       time: info.time
         ? { ...info.time }
         : {
@@ -523,6 +526,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
+      metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
       revert: info.revert
         ? {

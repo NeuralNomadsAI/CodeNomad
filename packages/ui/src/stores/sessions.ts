@@ -17,6 +17,8 @@ import {
   getSessionDraftPrompt,
   getSessionFamily,
   getSessionInfo,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -37,6 +39,11 @@ import {
   setSessionParentExpanded,
   setSessionStatus,
   toggleSessionParentExpanded,
+  clearSessionSearch,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  isSessionSearchLoading,
+  resetSessionPagination,
 } from "./session-state"
 
 import { getDefaultModel } from "./session-models"
@@ -46,6 +53,8 @@ import {
   fetchAgents,
   fetchProviders,
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   loadMessages,
@@ -111,6 +120,8 @@ export {
   fetchAgents,
   fetchProviders,
   fetchSessions,
+  loadMoreSessions,
+  searchSessions,
   fetchSessionChildren,
   forkSession,
   getActiveParentSession,
@@ -121,6 +132,8 @@ export {
   getSessionDraftPrompt,
   getSessionFamily,
   getSessionInfo,
+  getSessionSearchQuery,
+  getSessionSearchThreads,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -145,5 +158,10 @@ export {
   toggleSessionParentExpanded,
   updateSessionAgent,
   updateSessionModel,
+  clearSessionSearch,
+  getSessionFetchLimit,
+  getSessionHasMore,
+  isSessionSearchLoading,
+  resetSessionPagination,
 }
 export type { SessionInfo }

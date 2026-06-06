@@ -3,7 +3,8 @@ import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
-import { getOrCreateWorktreeClient } from "../../../../stores/worktrees"
+import { getRootClient } from "../../../../stores/opencode-client"
+import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
 import { requestData } from "../../../../lib/opencode-api"
 import { serverApi } from "../../../../lib/api-client"
 import { serverEvents } from "../../../../lib/server-events"
@@ -166,12 +167,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const loadGitStatus = async (force = false) => {
     if (!force && gitStatusEntries() !== null) return
     const slug = options.worktreeSlug()
-    const client = getOrCreateWorktreeClient(options.instanceId, slug)
+    const client = getRootClient(options.instanceId)
+    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, slug)
     const requestVersion = ++gitStatusRequestVersion
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status(), "file.status")
+      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status({ ...(workspace ? { workspace } : {}) }), "file.status")
       const detailList = await serverApi.fetchWorktreeGitStatus(options.instanceId, slug)
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== options.worktreeSlug()) return

@@ -29,6 +29,7 @@ const WorkspaceFilesQuerySchema = z.object({
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
+  worktree: z.string().trim().optional(),
 })
 
 const WorkspaceFileContentBodySchema = z.object({
@@ -132,10 +133,15 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; encoding?: "utf-8" | "base64"; worktree?: string }
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
+      if (query.worktree && query.worktree !== "root") {
+        const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
+        if (!directory) return
+        return deps.workspaceManager.readFileInDirectory(request.params.id, directory, query.path, { encoding: query.encoding })
+      }
       return deps.workspaceManager.readFile(request.params.id, query.path, { encoding: query.encoding })
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -144,11 +150,18 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.put<{
     Params: { id: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; worktree?: string }
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      if (query.worktree && query.worktree !== "root") {
+        const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
+        if (!directory) return
+        deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+        reply.code(204)
+        return
+      }
       deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
       reply.code(204)
     } catch (error) {
