@@ -189,6 +189,21 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastResetKey: string | number | undefined
   let suppressAutoScrollOnce = false
   let suppressHoldUntilTargetChanges = false
+  let lastItemsReference = props.items()
+  let restoreToken = 0
+
+  createEffect(() => {
+    const items = props.items()
+    if (items === lastItemsReference) return
+    lastItemsReference = items
+    restoreToken += 1
+    scrollController.setRestoring(false)
+  })
+
+  onCleanup(() => {
+    restoreToken += 1
+    scrollController.setRestoring(false)
+  })
   let pendingInitialScroll = true
   let programmaticScrollUntil = 0
   let pendingBottomRepinAfterHold = false
@@ -508,19 +523,22 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element) {
       opts?.fallback?.()
-      opts?.onApplied?.()
       return
     }
 
+    const token = ++restoreToken
+    const isRestoreCurrent = () => token === restoreToken && Boolean(scrollElement())
     const behavior = opts?.behavior ?? "auto"
     scrollController.setRestoring(true)
     const finishRestore = () => {
+      if (!isRestoreCurrent()) return
       scrollController.setRestoring(false)
       opts?.onApplied?.()
     }
     if (snapshot.atBottom) {
       applyBottomSnapshot()
       requestAnimationFrame(() => {
+        if (!isRestoreCurrent()) return
         applyBottomSnapshot()
         finishRestore()
       })
@@ -532,7 +550,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (index !== -1) {
         markProgrammaticScroll()
         virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: behavior === "smooth" })
-        retryAnchorRestore(snapshot, behavior, 6, finishRestore)
+        retryAnchorRestore(snapshot, behavior, 6, isRestoreCurrent, finishRestore)
         return
       }
     }
@@ -541,11 +559,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     requestAnimationFrame(finishRestore)
   }
 
-  function retryAnchorRestore(snapshot: VirtualFollowScrollSnapshot, behavior: ScrollBehavior, remainingFrames: number, onApplied?: () => void) {
+  function retryAnchorRestore(
+    snapshot: VirtualFollowScrollSnapshot,
+    behavior: ScrollBehavior,
+    remainingFrames: number,
+    isCurrent: () => boolean,
+    onApplied?: () => void,
+  ) {
     requestAnimationFrame(() => {
+      if (!isCurrent()) return
       const applied = applyAnchorSnapshot(snapshot)
       if (applied) {
         requestAnimationFrame(() => {
+          if (!isCurrent()) return
           applyAnchorSnapshot(snapshot)
           onApplied?.()
         })
@@ -553,12 +579,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (remainingFrames > 0) {
-        retryAnchorRestore(snapshot, behavior, remainingFrames - 1, onApplied)
+        retryAnchorRestore(snapshot, behavior, remainingFrames - 1, isCurrent, onApplied)
         return
       }
 
       applyPixelSnapshot(snapshot, behavior)
-      requestAnimationFrame(() => onApplied?.())
+      requestAnimationFrame(() => {
+        if (!isCurrent()) return
+        onApplied?.()
+      })
     })
   }
 

@@ -1318,10 +1318,12 @@ function StepCard(props: StepCardProps) {
   }
 
   const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
+  let didReportUsageStats = false
 
   createEffect(() => {
-    if (props.kind !== "finish") return
-    if (!usageStats()) return
+    if (didReportUsageStats) return
+    if (props.kind !== "finish" || !usageStats()) return
+    didReportUsageStats = true
     props.onContentRendered?.()
   })
 

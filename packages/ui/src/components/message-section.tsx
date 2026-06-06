@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from 
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
 import MessageBlock from "./message-block"
-import { getMessageAnchorId, getMessageIdFromAnchorId } from "./message-anchors"
+import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import VirtualFollowList, { type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { useConfig } from "../stores/preferences"
@@ -823,6 +823,8 @@ export default function MessageSection(props: MessageSectionProps) {
       fallback: () => {
         api.setAutoScroll(true)
         api.scrollToBottom({ immediate: true })
+        restoringScrollSnapshot = false
+        setDidRestoreScroll(true)
       },
       onApplied: () => {
         // Keep follow mode consistent with the restored state.
