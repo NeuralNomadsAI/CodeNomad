@@ -213,10 +213,18 @@ fn augment_launch_url(base_url: &str) -> String {
     };
 
     if base_url.contains('?') {
-        return format!("{}&{}", base_url, launch_query.trim_start_matches('?'));
+        return format!(
+            "{}&{}",
+            base_url,
+            launch_query.trim_start_matches(['?', '#'])
+        );
     }
 
-    format!("{}?{}", base_url, launch_query.trim_start_matches('?'))
+    format!(
+        "{}?{}",
+        base_url,
+        launch_query.trim_start_matches(['?', '#'])
+    )
 }
 
 fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
@@ -1436,6 +1444,9 @@ fn normalize_path(path: PathBuf) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     #[test]
     fn prod_entry_candidates_prefer_exe_relative_before_workspace_fallback() {
@@ -1455,5 +1466,27 @@ mod tests {
             candidates.last(),
             Some(&workspace.join("packages/server/dist/bin.js"))
         );
+    }
+
+    #[test]
+    fn augment_launch_url_trims_leading_fragment_marker() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        std::env::set_var("CODENOMAD_UI_LAUNCH_QUERY", "#debug=true");
+
+        let augmented = augment_launch_url("http://127.0.0.1:3000");
+
+        std::env::remove_var("CODENOMAD_UI_LAUNCH_QUERY");
+        assert_eq!(augmented, "http://127.0.0.1:3000?debug=true");
+    }
+
+    #[test]
+    fn augment_launch_url_trims_fragment_marker_when_query_exists() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        std::env::set_var("CODENOMAD_UI_LAUNCH_QUERY", "#debug=true");
+
+        let augmented = augment_launch_url("http://127.0.0.1:3000?existing=true");
+
+        std::env::remove_var("CODENOMAD_UI_LAUNCH_QUERY");
+        assert_eq!(augmented, "http://127.0.0.1:3000?existing=true&debug=true");
     }
 }

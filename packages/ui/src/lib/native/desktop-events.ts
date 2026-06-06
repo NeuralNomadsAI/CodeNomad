@@ -18,6 +18,15 @@ interface WorkspaceEventBatchPayload {
   events: WorkspaceEventPayload[]
 }
 
+export function createTerminalErrorNotifier(callbacks: Pick<WorkspaceEventTransportCallbacks, "onError">) {
+  let raised = false
+  return () => {
+    if (raised) return
+    raised = true
+    callbacks.onError?.()
+  }
+}
+
 export async function connectTauriWorkspaceEvents(
   callbacks: WorkspaceEventTransportCallbacks,
   options: DesktopEventTransportStartOptions,
@@ -25,7 +34,7 @@ export async function connectTauriWorkspaceEvents(
   let closed = false
   let opened = false
   let expectedGeneration: number | null = null
-  let terminalErrorRaised = false
+  const notifyTerminalError = createTerminalErrorNotifier(callbacks)
   const pendingBatches: WorkspaceEventBatchPayload[] = []
   const pendingStatuses: DesktopEventTransportStatusPayload[] = []
 
@@ -79,13 +88,12 @@ export async function connectTauriWorkspaceEvents(
     }
 
     if (payload.state === "stopped") {
-      callbacks.onError?.()
+      notifyTerminalError()
       return
     }
 
-    if (payload.terminal && !terminalErrorRaised) {
-      terminalErrorRaised = true
-      callbacks.onError?.()
+    if (payload.terminal) {
+      notifyTerminalError()
     }
   }
 
