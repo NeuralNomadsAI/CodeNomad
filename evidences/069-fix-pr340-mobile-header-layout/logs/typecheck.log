@@ -1,4 +1,0 @@
-
-> @codenomad/ui@0.15.0 typecheck
-> tsc --noEmit -p tsconfig.json
-
