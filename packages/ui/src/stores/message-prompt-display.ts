@@ -1,6 +1,7 @@
 import type { PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 
 const STORAGE_KEY = "codenomad:prompt-display:v3"
+const LEGACY_STORAGE_KEY = "codenomad:prompt-display:v2"
 
 let loaded = false
 const promptDisplayOverrides = new Map<string, PromptDisplayMetadata>()
@@ -10,18 +11,17 @@ function makeKey(_instanceId: string, sessionId: string, messageId: string): str
 }
 
 function isLegacyInstanceScopedKey(key: string): boolean {
-  return key.split(":").length === 3
+  const firstSeparator = key.indexOf(":")
+  if (firstSeparator <= 0) return false
+  const secondSeparator = key.indexOf(":", firstSeparator + 1)
+  return secondSeparator > firstSeparator + 1 && secondSeparator < key.length - 1
 }
 
 function migrateStoredKey(key: string): string {
   if (!isLegacyInstanceScopedKey(key)) {
     return key
   }
-  const [, sessionId, messageId] = key.split(":")
-  if (!sessionId || !messageId) {
-    return key
-  }
-  return `${sessionId}:${messageId}`
+  return key.slice(key.indexOf(":") + 1)
 }
 
 function readStorage(): Storage | null {
@@ -40,37 +40,39 @@ function ensureLoaded(): void {
   if (!storage) return
 
   try {
-    const parsedEntries: Record<string, PromptDisplayMetadata>[] = []
     const raw = storage.getItem(STORAGE_KEY)
     if (raw) {
-      parsedEntries.push(JSON.parse(raw) as Record<string, PromptDisplayMetadata>)
+      loadStoredEntries(JSON.parse(raw) as Record<string, PromptDisplayMetadata>, false)
     }
-    const legacyRaw = storage.getItem("codenomad:prompt-display:v2")
+    const legacyRaw = storage.getItem(LEGACY_STORAGE_KEY)
     if (legacyRaw) {
-      parsedEntries.push(JSON.parse(legacyRaw) as Record<string, PromptDisplayMetadata>)
+      loadStoredEntries(JSON.parse(legacyRaw) as Record<string, PromptDisplayMetadata>, true)
     }
-    if (parsedEntries.length === 0) return
-    for (const parsed of parsedEntries) {
-      for (const [key, value] of Object.entries(parsed)) {
-        if (isPromptDisplayMetadata(value)) {
-          promptDisplayOverrides.set(migrateStoredKey(key), value)
-        }
-      }
-    }
-    persist()
+    if (!raw && !legacyRaw) return
+    if (persist() && legacyRaw) storage.removeItem(LEGACY_STORAGE_KEY)
   } catch {
     promptDisplayOverrides.clear()
   }
 }
 
-function persist(): void {
+function loadStoredEntries(parsed: Record<string, PromptDisplayMetadata>, migrateLegacyKeys: boolean): void {
+  for (const [key, value] of Object.entries(parsed)) {
+    if (isPromptDisplayMetadata(value)) {
+      promptDisplayOverrides.set(migrateLegacyKeys ? migrateStoredKey(key) : key, value)
+    }
+  }
+}
+
+function persist(): boolean {
   const storage = readStorage()
-  if (!storage) return
+  if (!storage) return false
 
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(promptDisplayOverrides)))
+    return true
   } catch {
     // Ignore persistence failures.
+    return false
   }
 }
 

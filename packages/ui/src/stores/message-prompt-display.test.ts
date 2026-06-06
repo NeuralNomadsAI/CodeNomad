@@ -113,8 +113,40 @@ describe("message prompt display overrides", () => {
 
     assert.deepEqual(getPromptDisplayOverride(reopenedInstanceId, sessionId, messageId), metadata)
     assert.equal(storage.getItem("codenomad:prompt-display:v3")?.includes(`${sessionId}:${messageId}`), true)
+    assert.equal(storage.getItem("codenomad:prompt-display:v2"), null)
 
     clearPromptDisplayOverride(reopenedInstanceId, sessionId, messageId)
+    resetPromptDisplayOverrideStateForTests()
+    assert.equal(getPromptDisplayOverride(reopenedInstanceId, sessionId, messageId), undefined)
+
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  it("migrates legacy keys without rewriting stored stable v3 keys", () => {
+    const storage = new MemoryStorage()
+    const legacyInstanceId = "legacy-instance"
+    const reopenedInstanceId = "reopened-instance"
+    const sessionId = "session:with-colon"
+    const messageId = "msg-with-colon"
+    const stableSessionId = "stable-session"
+    const stableMessageId = "msg:with:colons"
+    const metadata: PromptDisplayMetadata = { segments: [{ kind: "inline", length: 4 }, { kind: "pasted", length: 9 }] }
+
+    storage.setItem(
+      "codenomad:prompt-display:v2",
+      JSON.stringify({ [`${legacyInstanceId}:${sessionId}:${messageId}`]: metadata }),
+    )
+    storage.setItem(
+      "codenomad:prompt-display:v3",
+      JSON.stringify({ [`${stableSessionId}:${stableMessageId}`]: metadata }),
+    )
+    ;(globalThis as unknown as { window?: WindowWithMemoryStorage }).window = { localStorage: storage }
+    resetPromptDisplayOverrideStateForTests()
+
+    assert.deepEqual(getPromptDisplayOverride(reopenedInstanceId, sessionId, messageId), metadata)
+    assert.deepEqual(getPromptDisplayOverride(reopenedInstanceId, stableSessionId, stableMessageId), metadata)
+    assert.equal(storage.getItem("codenomad:prompt-display:v2"), null)
+
     delete (globalThis as unknown as { window?: unknown }).window
   })
 

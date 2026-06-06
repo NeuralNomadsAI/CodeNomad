@@ -391,7 +391,7 @@ export default function PromptInput(props: PromptInputProps) {
       commandArgs,
     })
     const resolvedCommandArgs = submission.resolvedCommandArgs
-    const resolvedPrompt = submission.submitPrompt
+    const submitPrompt = submission.submitPrompt
     const historyEntry = submission.historyEntry
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
@@ -426,9 +426,9 @@ export default function PromptInput(props: PromptInputProps) {
     try {
       if (isShellMode) {
         if (props.onRunShell) {
-          await props.onRunShell(resolvedPrompt)
+          await props.onRunShell(submitPrompt)
         } else {
-          await props.onSend(resolvedPrompt, [])
+          await props.onSend(submitPrompt, [])
         }
       } else if (isKnownSlashCommand) {
         if (props.onCommand) {
@@ -437,7 +437,7 @@ export default function PromptInput(props: PromptInputProps) {
           await executeCustomCommand(props.instanceId, props.sessionId, commandName, resolvedCommandArgs)
         }
       } else {
-        await props.onSend(resolvedPrompt, currentAttachments)
+        await props.onSend(submitPrompt, currentAttachments)
       }
       if (!isKnownSlashCommand) {
         void refreshHistory()
