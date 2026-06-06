@@ -514,6 +514,23 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     </div>
   )
 
+  const renderPreviewToggleButton = () => (
+    <Show when={!showingInfoView()}>
+      <IconButton
+        color="inherit"
+        onClick={handlePreviewButtonClick}
+        aria-label={previewToggleLabel()}
+        title={previewToggleLabel()}
+        size="small"
+      >
+        {(() => {
+          const Icon = PreviewToggleIcon()
+          return <Icon class="w-5 h-5" aria-hidden="true" />
+        })()}
+      </IconButton>
+    </Show>
+  )
+
   const handleCommandPaletteClick = () => {
     showCommandPalette(props.instance.id)
   }
@@ -1018,6 +1035,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         </span>
                       </div>
 
+                      <Show when={!isPhoneLayout()}>
+                        {renderPreviewToggleButton()}
+                      </Show>
+
                       <Show when={isPhoneLayout() && !props.mobileFullscreenMode}>
                         <IconButton
                           color="inherit"
@@ -1028,18 +1049,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         >
                           <Maximize2 class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
-                        <IconButton
-                          color="inherit"
-                          onClick={handlePreviewButtonClick}
-                          aria-label={previewToggleLabel()}
-                          title={previewToggleLabel()}
-                          size="small"
-                        >
-                          {(() => {
-                            const Icon = PreviewToggleIcon()
-                            return <Icon class="w-5 h-5" aria-hidden="true" />
-                          })()}
-                        </IconButton>
+                        {renderPreviewToggleButton()}
                       </Show>
 
                       <Show when={rightDrawerState() === "floating-closed"}>
@@ -1117,18 +1127,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       >
                         <Search class="w-5 h-5" aria-hidden="true" />
                       </IconButton>
-                      <IconButton
-                        color="inherit"
-                        onClick={handlePreviewButtonClick}
-                        aria-label={previewToggleLabel()}
-                        title={previewToggleLabel()}
-                        size="small"
-                      >
-                        {(() => {
-                          const Icon = PreviewToggleIcon()
-                          return <Icon class="w-5 h-5" aria-hidden="true" />
-                        })()}
-                      </IconButton>
+                      {renderPreviewToggleButton()}
                     </Show>
                     <Show when={connectionStatus() === "connected"}>
                       <span class="status-indicator connected">
