@@ -17,6 +17,7 @@ import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import SpeechActionButton from "./speech-action-button"
 import { createFollowScroll } from "../lib/follow-scroll"
+import { formatElapsedClock, getMessageStartedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 
@@ -698,6 +699,7 @@ type ReasoningDisplayItem = {
   key: string
   part: ClientPart
   messageInfo?: MessageInfo
+  durationMs?: number
   showAgentMeta?: boolean
   defaultExpanded: boolean
   messageId: string
@@ -948,6 +950,7 @@ export default function MessageBlock(props: MessageBlockProps) {
             key,
             part,
             messageInfo: info,
+            durationMs: inferReasoningDurationMs(orderedParts, part, info, current.status),
             showAgentMeta,
             defaultExpanded: props.thinkingDefaultExpanded(),
             messageId: current.id,
@@ -1076,6 +1079,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
                     selectedMessageIds={props.selectedMessageIds}
                     onToggleSelectedMessage={props.onToggleSelectedMessage}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "compaction"}>
@@ -1097,6 +1101,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                   <ReasoningCard
                     part={(item() as ReasoningDisplayItem).part}
                     messageInfo={(item() as ReasoningDisplayItem).messageInfo}
+                    durationMs={(item() as ReasoningDisplayItem).durationMs}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as ReasoningDisplayItem).messageId}
@@ -1135,6 +1140,7 @@ interface StepCardProps {
   onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   selectedMessageIds?: () => Set<string>
   onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
+  onContentRendered?: () => void
 }
 
 interface CompactionCardProps {
@@ -1316,6 +1322,14 @@ function StepCard(props: StepCardProps) {
   }
 
   const finishStyle = () => (props.borderColor ? { "border-left-color": props.borderColor } : undefined)
+  let didReportUsageStats = false
+
+  createEffect(() => {
+    if (didReportUsageStats) return
+    if (props.kind !== "finish" || !usageStats()) return
+    didReportUsageStats = true
+    props.onContentRendered?.()
+  })
 
   const canDeleteMessage = () =>
     Boolean(props.showDeleteMessage && props.instanceId && props.sessionId && props.messageId) && !deletingMessage()
@@ -1483,6 +1497,7 @@ function formatCostValue(value: number) {
 interface ReasoningCardProps {
   part: ClientPart
   messageInfo?: MessageInfo
+  durationMs?: number
   instanceId: string
   sessionId: string
   messageId: string
@@ -1565,7 +1580,7 @@ function ReasoningStreamOutput(props: {
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
@@ -1583,10 +1598,12 @@ function ReasoningCard(props: ReasoningCardProps) {
   })
 
   const timestamp = () => {
-    const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
+    const value = getPartStartedAt(props.part) ?? getMessageStartedAt(props.messageInfo) ?? Date.now()
     const date = new Date(value)
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   }
+
+  const durationLabel = () => formatElapsedClock(props.durationMs, locale())
 
   const agentIdentifier = () => {
     const info = props.messageInfo
@@ -1780,6 +1797,9 @@ function ReasoningCard(props: ReasoningCardProps) {
               </Show>
 
               <span>{t("messageBlock.reasoning.thinkingLabel")}</span>
+              <Show when={durationLabel()}>
+                {(value) => <span class="message-reasoning-duration">{value()}</span>}
+              </Show>
             </span>
           </span>
         </button>
@@ -1850,7 +1870,9 @@ function ReasoningCard(props: ReasoningCardProps) {
             minItems={2}
           />
 
-          <span class="message-reasoning-time">{timestamp()}</span>
+          <div class="message-reasoning-timing">
+            <span class="message-reasoning-time">{timestamp()}</span>
+          </div>
         </div>
       </div>
 
