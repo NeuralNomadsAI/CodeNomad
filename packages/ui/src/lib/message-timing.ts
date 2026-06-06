@@ -45,21 +45,22 @@ export function inferReasoningDurationMs(
   return getPartDurationMs(reasoningPart)
 }
 
-export function formatElapsedClock(durationMs?: number): string {
+export function formatElapsedClock(durationMs?: number, locale?: string): string {
   const safeDuration = getPositiveNumber(durationMs)
   if (!safeDuration) {
     return ""
   }
 
+  const formatNumber = (value: number, minimumIntegerDigits = 1) =>
+    new Intl.NumberFormat(locale, { minimumIntegerDigits, useGrouping: false }).format(value)
   const totalSeconds = Math.max(1, Math.round(safeDuration / 1000))
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
-  const pad = (value: number) => String(value).padStart(2, "0")
 
   if (hours > 0) {
-    return `${hours}:${pad(minutes)}:${pad(seconds)}`
+    return `${formatNumber(hours)}:${formatNumber(minutes, 2)}:${formatNumber(seconds, 2)}`
   }
 
-  return `${minutes}:${pad(seconds)}`
+  return `${formatNumber(minutes)}:${formatNumber(seconds, 2)}`
 }

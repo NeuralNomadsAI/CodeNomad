@@ -43,7 +43,7 @@ interface MessageItemProps {
 }
 
 export default function MessageItem(props: MessageItemProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [copied, setCopied] = createSignal(false)
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
@@ -142,7 +142,7 @@ export default function MessageItem(props: MessageItemProps) {
   const isUser = () => props.record.role === "user"
   const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
   const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
-  const totalDurationLabel = () => (!isUser() ? formatElapsedClock(totalDuration()) : "")
+  const totalDurationLabel = () => (!isUser() ? formatElapsedClock(totalDuration(), locale()) : "")
 
   const timestamp = () => {
     const date = new Date(createdTimestamp())

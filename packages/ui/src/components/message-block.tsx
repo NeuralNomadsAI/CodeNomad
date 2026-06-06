@@ -1570,7 +1570,7 @@ function ReasoningStreamOutput(props: {
 }
 
 function ReasoningCard(props: ReasoningCardProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [expanded, setExpanded] = createSignal(Boolean(props.defaultExpanded))
   const [deletingMessage, setDeletingMessage] = createSignal(false)
   const [deletingUpTo, setDeletingUpTo] = createSignal(false)
@@ -1593,7 +1593,7 @@ function ReasoningCard(props: ReasoningCardProps) {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   }
 
-  const durationLabel = () => formatElapsedClock(props.durationMs)
+  const durationLabel = () => formatElapsedClock(props.durationMs, locale())
 
   const agentIdentifier = () => {
     const info = props.messageInfo

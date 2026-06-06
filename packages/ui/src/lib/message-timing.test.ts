@@ -10,6 +10,13 @@ describe("message timing helpers", () => {
     assert.equal(formatElapsedClock(3_725_000), "1:02:05")
   })
 
+  it("localizes elapsed clock digits while keeping compact clock separators", () => {
+    const wholeNumber = new Intl.NumberFormat("ar-EG", { useGrouping: false })
+    const twoDigitNumber = new Intl.NumberFormat("ar-EG", { minimumIntegerDigits: 2, useGrouping: false })
+
+    assert.equal(formatElapsedClock(65_000, "ar-EG"), `${wholeNumber.format(1)}:${twoDigitNumber.format(5)}`)
+  })
+
   it("uses message created/completed times for assistant durations", () => {
     const duration = getMessageDurationMs({ time: { created: 1_000, completed: 7_000 } } as any, "complete")
     assert.equal(duration, 6_000)
