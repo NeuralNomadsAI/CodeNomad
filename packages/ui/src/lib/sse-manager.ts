@@ -16,6 +16,13 @@ import type {
   EventSessionUpdated,
   EventSessionStatus,
 } from "@opencode-ai/sdk"
+import type {
+  EventPermissionV2Asked,
+  EventPermissionV2Replied,
+  EventQuestionV2Asked,
+  EventQuestionV2Rejected,
+  EventQuestionV2Replied,
+} from "@opencode-ai/sdk/v2"
 import { serverEvents } from "./server-events"
 import type {
   BackgroundProcess,
@@ -73,10 +80,13 @@ type SSEEvent =
   | EventSessionError
   | EventSessionIdle
   | EventSessionStatus
-  | { type: "permission.updated" | "permission.asked"; properties?: any }
-  | { type: "permission.replied"; properties?: any }
+  | EventPermissionV2Asked
+  | EventPermissionV2Replied
   | { type: "question.asked"; properties?: any }
   | { type: "question.replied" | "question.rejected"; properties?: any }
+  | EventQuestionV2Asked
+  | EventQuestionV2Replied
+  | EventQuestionV2Rejected
   | EventLspUpdated
   | TuiToastEvent
   | BackgroundProcessUpdatedEvent
@@ -158,12 +168,11 @@ class SSEManager {
       case "session.diff":
         this.onSessionDiff?.(instanceId, event as EventSessionDiff)
         break
-      case "permission.updated":
-      case "permission.asked":
-        this.onPermissionUpdated?.(instanceId, event as any)
+      case "permission.v2.asked":
+        this.onPermissionUpdated?.(instanceId, event as EventPermissionV2Asked)
         break
-      case "permission.replied":
-        this.onPermissionReplied?.(instanceId, event as any)
+      case "permission.v2.replied":
+        this.onPermissionReplied?.(instanceId, event as EventPermissionV2Replied)
         break
       case "question.asked":
         this.onQuestionAsked?.(instanceId, event as any)
@@ -171,6 +180,13 @@ class SSEManager {
       case "question.replied":
       case "question.rejected":
         this.onQuestionAnswered?.(instanceId, event as any)
+        break
+      case "question.v2.asked":
+        this.onQuestionAsked?.(instanceId, event as EventQuestionV2Asked)
+        break
+      case "question.v2.replied":
+      case "question.v2.rejected":
+        this.onQuestionAnswered?.(instanceId, event as EventQuestionV2Replied | EventQuestionV2Rejected)
         break
       case "lsp.updated":
         this.onLspUpdated?.(instanceId, event as EventLspUpdated)
@@ -209,10 +225,10 @@ class SSEManager {
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
   onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
   onSessionDiff?: (instanceId: string, event: EventSessionDiff) => void
-  onPermissionUpdated?: (instanceId: string, event: any) => void
-  onPermissionReplied?: (instanceId: string, event: any) => void
-  onQuestionAsked?: (instanceId: string, event: any) => void
-  onQuestionAnswered?: (instanceId: string, event: any) => void
+  onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked) => void
+  onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied) => void
+  onQuestionAsked?: (instanceId: string, event: EventQuestionV2Asked | { type: "question.asked"; properties?: any }) => void
+  onQuestionAnswered?: (instanceId: string, event: EventQuestionV2Replied | EventQuestionV2Rejected | { type: "question.replied" | "question.rejected"; properties?: any }) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void
   onBackgroundProcessUpdated?: (instanceId: string, event: BackgroundProcessUpdatedEvent) => void
   onBackgroundProcessRemoved?: (instanceId: string, event: BackgroundProcessRemovedEvent) => void

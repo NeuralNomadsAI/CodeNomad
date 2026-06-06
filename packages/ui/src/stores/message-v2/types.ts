@@ -1,5 +1,5 @@
 import type { ClientPart } from "../../types/message"
-import type { PermissionRequestLike } from "../../types/permission"
+import type { PermissionRequest } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
 
 export type MessageStatus = "sending" | "sent" | "streaming" | "complete" | "error"
@@ -48,7 +48,7 @@ export interface PendingPartEntry {
 }
 
 export interface PermissionEntry {
-  permission: PermissionRequestLike
+  permission: PermissionRequest
   messageId?: string
   partId?: string
   enqueuedAt: number

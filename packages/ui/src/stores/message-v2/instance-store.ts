@@ -3,7 +3,6 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import type { PermissionRequestLike } from "../../types/permission"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
