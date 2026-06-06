@@ -1,5 +1,5 @@
-use crate::managed_node::resolve_bundled_node_binary;
 use crate::desktop_event_transport::DesktopEventStreamConfig;
+use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -1287,25 +1287,36 @@ fn resolve_dev_entry(_app: &AppHandle) -> Option<String> {
 
 fn resolve_prod_entry(_app: &AppHandle) -> Option<String> {
     let base = workspace_root();
-    let mut candidates = vec![base.as_ref().map(|p| p.join("packages/server/dist/bin.js"))];
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()));
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(Some(dir.join("resources/server/dist/bin.js")));
+    first_existing(prod_entry_candidates(exe_dir, base))
+}
 
-            let resources = dir.join("../Resources");
-            candidates.push(Some(resources.join("server/dist/bin.js")));
-            candidates.push(Some(resources.join("resources/server/dist/bin.js")));
+fn prod_entry_candidates(
+    exe_dir: Option<PathBuf>,
+    workspace: Option<PathBuf>,
+) -> Vec<Option<PathBuf>> {
+    let mut candidates = Vec::new();
 
-            let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
-            for root in linux_resource_roots {
-                candidates.push(Some(root.join("server/dist/bin.js")));
-                candidates.push(Some(root.join("resources/server/dist/bin.js")));
-            }
+    if let Some(dir) = exe_dir {
+        candidates.push(Some(dir.join("resources/server/dist/bin.js")));
+
+        let resources = dir.join("../Resources");
+        candidates.push(Some(resources.join("server/dist/bin.js")));
+        candidates.push(Some(resources.join("resources/server/dist/bin.js")));
+
+        let linux_resource_roots = [dir.join("../lib/CodeNomad"), dir.join("../lib/codenomad")];
+        for root in linux_resource_roots {
+            candidates.push(Some(root.join("server/dist/bin.js")));
+            candidates.push(Some(root.join("resources/server/dist/bin.js")));
         }
     }
 
-    first_existing(candidates)
+    candidates.push(workspace.map(|p| p.join("packages/server/dist/bin.js")));
+
+    candidates
 }
 
 fn build_shell_command_string(
@@ -1419,5 +1430,30 @@ fn normalize_path(path: PathBuf) -> String {
         stripped.to_string()
     } else {
         rendered
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prod_entry_candidates_prefer_exe_relative_before_workspace_fallback() {
+        let exe_dir = PathBuf::from("/opt/codenomad/bin");
+        let workspace = PathBuf::from("/workspace/codenomad");
+
+        let candidates = prod_entry_candidates(Some(exe_dir.clone()), Some(workspace.clone()))
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            candidates.first(),
+            Some(&exe_dir.join("resources/server/dist/bin.js"))
+        );
+        assert_eq!(
+            candidates.last(),
+            Some(&workspace.join("packages/server/dist/bin.js"))
+        );
     }
 }

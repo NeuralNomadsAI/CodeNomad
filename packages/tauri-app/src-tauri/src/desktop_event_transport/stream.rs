@@ -87,7 +87,35 @@ fn attach_session_cookie_value(
         return request;
     };
 
-    request.header("Cookie", format!("{}={}", cookie_name, session_cookie))
+    request.header(
+        "Cookie",
+        format!(
+            "{}={}",
+            cookie_name,
+            encode_cookie_header_value(session_cookie)
+        ),
+    )
+}
+
+fn encode_cookie_header_value(value: &str) -> String {
+    let mut encoded = String::new();
+
+    for byte in value.bytes() {
+        if is_cookie_header_value_byte(byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+
+    encoded
+}
+
+fn is_cookie_header_value_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'!' | b'#'..=b'+' | b'-'..=b':' | b'<'..=b'[' | b']'..=b'~'
+    )
 }
 
 fn read_session_cookie_from_webview(
@@ -273,6 +301,25 @@ mod tests {
                 .get("Cookie")
                 .and_then(|value| value.to_str().ok()),
             Some("codenomad_session=cookie-value")
+        );
+    }
+
+    #[test]
+    fn session_cookie_value_is_encoded_before_header_attachment() {
+        let request = attach_session_cookie_value(
+            Client::new().post("http://localhost/api/client-connections/pong"),
+            "codenomad_session",
+            Some("safe;\r\nInjected=bad value"),
+        )
+        .build()
+        .expect("request should build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("Cookie")
+                .and_then(|value| value.to_str().ok()),
+            Some("codenomad_session=safe%3B%0D%0AInjected=bad%20value")
         );
     }
 }

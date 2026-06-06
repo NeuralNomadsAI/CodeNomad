@@ -111,6 +111,15 @@ impl DesktopEventTransportConfig {
             reconnect: ResolvedDesktopEventReconnectPolicy::resolve(request.reconnect.as_ref()),
         }
     }
+
+    fn is_equivalent_start(&self, other: &Self) -> bool {
+        self.reconnect == other.reconnect
+            && self.stream.base_url == other.stream.base_url
+            && self.stream.events_url == other.stream.events_url
+            && self.stream.client_id == other.stream.client_id
+            && self.stream.cookie_name == other.stream.cookie_name
+            && self.stream.session_cookie == other.stream.session_cookie
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -235,7 +244,11 @@ impl DesktopEventTransportManager {
         let transport_config = DesktopEventTransportConfig::new(stream_config, &request);
 
         let mut state = self.state.lock();
-        if state.config.as_ref() == Some(&transport_config) {
+        if state
+            .config
+            .as_ref()
+            .is_some_and(|config| config.is_equivalent_start(&transport_config))
+        {
             if let Some(stop) = &state.stop {
                 if !stop.load(Ordering::SeqCst) {
                     return DesktopEventsStartResult {

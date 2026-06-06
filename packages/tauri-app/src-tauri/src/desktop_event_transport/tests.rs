@@ -5,6 +5,17 @@ fn fresh_stats() -> DesktopEventTransportStats {
     DesktopEventTransportStats::default()
 }
 
+fn stream_config(connection_id: &str) -> DesktopEventStreamConfig {
+    DesktopEventStreamConfig {
+        base_url: "http://127.0.0.1:4096".to_string(),
+        events_url: "http://127.0.0.1:4096/api/events".to_string(),
+        client_id: "tauri-test".to_string(),
+        connection_id: connection_id.to_string(),
+        cookie_name: "codenomad_session".to_string(),
+        session_cookie: Some("cookie-value".to_string()),
+    }
+}
+
 fn delta_event(delta: &str) -> Value {
     json!({
         "type": "instance.event",
@@ -340,4 +351,24 @@ fn direct_snapshot_replaces_trailing_direct_deltas_for_same_part() {
         events[0]["properties"]["part"]["text"].as_str(),
         Some("Hello world")
     );
+}
+
+#[test]
+fn equivalent_transport_start_ignores_fresh_connection_id() {
+    let request = DesktopEventsStartRequest::default();
+    let first = DesktopEventTransportConfig::new(stream_config("conn-1"), &request);
+    let second = DesktopEventTransportConfig::new(stream_config("conn-2"), &request);
+
+    assert!(first.is_equivalent_start(&second));
+}
+
+#[test]
+fn equivalent_transport_start_detects_material_stream_changes() {
+    let request = DesktopEventsStartRequest::default();
+    let first = DesktopEventTransportConfig::new(stream_config("conn-1"), &request);
+    let mut changed_stream = stream_config("conn-2");
+    changed_stream.session_cookie = Some("other-cookie".to_string());
+    let second = DesktopEventTransportConfig::new(changed_stream, &request);
+
+    assert!(!first.is_equivalent_start(&second));
 }
