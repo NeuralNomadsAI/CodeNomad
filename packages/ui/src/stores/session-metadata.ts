@@ -82,6 +82,21 @@ export async function updateSessionMetadataWithClient(
   return persistedMetadata
 }
 
+export async function hydrateSessionMetadataWithClient(
+  client: OpencodeClient,
+  instanceId: string,
+  sessionId: string,
+): Promise<MetadataRecord> {
+  const latest = await requestData<any>(client.session.get({ sessionID: sessionId }), "session.get")
+  const metadata = normalizeMetadata(latest?.metadata)
+
+  withSession(instanceId, sessionId, (session) => {
+    session.metadata = metadata
+  })
+
+  return metadata
+}
+
 export async function updateCodeNomadSessionMetadataWithClient(
   client: OpencodeClient,
   instanceId: string,

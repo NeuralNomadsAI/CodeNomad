@@ -55,6 +55,7 @@ import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
+import { hydrateSessionMetadataWithClient } from "./session-metadata"
 
 const log = getLogger("api")
 
@@ -167,6 +168,22 @@ function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
 function getV2NextCursor(response: V2SessionsResponse): string | undefined {
   const next = (response as any)?.cursor?.next
   return typeof next === "string" && next.length > 0 ? next : undefined
+}
+
+async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(sessionIds)).filter(Boolean)
+  if (uniqueIds.length === 0) return
+
+  const client = getRootClient(instanceId)
+  for (const sessionId of uniqueIds) {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session || session.metadata !== undefined) continue
+    try {
+      await hydrateSessionMetadataWithClient(client, instanceId, sessionId)
+    } catch (error) {
+      log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+    }
+  }
 }
 
 async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
@@ -322,6 +339,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
 
     pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
     void (async () => {
+      await hydrateMissingSessionMetadata(instanceId, rootIds)
       await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
       await pruneStaleLegacyWorktreeMapEntries(instanceId)
     })().catch((error) => {
