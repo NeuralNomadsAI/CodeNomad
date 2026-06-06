@@ -47,6 +47,8 @@ function resolveToolCallFromPermission(
 
   const metadata = ((permission as any).metadata || {}) as Record<string, unknown>
   const directPartId =
+    (permission as any).partID ??
+    (permission as any).partId ??
     (metadata as any).partID ??
     (metadata as any).partId ??
     undefined

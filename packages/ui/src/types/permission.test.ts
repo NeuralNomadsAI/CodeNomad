@@ -33,10 +33,10 @@ describe("mergePermissionRequest", () => {
     const merged = mergePermissionRequest(previous, next)
 
     assert.equal(merged.sessionID, "session-1")
-    assert.deepEqual(merged.resources, ["file-b.ts"])
+    assert.deepEqual((merged as any).resources, ["file-b.ts"])
     assert.equal(merged.metadata?.path, "file-a.ts")
     assert.equal(merged.metadata?.diff, "diff --git a/file-b.ts b/file-b.ts")
-    assert.equal(merged.source?.callID, "call-1")
-    assert.equal(merged.source?.messageID, "tool-message-1")
+    assert.equal((merged as any).source?.callID, "call-1")
+    assert.equal((merged as any).source?.messageID, "tool-message-1")
   })
 })

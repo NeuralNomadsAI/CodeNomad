@@ -23,6 +23,7 @@ import type {
   EventQuestionV2Rejected,
   EventQuestionV2Replied,
 } from "@opencode-ai/sdk/v2"
+import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent } from "../types/permission"
 import { serverEvents } from "./server-events"
 import type {
   BackgroundProcess,
@@ -82,6 +83,8 @@ type SSEEvent =
   | EventSessionStatus
   | EventPermissionV2Asked
   | EventPermissionV2Replied
+  | LegacyPermissionAskedEvent
+  | LegacyPermissionRepliedEvent
   | { type: "question.asked"; properties?: any }
   | { type: "question.replied" | "question.rejected"; properties?: any }
   | EventQuestionV2Asked
@@ -168,6 +171,13 @@ class SSEManager {
       case "session.diff":
         this.onSessionDiff?.(instanceId, event as EventSessionDiff)
         break
+      case "permission.asked":
+      case "permission.updated":
+        this.onPermissionUpdated?.(instanceId, event as any)
+        break
+      case "permission.replied":
+        this.onPermissionReplied?.(instanceId, event as any)
+        break
       case "permission.v2.asked":
         this.onPermissionUpdated?.(instanceId, event as EventPermissionV2Asked)
         break
@@ -225,8 +235,8 @@ class SSEManager {
   onSessionIdle?: (instanceId: string, event: EventSessionIdle) => void
   onSessionStatus?: (instanceId: string, event: EventSessionStatus) => void
   onSessionDiff?: (instanceId: string, event: EventSessionDiff) => void
-  onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked) => void
-  onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied) => void
+  onPermissionUpdated?: (instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent) => void
+  onPermissionReplied?: (instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent) => void
   onQuestionAsked?: (instanceId: string, event: EventQuestionV2Asked | { type: "question.asked"; properties?: any }) => void
   onQuestionAnswered?: (instanceId: string, event: EventQuestionV2Replied | EventQuestionV2Rejected | { type: "question.replied" | "question.rejected"; properties?: any }) => void
   onLspUpdated?: (instanceId: string, event: EventLspUpdated) => void

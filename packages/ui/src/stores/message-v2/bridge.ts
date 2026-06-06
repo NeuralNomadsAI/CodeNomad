@@ -1,5 +1,5 @@
 import type { PermissionRequest } from "../../types/permission"
-import { getPermissionCallId, getPermissionMessageId } from "../../types/permission"
+import { getPermissionCallId, getPermissionMessageId, getPermissionSessionId } from "../../types/permission"
 import type { QuestionRequest } from "../../types/question"
 import { getQuestionCallId, getQuestionMessageId } from "../../types/question"
 import type { Message, MessageInfo, ClientPart } from "../../types/message"
@@ -134,6 +134,8 @@ function extractPermissionMessageId(permission: PermissionRequest): string | und
 function extractPermissionPartId(permission: PermissionRequest): string | undefined {
   const metadata = (permission as any).metadata || {}
   return (
+    (permission as any).partID ||
+    (permission as any).partId ||
     metadata.partID ||
     metadata.partId ||
     undefined
@@ -191,7 +193,7 @@ export function reconcilePendingPermissionsV2(instanceId: string, sessionId?: st
     const permission = entry.permission
     if (!permission) continue
 
-    const permissionSessionId = permission.sessionID
+    const permissionSessionId = getPermissionSessionId(permission)
     if (sessionId && permissionSessionId && permissionSessionId !== sessionId) {
       continue
     }

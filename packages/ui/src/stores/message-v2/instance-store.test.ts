@@ -26,7 +26,7 @@ describe("message-v2 permission state", () => {
 
     assert.equal(store.state.permissions.queue.length, 1)
     assert.equal(store.getPermissionState(undefined, "permission-1"), null)
-    assert.equal(store.getPermissionState("message-1", "part-1")?.entry.permission.source?.callID, "call-1")
+    assert.equal((store.getPermissionState("message-1", "part-1")?.entry.permission as any).source?.callID, "call-1")
     assert.equal(store.getPermissionState("message-1", "part-1")?.active, true)
   })
 

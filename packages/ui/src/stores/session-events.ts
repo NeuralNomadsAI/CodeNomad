@@ -24,7 +24,7 @@ import {
   getPermissionSessionId,
   getRequestIdFromPermissionReply,
 } from "../types/permission"
-import type { PermissionRequest } from "../types/permission"
+import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent, PermissionRequest } from "../types/permission"
 import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
 import type { LegacyQuestionAnsweredEvent, LegacyQuestionAskedEvent, QuestionRequest } from "../types/question"
 import type {
@@ -722,9 +722,10 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked): void {
+function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
   const permission = event?.properties as PermissionRequest | undefined
   if (!permission) return
+  const source = event.type === "permission.v2.asked" ? "v2" : "legacy"
   const permissionId = getPermissionId(permission)
   if (permissionId && hasRepliedPermission(instanceId, permissionId)) {
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
@@ -732,7 +733,7 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
   }
 
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission) ?? permission
+  const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
   upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
@@ -745,7 +746,7 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
   }
 }
 
-function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied): void {
+function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
   const properties = event?.properties
   const requestId = getRequestIdFromPermissionReply(properties)
   if (!requestId) return
