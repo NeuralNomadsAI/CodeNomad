@@ -68,6 +68,7 @@ const SESSION_PAGE_SIZE = 200
 type SessionPaginationState = {
   ids: string[]
   hasMore: boolean
+  nextCursor?: string
 }
 
 type SessionSearchState = {
@@ -92,7 +93,11 @@ function getSessionFetchLimit(instanceId: string): number {
   return Math.max(getSessionPaginationState(instanceId).ids.length, SESSION_PAGE_SIZE)
 }
 
-function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false): void {
+function getSessionNextCursor(instanceId: string): string | undefined {
+  return getSessionPaginationState(instanceId).nextCursor
+}
+
+function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false, nextCursor?: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
     const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
@@ -100,6 +105,7 @@ function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, res
     next.set(instanceId, {
       ids: nextIds,
       hasMore,
+      nextCursor,
     })
     return next
   })
@@ -112,7 +118,7 @@ function getSessionHasMore(instanceId: string): boolean {
 function resetSessionPagination(instanceId: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    next.set(instanceId, { ids: [], hasMore: true })
+    next.set(instanceId, { ids: [], hasMore: true, nextCursor: undefined })
     return next
   })
 }
@@ -1048,6 +1054,7 @@ export {
   sessionSearch,
   getSessionListIds,
   getSessionFetchLimit,
+  getSessionNextCursor,
   setSessionPage,
   getSessionHasMore,
   resetSessionPagination,

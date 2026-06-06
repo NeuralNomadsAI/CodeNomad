@@ -35,6 +35,7 @@ import {
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
   SESSION_PAGE_SIZE,
+  getSessionNextCursor,
   setSessionPage,
   prependSessionListId,
   removeSessionListId,
@@ -130,6 +131,7 @@ type V2SessionListOptions = {
   directory?: string
   limit?: number
   search?: string
+  cursor?: string
 }
 
 function getKnownParentId(session: SessionV2Info | Session): string | null | undefined {
@@ -162,6 +164,11 @@ function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
   return response.data
 }
 
+function getV2NextCursor(response: V2SessionsResponse): string | undefined {
+  const next = (response as any)?.cursor?.next
+  return typeof next === "string" && next.length > 0 ? next : undefined
+}
+
 async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SessionV2Info | Session>(currentSessions)
@@ -170,23 +177,35 @@ async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: Sessi
   if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
 
   const limit = SESSION_PAGE_SIZE
-  const page = await fetchV2Sessions(instanceId, { directory, limit })
-  setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+  let cursor: string | undefined
+  let remainingPages = 25
 
-    for (const apiSession of getV2SessionItems(page)) {
-      const existingSession = instanceSessions.get(apiSession.id)
-      instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
-      loaded.set(apiSession.id, apiSession)
-    }
+  while (apiSessions.some((session) => hasMissingParentChain(session, loaded)) && remainingPages > 0) {
+    const page = await fetchV2Sessions(instanceId, { directory, limit, ...(cursor ? { cursor } : {}) })
+    const items = getV2SessionItems(page)
+    if (items.length === 0) break
 
-    next.set(instanceId, instanceSessions)
-    return next
-  })
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+
+      for (const apiSession of items) {
+        const existingSession = instanceSessions.get(apiSession.id)
+        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+        loaded.set(apiSession.id, apiSession)
+      }
+
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    cursor = getV2NextCursor(page)
+    if (!cursor) break
+    remainingPages -= 1
+  }
 }
 
-async function fetchSessions(instanceId: string, options?: { limit?: number; reset?: boolean }): Promise<void> {
+async function fetchSessions(instanceId: string, options?: { limit?: number; reset?: boolean; cursor?: string }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -203,13 +222,15 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
   try {
     const limit = Math.min(options?.limit ?? SESSION_PAGE_SIZE, 200)
 
-    const sessionListOptions: { directory?: string; limit?: number } = {
+    const sessionListOptions: { directory?: string; limit?: number; cursor?: string } = {
       limit,
       ...(instance.folder ? { directory: instance.folder } : {}),
+      ...(options?.cursor ? { cursor: options.cursor } : {}),
     }
 
-    log.info("v2.session.list", { instanceId, limit, directory: sessionListOptions.directory })
+    log.info("v2.session.list", { instanceId, limit, directory: sessionListOptions.directory, cursor: sessionListOptions.cursor })
     const response = await fetchV2Sessions(instanceId, sessionListOptions)
+    const nextCursor = getV2NextCursor(response)
 
     let statusById: Record<string, any> = {}
     try {
@@ -279,7 +300,7 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
       })
     }
 
-    setSessionPage(instanceId, rootIds, false, options?.reset ?? true)
+    setSessionPage(instanceId, rootIds, Boolean(nextCursor), options?.reset ?? true, nextCursor)
 
     syncInstanceSessionIndicator(instanceId)
 
@@ -319,7 +340,9 @@ async function fetchSessions(instanceId: string, options?: { limit?: number; res
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
-  await fetchSessions(instanceId, { limit: SESSION_PAGE_SIZE, reset: true })
+  const cursor = getSessionNextCursor(instanceId)
+  if (!cursor) return
+  await fetchSessions(instanceId, { limit: SESSION_PAGE_SIZE, reset: false, cursor })
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {

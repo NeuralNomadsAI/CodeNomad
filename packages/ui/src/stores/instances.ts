@@ -27,7 +27,7 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
+import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
 import { fetchCommands, clearCommands } from "./commands"
 import { serverSettings } from "./preferences"
 import { sessions, setSessionPendingPermission, setSessionPendingQuestion } from "./session-state"
@@ -168,11 +168,6 @@ async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> 
   }
 
   return locations
-}
-
-function getV2DirectoryLocation(instanceId: string): V2Location {
-  const instance = instances().get(instanceId)
-  return instance?.folder ? { directory: instance.folder } : {}
 }
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
@@ -362,15 +357,16 @@ async function syncPendingQuestions(instanceId: string): Promise<void> {
       remote.push({ request, source: "legacy" })
     }
 
-    const location = getV2DirectoryLocation(instanceId)
-    const response = await requestData<{ location?: unknown; data: QuestionRequest[] }>(
-      instance.client.v2.question.request.list({ location }),
-      "v2.question.request.list",
-    )
-    log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
-    for (const request of response.data) {
-      setQuestionSource(instanceId, request.id, "v2")
-      remote.push({ request, source: "v2" })
+    for (const location of await getV2RequestLocations(instanceId)) {
+      const response = await requestData<{ location?: unknown; data: QuestionRequest[] }>(
+        instance.client.v2.question.request.list({ location }),
+        "v2.question.request.list",
+      )
+      log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
+      for (const request of response.data) {
+        setQuestionSource(instanceId, request.id, "v2")
+        remote.push({ request, source: "v2" })
+      }
     }
 
     const remoteIds = new Set(remote.map((item) => item.request.id))
@@ -1194,9 +1190,11 @@ async function sendQuestionReply(
     const source = getQuestionSource(instanceId, requestId)
 
     if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
       await requestData(
         client.question.reply({
           requestID: requestId,
+          ...(workspace ? { workspace } : {}),
           answers,
         }),
         "question.reply",
@@ -1230,9 +1228,11 @@ async function sendQuestionReject(instanceId: string, sessionId: string, request
     const source = getQuestionSource(instanceId, requestId)
 
     if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
       await requestData(
         client.question.reject({
           requestID: requestId,
+          ...(workspace ? { workspace } : {}),
         }),
         "question.reject",
       )
@@ -1270,9 +1270,11 @@ async function sendPermissionResponse(
     const source = getPermissionSource(instanceId, requestId)
 
     if (source === "legacy") {
+      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
       await requestData(
         client.permission.reply({
           requestID: requestId,
+          ...(workspace ? { workspace } : {}),
           reply,
           ...(message ? { message } : {}),
         }),
