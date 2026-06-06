@@ -53,6 +53,7 @@ import { getLogger } from "../lib/logger"
 import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
 import { activeSidecarToken } from "./sidecars"
+import { buildV2RequestLocations, type V2Location } from "./request-locations"
 
 const log = getLogger("api")
 
@@ -145,29 +146,19 @@ type InterruptionKind = "permission" | "question"
 
 type ActiveInterruption = { kind: InterruptionKind; id: string } | null
 
-type V2Location = {
-  directory?: string
-  workspace?: string
-}
-
 async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> {
   const instance = instances().get(instanceId)
-  const rootLocation: V2Location = instance?.folder ? { directory: instance.folder } : {}
-  const locations: V2Location[] = [rootLocation]
-  const seen = new Set([JSON.stringify(rootLocation)])
+  const worktrees = getWorktrees(instanceId)
+  const workspaceBySlug = new Map<string, string>()
 
-  for (const worktree of getWorktrees(instanceId)) {
+  for (const worktree of worktrees) {
     if (!worktree.slug || worktree.slug === "root") continue
     const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
     if (!workspace) continue
-    const location: V2Location = { ...rootLocation, workspace }
-    const key = JSON.stringify(location)
-    if (seen.has(key)) continue
-    seen.add(key)
-    locations.push(location)
+    workspaceBySlug.set(worktree.slug, workspace)
   }
 
-  return locations
+  return buildV2RequestLocations(instance?.folder, worktrees, workspaceBySlug)
 }
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())

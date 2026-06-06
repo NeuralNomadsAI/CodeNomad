@@ -12,6 +12,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
+import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 
 const log = getLogger("session")
 
@@ -65,12 +66,6 @@ const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<s
 
 const SESSION_PAGE_SIZE = 200
 
-type SessionPaginationState = {
-  ids: string[]
-  hasMore: boolean
-  nextCursor?: string
-}
-
 type SessionSearchState = {
   query: string
   ids: string[]
@@ -82,7 +77,7 @@ const [sessionPagination, setSessionPagination] = createSignal<Map<string, Sessi
 const [sessionSearch, setSessionSearch] = createSignal<Map<string, SessionSearchState>>(new Map())
 
 function getSessionPaginationState(instanceId: string): SessionPaginationState {
-  return sessionPagination().get(instanceId) ?? { ids: [], hasMore: true }
+  return sessionPagination().get(instanceId) ?? getDefaultSessionPaginationState()
 }
 
 function getSessionListIds(instanceId: string): string[] {
@@ -100,13 +95,7 @@ function getSessionNextCursor(instanceId: string): string | undefined {
 function setSessionPage(instanceId: string, ids: string[], hasMore: boolean, reset = false, nextCursor?: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    const current = prev.get(instanceId) ?? { ids: [], hasMore: true }
-    const nextIds = reset ? ids : Array.from(new Set([...current.ids, ...ids]))
-    next.set(instanceId, {
-      ids: nextIds,
-      hasMore,
-      nextCursor,
-    })
+    next.set(instanceId, applySessionPage(prev.get(instanceId), ids, hasMore, reset, nextCursor))
     return next
   })
 }
@@ -118,7 +107,7 @@ function getSessionHasMore(instanceId: string): boolean {
 function resetSessionPagination(instanceId: string): void {
   setSessionPagination((prev) => {
     const next = new Map(prev)
-    next.set(instanceId, { ids: [], hasMore: true, nextCursor: undefined })
+    next.set(instanceId, getDefaultSessionPaginationState())
     return next
   })
 }
