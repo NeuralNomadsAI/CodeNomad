@@ -7,7 +7,7 @@ import {
   type SessionStatus,
 } from "../types/session"
 import type { Message } from "../types/message"
-import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2/client"
+import type { SnapshotFileDiff, SessionV2Info, V2SessionsResponse } from "@opencode-ai/sdk/v2/client"
 
 import { instances } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -15,7 +15,7 @@ import {
   activeSessionId,
   agents,
   clearSessionDraftPrompt,
-  getChildSessions,
+  getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   pruneDraftPrompts,
@@ -27,6 +27,7 @@ import {
   setSessionInfoByInstance,
   setSessions,
   sessions,
+  getSessionRoot,
   withSession,
   loading,
   setLoading,
@@ -34,7 +35,7 @@ import {
   syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
   SESSION_PAGE_SIZE,
-  getSessionNextStart,
+  getSessionNextCursor,
   setSessionPage,
   prependSessionListId,
   removeSessionListId,
@@ -54,11 +55,11 @@ import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktreeSlugForSession, migrateLegacyWorktreeMapToSessionMetadata, pruneStaleLegacyWorktreeMapEntries, removeLegacyParentSessionMapping, setWorktreeSlugForParentSession } from "./worktrees"
 import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
+import { hydrateSessionMetadataWithClient } from "./session-metadata"
 
 const log = getLogger("api")
 
 const pendingSessionDiffFetches = new Map<string, Promise<void>>()
-const pendingSessionChildrenFetches = new Map<string, Promise<Session[]>>()
 
 async function getSessionWorkspacePayload(instanceId: string, sessionId: string): Promise<{ workspace?: string }> {
   const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, sessionId)
@@ -127,7 +128,101 @@ interface SessionForkResponse {
   }
 }
 
-async function fetchSessions(instanceId: string, options?: { start?: number; limit?: number }): Promise<void> {
+type V2SessionListOptions = {
+  directory?: string
+  limit?: number
+  search?: string
+  cursor?: string
+}
+
+function getKnownParentId(session: SessionV2Info | Session): string | null | undefined {
+  return (session as any).parentID ?? (session as Session).parentId
+}
+
+function hasMissingParentChain(session: SessionV2Info, loaded: Map<string, SessionV2Info | Session>): boolean {
+  let current: SessionV2Info | Session = session
+  const seen = new Set<string>()
+
+  while (getKnownParentId(current)) {
+    const parentId = getKnownParentId(current)
+    if (!parentId) return false
+    if (seen.has(parentId)) return false
+    seen.add(parentId)
+    const parent = loaded.get(parentId)
+    if (!parent) return true
+    current = parent
+  }
+
+  return false
+}
+
+async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<V2SessionsResponse> {
+  const client = getRootClient(instanceId)
+  return requestData<V2SessionsResponse>(client.v2.session.list(options), "v2.session.list")
+}
+
+function getV2SessionItems(response: V2SessionsResponse): SessionV2Info[] {
+  return response.data
+}
+
+function getV2NextCursor(response: V2SessionsResponse): string | undefined {
+  const next = (response as any)?.cursor?.next
+  return typeof next === "string" && next.length > 0 ? next : undefined
+}
+
+async function hydrateMissingSessionMetadata(instanceId: string, sessionIds: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(sessionIds)).filter(Boolean)
+  if (uniqueIds.length === 0) return
+
+  const client = getRootClient(instanceId)
+  for (const sessionId of uniqueIds) {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session || session.metadata !== undefined) continue
+    try {
+      await hydrateSessionMetadataWithClient(client, instanceId, sessionId)
+    } catch (error) {
+      log.warn("Failed to hydrate session metadata", { instanceId, sessionId, error })
+    }
+  }
+}
+
+async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SessionV2Info[], directory?: string): Promise<void> {
+  const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
+  const loaded = new Map<string, SessionV2Info | Session>(currentSessions)
+  for (const session of apiSessions) loaded.set(session.id, session)
+
+  if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
+
+  const limit = SESSION_PAGE_SIZE
+  let cursor: string | undefined
+  let remainingPages = 25
+
+  while (apiSessions.some((session) => hasMissingParentChain(session, loaded)) && remainingPages > 0) {
+    const page = await fetchV2Sessions(instanceId, { directory, limit, ...(cursor ? { cursor } : {}) })
+    const items = getV2SessionItems(page)
+    if (items.length === 0) break
+
+    setSessions((prev) => {
+      const next = new Map(prev)
+      const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+
+      for (const apiSession of items) {
+        const existingSession = instanceSessions.get(apiSession.id)
+        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+        loaded.set(apiSession.id, apiSession)
+      }
+
+      next.set(instanceId, instanceSessions)
+      return next
+    })
+
+    cursor = getV2NextCursor(page)
+    if (!cursor) break
+    remainingPages -= 1
+  }
+}
+
+async function fetchSessions(instanceId: string, options?: { limit?: number; reset?: boolean; cursor?: string }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -142,29 +237,17 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
   })
 
   try {
-    const projectResponse = await rootClient.project.current()
-    const projectId = projectResponse.data?.id
-    const start = options?.start ?? 0
-    const limit = options?.limit ?? SESSION_PAGE_SIZE
+    const limit = Math.min(options?.limit ?? SESSION_PAGE_SIZE, 200)
 
-    const sessionListOptions: { directory?: string; roots?: boolean; start?: number; limit?: number } = {
-      roots: true,
-      start,
+    const sessionListOptions: { directory?: string; limit?: number; cursor?: string } = {
       limit,
-    }
-    if (instance.folder) sessionListOptions.directory = instance.folder
-
-    log.info("session.list", { instanceId, projectId, start, limit, directory: sessionListOptions.directory })
-    const response = await rootClient.session.list(sessionListOptions)
-
-    const sessionMap = new Map<string, Session>()
-
-    if (!response.data || !Array.isArray(response.data)) {
-      setSessionPage(instanceId, [], start, false)
-      return
+      ...(instance.folder ? { directory: instance.folder } : {}),
+      ...(options?.cursor ? { cursor: options.cursor } : {}),
     }
 
-    const hasMore = response.data.length >= limit
+    log.info("v2.session.list", { instanceId, limit, directory: sessionListOptions.directory, cursor: sessionListOptions.cursor })
+    const response = await fetchV2Sessions(instanceId, sessionListOptions)
+    const nextCursor = getV2NextCursor(response)
 
     let statusById: Record<string, any> = {}
     try {
@@ -177,8 +260,9 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
     }
 
     const existingSessions = sessions().get(instanceId)
+    const sessionMap = new Map<string, Session>()
 
-    for (const apiSession of response.data) {
+    for (const apiSession of getV2SessionItems(response)) {
       const existingSession = existingSessions?.get(apiSession.id)
       const existingStatus = existingSession?.status
 
@@ -194,33 +278,16 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
         retry = hasType ? mapSdkSessionRetry(rawStatus) : retry
       }
 
+      const session = toClientSessionV2(instanceId, apiSession, existingSession)
       sessionMap.set(apiSession.id, {
-        id: apiSession.id,
-        instanceId,
-        title: apiSession.title || "Untitled",
-        parentId: apiSession.parentID || null,
-        agent: existingSession?.agent ?? "",
-        model: existingSession?.model ?? { providerId: "", modelId: "" },
+        ...session,
+        agent: session.agent,
+        model: session.model,
         status,
         retry,
         idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
-        version: apiSession.version,
-        time: {
-          ...apiSession.time,
-        },
-        metadata: apiSession.metadata ?? existingSession?.metadata,
-        revert: apiSession.revert
-          ? {
-              messageID: apiSession.revert.messageID,
-              partID: apiSession.revert.partID,
-              snapshot: apiSession.revert.snapshot,
-              diff: apiSession.revert.diff,
-            }
-          : undefined,
       })
     }
-
-    const validSessionIds = new Set(sessionMap.keys())
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -232,7 +299,25 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
       return next
     })
 
-    setSessionPage(instanceId, Array.from(validSessionIds), start, hasMore)
+    const rootIds: string[] = []
+    const missingRootSessionIds: string[] = []
+    for (const apiSession of getV2SessionItems(response)) {
+      const root = getSessionRoot(instanceId, apiSession.id)
+      if (root) {
+        if (!rootIds.includes(root.id)) rootIds.push(root.id)
+      } else if (apiSession.parentID) {
+        missingRootSessionIds.push(apiSession.id)
+      }
+    }
+
+    if (missingRootSessionIds.length > 0) {
+      log.warn("Some V2 session list items could not be attached to a loaded root", {
+        instanceId,
+        sessionIds: missingRootSessionIds,
+      })
+    }
+
+    setSessionPage(instanceId, rootIds, Boolean(nextCursor), options?.reset ?? true, nextCursor)
 
     syncInstanceSessionIndicator(instanceId)
 
@@ -253,13 +338,8 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
 
 
     pruneDraftPrompts(instanceId, new Set(sessions().get(instanceId)?.keys() ?? []))
-
-    const parentIds = Array.from(sessionMap.values())
-      .filter((session) => session.parentId === null)
-      .map((session) => session.id)
-
-    await Promise.all(parentIds.map((parentId) => fetchSessionChildren(instanceId, parentId)))
     void (async () => {
+      await hydrateMissingSessionMetadata(instanceId, rootIds)
       await migrateLegacyWorktreeMapToSessionMetadata(instanceId)
       await pruneStaleLegacyWorktreeMapEntries(instanceId)
     })().catch((error) => {
@@ -278,7 +358,9 @@ async function fetchSessions(instanceId: string, options?: { start?: number; lim
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
-  await fetchSessions(instanceId, { start: getSessionNextStart(instanceId), limit: SESSION_PAGE_SIZE })
+  const cursor = getSessionNextCursor(instanceId)
+  if (!cursor) return
+  await fetchSessions(instanceId, { limit: SESSION_PAGE_SIZE, reset: false, cursor })
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
@@ -290,19 +372,18 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     throw new Error("Instance not ready")
   }
 
-  const rootClient = getRootClient(instanceId)
   const requestId = beginSessionSearch(instanceId, trimmedQuery)
 
   try {
-    log.info("session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    const response = await rootClient.session.list({
+    log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
+    const response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
       limit: SESSION_PAGE_SIZE,
       directory: instance.folder,
     })
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
-    const searchResults = response.data ?? []
+    const searchResults = getV2SessionItems(response)
 
     if (searchResults.length === 0) {
       setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
@@ -315,43 +396,14 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
       for (const apiSession of searchResults) {
         const existingSession = instanceSessions.get(apiSession.id)
-        instanceSessions.set(apiSession.id, toClientSession(instanceId, apiSession, existingSession))
+        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
       }
 
       next.set(instanceId, instanceSessions)
       return next
     })
 
-    // Fetch any missing parents so child results are rendered correctly
-    const currentSessions = sessions().get(instanceId)
-    const missingParentIds = new Set<string>()
-    for (const apiSession of searchResults) {
-      const parentId = apiSession.parentID
-      if (parentId && !currentSessions?.has(parentId)) {
-        missingParentIds.add(parentId)
-      }
-    }
-
-    if (missingParentIds.size > 0) {
-      const parentFetches = Array.from(missingParentIds).map(async (parentId) => {
-        try {
-          const parentResponse = await rootClient.session.get({ sessionID: parentId })
-          if (parentResponse.data) {
-            setSessions((prev) => {
-              const next = new Map(prev)
-              const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-              const existingSession = instanceSessions.get(parentId)
-              instanceSessions.set(parentId, toClientSession(instanceId, parentResponse.data, existingSession))
-              next.set(instanceId, instanceSessions)
-              return next
-            })
-          }
-        } catch (error) {
-          log.warn("Failed to fetch missing parent session:", { parentId, error })
-        }
-      })
-      await Promise.all(parentFetches)
-    }
+    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
 
     if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
 
@@ -377,145 +429,32 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 }
 
-function toClientSession(instanceId: string, apiSession: any, existingSession?: Session): Session {
+function toClientSessionV2(instanceId: string, apiSession: SessionV2Info, existingSession?: Session): Session {
   return {
     id: apiSession.id,
     instanceId,
     title: apiSession.title || existingSession?.title || "Untitled",
     parentId: apiSession.parentID || null,
-    agent: existingSession?.agent ?? "",
-    model: existingSession?.model ?? { providerId: "", modelId: "" },
+    agent: apiSession.agent ?? existingSession?.agent ?? "",
+    model: apiSession.model
+      ? {
+          providerId: apiSession.model.providerID,
+          modelId: apiSession.model.id,
+        }
+      : existingSession?.model ?? { providerId: "", modelId: "" },
     status: existingSession?.status ?? "idle",
     retry: existingSession?.retry ?? null,
     idleSince: existingSession?.idleSince ?? null,
-    version: apiSession.version,
+    version: existingSession?.version || "0",
     time: {
       ...apiSession.time,
     },
-    metadata: apiSession.metadata ?? existingSession?.metadata,
-    revert: apiSession.revert
-      ? {
-          messageID: apiSession.revert.messageID,
-          partID: apiSession.revert.partID,
-          snapshot: apiSession.revert.snapshot,
-          diff: apiSession.revert.diff,
-        }
-      : existingSession?.revert,
+    metadata: existingSession?.metadata,
+    revert: existingSession?.revert,
     diff: existingSession?.diff,
     pendingPermission: existingSession?.pendingPermission,
     pendingQuestion: existingSession?.pendingQuestion,
   }
-}
-
-async function fetchSessionChildren(instanceId: string, parentSessionId: string): Promise<Session[]> {
-  if (!instanceId || !parentSessionId) return []
-
-  const key = `${instanceId}:${parentSessionId}`
-  const pending = pendingSessionChildrenFetches.get(key)
-  if (pending) return pending
-
-  const promise = (async () => {
-    const instance = instances().get(instanceId)
-    if (!instance || !instance.client) {
-      throw new Error("Instance not ready")
-    }
-
-    const client = getRootClient(instanceId)
-
-    log.info(`[HTTP] GET /session/{sessionID}/children for instance ${instanceId}`, { sessionId: parentSessionId })
-    const apiChildren = await requestData<any[]>(
-      client.session.children({ sessionID: parentSessionId, ...(await getSessionWorkspacePayload(instanceId, parentSessionId)) }),
-      "session.children",
-    )
-
-    if (!Array.isArray(apiChildren)) return []
-
-    const currentSessions = sessions().get(instanceId)
-    const children = apiChildren.map((apiSession) => toClientSession(instanceId, apiSession, currentSessions?.get(apiSession.id)))
-    const returnedChildIds = new Set(children.map((child) => child.id))
-    let staleChildIds: string[] = []
-
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = new Map(next.get(instanceId))
-      staleChildIds = []
-
-      for (const session of instanceSessions.values()) {
-        if (session.parentId === parentSessionId && !returnedChildIds.has(session.id)) {
-          staleChildIds.push(session.id)
-        }
-      }
-
-      for (const staleChildId of staleChildIds) {
-        instanceSessions.delete(staleChildId)
-      }
-
-      for (const child of children) {
-        instanceSessions.set(child.id, child)
-      }
-      next.set(instanceId, instanceSessions)
-      return next
-    })
-
-    if (staleChildIds.length > 0) {
-      const staleChildIdSet = new Set(staleChildIds)
-
-      setMessagesLoaded((prev) => {
-        const loadedSet = prev.get(instanceId)
-        if (!loadedSet) return prev
-        const updated = new Set(loadedSet)
-        let changed = false
-        for (const staleChildId of staleChildIdSet) {
-          changed = updated.delete(staleChildId) || changed
-        }
-        if (!changed) return prev
-        const next = new Map(prev)
-        next.set(instanceId, updated)
-        return next
-      })
-
-      setSessionInfoByInstance((prev) => {
-        const instanceInfo = prev.get(instanceId)
-        if (!instanceInfo) return prev
-        const updated = new Map(instanceInfo)
-        let changed = false
-        for (const staleChildId of staleChildIdSet) {
-          changed = updated.delete(staleChildId) || changed
-        }
-        if (!changed) return prev
-        const next = new Map(prev)
-        next.set(instanceId, updated)
-        return next
-      })
-
-      for (const staleChildId of staleChildIds) {
-        messageStoreBus.getOrCreate(instanceId).clearSession(staleChildId)
-        clearCacheForSession(instanceId, staleChildId)
-      }
-    }
-
-    syncInstanceSessionIndicator(instanceId)
-    updateThreadTotalsForParent(instanceId, parentSessionId)
-
-    if (messagesLoaded().get(instanceId)?.has(parentSessionId)) {
-      for (const child of children) {
-        void loadMessages(instanceId, child.id, { skipDiff: true, skipChildren: true }).catch((error) =>
-          log.error("Failed to load child session messages", {
-            instanceId,
-            sessionId: child.id,
-            parentSessionId,
-            error,
-          }),
-        )
-      }
-    }
-
-    return children
-  })()
-
-  pendingSessionChildrenFetches.set(key, promise)
-  void promise.finally(() => pendingSessionChildrenFetches.delete(key))
-  return promise
 }
 
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
@@ -567,7 +506,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       time: {
         ...response.data.time,
       },
-      metadata: response.data.metadata,
+      metadata: (response.data as any).metadata,
       revert: response.data.revert
         ? {
             messageID: response.data.revert.messageID,
@@ -1076,7 +1015,7 @@ async function loadMessages(
   updateSessionInfo(instanceId, sessionId)
 
   if (!skipChildren && session.parentId === null) {
-    for (const child of getChildSessions(instanceId, sessionId)) {
+    for (const child of getDescendantSessions(instanceId, sessionId)) {
       void loadMessages(instanceId, child.id, { skipDiff: true, skipChildren: true }).catch((error) =>
         log.error("Failed to load child session messages", {
           instanceId,
@@ -1098,7 +1037,6 @@ export {
   fetchSessions,
   loadMoreSessions,
   searchSessions,
-  fetchSessionChildren,
   forkSession,
   loadMessages,
 }

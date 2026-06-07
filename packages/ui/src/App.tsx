@@ -103,7 +103,6 @@ const App: Component = () => {
     binaryPath: string
     instanceId: string
   } | null>(null)
-
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -418,7 +417,7 @@ const App: Component = () => {
     clearActiveParentSession(instanceId)
 
     try {
-      await fetchSessions(instanceId, { start: 0, limit: getSessionFetchLimit(instanceId) })
+      await fetchSessions(instanceId, { reset: true, limit: getSessionFetchLimit(instanceId) })
     } catch (error) {
       log.error("Failed to refresh sessions after closing", error)
     }

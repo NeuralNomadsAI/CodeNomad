@@ -9,7 +9,7 @@ import type {
   AssistantMessage as SDKAssistantMessageV2,
 } from "@opencode-ai/sdk/v2"
 
-import type { PermissionRequestLike } from "./permission"
+import type { PermissionRequest } from "./permission"
 
 // Re-export for other modules
 export type {
@@ -44,7 +44,7 @@ export interface RenderCache {
 }
 
 export interface PendingPermissionState {
-  permission: PermissionRequestLike
+  permission: PermissionRequest
   active: boolean
 }
 

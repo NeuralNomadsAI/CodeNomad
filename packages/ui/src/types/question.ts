@@ -1,10 +1,24 @@
 import type {
-  QuestionRequest,
-  EventQuestionReplied,
-  EventQuestionRejected,
+  QuestionV2Request,
+  EventQuestionV2Replied,
+  EventQuestionV2Rejected,
 } from "@opencode-ai/sdk/v2"
 
-export type { QuestionRequest }
+export type QuestionSource = "legacy" | "v2"
+
+export type QuestionRequest = QuestionV2Request & {
+  version?: string
+}
+
+export type LegacyQuestionAskedEvent = {
+  type: "question.asked"
+  properties?: QuestionRequest
+}
+
+export type LegacyQuestionAnsweredEvent = {
+  type: "question.replied" | "question.rejected"
+  properties?: { requestID?: string }
+}
 
 export function getQuestionId(question: QuestionRequest | null | undefined): string {
   return question?.id ?? ""
@@ -28,7 +42,7 @@ export function getQuestionCreatedAt(question: QuestionRequest | null | undefine
 }
 
 export function getRequestIdFromQuestionReply(
-  properties: EventQuestionReplied["properties"] | EventQuestionRejected["properties"] | null | undefined,
+  properties: EventQuestionV2Replied["properties"] | EventQuestionV2Rejected["properties"] | LegacyQuestionAnsweredEvent["properties"] | null | undefined,
 ): string | undefined {
   return properties?.requestID
 }

@@ -11,7 +11,6 @@ import {
   setPromptDisplayOverride,
 } from "../message-prompt-display"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import type { PermissionRequestLike } from "../../types/permission"
 import { mergePermissionRequest } from "../../types/permission"
 import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
 import type {
