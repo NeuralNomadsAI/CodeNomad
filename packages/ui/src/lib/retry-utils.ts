@@ -8,7 +8,7 @@ interface RetryOptions {
 }
 
 export async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
+  fn: (signal?: AbortSignal) => Promise<T>,
   options: RetryOptions = {},
 ): Promise<T> {
   const {
@@ -29,14 +29,7 @@ export async function retryWithBackoff<T>(
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), timeoutMs)
         try {
-          const result = await Promise.race([
-            fn(),
-            new Promise<never>((_, reject) => {
-              controller.signal.addEventListener("abort", () => {
-                reject(new DOMException("Request timed out", "TimeoutError"))
-              })
-            }),
-          ])
+          const result = await fn(controller.signal)
           clearTimeout(timer)
           return result
         } catch (error) {

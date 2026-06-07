@@ -44,7 +44,7 @@ class ServerEvents {
         const pongPayload = { ...identity, pingTs: payload.ts }
 
         void retryWithBackoff(
-          () => serverApi.sendClientConnectionPong(pongPayload),
+          (signal) => serverApi.sendClientConnectionPong(pongPayload, signal),
           {
             maxAttempts: 3,
             initialDelayMs: 100,
@@ -52,8 +52,8 @@ class ServerEvents {
             timeoutMs: 10000,
             shouldRetry: (error) => isRetryableError(error),
           },
-        ).catch(() => {
-          log.warn("Pong failed after retries (connection already closed)")
+        ).catch((error) => {
+          log.warn("Failed to send client connection pong after retries", error)
         })
       },
     )

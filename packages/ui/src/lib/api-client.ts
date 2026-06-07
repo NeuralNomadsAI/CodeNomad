@@ -517,11 +517,15 @@ export const serverApi = {
       body: JSON.stringify({ ...identity, enabled }),
     })
   },
-  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }): Promise<void> {
-    return request<void>("/api/client-connections/pong", {
+  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
+    const init: RequestInit = {
       method: "POST",
       body: JSON.stringify(payload),
-    })
+    }
+    if (signal) {
+      init.signal = signal
+    }
+    return request<void>("/api/client-connections/pong", init)
   },
   fetchBackgroundProcessOutput(
     instanceId: string,
